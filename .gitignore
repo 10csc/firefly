@@ -6,3 +6,4 @@ __pycache__/
 封装/
 .claude/*.bak
 app/data/
+*.bak
