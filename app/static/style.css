@@ -229,3 +229,28 @@ body {
     background: rgba(20,20,40,0.95); padding: 32px; border-radius: 12px;
     color: #e0d5c1; text-align: center; max-width: 320px;
 }
+
+/* 配置标签 */
+#key-panel .tab-btn {
+    flex: 1; padding: 8px; border: none; border-radius: 8px;
+    background: rgba(255,255,255,0.06); color: #8a8a8a;
+    font-family: inherit; cursor: pointer; font-size: 0.9em;
+}
+#key-panel .tab-btn.active { background: rgba(140,160,200,0.3); color: #c8d0e0; }
+/* 设定编辑器 */
+#char-file-save, #char-file-reload {
+    flex: 1; padding: 8px; border-radius: 8px;
+    border: 1px solid rgba(255,255,255,0.15); background: transparent;
+    color: #c8d0e0; font-family: inherit; cursor: pointer; font-size: 0.85em;
+}
+#char-file-save { background: rgba(140,160,200,0.3); }
+#char-file-save:hover { background: rgba(140,160,200,0.45); }
+/* 撤回 */
+#undo-btn {
+    width: 36px; height: 36px; border-radius: 50%;
+    border: 1px solid rgba(255,255,255,0.1); background: rgba(255,255,255,0.04);
+    color: #8a8a8a; font-size: 1em; cursor: pointer; flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center;
+}
+#undo-btn:hover { color: #e0d5c1; border-color: rgba(255,255,255,0.2); }
+#undo-btn:disabled { opacity: 0.3; cursor: default; }

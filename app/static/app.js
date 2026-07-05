@@ -254,6 +254,7 @@ async function send() {
     sendBtn.disabled = true;
 
     addTextMessage(text, "user");
+    undoBtn.disabled = false;
 
     // 打字占位
     const typingRow = addTextMessage("...", "firefly");
@@ -528,6 +529,7 @@ async function loadHistory(beforeSeq = null) {
             // 首次加载：append 到末尾
             data.messages.forEach(m => renderHistoryMessage(m, false));
             messagesEl.scrollTop = messagesEl.scrollHeight;
+            undoBtn.disabled = false;
         } else {
             // 向上翻页：prepend 到顶部，保持滚动位置
             const prevHeight = messagesEl.scrollHeight;
@@ -556,3 +558,101 @@ messagesEl.addEventListener("scroll", () => {
 
 // 启动时加载历史（在 checkKey 之后，避免与配置面板冲突）
 checkKey().then(() => loadHistory());
+
+// ── 配置标签切换 ──────────────────────────────
+function switchConfigTab(tab) {
+    document.getElementById("tab-api").className = tab === "api" ? "tab-btn active" : "tab-btn";
+    document.getElementById("tab-char").className = tab === "char" ? "tab-btn active" : "tab-btn";
+    document.getElementById("config-tab-api").style.display = tab === "api" ? "block" : "none";
+    document.getElementById("config-tab-char").style.display = tab === "char" ? "block" : "none";
+    if (tab === "char") loadCharFiles();
+}
+
+// ── 设定文件编辑器 ──────────────────────────────
+async function loadCharFiles() {
+    const sel = document.getElementById("char-file-select");
+    const editor = document.getElementById("char-file-editor");
+    const msg = document.getElementById("char-file-msg");
+    try {
+        const resp = await fetch("/character-files");
+        const data = await resp.json();
+        sel.innerHTML = data.files.map(f => `<option value="${f.name}">${f.name}</option>`).join("");
+        if (data.files.length > 0) {
+            editor.value = data.files[0].content;
+            sel.value = data.files[0].name;
+        }
+        sel.onchange = () => {
+            const f = data.files.find(x => x.name === sel.value);
+            if (f) editor.value = f.content;
+        };
+        msg.textContent = `共 ${data.files.length} 个文件`;
+    } catch (e) { msg.textContent = "加载失败"; }
+}
+
+document.getElementById("char-file-save").addEventListener("click", async () => {
+    const filename = document.getElementById("char-file-select").value;
+    const content = document.getElementById("char-file-editor").value;
+    const msg = document.getElementById("char-file-msg");
+    msg.textContent = "保存中…";
+    try {
+        const resp = await fetch("/character-file-update", {
+            method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({filename, content}),
+        });
+        const data = await resp.json();
+        msg.textContent = data.ok ? `✓ ${filename} 已保存，回复器已重载` : "失败：" + (data.error || "未知");
+    } catch (e) { msg.textContent = "网络错误"; }
+});
+
+document.getElementById("char-file-reload").addEventListener("click", loadCharFiles);
+
+// ── 撤回逻辑 ───────────────────────────────────
+const undoBtn = document.getElementById("undo-btn");
+undoBtn.addEventListener("click", async () => {
+    if (!confirm("撤回上一轮对话？（消息将从界面和历史中移除）")) return;
+    undoBtn.disabled = true;
+    try {
+        const resp = await fetch("/undo", {
+            method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({session_id: SESSION_ID}),
+        });
+        const data = await resp.json();
+        if (data.ok) {
+            // 移除最后一条 user 消息
+            const userMsgs = messagesEl.querySelectorAll(".msg-row.user");
+            if (userMsgs.length > 0) userMsgs[userMsgs.length - 1].remove();
+            // 移除最后连续的 firefly 消息（含表情包）
+            while (true) {
+                const rows = messagesEl.querySelectorAll(".msg-row.firefly");
+                if (rows.length === 0) break;
+                const last = rows[rows.length - 1];
+                const prev = last.previousElementSibling;
+                if (prev && prev.classList.contains("msg-row") && prev.classList.contains("user")) break;
+                last.remove();
+                if (!prev || !prev.classList.contains("msg-row") || !prev.classList.contains("firefly")) break;
+            }
+        } else {
+            alert(data.error || "撤回失败");
+        }
+    } catch (e) { alert("网络错误"); }
+    undoBtn.disabled = false;
+});
+
+// ── 清历史逻辑 ─────────────────────────────────
+document.getElementById("clear-btn").addEventListener("click", async () => {
+    if (!confirm("确认清除全部对话历史？此操作不可撤销。")) return;
+    try {
+        const resp = await fetch("/clear-history", {
+            method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({session_id: SESSION_ID}),
+        });
+        const data = await resp.json();
+        if (data.ok) {
+            messagesEl.innerHTML = "";
+            undoBtn.disabled = true;
+        }
+    } catch (e) { alert("网络错误"); }
+});

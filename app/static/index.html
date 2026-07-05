@@ -18,40 +18,62 @@
         <button id="config-btn" title="配置">⚙</button>
         <button id="state-btn" title="状态">◐</button>
         <button id="rest-btn" title="让流萤休息">☾</button>
+        <button id="clear-btn" title="清除对话历史">🗑</button>
     </div>
     <div id="messages"></div>
     <div id="input-bar">
+        <button id="undo-btn" title="撤回上一轮" disabled>↩</button>
         <input type="text" id="msg-input" placeholder="说点什么…" maxlength="500" autofocus>
         <button id="send-btn" title="发送">▶</button>
     </div>
     <!-- 配置面板（API Key + 回复器模型 + 思考等级）-->
     <div id="key-panel" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.8); z-index:99; align-items:center; justify-content:center;">
         <div style="background:#1e1e30; padding:24px; border-radius:12px; width:380px; text-align:center;">
-            <div style="color:#e0d5c1; font-size:1em; margin-bottom:16px;">DeepSeek 配置</div>
+            <div style="display:flex; gap:0; margin-bottom:16px;">
+                <button id="tab-api" onclick="switchConfigTab('api')" class="tab-btn active" style="flex:1; padding:8px; border-radius:8px; background:rgba(140,160,200,0.3); color:#c8d0e0; font-family:inherit; cursor:pointer; font-size:0.9em; border: none;">API</button>
+                <button id="tab-char" onclick="switchConfigTab('char')" class="tab-btn" style="flex:1; padding:8px; border-radius:8px; background:rgba(255,255,255,0.06); color:#8a8a8a; font-family:inherit; cursor:pointer; font-size:0.9em; border: none;">设定文件</button>
+            </div>
 
-            <div style="text-align:left; color:#8a8a8a; font-size:0.8em; margin-bottom:4px;">API Key</div>
-            <input id="key-input" type="password" placeholder="sk-..." style="width:100%; padding:10px; border-radius:8px; border:1px solid rgba(255,255,255,0.2); background:rgba(255,255,255,0.08); color:#e0d5c1; font-family:inherit; box-sizing:border-box;">
+            <div id="config-tab-api">
+                <div style="color:#e0d5c1; font-size:1em; margin-bottom:16px;">DeepSeek 配置</div>
 
-            <div style="text-align:left; color:#8a8a8a; font-size:0.8em; margin:12px 0 4px;">回复器模型</div>
-            <select id="reply-model-select" style="width:100%; padding:10px; border-radius:8px; border:1px solid rgba(255,255,255,0.2); background:rgba(255,255,255,0.08); color:#e0d5c1; font-family:inherit; box-sizing:border-box;">
-                <option value="deepseek-v4-flash">Flash（快，便宜）</option>
-                <option value="deepseek-v4-pro">Pro（慢，贵，更强）</option>
-            </select>
+                <div style="text-align:left; color:#8a8a8a; font-size:0.8em; margin-bottom:4px;">API Key</div>
+                <input id="key-input" type="password" placeholder="sk-..." style="width:100%; padding:10px; border-radius:8px; border:1px solid rgba(255,255,255,0.2); background:rgba(255,255,255,0.08); color:#e0d5c1; font-family:inherit; box-sizing:border-box;">
 
-            <div style="text-align:left; color:#8a8a8a; font-size:0.8em; margin:12px 0 4px;">思考等级</div>
-            <select id="reply-effort-select" style="width:100%; padding:10px; border-radius:8px; border:1px solid rgba(255,255,255,0.2); background:rgba(255,255,255,0.08); color:#e0d5c1; font-family:inherit; box-sizing:border-box;">
-                <option value="none">无（最快，无推理）</option>
-                <option value="low">低（轻度推理）</option>
-                <option value="high">高（兼顾，推荐）</option>
-                <option value="max">最高（最强，~2x token，需384K+）</option>
-            </select>
+                <div style="text-align:left; color:#8a8a8a; font-size:0.8em; margin:12px 0 4px;">回复器模型</div>
+                <select id="reply-model-select" style="width:100%; padding:10px; border-radius:8px; border:1px solid rgba(255,255,255,0.2); background:rgba(255,255,255,0.08); color:#e0d5c1; font-family:inherit; box-sizing:border-box;">
+                    <option value="deepseek-v4-flash">Flash（快，便宜）</option>
+                    <option value="deepseek-v4-pro">Pro（慢，贵，更强）</option>
+                </select>
 
-            <div style="text-align:left; color:#8a8a8a; font-size:0.8em; margin:12px 0 4px;">温度 <span id="temp-value" style="color:#e0d5c1;">0.5</span></div>
-            <input id="reply-temp-slider" type="range" min="0" max="2" step="0.1" value="0.5" style="width:100%; accent-color:#c8d0e0;">
-            <div style="text-align:left; color:#6a6a6a; font-size:0.7em; margin-top:2px;">低=克制短信风（推荐 0.5），高=发散抒情</div>
+                <div style="text-align:left; color:#8a8a8a; font-size:0.8em; margin:12px 0 4px;">思考等级</div>
+                <select id="reply-effort-select" style="width:100%; padding:10px; border-radius:8px; border:1px solid rgba(255,255,255,0.2); background:rgba(255,255,255,0.08); color:#e0d5c1; font-family:inherit; box-sizing:border-box;">
+                    <option value="none">无（最快，无推理）</option>
+                    <option value="low">低（轻度推理）</option>
+                    <option value="high">高（兼顾，推荐）</option>
+                    <option value="max">最高（最强，~2x token，需384K+）</option>
+                </select>
 
-            <div id="config-msg" style="color:#8a8a8a; font-size:0.75em; margin-top:8px; min-height:1em;"></div>
-            <button id="key-save" style="margin-top:12px; width:100%; padding:10px; border-radius:8px; border:none; background:rgba(140,160,200,0.3); color:#c8d0e0; font-family:inherit; cursor:pointer;">保存</button>
+                <div style="text-align:left; color:#8a8a8a; font-size:0.8em; margin:12px 0 4px;">温度 <span id="temp-value" style="color:#e0d5c1;">0.5</span></div>
+                <input id="reply-temp-slider" type="range" min="0" max="2" step="0.1" value="0.5" style="width:100%; accent-color:#c8d0e0;">
+                <div style="text-align:left; color:#6a6a6a; font-size:0.7em; margin-top:2px;">低=克制短信风（推荐 0.5），高=发散抒情</div>
+
+                <div id="config-msg" style="color:#8a8a8a; font-size:0.75em; margin-top:8px; min-height:1em;"></div>
+                <button id="key-save" style="margin-top:12px; width:100%; padding:10px; border-radius:8px; border:none; background:rgba(140,160,200,0.3); color:#c8d0e0; font-family:inherit; cursor:pointer;">保存</button>
+            </div>
+
+            <div id="config-tab-char" style="display:none">
+                <div style="text-align:left; color:#8a8a8a; font-size:0.8em; margin-bottom:4px;">选择文件</div>
+                <select id="char-file-select" style="width:100%; padding:10px; border-radius:8px; border:1px solid rgba(255,255,255,0.2); background:rgba(255,255,255,0.08); color:#e0d5c1; font-family:inherit; box-sizing:border-box;">
+                </select>
+                <textarea id="char-file-editor" style="width:100%; height:320px; margin-top:10px; padding:10px; border-radius:8px; border:1px solid rgba(255,255,255,0.2); background:rgba(255,255,255,0.08); color:#e0d5c1; font-family:'Consolas','Microsoft YaHei',monospace; font-size:0.8em; resize:vertical; box-sizing:border-box;"></textarea>
+                <div style="display:flex; gap:8px; margin-top:10px;">
+                    <button id="char-file-save">保存</button>
+                    <button id="char-file-reload">重新加载</button>
+                </div>
+                <div id="char-file-msg" style="color:#8a8a8a; font-size:0.75em; margin-top:8px; min-height:1em;"></div>
+            </div>
+
             <button id="config-close" style="margin-top:8px; width:100%; padding:8px; border-radius:8px; border:1px solid rgba(255,255,255,0.15); background:transparent; color:#8a8a8a; font-family:inherit; cursor:pointer; font-size:0.85em;">取消</button>
         </div>
     </div>

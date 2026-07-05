@@ -259,6 +259,56 @@ class FireflyHandler(SimpleHTTPRequestHandler):
                 self._json({"ok": False, "error": str(e)})
             except Exception as e:
                 self._json({"ok": False, "error": f"删除失败: {e}"})
+
+        elif self.path == "/character-file-update":
+            length = int(self.headers.get("Content-Length", 0))
+            body = json.loads(self.rfile.read(length))
+            filename = (body.get("filename") or "").strip()
+            content = (body.get("content") or "")
+            # 白名单：回复器加载的设定文件
+            allowed = {"core.md", "identity.md", "experience.md", "sms_samples.md", "lore.md", "处事原则.md"}
+            if filename not in allowed:
+                self._json({"ok": False, "error": f"不允许的文件: {filename}"}); return
+            if not content:
+                self._json({"ok": False, "error": "内容不能为空"}); return
+            try:
+                filepath = BASE_DIR / "assets" / "character" / filename
+                filepath.write_text(content, encoding="utf-8")
+                # 重载回复器缓存
+                from modules.reply_generator import reload_character
+                reload_character()
+                self._json({"ok": True, "filename": filename})
+            except Exception as e:
+                self._json({"ok": False, "error": f"保存失败: {e}"})
+
+        elif self.path == "/undo":
+            length = int(self.headers.get("Content-Length", 0))
+            body = json.loads(self.rfile.read(length))
+            session_id = body.get("session_id", "default")
+            session = get_session(session_id)
+            result = session["context"].pop_last_turn()
+            from modules.conversation_store import remove_last_turn
+            removed = remove_last_turn()
+            if result is not None:
+                self._json({"ok": True, "removed_turn": 1, "files_removed": removed})
+            else:
+                self._json({"ok": False, "error": "没有可撤回的轮次"})
+
+        elif self.path == "/clear-history":
+            length = int(self.headers.get("Content-Length", 0))
+            body = json.loads(self.rfile.read(length))
+            session_id = body.get("session_id", "default")
+            session = get_session(session_id)
+            from modules.context_manager import ContextManager
+            session["context"] = ContextManager()
+            # 清空持久化文件
+            from modules.conversation_store import _CONV_FILE
+            try:
+                if _CONV_FILE.exists():
+                    _CONV_FILE.write_text("", encoding="utf-8")
+            except Exception:
+                pass
+            self._json({"ok": True})
         else:
             self.send_error(404)
 
@@ -315,6 +365,18 @@ class FireflyHandler(SimpleHTTPRequestHandler):
                     for s in entries
                 ],
             })
+        elif path == "/character-files":
+            char_dir = BASE_DIR / "assets" / "character"
+            allowed = ["core.md", "identity.md", "experience.md", "sms_samples.md", "lore.md", "处事原则.md"]
+            files = []
+            for fname in allowed:
+                fp = char_dir / fname
+                if fp.exists():
+                    files.append({
+                        "name": fname,
+                        "content": fp.read_text(encoding="utf-8"),
+                    })
+            self._json({"files": files})
         # 静态文件路由（unquote 解码中文路径，否则表情包等中文文件名 404）
         elif path.startswith("/assets/"):
             self._serve_file(ASSETS_DIR / unquote(path[8:]))

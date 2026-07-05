@@ -52,6 +52,54 @@ def _next_seq() -> int:
     return last_seq + 1
 
 
+def remove_last_turn() -> int:
+    """移除 conversation.jsonl 中最后一轮（从最后一条 user 消息到末尾）。
+
+    Returns:
+        移除的行数
+    """
+    if not _CONV_FILE.exists():
+        return 0
+
+    with _lock:
+        # 读所有行
+        with _CONV_FILE.open("r", encoding="utf-8") as f:
+            lines = f.readlines()
+
+        if not lines:
+            return 0
+
+        # 从末尾向前找第一个 "who": "user" 的行索引
+        i = None
+        for idx in range(len(lines) - 1, -1, -1):
+            line = lines[idx].strip()
+            if not line:
+                continue
+            try:
+                obj = json.loads(line)
+                if isinstance(obj, dict) and obj.get("who") == "user":
+                    i = idx
+                    break
+            except Exception:
+                continue
+
+        if i is None:
+            return 0
+
+        original_len = len(lines)
+
+        # 删除从该行到末尾
+        lines = lines[:i]
+
+        # 写回文件
+        with _CONV_FILE.open("w", encoding="utf-8") as f:
+            f.writelines(lines)
+
+    removed = original_len - len(lines)
+    logger.debug("remove_last_turn: 移除 %d 行, 剩余 %d 行", removed, len(lines))
+    return removed
+
+
 # ── 主入口 ────────────────────────────────────────
 def append_message(who: str, msg: dict) -> tuple:
     """追加一条消息。msg 已含 type/content 或 type/path+label。

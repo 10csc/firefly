@@ -122,6 +122,38 @@ class ContextManager:
         # 4. 最终输出
         return stats
 
+    def pop_last_turn(self) -> tuple[str, str] | None:
+        """移除最后一轮对话（user + assistant + 中间的 system action 消息）。
+
+        Returns:
+            (user_msg, assistant_msg) 或 None（没有可撤回的轮次）
+        """
+        # 从末尾向前找最后一个 role="user" 的消息索引
+        i = None
+        for idx in range(len(self._history) - 1, -1, -1):
+            if self._history[idx]["role"] == "user":
+                i = idx
+                break
+        if i is None:
+            return None
+
+        # 从 i 往后找最后一个 role="assistant" 的消息索引
+        j = None
+        for idx in range(i + 1, len(self._history)):
+            if self._history[idx]["role"] == "assistant":
+                j = idx
+        if j is None:
+            return None
+
+        user_msg = self._history[i]["content"]
+        assistant_msg = self._history[j]["content"]
+
+        # 删除从该 user 消息到末尾的所有消息
+        del self._history[i:]
+
+        logger.debug("pop_last_turn: 移除轮次, 剩余消息=%d", len(self._history))
+        return user_msg, assistant_msg
+
     # ── 查询方法 ─────────────────────────────────
     def get_recent(self, n_turns: int = 10) -> list:
         """获取最近 n 轮对话（n*2 条消息），返回副本"""
