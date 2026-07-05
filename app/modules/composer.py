@@ -127,62 +127,56 @@ _COMPOSE_DYNAMIC_TEMPLATE = """## 当前语气
 {raw_text}"""
 
 
-# ── 编排器 ────────────────────────────────────────
+# 纯规则编排器——不走 LLM，省成本 + 防幻觉
+# 回复器的产出本身已经是适合短信发布的文本了，只需按自然断行切分 + [sticker] 替换
+
+_MSG_MAX_CHARS = 30  # 单条超过此长度需要进一步切分
+_MSG_MIN_CHARS = 2   # 单条最短长度
+
 class Composer:
-    def __init__(self, client, model: str = "deepseek-v4-flash"):
-        self._client = client
-        self._model = model
+    def __init__(self, client=None, model: str = "deepseek-v4-flash"):
+        pass  # client/model 保留兼容签名，但纯规则模式不再需要
 
     def compose(self, inp: ComposerInput) -> ComposerOutput:
-        global _COMPOSE_COUNT, _COMPOSE_LLM_ERRORS, _COMPOSE_DEGRADED
-
-        # 1. 审查
         _validate_input(inp)
 
-        # 2. 处理空文本或仅有 sticker 的文本
-        if not inp.raw_text.strip():
-            return _degraded_fallback(inp, "空文本")
+        if not inp.raw_text or not inp.raw_text.strip():
+            return ComposerOutput(messages=[{"type": "text", "content": "嗯…信号好像不太好"}])
 
-        # 3. 如果没有 sticker 且文本很短（单句），直接分句
-        if "[sticker]" not in inp.raw_text and len(inp.raw_text) < 20:
-            return ComposerOutput(messages=[{"type": "text", "content": inp.raw_text.strip()}])
+        text = inp.raw_text.strip()
+        messages = []
 
-        # 4. 构建 prompt（稳定层 system + 动态层 user）
-        tone_text = inp.tone.get("base", "日常") if isinstance(inp.tone, dict) else "日常"
-        samples = load_composer_samples()
+        # 1. 按 [sticker] 切分段落
+        segments = text.split("[sticker]")
+        for i, seg in enumerate(segments):
+            seg = seg.strip()
+            if not seg:
+                continue
+            # 2. 每个段落按自然换行先拆，再按长度细分
+            lines = seg.split("\n")
+            for line in lines:
+                line = line.strip()
+                if not line:
+                    continue
+                parts = _split_sentences(line)
+                for part in parts:
+                    part = part.strip()
+                    if not part:
+                        continue
+                    # 过长再切
+                    sub = _split_long(part)
+                    messages.extend(sub)
 
-        stable = _COMPOSE_STABLE_PROMPT.format(composer_samples=samples)
-        dynamic = _COMPOSE_DYNAMIC_TEMPLATE.format(tone=tone_text, raw_text=inp.raw_text)
+            # 3. 在 [sticker] 位置插入表情包（最后一个 segment 之后不插）
+            if i < len(segments) - 1 and inp.sticker:
+                messages.append({
+                    "type": "sticker",
+                    "path": inp.sticker.file,
+                    "label": inp.sticker.label,
+                })
 
-        # 5. 调 LLM (Non-think)
-        try:
-            resp = self._client.chat.completions.create(
-                model=self._model,
-                messages=[
-                    {"role": "system", "content": stable},
-                    {"role": "user", "content": dynamic},
-                ],
-                max_tokens=256, temperature=0,
-            )
-            _record_cache_stats(resp)
-            raw = resp.choices[0].message.content.strip()
-            # 思考模式下 content 偶尔空，fallback 到 reasoning_content
-            if not raw:
-                rc = getattr(resp.choices[0].message, "reasoning_content", None)
-                if rc and rc.strip():
-                    raw = rc.strip()
-        except Exception as e:
-            logger.error("编排器 LLM 失败: %s", e)
-            with _lock: _COMPOSE_LLM_ERRORS += 1
-            return _degraded_fallback(inp, f"LLM 异常: {e}")
-
-        with _lock: _COMPOSE_COUNT += 1
-
-        # 6. 解析
-        messages = _parse_response(raw, inp.sticker)
         if not messages:
-            with _lock: _COMPOSE_DEGRADED += 1
-            return _degraded_fallback(inp, "解析结果为空")
+            messages = [{"type": "text", "content": "嗯…信号好像不太好"}]
 
         return ComposerOutput(messages=messages)
 
@@ -253,27 +247,43 @@ def _degraded_fallback(inp: ComposerInput, reason: str) -> ComposerOutput:
     return ComposerOutput(messages=messages)
 
 
-def _split_sentences(text: str) -> list[str]:
-    """按中文标点自然分句，每段 >= 4 字。"""
-    import re
-    # 在句号、感叹号、问号、省略号处切开
-    parts = re.split(r"(?<=[。！？…])", text)
+def _split_long(text: str, max_chars: int = 30) -> list[dict]:
+    """太长时在逗号处切开。"""
+    if len(text) <= max_chars:
+        return [{"type": "text", "content": text}]
     result = []
-    buf = ""
+    while len(text) > max_chars:
+        cut = max_chars
+        for sep in ("，", ",", "；", ";", "、"):
+            idx = text.rfind(sep, 0, max_chars)
+            if idx > max_chars // 2:
+                cut = idx + 1
+                break
+        result.append({"type": "text", "content": text[:cut].strip()})
+        text = text[cut:].strip()
+    if text:
+        result.append({"type": "text", "content": text})
+    return result
+
+
+def _split_sentences(text: str) -> list[str]:
+    """按句号/感叹号/问号/省略号处切分，去掉末尾标点。
+    短信不发句号——句号是分条信号，不是内容。
+    """
+    import re
+    # 在句号、感叹号、问号、省略号处切开（标点本身从结果中去掉）
+    parts = re.split(r"[。！？…]+", text)
+    result = []
     for p in parts:
         p = p.strip()
         if not p:
             continue
         if len(p) >= 4:
-            if buf:
-                result.append(buf)
-                buf = ""
             result.append(p)
         else:
-            buf += p
-    if buf:
-        if result:
-            result[-1] += buf
-        else:
-            result.append(buf)
+            # 太短的合并到下一条
+            if result:
+                result[-1] += p
+            else:
+                result.append(p)
     return result

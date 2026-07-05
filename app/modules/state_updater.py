@@ -198,7 +198,7 @@ class StateUpdater:
                 {"role": "system", "content": prompt},
                 {"role": "user", "content": f"用户输入: {user_input}"},
             ],
-            max_tokens=500,
+            max_tokens=2000,
             temperature=0.0,
         )
         if not resp.choices:

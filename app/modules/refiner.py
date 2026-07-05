@@ -131,7 +131,7 @@ class Refiner:
                     {"role": "system", "content": _REFINER_SYSTEM},
                     {"role": "user", "content": raw_reply.strip()},
                 ],
-                max_tokens=512,
+                max_tokens=2000,
                 temperature=0,
             )
             _record_cache_stats(resp)

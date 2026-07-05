@@ -185,7 +185,7 @@ class PlanningJudge:
                 {"role": "system", "content": _JUDGE_SYSTEM_PROMPT},
                 {"role": "user", "content": user_message},
             ],
-            max_tokens=800,
+            max_tokens=2000,
             temperature=0.0,
         )
         raw = resp.choices[0].message.content.strip()

@@ -229,7 +229,7 @@ class ReplyGenerator:
             extra_body = {"reasoning_effort": api_effort}
             resp = self._client.chat.completions.create(
                 model=self._model, messages=msg_list,
-                max_tokens=800, temperature=self._temperature,
+                max_tokens=2000, temperature=self._temperature,
                 extra_body=extra_body,
             )
             _record_cache_stats(resp)

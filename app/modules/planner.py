@@ -195,7 +195,7 @@ class Planner:
                     {"role": "user", "content": history_section},
                     {"role": "user", "content": dynamic_section},
                 ],
-                max_tokens=400, temperature=0.6,
+                max_tokens=2000, temperature=0.6,
                 extra_body={"reasoning_effort": "high"},
             )
             _record_cache_stats(resp)

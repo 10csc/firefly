@@ -113,7 +113,7 @@ parts = _split_sentences("")
 check("空文本→0条", len(parts) == 0)
 
 parts = _split_sentences("嗯。好。的。")
-check("超短句→合并", all(len(p) >= 4 for p in parts if parts))
+check("超短句→合并为一条", len(parts) == 1)
 
 
 # ══════════════════════════════════════════════════

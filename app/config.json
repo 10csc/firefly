@@ -1,1 +1,1 @@
-{"api_key": "sk-913703f284ab40d9a062d1e6cdad7d29", "reply_model": "deepseek-v4-flash", "reply_effort": "high", "reply_temperature": 0.7}
+{"api_key": "sk-913703f284ab40d9a062d1e6cdad7d29", "reply_model": "deepseek-v4-pro", "reply_effort": "max", "reply_temperature": 0.7}

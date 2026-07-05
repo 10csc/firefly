@@ -94,7 +94,7 @@ class MoodAdder:
                     {"role": "system", "content": _ADDER_PROMPT},
                     {"role": "user", "content": user_msg},
                 ],
-                max_tokens=200, temperature=0.0,
+                max_tokens=2000, temperature=0.0,
             )
             if resp.choices:
                 c = resp.choices[0].message.content
@@ -182,7 +182,7 @@ class MoodDecayer:
                     {"role": "system", "content": prompt},
                     {"role": "user", "content": user_input},
                 ],
-                max_tokens=200, temperature=0.0,
+                max_tokens=2000, temperature=0.0,
             )
             if resp.choices:
                 c = resp.choices[0].message.content
