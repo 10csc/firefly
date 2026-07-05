@@ -1,0 +1,274 @@
+{
+  "stickers": [
+    {
+      "id": "佩佩_递茶",
+      "file": "stickers/佩佩_递茶.webp",
+      "category": "可爱",
+      "label": "递茶"
+    },
+    {
+      "id": "刃_啧",
+      "file": "stickers/刃_啧.webp",
+      "category": "帅气",
+      "label": "啧"
+    },
+    {
+      "id": "刃_我没事",
+      "file": "stickers/刃_我没事.webp",
+      "category": "帅气",
+      "label": "我没事"
+    },
+    {
+      "id": "刃_来了",
+      "file": "stickers/刃_来了.webp",
+      "category": "帅气",
+      "label": "来了"
+    },
+    {
+      "id": "刃_看不见我",
+      "file": "stickers/刃_看不见我.webp",
+      "category": "帅气",
+      "label": "看不见我"
+    },
+    {
+      "id": "卡芙卡_优雅",
+      "file": "stickers/卡芙卡_优雅.webp",
+      "category": "帅气",
+      "label": "优雅"
+    },
+    {
+      "id": "卡芙卡_嘘",
+      "file": "stickers/卡芙卡_嘘.webp",
+      "category": "帅气",
+      "label": "嘘"
+    },
+    {
+      "id": "卡芙卡_爆炸",
+      "file": "stickers/卡芙卡_爆炸.webp",
+      "category": "帅气",
+      "label": "爆炸"
+    },
+    {
+      "id": "卡芙卡_生气",
+      "file": "stickers/卡芙卡_生气.webp",
+      "category": "帅气",
+      "label": "生气"
+    },
+    {
+      "id": "呜呜伯_坏笑",
+      "file": "stickers/呜呜伯_坏笑.webp",
+      "category": "可爱",
+      "label": "坏笑"
+    },
+    {
+      "id": "呜呜伯_委屈",
+      "file": "stickers/呜呜伯_委屈.webp",
+      "category": "可爱",
+      "label": "委屈"
+    },
+    {
+      "id": "呜呜伯_开心",
+      "file": "stickers/呜呜伯_开心.webp",
+      "category": "可爱",
+      "label": "开心"
+    },
+    {
+      "id": "呜呜伯_恶作剧",
+      "file": "stickers/呜呜伯_恶作剧.webp",
+      "category": "可爱",
+      "label": "恶作剧"
+    },
+    {
+      "id": "呜呜伯_收到惊吓",
+      "file": "stickers/呜呜伯_收到惊吓.webp",
+      "category": "可爱",
+      "label": "收到惊吓"
+    },
+    {
+      "id": "呜呜伯_敲黑板",
+      "file": "stickers/呜呜伯_敲黑板.webp",
+      "category": "可爱",
+      "label": "敲黑板"
+    },
+    {
+      "id": "呜呜伯_无奈",
+      "file": "stickers/呜呜伯_无奈.webp",
+      "category": "可爱",
+      "label": "无奈"
+    },
+    {
+      "id": "呜呜伯_无语",
+      "file": "stickers/呜呜伯_无语.webp",
+      "category": "可爱",
+      "label": "无语"
+    },
+    {
+      "id": "呜呜伯_晕",
+      "file": "stickers/呜呜伯_晕.webp",
+      "category": "可爱",
+      "label": "晕"
+    },
+    {
+      "id": "呜呜伯_期待",
+      "file": "stickers/呜呜伯_期待.webp",
+      "category": "可爱",
+      "label": "期待"
+    },
+    {
+      "id": "呜呜伯_比心",
+      "file": "stickers/呜呜伯_比心.webp",
+      "category": "可爱",
+      "label": "比心"
+    },
+    {
+      "id": "呜呜伯_气气",
+      "file": "stickers/呜呜伯_气气.webp",
+      "category": "可爱",
+      "label": "气气"
+    },
+    {
+      "id": "呜呜伯_点赞",
+      "file": "stickers/呜呜伯_点赞.webp",
+      "category": "可爱",
+      "label": "点赞"
+    },
+    {
+      "id": "呜呜伯_疑惑",
+      "file": "stickers/呜呜伯_疑惑.webp",
+      "category": "可爱",
+      "label": "疑惑"
+    },
+    {
+      "id": "呜呜伯_睡觉",
+      "file": "stickers/呜呜伯_睡觉.webp",
+      "category": "可爱",
+      "label": "睡觉"
+    },
+    {
+      "id": "呜呜伯_认真",
+      "file": "stickers/呜呜伯_认真.webp",
+      "category": "可爱",
+      "label": "认真"
+    },
+    {
+      "id": "哈努兄弟_暗中观察",
+      "file": "stickers/哈努兄弟_暗中观察.webp",
+      "category": "帅气",
+      "label": "暗中观察"
+    },
+    {
+      "id": "垃圾桶_注意",
+      "file": "stickers/垃圾桶_注意.webp",
+      "category": "帅气",
+      "label": "注意"
+    },
+    {
+      "id": "小浣熊_开心",
+      "file": "stickers/小浣熊_开心.webp",
+      "category": "帅气",
+      "label": "开心"
+    },
+    {
+      "id": "小浣熊_来了",
+      "file": "stickers/小浣熊_来了.webp",
+      "category": "帅气",
+      "label": "来了"
+    },
+    {
+      "id": "小浣熊_翻垃圾桶",
+      "file": "stickers/小浣熊_翻垃圾桶.webp",
+      "category": "帅气",
+      "label": "翻垃圾桶"
+    },
+    {
+      "id": "小浣熊_诶嘿",
+      "file": "stickers/小浣熊_诶嘿.webp",
+      "category": "帅气",
+      "label": "诶嘿"
+    },
+    {
+      "id": "帕姆_大厨",
+      "file": "stickers/帕姆_大厨.webp",
+      "category": "可爱",
+      "label": "大厨"
+    },
+    {
+      "id": "帕姆_害羞",
+      "file": "stickers/帕姆_害羞.jpg",
+      "category": "可爱",
+      "label": "害羞"
+    },
+    {
+      "id": "广告牌_疑问",
+      "file": "stickers/广告牌_疑问.webp",
+      "category": "帅气",
+      "label": "疑问"
+    },
+    {
+      "id": "折纸小鸟_汗颜",
+      "file": "stickers/折纸小鸟_汗颜.webp",
+      "category": "可爱",
+      "label": "汗颜"
+    },
+    {
+      "id": "猫猫糕_贴贴",
+      "file": "stickers/猫猫糕_贴贴.webp",
+      "category": "可爱",
+      "label": "贴贴"
+    },
+    {
+      "id": "苏乐达_干杯",
+      "file": "stickers/苏乐达_干杯.webp",
+      "category": "可爱",
+      "label": "干杯"
+    },
+    {
+      "id": "钟表小子_庆祝",
+      "file": "stickers/钟表小子_庆祝.webp",
+      "category": "可爱",
+      "label": "庆祝"
+    },
+    {
+      "id": "钟表小子_开始",
+      "file": "stickers/钟表小子_开始.webp",
+      "category": "可爱",
+      "label": "开始"
+    },
+    {
+      "id": "银狼_吹泡泡",
+      "file": "stickers/银狼_吹泡泡.webp",
+      "category": "帅气",
+      "label": "吹泡泡"
+    },
+    {
+      "id": "银狼_嘴炮",
+      "file": "stickers/银狼_嘴炮.webp",
+      "category": "帅气",
+      "label": "嘴炮"
+    },
+    {
+      "id": "银狼_弱",
+      "file": "stickers/银狼_弱.webp",
+      "category": "帅气",
+      "label": "弱"
+    },
+    {
+      "id": "银狼_想赢",
+      "file": "stickers/银狼_想赢.webp",
+      "category": "帅气",
+      "label": "想赢"
+    },
+    {
+      "id": "银狼_车票",
+      "file": "stickers/银狼_车票.webp",
+      "category": "帅气",
+      "label": "车票"
+    },
+    {
+      "id": "银狼_酷",
+      "file": "stickers/银狼_酷.webp",
+      "category": "帅气",
+      "label": "酷"
+    }
+  ]
+}

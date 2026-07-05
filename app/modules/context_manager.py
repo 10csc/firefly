@@ -40,7 +40,7 @@ class ContextStats:
 # ── Token 估算（内化实现，不引外部库）─────────────
 def _estimate_tokens(text: str) -> int:
     """中英文混合 token 估算。
-    中文 ~1.5 char/token, 英文/符号 ~4 char/token。
+    中文约 0.5 token/字，英文/符号约 4 字符折合 1 token。
     此为近似值，用于精力计算，不需要精确匹配 API 实际 token 数。
     """
     if not text:
@@ -72,6 +72,23 @@ class ContextManager:
         self._history: list[dict] = []
         self._energy_max = energy_max
         self._token_capacity = token_capacity
+
+    # ── 行为记录 ────────────────────────────────
+    def add_action(self, action_type: str, action_detail: str):
+        """记录流萤的行为到对话历史（表情包/气泡切换等）。
+        以 system 消息形式插入，规划器读取历史时自然感知。
+
+        Args:
+            action_type: 行为类型，如 "表情包"、"气泡切换"
+            action_detail: 行为描述，如 "比心"、"光阴莫负"
+        """
+        if not isinstance(action_type, str) or not action_type.strip():
+            raise InputRejected("action_type 为空")
+        if not isinstance(action_detail, str) or not action_detail.strip():
+            raise InputRejected("action_detail 为空")
+        content = f"[行为: {action_type.strip()}] {action_detail.strip()}"
+        self._history.append({"role": "system", "content": content})
+        logger.debug("add_action: %s", content)
 
     # ── 主入口 ──────────────────────────────────
     def add_turn(self, user_msg: str, assistant_msg: str) -> ContextStats:

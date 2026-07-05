@@ -172,7 +172,7 @@ class PlanningJudge:
             user_message += f"[场景信息: {json.dumps(scene_context, ensure_ascii=False)}]\n\n"
         if recent_history:
             history_lines = []
-            for m in recent_history[-20:]:  # 最近10轮 = 20条消息
+            for m in recent_history:  # 全量历史，纯追加（不再窗口滑动）
                 role = "开拓者" if m["role"] == "user" else "流萤"
                 history_lines.append(f"{role}: {m['content']}")
             if history_lines:

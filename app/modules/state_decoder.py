@@ -144,7 +144,8 @@ def decode(state: dict, stop_reason: str, now: datetime | None = None) -> Decode
     mood_text = _decode_mood(mood_list)
     affection_text, sticker_frequency = _decode_affection(affection)
     tension_text = _decode_tension(tension)
-    initiative_text, sticker_style = _decode_initiative(initiative)
+    initiative_text = _decode_initiative(initiative)
+    sticker_style = "可爱"   # 流萤默认表情包风格，不再随 initiative 变
     energy_text = _decode_energy(energy)
     event_text = _decode_event(stop_reason)
 
@@ -155,8 +156,12 @@ def decode(state: dict, stop_reason: str, now: datetime | None = None) -> Decode
     summary = "\n".join(parts)
 
     reply_parts = [mood_text, affection_text]
-    if energy < 100:
-        reply_parts.append(energy_text)
+    # 深夜/凌晨——时间维度很重要
+    if now.hour >= 22 or now.hour < 6:
+        reply_parts.append(time_text)
+    # 精力和主动度始终包含
+    reply_parts.append(energy_text)
+    reply_parts.append(initiative_text)
     reply_context = " ".join(reply_parts)
 
     # 3. 验证 + 修正（不抛异常，异常直接降级）
@@ -174,31 +179,51 @@ def decode(state: dict, stop_reason: str, now: datetime | None = None) -> Decode
     return result
 
 
+# ── 监控计数器 ──────────────────────────────────────
+import threading
+_lock = threading.Lock()
+_VALIDATE_REJECTED = 0
+_VALIDATE_DEGRADED = 0
+_VERIFY_FIXED = 0
+
+
+def _inc(counter_name: str):
+    global _VALIDATE_REJECTED, _VALIDATE_DEGRADED, _VERIFY_FIXED
+    with _lock:
+        if counter_name == "validate_rejected": _VALIDATE_REJECTED += 1
+        elif counter_name == "validate_degraded": _VALIDATE_DEGRADED += 1
+        elif counter_name == "verify_fixed": _VERIFY_FIXED += 1
+
+
+def get_counters() -> dict:
+    return {"validate_rejected": _VALIDATE_REJECTED, "validate_degraded": _VALIDATE_DEGRADED, "verify_fixed": _VERIFY_FIXED}
+
+
 # ── 输入验证 ──────────────────────────────────────
 def _validate_input(state: dict, stop_reason: str):
     """只拒绝致命错误。字段缺失/越界 → 容错辅助函数处理 + WARNING。"""
     if not isinstance(state, dict):
+        _inc("validate_rejected")
         raise InputRejected(f"state 必须为 dict，实际: {type(state).__name__}")
-    # 其余字段的容错在 decode() 中由 _safe_* 函数处理
-    # 此处只做最基本的类型检查，不再逐字段抛异常
 
 
 def _validate_output(result: DecodedState) -> DecodedState:
     """验证输出合法性。不抛异常——发现异常直接修正 + WARNING。"""
-    fixed = False
+    fixed = 0
     if not result.summary:
         result.summary = "【状态】信息不足，流萤在自然放松地聊天。"
-        logger.warning("summary 为空，降级为默认描述"); fixed = True
+        logger.warning("summary 为空，降级为默认描述"); fixed += 1
     if not result.reply_context:
         result.reply_context = "流萤现在感觉比较放松，相处自然。"
-        logger.warning("reply_context 为空，降级为默认描述"); fixed = True
+        logger.warning("reply_context 为空，降级为默认描述"); fixed += 1
     if result.sticker_frequency not in VALID_STICKER_FREQUENCY:
         result.sticker_frequency = "偶尔"
-        logger.warning("sticker_frequency='%s' 不合法，降级为'偶尔'", result.sticker_frequency); fixed = True
-    if result.sticker_style not in ("强势", "弱势", "无偏向", "喜欢"):
-        result.sticker_style = "无偏向"
-        logger.warning("sticker_style='%s' 不合法，降级为'无偏向'", result.sticker_style); fixed = True
-    if fixed:
+        logger.warning("sticker_frequency='%s' 不合法，降级为'偶尔'", result.sticker_frequency); fixed += 1
+    if result.sticker_style not in ("可爱", "帅气"):
+        result.sticker_style = "可爱"
+        logger.warning("sticker_style='%s' 不合法，降级为'可爱'", result.sticker_style); fixed += 1
+    if fixed > 0:
+        _inc("verify_fixed")
         logger.warning("输出验证修正了 %d 项，对话继续", fixed)
     return result
 
@@ -294,24 +319,20 @@ def _decode_tension(tension: float) -> str:
 
 
 # ── 四、主动性解码 ────────────────────────────────
-def _decode_initiative(initiative: float) -> tuple[str, str]:
+def _decode_initiative(initiative: float) -> str:
+    """主动性解码为文字。initiative 剥离为不变属性后恒为 50.0，落在中性区间。"""
     if initiative <= 20:
         text = "流萤现在比较被动，等待对方主导，很少主动起话题。回复较短，容易害羞。"
-        style = "弱势"
     elif initiative <= 40:
         text = "流萤整体被动但有回应，偶尔主动问一句。不扛话题但有来有回。"
-        style = "弱势"
     elif initiative <= 60:
         text = "流萤节奏自然，有来有回，不抢也不退。正常聊天。"
-        style = "无偏向"
     elif initiative <= 80:
         text = "流萤比较主动，会自然地找话题。回复可能稍长，会关心和引导对话。"
-        style = "强势"
     else:
         text = "流萤很主动，扛话题，会提议一起做什么。表达直接但不霸道——骑士风格。"
-        style = "强势"
 
-    return f"【主动度】{text}", style
+    return f"【主动度】{text}"
 
 
 # ── 五、精力解码 ──────────────────────────────────

@@ -39,18 +39,18 @@ class OutputInvalid(StateUpdaterError):
 # ── 数据结构 ──────────────────────────────────────
 @dataclass
 class StateResult:
-    """状态更新结果 — 透传 JudgeResult + 新 state + energy + 原始 delta。
-    state 中的 mood 为透传值（由 MoodUpdater 并行更新后合并）。
-    主动性不由此模块处理（代码层培养）。
+    """状态更新结果 — 透传 JudgeResult + 原 state（未应用 delta）+ energy + 原始 delta。
+    state 字段为 prev_state 副本，delta 尚未应用——由 finalize() 收口合成最终 state。
+    mood 由 MoodUpdater 并行更新后由 orchestrator 合并，本模块不涉及。
     """
     result_mode: str
     stopped_at: int
     stop_reason: str
     reply_direct: Optional[dict] = None
     execution_plan: Optional[dict] = None
-    state: dict = field(default_factory=dict)  # mood/affection/tension/initiative
+    state: dict = field(default_factory=dict)  # 透传 prev_state（delta 未应用）
     energy: int = 300
-    affection_delta: float = 0.0   # 原始 delta，供倍率变化器使用
+    affection_delta: float = 0.0   # 原始 delta，供 finalize 使用
     tension_delta: float = 0.0
 
 
@@ -139,8 +139,8 @@ class StateUpdater:
         energy: int,
     ) -> StateResult:
         """主入口。流程：审查 → LLM判定 → 验证 → 输出。
-        mood/initiative 透传不修改（由 MoodUpdater / 主动性培养逻辑处理）。
-        返回原始 delta 供倍率变化器使用。
+        仅产出 raw delta，不应用 delta 到 state（由 finalize() 收口）。
+        mood/initiative 透传不修改。返回原始 delta 供 finalize 使用。
         """
         # 1. 审查阶段
         if not isinstance(user_input, str):
@@ -155,7 +155,7 @@ class StateUpdater:
             if key not in current_state:
                 raise InputRejected(f"current_state 缺少字段: {key}")
 
-        # 2. LLM 判定（仅产出好感/紧张 delta，不含主动性）
+        # 2. LLM 判定（仅产出好感/紧张 raw delta）
         affection_delta = 0.0
         tension_delta = 0.0
         try:
@@ -163,27 +163,21 @@ class StateUpdater:
             self._validate_deltas(deltas)
             affection_delta = deltas["affection_delta"]
             tension_delta = deltas["tension_delta"]
-            new_state = self._apply_deltas(current_state, affection_delta, tension_delta)
         except (json.JSONDecodeError, OutputInvalid) as e:
-            logger.error("状态更新器 LLM 输出异常，保持原状态: %s", e)
-            new_state = deepcopy(current_state)
+            logger.error("状态更新器 LLM 输出异常，delta 归零: %s", e)
         except InputRejected:
             raise
         except Exception as e:
-            logger.error("状态更新器 API 调用失败，保持原状态: %s", e)
-            new_state = deepcopy(current_state)
+            logger.error("状态更新器 API 调用失败，delta 归零: %s", e)
 
-        # 3. 验证阶段
-        new_state = self._validate_state(new_state)
-
-        # 4. 最终输出（含原始 delta）
+        # 3. 输出 —— state 透传 prev（delta 未应用），由 finalize() 合成
         return StateResult(
             result_mode=judge_result.result_mode,
             stopped_at=judge_result.stopped_at,
             stop_reason=judge_result.stop_reason,
             reply_direct=judge_result.reply_direct,
             execution_plan=judge_result.execution_plan,
-            state=new_state,
+            state=deepcopy(current_state),
             energy=energy,
             affection_delta=affection_delta,
             tension_delta=tension_delta,
@@ -247,33 +241,55 @@ class StateUpdater:
         if not (-10 <= deltas["tension_delta"] <= 30):
             raise OutputInvalid(f"tension_delta 超出合理范围: {deltas['tension_delta']}")
 
-    def _apply_deltas(self, current: dict, affection_delta: float, tension_delta: float) -> dict:
-        new = deepcopy(current)
-        new["affection"] = float(current.get("affection", 80.0)) + affection_delta
-        new["tension"] = float(current.get("tension", 15.0)) + tension_delta
-        # initiative 透传不变（代码层培养）
-        return new
 
-    def _validate_state(self, state: dict) -> dict:
-        aff = float(state.get("affection", 80.0))
-        if aff < 0:
-            aff = 0.0
-        elif aff > 100:
-            logger.info("affection 触及上限 %.1f -> 100", aff)
-            aff = 100.0
-        state["affection"] = aff
+# ── finalize：raw delta → 最终 state 合成（纯代码，由 orchestrator 调用）──
 
-        ten = float(state.get("tension", 15.0))
-        if ten < 0:
-            ten = 0.0
-        # 紧张不设上限——短期数值，后续自动消退
-        state["tension"] = ten
+def finalize(
+    prev_state: dict,
+    affection_delta: float,
+    tension_delta: float,
+    rates: dict,
+    user_input: str,
+) -> dict:
+    """收口 raw delta → 最终 state 的全部合成。
 
-        ini = float(state.get("initiative", 50.0))
-        if ini < 0:
-            ini = 0.0
-        elif ini > 100:
-            ini = 100.0
-        state["initiative"] = ini
+    流程：审查 → 倍率应用 → 紧张自动消退 → 主动性培养 → 钳位验证 → 输出
+    由 orchestrator 在 compute_rates 后调用。mood 不由此处理（由 merge_moods 覆盖）。
+    """
+    if not isinstance(prev_state, dict):
+        raise InputRejected(f"prev_state 必须为 dict，实际: {type(prev_state).__name__}")
+    for key in ("affection", "tension", "initiative"):
+        if key not in prev_state:
+            raise InputRejected(f"prev_state 缺少字段: {key}")
 
-        return state
+    # 取 prev 值
+    prev_affection = float(prev_state.get("affection", 80.0))
+    prev_tension = float(prev_state.get("tension", 15.0))
+    prev_initiative = float(prev_state.get("initiative", 50.0))
+
+    # 倍率应用
+    aff_rate = float(rates.get("affection", 1.0))
+    ten_rate = float(rates.get("tension", 1.0))
+    ini_rate = float(rates.get("initiative", 1.0))
+
+    new_affection = prev_affection + affection_delta * aff_rate
+    new_tension = prev_tension + tension_delta * ten_rate
+
+    # 紧张自动消退（每轮 -1.5）
+    new_tension = max(0.0, new_tension - 1.5)
+
+    # initiative 剥离为不变属性，不再动态计算（保持恒等于初始值 50.0）
+    new_initiative = prev_initiative
+
+    # 钳位
+    new_affection = max(0.0, min(100.0, new_affection))
+    if new_affection >= 100.0:
+        logger.info("affection 触及上限 %.1f -> 100", new_affection)
+    new_tension = max(0.0, new_tension)  # 不设上限——短期数值
+    new_initiative = max(0.0, min(100.0, new_initiative))
+
+    return {
+        "affection": new_affection,
+        "tension": new_tension,
+        "initiative": new_initiative,
+    }

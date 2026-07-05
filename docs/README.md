@@ -14,13 +14,43 @@
 | 心情更新器 | [规格](modules/心情更新器/规格.md) | [mood_updater.py](../app/modules/mood_updater.py) |
 | 倍率变化器 | [规格](modules/倍率变化器/规格.md) · [参考值](modules/倍率变化器/参考值.md) | [rate_modifier.py](../app/modules/rate_modifier.py) |
 | 状态解码器 | [规格](modules/状态解码器/规格.md) | [state_decoder.py](../app/modules/state_decoder.py) |
-| 气泡更新器 | — | [bubble_updater.py](../app/tools/bubble_updater.py) |
+| 规划器 | [规格](modules/规划器/规格.md) | [planner.py](../app/modules/planner.py) |
+| 工具调度器 | [规格](modules/工具调度器/规格.md) | [tool_dispatcher.py](../app/modules/tool_dispatcher.py) |
+| 回复生成器 | [规格](modules/回复器/规格.md) | [reply_generator.py](../app/modules/reply_generator.py) |
+| 消息编排器 | — | [composer.py](../app/modules/composer.py) |
+| 记忆管理器 | [规格](modules/记忆管理器/规格.md) | [memory_manager.py](../app/modules/memory_manager.py) |
+| 编排器 | — | [orchestrator.py](../app/orchestrator.py) |
 
-## 数据流
+## 工具规格
+
+| 工具 | 规格 | 代码 |
+|------|------|------|
+| 气泡更新器 | — | [bubble_updater.py](../app/tools/bubble_updater.py) |
+| 表情包选择器 | [规格](tools/表情包选择器规格.md) | [sticker_picker.py](../app/tools/sticker_picker.py) |
+
+## 数据流 (V4.7)
 
 ```
-用户输入 → 规划判断器 → 三路并行(MoodAdder+MoodDecayer+StateUpdater)
-  → merge_moods + 倍率变化器 → 回复生成 → 上下文管理器
+POST /chat → server.py（HTTP+会话）→ orchestrator.handle_chat()
+  │
+  ├─ PlanningJudge.judge()           → JudgeResult
+  ├─ 三路并行
+  │   ├─ MoodAdder.add()              → 新增情绪
+  │   ├─ MoodDecayer.decay()          → 消退后情绪
+  │   └─ StateUpdater.update()        → raw delta
+  ├─ merge_moods() + compute_rates() + state_updater.finalize()
+  │
+  ├─ [direct] → 静态话术
+  ├─ [normal]
+  │   ├─ state_decoder.decode()       → 数值→自然语言
+  │   ├─ Planner.plan()               → {tools, tone, direction}
+  │   │   └── 缓存分层: system(stable+menu) → user(历史全量) → user(动态)
+  │   ├─ tool_dispatcher.pre_dispatch() → 工具执行
+  │   ├─ ReplyGenerator.generate(memory_head)
+  │   │   └── 缓存分层: system(稳定) → [system(记忆)] → user(历史全量) → user(动态)
+  │   └─ Composer.compose()           → 分句+消息序列
+  │
+  └─ ContextManager.record()          → 历史写入（纯追加，无截断）
 ```
 
 ## 全局文档

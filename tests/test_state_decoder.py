@@ -140,20 +140,19 @@ check("紧张120→沉默", "沉默" in _decode_tension(120.0))
 
 
 # ══════════════════════════════════════════════════
-# 5. 主动性解码 — 各区间 + 表情包风格
+# 5. 主动性解码 — 各区间文字（initiative 剥离后恒为 50，但函数仍按区间解码）
 # ══════════════════════════════════════════════════
 print("\n=== 主动性解码 ===")
 
-for ini, exp_style in [(10, "弱势"), (30, "弱势"), (50, "无偏向"),
-                         (70, "强势"), (90, "强势")]:
-    text, style = _decode_initiative(float(ini))
-    check(f"主动{ini}→风格'{exp_style}'", style == exp_style)
+for ini in [10, 30, 50, 70, 90]:
+    text = _decode_initiative(float(ini))
+    check(f"主动{ini}→非空", len(text) > 0)
 
-text, style = _decode_initiative(20.0)
+text = _decode_initiative(20.0)
 check("主动20→被动", "被动" in text)
-text, style = _decode_initiative(60.0)
+text = _decode_initiative(60.0)
 check("主动60→自然", "自然" in text)
-text, style = _decode_initiative(95.0)
+text = _decode_initiative(95.0)
 check("主动95→骑士", "骑士" in text)
 
 
@@ -207,7 +206,7 @@ check("日常→DecodedState", isinstance(result, DecodedState))
 check("日常→summary非空", len(result.summary) > 0)
 check("日常→reply_context非空", len(result.reply_context) > 0)
 check("日常→sticker_frequency合法", result.sticker_frequency in ("经常","偶尔","几乎不"))
-check("日常→sticker_style合法", result.sticker_style in ("强势","弱势","无偏向","喜欢"))
+check("日常→sticker_style合法", result.sticker_style in ("可爱","帅气"))
 check("日常→含时间", "【时间】" in result.summary)
 check("日常→含心情", "【心情】" in result.summary)
 check("日常→含关系", "【关系】" in result.summary)
@@ -232,10 +231,22 @@ state["energy"] = 80
 result = decode(state, "normal")
 check("低精力→reply_context含精力", "累" in result.reply_context or "困" in result.reply_context)
 
-# 高精力——reply_context 不含精力提示
+# 高精力——reply_context 始终含精力
 state["energy"] = 280
 result = decode(state, "normal")
-check("高精力→reply_context不含精力", "累" not in result.reply_context and "困" not in result.reply_context)
+check("高精力→reply_context含充沛", "充沛" in result.reply_context)
+
+# reply_context 含主动度
+check("reply_context含主动度", "主动" in result.reply_context or "自然" in result.reply_context or "被动" in result.reply_context)
+
+# 深夜——reply_context 含时间
+state["energy"] = 250
+result = decode(state, "normal", datetime(2026, 6, 30, 23, 30))
+check("深夜→reply_context含时间", "【时间】" in result.reply_context)
+
+# 白天——reply_context 不含时间
+result = decode(state, "normal", datetime(2026, 6, 30, 14, 0))
+check("白天→reply_context不含时间", "【时间】" not in result.reply_context)
 
 # 极端状态组合
 extreme_state = {
@@ -245,7 +256,7 @@ extreme_state = {
 result = decode(extreme_state, "urgent", datetime(2026, 6, 30, 23, 30))
 check("极端→不抛异常", isinstance(result, DecodedState))
 check("极端→summary非空", len(result.summary) > 0)
-check("极端→风格弱势", result.sticker_style == "弱势")
+check("极端→风格可爱", result.sticker_style == "可爱")
 check("极端→频次几乎不", result.sticker_frequency == "几乎不")
 
 # 高好感状态
@@ -255,7 +266,7 @@ high_state = {
 }
 result = decode(high_state, "normal")
 check("高好感→经常发", result.sticker_frequency == "经常")
-check("高主动→强势风格", result.sticker_style == "强势")
+check("高主动→风格可爱(剥离后恒定)", result.sticker_style == "可爱")
 
 
 # ══════════════════════════════════════════════════
@@ -314,10 +325,10 @@ for ten in [0.0, 15.0, 15.1, 35.0, 35.1, 60.0, 60.1, 85.0, 85.1]:
     text = _decode_tension(ten)
     check(f"紧张{ten}→非空", len(text) > 0)
 
-# 主动边界
+# 主动边界（initiative 剥离后 _decode_initiative 只返回 text）
 for ini in [0.0, 20.0, 20.1, 40.0, 40.1, 60.0, 60.1, 80.0, 80.1, 100.0]:
-    text, style = _decode_initiative(ini)
-    check(f"主动{ini}→风格非空", style in ("强势","弱势","无偏向"))
+    text = _decode_initiative(ini)
+    check(f"主动{ini}→非空", len(text) > 0)
 
 # 精力边界
 for ene in [300, 200, 199, 100, 99, 50, 49, 0]:

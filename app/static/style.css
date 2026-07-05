@@ -47,6 +47,12 @@ body {
 }
 #header .name { color: #e0d5c1; font-size: 1.1em; font-weight: bold; }
 #header .status { color: #8a8a8a; font-size: 0.75em; }
+#header button {
+    background: none; border: none; color: #e0d5c1;
+    font-size: 1.2em; cursor: pointer; margin-left: 8px;
+    opacity: 0.6; flex-shrink: 0;
+}
+#header button:hover { opacity: 1; }
 
 /* 消息列表 */
 #messages {
@@ -84,6 +90,13 @@ body {
     font-size: 0.65em; color: rgba(255,255,255,0.25);
     flex-shrink: 0; margin-bottom: 4px;
 }
+/* 表情包 */
+.sticker-img {
+    max-width: 140px;
+    max-height: 140px;
+    border-radius: 10px;
+    display: block;
+}
 
 /* 输入栏 */
 #input-bar {
@@ -118,3 +131,101 @@ body {
     margin-left: 2px; animation: blink 0.6s infinite alternate;
 }
 @keyframes blink { to { opacity: 0.2; } }
+
+/* 状态抽屉 */
+#state-drawer {
+    position: fixed; top: 0; right: -280px; width: 280px; height: 100vh;
+    background: rgba(20,20,40,0.95); z-index: 50;
+    transition: right 0.3s; padding: 20px; box-sizing: border-box;
+    overflow-y: auto;
+}
+#state-drawer.open { right: 0; }
+#drawer-overlay {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.4); z-index: 49;
+    display: none;
+}
+#drawer-overlay.show { display: block; }
+#drawer-header {
+    display: flex; justify-content: space-between; align-items: center;
+    color: #e0d5c1; font-size: 1em; margin-bottom: 16px;
+    border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 12px;
+}
+#drawer-close { background:none; border:none; color:#e0d5c1; cursor:pointer; font-size:1.1em; }
+.state-item { margin-bottom: 14px; }
+.state-label { color: #8a8a8a; font-size: 0.75em; margin-bottom: 4px; }
+.state-bar { height: 6px; background: rgba(255,255,255,0.1); border-radius: 3px; overflow: hidden; }
+.state-bar-fill { height: 100%; background: #c8d0e0; border-radius: 3px; transition: width 0.4s; }
+.state-value { color: #e0d5c1; font-size: 0.85em; margin-top: 2px; }
+
+/* 添加表情包表单 */
+#sticker-add-section { margin-top: 24px; border-top: 1px solid rgba(255,255,255,0.1); padding-top: 16px; }
+#sticker-add-btn {
+    width: 100%; padding: 10px; border-radius: 8px;
+    border: 1px solid rgba(255,255,255,0.15); background: rgba(255,255,255,0.06);
+    color: #e0d5c1; font-family: inherit; font-size: 0.85em; cursor: pointer;
+}
+#sticker-add-btn:hover { background: rgba(255,255,255,0.12); }
+#sticker-add-form { margin-top: 12px; display: flex; flex-direction: column; gap: 8px; }
+#sticker-add-form input[type="file"] {
+    font-size: 0.75em; color: #e0d5c1; padding: 6px;
+    border: 1px solid rgba(255,255,255,0.15); border-radius: 6px; background: rgba(255,255,255,0.04);
+}
+#sticker-add-form select, #sticker-add-form input[type="text"] {
+    padding: 8px; border-radius: 6px; border: 1px solid rgba(255,255,255,0.15);
+    background: rgba(255,255,255,0.06); color: #e0d5c1; font-family: inherit; font-size: 0.85em;
+}
+#sticker-submit {
+    padding: 8px; border-radius: 6px; border: none;
+    background: rgba(140,160,200,0.3); color: #c8d0e0; font-family: inherit; cursor: pointer;
+}
+#sticker-submit:hover { background: rgba(140,160,200,0.45); }
+
+/* 表情包管理表 */
+#sticker-manage-btn {
+    width: 100%; padding: 10px; border-radius: 8px;
+    border: 1px solid rgba(255,255,255,0.15); background: rgba(255,255,255,0.06);
+    color: #e0d5c1; font-family: inherit; font-size: 0.85em; cursor: pointer;
+    margin-top: 8px;
+}
+#sticker-manage-btn:hover { background: rgba(255,255,255,0.12); }
+#sticker-manage-panel { margin-top: 12px; }
+.sticker-row {
+    display: flex; align-items: center; gap: 8px;
+    padding: 8px 0; border-bottom: 1px solid rgba(255,255,255,0.06);
+}
+.sticker-row .stk-thumb {
+    width: 48px; height: 48px; object-fit: contain; border-radius: 6px;
+    background: rgba(255,255,255,0.04); flex-shrink: 0;
+}
+.sticker-row .stk-cat {
+    font-size: 0.7em; color: #8a8a8a; flex-shrink: 0; width: 28px; text-align: center;
+}
+.sticker-row .stk-label-input {
+    flex: 1; padding: 6px 8px; border-radius: 6px;
+    border: 1px solid rgba(255,255,255,0.15); background: rgba(255,255,255,0.06);
+    color: #e0d5c1; font-family: inherit; font-size: 0.85em;
+}
+.sticker-row .stk-save {
+    padding: 5px 10px; border-radius: 6px; border: none;
+    background: rgba(140,160,200,0.3); color: #c8d0e0; font-family: inherit;
+    font-size: 0.8em; cursor: pointer; flex-shrink: 0;
+}
+.sticker-row .stk-save:hover { background: rgba(140,160,200,0.45); }
+.sticker-row .stk-save:disabled { opacity: 0.4; cursor: default; }
+.sticker-row .stk-del {
+    padding: 5px 10px; border-radius: 6px; border: 1px solid rgba(200,100,100,0.3);
+    background: transparent; color: #c89090; font-family: inherit;
+    font-size: 0.8em; cursor: pointer; flex-shrink: 0;
+}
+.sticker-row .stk-del:hover { background: rgba(200,100,100,0.15); }
+.sticker-row .stk-del:disabled { opacity: 0.3; cursor: not-allowed; }
+
+/* 休息/起床遮罩 */
+#rest-overlay, #wake-overlay {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.85); z-index: 60;
+    display: flex; align-items: center; justify-content: center;
+}
+.rest-card {
+    background: rgba(20,20,40,0.95); padding: 32px; border-radius: 12px;
+    color: #e0d5c1; text-align: center; max-width: 320px;
+}

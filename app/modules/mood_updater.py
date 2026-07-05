@@ -79,9 +79,9 @@ class MoodAdder:
         return self._parse(result)
 
     def _call(self, user_input: str, stop_reason: str, history: list) -> str:
-        # 组装最近对话
+        # 组装全量历史（纯追加，不再窗口滑动）
         ctx_lines = []
-        for m in history[-10:]:  # 最近 5 轮
+        for m in history:
             role = "开拓者" if m["role"] == "user" else "流萤"
             ctx_lines.append(f"{role}: {m['content']}")
         ctx = "\n".join(ctx_lines) if ctx_lines else "（无历史）"
@@ -100,6 +100,13 @@ class MoodAdder:
                 c = resp.choices[0].message.content
                 if c and c.strip():
                     return c.strip()
+                # DeepSeek 思考模式下 content 偶尔空，答案可能在 reasoning_content
+                rc = getattr(resp.choices[0].message, "reasoning_content", None)
+                if rc and rc.strip():
+                    # reasoning_content 是推理过程，最后一句往往是答案
+                    last = rc.strip().split("\n")[-1].strip()
+                    if last:
+                        return last
             logger.warning("MoodAdder 第%d次返回空", attempt + 1)
         raise MoodUpdaterError("MoodAdder 连续3次返回空")
 
@@ -161,7 +168,7 @@ class MoodDecayer:
     def _call(self, user_input: str, moods: list, history: list) -> str:
         prev_text = "|".join(f"{m['label']}:{m['intensity']}" for m in moods)
         context_lines = []
-        for m in history[-6:]:
+        for m in history:  # 全量历史，纯追加
             role = "开拓者" if m["role"] == "user" else "流萤"
             context_lines.append(f"{role}: {m['content']}")
         ctx = "\n".join(context_lines) if context_lines else "（无历史）"
@@ -181,6 +188,12 @@ class MoodDecayer:
                 c = resp.choices[0].message.content
                 if c and c.strip():
                     return c.strip()
+                # DeepSeek 思考模式下 content 偶尔空，答案可能在 reasoning_content
+                rc = getattr(resp.choices[0].message, "reasoning_content", None)
+                if rc and rc.strip():
+                    last = rc.strip().split("\n")[-1].strip()
+                    if last:
+                        return last
             logger.warning("MoodDecayer 第%d次返回空", attempt + 1)
         raise MoodUpdaterError("MoodDecayer 连续3次返回空")
 
