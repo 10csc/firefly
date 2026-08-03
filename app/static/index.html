@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>流萤</title>
 <link rel="stylesheet" href="/static/style.css">
 </head>
@@ -10,102 +10,171 @@
 <div id="bg"></div>
 <div id="app">
     <div id="header">
-        <div class="avatar"></div>
+        <img class="avatar-sm" src="/流萤_头像.png" alt="流萤">
         <div style="flex:1">
             <div class="name">流萤</div>
-            <div class="status">在线</div>
+            <div class="status">会找到的，属于我的梦...</div>
         </div>
-        <button id="config-btn" title="配置">⚙</button>
-        <button id="state-btn" title="状态">◐</button>
-        <button id="rest-btn" title="让流萤休息">☾</button>
-        <button id="clear-btn" title="清除对话历史">🗑</button>
+        <button id="menu-btn" title="菜单">☰</button>
     </div>
     <div id="messages"></div>
     <div id="input-bar">
-        <button id="undo-btn" title="撤回上一轮" disabled>↩</button>
-        <input type="text" id="msg-input" placeholder="说点什么…" maxlength="500" autofocus>
-        <button id="send-btn" title="发送">▶</button>
+        <div class="input-wrap">
+            <input type="text" id="msg-input" placeholder="说点什么…" maxlength="500" autocomplete="off" autofocus>
+            <button id="sticker-btn" title="表情包">😊</button>
+        </div>
+        <button id="send-btn">发送</button>
     </div>
-    <!-- 配置面板（API Key + 回复器模型 + 思考等级）-->
-    <div id="key-panel" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.8); z-index:99; align-items:center; justify-content:center;">
-        <div style="background:#1e1e30; padding:24px; border-radius:12px; width:380px; text-align:center;">
-            <div style="display:flex; gap:0; margin-bottom:16px;">
-                <button id="tab-api" onclick="switchConfigTab('api')" class="tab-btn active" style="flex:1; padding:8px; border-radius:8px; background:rgba(140,160,200,0.3); color:#c8d0e0; font-family:inherit; cursor:pointer; font-size:0.9em; border: none;">API</button>
-                <button id="tab-char" onclick="switchConfigTab('char')" class="tab-btn" style="flex:1; padding:8px; border-radius:8px; background:rgba(255,255,255,0.06); color:#8a8a8a; font-family:inherit; cursor:pointer; font-size:0.9em; border: none;">设定文件</button>
+</div>
+
+<!-- 表情包面板 -->
+<div id="sticker-panel">
+    <div class="sp-title">
+        <span>选择表情包</span>
+        <button id="sticker-panel-close">✕</button>
+    </div>
+    <div id="sticker-grid"></div>
+</div>
+
+<!-- 汉堡菜单（移出 #app，避免 backdrop-filter 绑定 fixed 定位） -->
+<div id="menu-overlay"></div>
+    <div id="menu-drawer">
+        <div class="menu-header">
+            <span>菜单</span>
+            <button onclick="closeMenu()">✕</button>
+        </div>
+        <div class="menu-tabs">
+            <button class="menu-tab active" data-tab="api">API 配置</button>
+            <button class="menu-tab" data-tab="char">设定文件</button>
+            <button class="menu-tab" data-tab="bubble">聊天气泡</button>
+            <button class="menu-tab" data-tab="sticker">表情包</button>
+            <button class="menu-tab" data-tab="state">流萤状态</button>
+            <button class="menu-tab" data-tab="log">请求记录</button>
+            <button class="menu-tab" data-tab="pipeline">流程日志</button>
+        </div>
+        <div class="menu-actions">
+            <button id="menu-undo-btn">↩ 撤回上一轮</button>
+            <button id="menu-rest-btn">�?让流萤休息</button>
+            <button id="menu-clear-btn">🗑 清除历史</button>
+        </div>
+
+        <!-- Tab: API -->
+        <div class="menu-content active" id="tab-api">
+            <div class="field">
+                <label>API Key</label>
+                <input id="key-input" type="password" placeholder="已设置，留空则保留原 Key">
             </div>
-
-            <div id="config-tab-api">
-                <div style="color:#e0d5c1; font-size:1em; margin-bottom:16px;">DeepSeek 配置</div>
-
-                <div style="text-align:left; color:#8a8a8a; font-size:0.8em; margin-bottom:4px;">API Key</div>
-                <input id="key-input" type="password" placeholder="sk-..." style="width:100%; padding:10px; border-radius:8px; border:1px solid rgba(255,255,255,0.2); background:rgba(255,255,255,0.08); color:#e0d5c1; font-family:inherit; box-sizing:border-box;">
-
-                <div style="text-align:left; color:#8a8a8a; font-size:0.8em; margin:12px 0 4px;">回复器模型</div>
-                <select id="reply-model-select" style="width:100%; padding:10px; border-radius:8px; border:1px solid rgba(255,255,255,0.2); background:rgba(255,255,255,0.08); color:#e0d5c1; font-family:inherit; box-sizing:border-box;">
+            <div class="field">
+                <label>分析器模型（事实核查+意图分析）</label>
+                <select id="analyzer-model-select">
                     <option value="deepseek-v4-flash">Flash（快，便宜）</option>
                     <option value="deepseek-v4-pro">Pro（慢，贵，更强）</option>
                 </select>
-
-                <div style="text-align:left; color:#8a8a8a; font-size:0.8em; margin:12px 0 4px;">思考等级</div>
-                <select id="reply-effort-select" style="width:100%; padding:10px; border-radius:8px; border:1px solid rgba(255,255,255,0.2); background:rgba(255,255,255,0.08); color:#e0d5c1; font-family:inherit; box-sizing:border-box;">
-                    <option value="none">无（最快，无推理）</option>
-                    <option value="low">低（轻度推理）</option>
-                    <option value="high">高（兼顾，推荐）</option>
-                    <option value="max">最高（最强，~2x token，需384K+）</option>
-                </select>
-
-                <div style="text-align:left; color:#8a8a8a; font-size:0.8em; margin:12px 0 4px;">温度 <span id="temp-value" style="color:#e0d5c1;">0.5</span></div>
-                <input id="reply-temp-slider" type="range" min="0" max="2" step="0.1" value="0.5" style="width:100%; accent-color:#c8d0e0;">
-                <div style="text-align:left; color:#6a6a6a; font-size:0.7em; margin-top:2px;">低=克制短信风（推荐 0.5），高=发散抒情</div>
-
-                <div id="config-msg" style="color:#8a8a8a; font-size:0.75em; margin-top:8px; min-height:1em;"></div>
-                <button id="key-save" style="margin-top:12px; width:100%; padding:10px; border-radius:8px; border:none; background:rgba(140,160,200,0.3); color:#c8d0e0; font-family:inherit; cursor:pointer;">保存</button>
             </div>
-
-            <div id="config-tab-char" style="display:none">
-                <div style="text-align:left; color:#8a8a8a; font-size:0.8em; margin-bottom:4px;">选择文件</div>
-                <select id="char-file-select" style="width:100%; padding:10px; border-radius:8px; border:1px solid rgba(255,255,255,0.2); background:rgba(255,255,255,0.08); color:#e0d5c1; font-family:inherit; box-sizing:border-box;">
+            <div class="field">
+                <label>组织器模型（决定"说什么"）</label>
+                <select id="organizer-model-select">
+                    <option value="deepseek-v4-flash">Flash（快，便宜）</option>
+                    <option value="deepseek-v4-pro">Pro（慢，贵，更强）</option>
                 </select>
-                <textarea id="char-file-editor" style="width:100%; height:320px; margin-top:10px; padding:10px; border-radius:8px; border:1px solid rgba(255,255,255,0.2); background:rgba(255,255,255,0.08); color:#e0d5c1; font-family:'Consolas','Microsoft YaHei',monospace; font-size:0.8em; resize:vertical; box-sizing:border-box;"></textarea>
-                <div style="display:flex; gap:8px; margin-top:10px;">
-                    <button id="char-file-save">保存</button>
-                    <button id="char-file-reload">重新加载</button>
+            </div>
+            <div class="field">
+                <label>回复器模型（决定"怎么说"）</label>
+                <select id="polisher-model-select">
+                    <option value="deepseek-v4-flash">Flash（快，便宜）</option>
+                    <option value="deepseek-v4-pro">Pro（慢，贵，更强）</option>
+                </select>
+            </div>
+            <div class="field">
+                <label>思考等级（仅回复器）</label>
+                <select id="polisher-effort-select">
+                    <option value="none">无思考（温度才生效）</option>
+                    <option value="low">低（=高，官方映射）</option>
+                    <option value="high">高（推荐）</option>
+                    <option value="max">最高（~2x token）</option>
+                </select>
+            </div>
+            <div class="field">
+                <label>温度（仅"无思考"时生效）<span id="temp-value">0.5</span></label>
+                <input id="polisher-temp-slider" type="range" min="0" max="2" step="0.1" value="0.5">
+                <div style="color:#8a8a8a;font-size:0.7em;margin-top:2px">官方文档：思考模式下 temperature 无效（静默忽略）</div>
+            </div>
+            <button id="key-save">保存</button>
+            <div id="config-msg"></div>
+        </div>
+
+        <!-- Tab: 设定文件 -->
+        <div class="menu-content" id="tab-char">
+            <div class="field">
+                <label>选择文件</label>
+                <select id="char-file-select"></select>
+            </div>
+            <textarea id="char-file-editor"></textarea>
+            <div class="btn-row">
+                <button id="char-file-save">保存</button>
+                <button id="char-file-reload">重新加载</button>
+            </div>
+            <div id="char-file-msg"></div>
+            <div style="margin-top:24px;padding-top:14px;border-top:1px solid rgba(255,255,255,0.08)">
+                <label style="color:#e0d5c1;font-size:0.85em;margin-bottom:8px;display:block">流萤的手账</label>
+                <div class="btn-row" style="margin-bottom:8px">
+                    <button id="journal-reload" style="flex:1">重新加载</button>
+                    <button id="journal-save" style="flex:1">保存</button>
                 </div>
-                <div id="char-file-msg" style="color:#8a8a8a; font-size:0.75em; margin-top:8px; min-height:1em;"></div>
+                <textarea id="journal-editor" style="height:260px;color:#e0d5c1"></textarea>
+                <div id="journal-msg" style="color:#8a8a8a;font-size:0.75em;margin-top:4px"></div>
             </div>
+        </div>
 
-            <button id="config-close" style="margin-top:8px; width:100%; padding:8px; border-radius:8px; border:1px solid rgba(255,255,255,0.15); background:transparent; color:#8a8a8a; font-family:inherit; cursor:pointer; font-size:0.85em;">取消</button>
+        <!-- Tab: 气泡 -->
+        <div class="menu-content" id="tab-bubble">
+            <div id="bubble-grid"></div>
+        </div>
+
+        <!-- Tab: 表情包 -->
+        <div class="menu-content" id="tab-sticker">
+            <button id="sticker-add-btn" type="button">+ 添加表情包</button>
+            <div id="sticker-add-form" style="display:none">
+                <input type="file" id="sticker-file" accept="image/*">
+                <select id="sticker-category">
+                    <option value="可爱">可爱</option>
+                    <option value="帅气">帅气</option>
+                </select>
+                <input type="text" id="sticker-label" placeholder="含义描述（如：害羞）" maxlength="20">
+                <button id="sticker-submit" type="button">保存</button>
+                <div id="sticker-add-msg"></div>
+            </div>
+            <button id="sticker-manage-btn" type="button">表情包映射表</button>
+            <div id="sticker-manage-panel" style="display:none">
+                <div id="sticker-manage-msg"></div>
+                <div id="sticker-list"></div>
+            </div>
+        </div>
+
+        <!-- Tab: 状态 -->
+        <div class="menu-content" id="tab-state">
+            <div id="state-list"></div>
+        </div>
+
+        <!-- Tab: 请求记录 -->
+        <div class="menu-content" id="tab-log">
+            <div style="display:flex;justify-content:space-between;margin-bottom:8px">
+                <span style="color:#8a8a8a;font-size:0.75em" id="log-count"></span>
+                <button class="menu-tab" style="font-size:0.7em" onclick="loadRequestLog()">刷新</button>
+            </div>
+            <div id="log-list" style="max-height:60vh;overflow-y:auto"></div>
+        </div>
+
+        <!-- Tab: 流程日志（各阶段思考过程） -->
+        <div class="menu-content" id="tab-pipeline">
+            <div style="display:flex;justify-content:space-between;margin-bottom:8px">
+                <span style="color:#8a8a8a;font-size:0.75em" id="pipeline-count"></span>
+                <button class="menu-tab" style="font-size:0.7em" onclick="loadPipeline()">刷新</button>
+            </div>
+            <div id="pipeline-list" style="max-height:60vh;overflow-y:auto"></div>
         </div>
     </div>
 </div>
-<!-- 状态抽屉 -->
-<div id="state-drawer">
-    <div id="drawer-header">
-        <span>流萤的状态</span>
-        <button id="drawer-close">✕</button>
-    </div>
-    <div id="state-list"></div>
-    <div id="sticker-add-section">
-        <button id="sticker-add-btn" type="button">+ 添加表情包</button>
-        <div id="sticker-add-form" style="display:none">
-            <input type="file" id="sticker-file" accept="image/*">
-            <select id="sticker-category">
-                <option value="可爱">可爱</option>
-                <option value="帅气">帅气</option>
-            </select>
-            <input type="text" id="sticker-label" placeholder="含义描述（如：害羞）" maxlength="20">
-            <button id="sticker-submit" type="button">保存</button>
-            <div id="sticker-add-msg" style="font-size:0.8em;color:#8a8a8a;margin-top:6px"></div>
-        </div>
-
-        <button id="sticker-manage-btn" type="button">表情包映射表</button>
-        <div id="sticker-manage-panel" style="display:none">
-            <div id="sticker-manage-msg" style="font-size:0.8em;color:#8a8a8a;margin-bottom:8px"></div>
-            <div id="sticker-list"></div>
-        </div>
-    </div>
-</div>
-<div id="drawer-overlay"></div>
 
 <!-- 休息遮罩 -->
 <div id="rest-overlay" style="display:none">
@@ -121,6 +190,23 @@
     </div>
 </div>
 
-<script src="/static/app.js"></script>
+    <!-- 开拓者头像选择弹窗 -->
+    <div id="avatar-picker" style="display:none;position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);
+        background:rgba(24,24,48,0.97);border-radius:12px;padding:20px;z-index:100;
+        box-shadow:0 0 30px rgba(0,0,0,0.6);text-align:center">
+        <div style="color:#e0d5c1;margin-bottom:14px;font-size:0.95em">选择开拓者形象</div>
+        <div style="display:flex;gap:20px;justify-content:center">
+            <div class="avatar-option" data-key="穹">
+                <img src="/开拓者_穹.png" style="width:72px;height:72px;border-radius:50%;object-fit:cover">
+                <div style="color:#8a8a8a;font-size:0.75em;margin-top:6px">穹</div>
+            </div>
+            <div class="avatar-option" data-key="星">
+                <img src="/开拓者_星.png" style="width:72px;height:72px;border-radius:50%;object-fit:cover">
+                <div style="color:#8a8a8a;font-size:0.75em;margin-top:6px">星</div>
+            </div>
+        </div>
+    </div>
+    <div id="avatar-picker-mask" style="display:none;position:fixed;inset:0;z-index:99;background:rgba(0,0,0,0.5)" onclick="closeAvatarPicker()"></div>
+<script src="/static/app.js?v=3"></script>
 </body>
 </html>

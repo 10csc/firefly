@@ -2,14 +2,15 @@
 """会话历史持久化白盒测试"""
 
 import sys, os, tempfile, shutil
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "app"))
 
-from app.modules.conversation_store import (
+from modules.conversation_store import (
     append_message, load_recent, get_total_count, get_min_seq,
-    InputRejected,
+    hydrate_context, InputRejected,
 )
+from modules.context_manager import ContextManager
 from pathlib import Path
-import app.modules.conversation_store as cs
+import modules.conversation_store as cs
 
 PASS, FAIL = 0, 0
 def check(desc, cond):
@@ -21,6 +22,7 @@ def check(desc, cond):
 tmpdir = tempfile.mkdtemp()
 try:
     cs._CONV_FILE = Path(tmpdir) / "conversation.jsonl"
+    cs._LEGACY_CONV = Path(tmpdir) / "legacy_missing.jsonl"
 
     # === 空文件 ===
     print("=== 空文件 ===")
@@ -88,6 +90,22 @@ try:
         check("空path → 抛异常", False)
     except InputRejected:
         check("空path → InputRejected", True)
+
+    # === 回灌 ===
+    print("\n=== 回灌 ===")
+    cs._CONV_FILE = Path(tmpdir) / "hydrate.jsonl"
+    append_message("user", {"type": "text", "content": "早"})
+    append_message("firefly", {"type": "text", "content": "早呀"})
+    append_message("firefly", {"type": "sticker", "path": "stickers/x.webp", "label": "比心"})
+    append_message("user", {"type": "text", "content": "在吗"})  # 未完成轮，应跳过
+    ctx = ContextManager()
+    n = hydrate_context(ctx)
+    check("回灌轮数=1", n == 1)
+    recent = ctx.get_recent(5)
+    check("回灌含 user", any(m["role"] == "user" and "早" in m["content"] for m in recent))
+    check("回灌含 assistant", any(m["role"] == "assistant" and "早呀" in m["content"] for m in recent))
+    check("回灌含 sticker action", any(m["role"] == "system" and "比心" in m["content"] for m in recent))
+    check("未完成轮未写入", not any(m.get("content") == "在吗" for m in recent))
 
 finally:
     shutil.rmtree(tmpdir, ignore_errors=True)

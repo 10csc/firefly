@@ -3,572 +3,628 @@
 const messagesEl = document.getElementById("messages");
 const inputEl = document.getElementById("msg-input");
 const sendBtn = document.getElementById("send-btn");
-const keyPanel = document.getElementById("key-panel");
-const keyInput = document.getElementById("key-input");
-const keySave = document.getElementById("key-save");
-const configBtn = document.getElementById("config-btn");
-const configClose = document.getElementById("config-close");
-const replyModelSelect = document.getElementById("reply-model-select");
-const replyEffortSelect = document.getElementById("reply-effort-select");
-const replyTempSlider = document.getElementById("reply-temp-slider");
-const tempValue = document.getElementById("temp-value");
-const configMsg = document.getElementById("config-msg");
-const stateBtn = document.getElementById("state-btn");
-const restBtn = document.getElementById("rest-btn");
-const drawer = document.getElementById("state-drawer");
-const overlay = document.getElementById("drawer-overlay");
-const drawerClose = document.getElementById("drawer-close");
-const restOverlay = document.getElementById("rest-overlay");
-const wakeOverlay = document.getElementById("wake-overlay");
 const SESSION_ID = "firefly-" + Date.now();
 let waiting = false;
 
-// ── 抽屉开关 ──────────────────────────────────
-if (stateBtn) {
-    stateBtn.addEventListener("click", () => {
-        drawer.classList.add("open");
-        overlay.classList.add("show");
+// 输入检测器：5秒内无新输入则提交
+let _pending = [];
+let _sendTimer = null;
+
+// 开拓者头像
+const TB_AVATARS = { 穹: "/开拓者_穹.png", 星: "/开拓者_星.png" };
+let tbChoice = localStorage.getItem("tb_avatar") || "穹";
+
+function openAvatarPicker() {
+    const picker = document.getElementById("avatar-picker");
+    const mask = document.getElementById("avatar-picker-mask");
+    picker.style.display = "block";
+    mask.style.display = "block";
+    // 高亮当前选择
+    document.querySelectorAll(".avatar-option").forEach(opt => {
+        opt.classList.toggle("selected", opt.dataset.key === tbChoice);
     });
 }
-function closeDrawer() {
-    drawer.classList.remove("open");
-    overlay.classList.remove("show");
+function closeAvatarPicker() {
+    document.getElementById("avatar-picker").style.display = "none";
+    document.getElementById("avatar-picker-mask").style.display = "none";
 }
-if (drawerClose) drawerClose.addEventListener("click", closeDrawer);
-if (overlay) overlay.addEventListener("click", closeDrawer);
-
-// ── 配置管理（API Key + 回复器模型 + 思考等级 + 温度）────────
-async function loadConfig() {
-    try {
-        const resp = await fetch("/config");
-        const data = await resp.json();
-        if (data.reply_model && replyModelSelect) replyModelSelect.value = data.reply_model;
-        if (data.reply_effort && replyEffortSelect) replyEffortSelect.value = data.reply_effort;
-        if (data.reply_temperature != null && replyTempSlider) {
-            replyTempSlider.value = data.reply_temperature;
-            if (tempValue) tempValue.textContent = Number(data.reply_temperature).toFixed(1);
-        }
-        if (configMsg) {
-            configMsg.textContent = data.has_key
-                ? "当前 Key：" + (data.key_prefix || "已设置")
-                : "尚未设置 API Key";
-        }
-        // 有 key 时提示留空保留，避免用户误以为没设
-        if (keyInput) {
-            keyInput.placeholder = data.has_key ? "已设置，留空则保留原 Key" : "sk-...";
-            keyInput.value = "";
-        }
-        return data;
-    } catch (e) { return {has_key: false}; }
-}
-
-// 温度滑块实时显示数值
-if (replyTempSlider) {
-    replyTempSlider.addEventListener("input", () => {
-        if (tempValue) tempValue.textContent = Number(replyTempSlider.value).toFixed(1);
+window.closeAvatarPicker = closeAvatarPicker;
+document.querySelectorAll(".avatar-option").forEach(opt => {
+    opt.addEventListener("click", () => {
+        tbChoice = opt.dataset.key;
+        localStorage.setItem("tb_avatar", tbChoice);
+        document.querySelectorAll(".tb-avatar").forEach(el => { el.src = TB_AVATARS[tbChoice]; });
+        closeAvatarPicker();
     });
-}
-
-async function checkKey() {
-    const data = await loadConfig();
-    if (!data.has_key) {
-        keyPanel.style.display = "flex";
-    } else {
-        keyPanel.style.display = "none";
-    }
-}
-
-function openConfig() { keyPanel.style.display = "flex"; }
-function closeConfig() { keyPanel.style.display = "none"; }
-
-if (configBtn) configBtn.addEventListener("click", openConfig);
-if (configClose) configClose.addEventListener("click", closeConfig);
-
-keySave.addEventListener("click", async () => {
-    const k = keyInput.value.trim();
-    const model = replyModelSelect ? replyModelSelect.value : "deepseek-v4-flash";
-    const effort = replyEffortSelect ? replyEffortSelect.value : "high";
-    const temp = replyTempSlider ? parseFloat(replyTempSlider.value) : 0.5;
-    // key 为空时保留旧值（只改模型/思考等级/温度）
-    const payload = { reply_model: model, reply_effort: effort, reply_temperature: temp };
-    if (k) payload.api_key = k;
-    if (configMsg) configMsg.textContent = "保存中…";
-    try {
-        const resp = await fetch("/set-config", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(payload),
-        });
-        const data = await resp.json();
-        if (data.ok) {
-            keyPanel.style.display = "none";
-            keyInput.value = "";
-            if (configMsg) configMsg.textContent = "已保存";
-        } else {
-            if (configMsg) configMsg.textContent = "保存失败";
-        }
-    } catch (e) {
-        if (configMsg) configMsg.textContent = "网络错误";
-    }
 });
 
-// 启动时加载历史（在 checkKey 之后，避免与配置面板冲突）
-// checkKey + loadHistory 在文件末尾统一调用
+// ═══════════════════════════════════════════
+// 汉堡菜单
+// ═══════════════════════════════════════════
+const menuBtn = document.getElementById("menu-btn");
+const menuDrawer = document.getElementById("menu-drawer");
+const menuOverlay = document.getElementById("menu-overlay");
 
-// ── 渲染状态（侧边抽屉）───────────────────────
-function renderState(state) {
-    if (!state) return;
-    const list = document.getElementById("state-list");
-    const items = [
-        { label: "心情", value: formatMood(state.mood) },
-        { label: "好感度", value: state.affection?.toFixed(1), max: 100, pct: state.affection },
-        { label: "紧张度", value: state.tension?.toFixed(1), max: 100, pct: Math.min(state.tension, 100) },
-        { label: "主动性", value: state.initiative?.toFixed(1), max: 100, pct: state.initiative },
-    ];
-    list.innerHTML = items.map(it => `
-        <div class="state-item">
-            <div class="state-label">${it.label}</div>
-            <div class="state-bar"><div class="state-bar-fill" style="width:${it.pct||0}%"></div></div>
-            <div class="state-value">${it.value}</div>
-        </div>`).join("");
+menuBtn.addEventListener("click", openMenu);
+menuOverlay.addEventListener("click", closeMenu);
+function openMenu() {
+    menuDrawer.classList.add("open");
+    menuOverlay.classList.add("show");
+    document.getElementById("tab-api").classList.add("active");
 }
-function formatMood(moods) {
-    if (!Array.isArray(moods)) return "—";
-    return moods.map(m => `${m.label}${m.intensity}`).join("、");
+function closeMenu() {
+    menuDrawer.classList.remove("open");
+    menuOverlay.classList.remove("show");
 }
+window.closeMenu = closeMenu;
 
-// ── 添加消息（文本）───────────────────────────
-function addTextMessage(text, who, timeStr, prepend = false, seq = null) {
-    const row = document.createElement("div");
-    row.className = "msg-row " + (who === "user" ? "user" : "firefly");
-    if (seq !== null) row.dataset.seq = seq;
+// 点击 drawer 背景（非内容区域）也关闭菜单
+menuDrawer.addEventListener("click", (e) => {
+    if (e.target === menuDrawer) closeMenu();
+});
 
-    const bubble = document.createElement("div");
-    bubble.className = "bubble";
-    bubble.textContent = text;
-
-    const time = document.createElement("div");
-    time.className = "time";
-    time.textContent = timeStr || new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
-
-    row.appendChild(time);
-    row.appendChild(bubble);
-    if (prepend) {
-        messagesEl.insertBefore(row, messagesEl.firstChild);
-    } else {
-        messagesEl.appendChild(row);
-        messagesEl.scrollTop = messagesEl.scrollHeight;
-    }
-    return row;
-}
-
-// ── 添加表情包 ────────────────────────────────
-function addSticker(stickerPath, who, timeStr, prepend = false, seq = null) {
-    const row = document.createElement("div");
-    row.className = "msg-row " + (who === "user" ? "user" : "firefly");
-    if (seq !== null) row.dataset.seq = seq;
-
-    const img = document.createElement("img");
-    img.className = "sticker-img";
-    img.src = "/assets/" + stickerPath;
-
-    const time = document.createElement("div");
-    time.className = "time";
-    time.textContent = timeStr || new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
-
-    row.appendChild(time);
-    row.appendChild(img);
-    if (prepend) {
-        messagesEl.insertBefore(row, messagesEl.firstChild);
-    } else {
-        messagesEl.appendChild(row);
-        messagesEl.scrollTop = messagesEl.scrollHeight;
-    }
-    return row;
-}
-
-// ── 逐条渲染消息数组（支持 type: text|sticker）────
-function renderMessages(messages, who, data) {
-    if (!messages || messages.length === 0) return;
-
-    let delay = 0;
-    messages.forEach((msg, i) => {
-        setTimeout(() => {
-            // 用服务器返回的 time（HH:MM:SS），截取 HH:MM 显示
-            const ts = msg.time ? msg.time.slice(11, 16) : null;
-            if (msg.type === "sticker") {
-                addSticker(msg.path, who, ts);
-            } else {
-                addTextMessage(msg.content, who, ts);
-            }
-        }, delay);
-        delay += 400;
+// 菜单 tab 切换
+document.querySelectorAll(".menu-tab").forEach(btn => {
+    btn.addEventListener("click", () => {
+        document.querySelectorAll(".menu-tab").forEach(b => b.classList.remove("active"));
+        document.querySelectorAll(".menu-content").forEach(c => c.classList.remove("active"));
+        btn.classList.add("active");
+        const target = document.getElementById("tab-" + btn.dataset.tab);
+        if (target) target.classList.add("active");
+        if (btn.dataset.tab === "char") { loadCharFiles(); loadJournal(); }
+        if (btn.dataset.tab === "bubble") renderBubbleGrid();
+        if (btn.dataset.tab === "state") loadStateTab();
+        if (btn.dataset.tab === "log") loadRequestLog();
+        if (btn.dataset.tab === "pipeline") loadPipeline();
     });
+});
 
-    // 气泡切换
-    if (data && data.bubble) {
-        setTimeout(() => { switchBubble(data.bubble); }, delay + 300);
-    }
-}
+// ═══════════════════════════════════════════
+// 气泡选择（流萤 + 用户各自可选）
+// ═══════════════════════════════════════════
+const BUBBLES = [
+    { key: "bubble_culture", name: "光阴莫负", src: "/assets/bubbles/bubbleStyle1.svg" },
+    { key: "bubble_rabbit",  name: "逐兔之夏", src: "/assets/bubbles/bubbleStyle2.svg" },
+    { key: "bubble_trotter", name: "补天司命", src: "/assets/bubbles/bubbleStyle3.svg" },
+    { key: "bubble_tavern",  name: "孤独的疗愈", src: "/assets/bubbles/bubbleStyle4.svg" },
+    { key: "bubble_cinema",  name: "大娱乐家", src: "/assets/bubbles/bubbleStyle5.svg" },
+    { key: "bubble_warmth",  name: "何枝可依", src: "/assets/bubbles/bubbleStyle6/main.png" },
+];
+let _fireflyBubble = "bubble_culture";
+let _userBubble = "none";
 
-// ── 气泡切换 ────────────────────────────────
-const BUBBLE_ASSETS = {
-    "bubble_rabbit":  "/assets/bubbles/bubbleStyle2.svg",
-    "bubble_trotter": "/assets/bubbles/bubbleStyle3.svg",
-    "bubble_culture": "/assets/bubbles/bubbleStyle1.svg",
-    "bubble_tavern":  "/assets/bubbles/bubbleStyle4.svg",
-    "bubble_cinema":  "/assets/bubbles/bubbleStyle5.svg",
-    "bubble_warmth":  "/assets/bubbles/bubbleStyle6/main.png",
-};
-
-function switchBubble(bubbleKey) {
-    const url = BUBBLE_ASSETS[bubbleKey];
-    if (!url) return;
-
-    // 动态注入 style，避免 CSS 静态文件中的路径问题
-    const styleId = "bubble-style";
+function applyFireflyBubble(key) {
+    const b = BUBBLES.find(x => x.key === key);
+    const styleId = "bubble-firefly";
     const old = document.getElementById(styleId);
     if (old) old.remove();
-
+    if (!b) { _fireflyBubble = "none"; return; }   // 无气泡：移除旧样式即可
     const s = document.createElement("style");
     s.id = styleId;
     s.textContent = ".msg-row.firefly .bubble {" +
-        "border-image: url('" + url + "') 30 30 30 30 fill stretch !important;" +
+        "border-image: url('" + b.src + "') 30 30 30 30 fill stretch !important;" +
         "border-width: 16px !important; border-style: solid !important;" +
         "border-color: transparent !important; padding: 8px !important;" +
         "background: none !important; }";
     document.head.appendChild(s);
+    _fireflyBubble = key;
+    try { localStorage.setItem("firefly-bubble2", key); } catch(e) {}
 }
 
-// 加载默认气泡
-document.addEventListener("DOMContentLoaded", () => switchBubble("bubble_culture"));
+function applyUserBubble(key) {
+    const b = BUBBLES.find(x => x.key === key);
+    const styleId = "bubble-user";
+    const old = document.getElementById(styleId);
+    if (old) old.remove();
+    if (!b) { _userBubble = "none"; return; }   // 无气泡：移除旧样式即可
+    const s = document.createElement("style");
+    s.id = styleId;
+    s.textContent = ".msg-row.user .bubble {" +
+        "border-image: url('" + b.src + "') 30 30 30 30 fill stretch !important;" +
+        "border-width: 16px !important; border-style: solid !important;" +
+        "border-color: transparent !important; padding: 8px !important;" +
+        "background: none !important; }";
+    document.head.appendChild(s);
+    _userBubble = key;
+    try { localStorage.setItem("user-bubble", key); } catch(e) {}
+}
 
-// ── 发送消息 ────────────────────────────────
-async function send() {
-    const text = inputEl.value.trim();
-    if (!text || waiting) return;
+function renderBubbleGrid() {
+    const grid = document.getElementById("bubble-grid");
+    if (!grid) return;
+    grid.innerHTML = "";
+    // 流萤气泡
+    const ff = document.createElement("div");
+    ff.className = "bubble-section";
+    ff.innerHTML = '<div class="bubble-label">流萤的聊天气泡</div>' +
+        `<div class="bubble-card ${_fireflyBubble === 'none' ? 'selected' : ''}" onclick="pickFireflyBubble('none')">
+            <div class="bubble-none">默认</div><span>无气泡</span></div>` +
+        BUBBLES.map(b => `
+        <div class="bubble-card ${_fireflyBubble === b.key ? 'selected' : ''}" onclick="pickFireflyBubble('${b.key}')">
+            <img src="${b.src}" alt="${b.name}"><span>${b.name}</span>
+        </div>`).join("");
+    grid.appendChild(ff);
+    // 用户气泡
+    const us = document.createElement("div");
+    us.className = "bubble-section";
+    us.innerHTML = '<div class="bubble-label">我的聊天气泡</div>' +
+        `<div class="bubble-card ${_userBubble === 'none' ? 'selected' : ''}" onclick="pickUserBubble('none')">
+            <div class="bubble-none">默认</div><span>无气泡</span></div>` +
+        BUBBLES.map(b => `
+        <div class="bubble-card ${_userBubble === b.key ? 'selected' : ''}" onclick="pickUserBubble('${b.key}')">
+            <img src="${b.src}" alt="${b.name}"><span>${b.name}</span>
+        </div>`).join("");
+    grid.appendChild(us);
+}
 
+function pickFireflyBubble(key) { applyFireflyBubble(key); renderBubbleGrid(); }
+function pickUserBubble(key) { applyUserBubble(key); renderBubbleGrid(); }
+window.pickFireflyBubble = pickFireflyBubble;
+window.pickUserBubble = pickUserBubble;
+
+// 加载保存的气泡
+document.addEventListener("DOMContentLoaded", () => {
+    let fb = null, ub = null;
+    try { fb = localStorage.getItem("firefly-bubble2"); ub = localStorage.getItem("user-bubble"); } catch(e) {}
+    applyFireflyBubble(fb || "none");   // 默认无气泡（旧 key 弃用，避免历史残留）
+    applyUserBubble(ub || "none");
+});
+
+// ═══════════════════════════════════════════
+// 配置管理
+// ═══════════════════════════════════════════
+async function loadConfig() {
+    const ids = {
+        a: "analyzer-model-select", o: "organizer-model-select",
+        p: "polisher-model-select", e: "polisher-effort-select",
+        t: "polisher-temp-slider", tv: "temp-value",
+        k: "key-input", m: "config-msg",
+    };
+    try {
+        const resp = await fetch("/config");
+        const data = await resp.json();
+        const el = {};
+        for (const [k, id] of Object.entries(ids)) el[k] = document.getElementById(id);
+
+        if (el.a) el.a.value = data.analyzer_model || "deepseek-v4-flash";
+        if (el.o) el.o.value = data.organizer_model || "deepseek-v4-flash";
+        if (el.p) el.p.value = data.polisher_model || "deepseek-v4-flash";
+        if (el.e) el.e.value = data.polisher_effort || "high";
+        if (data.polisher_temperature != null && el.t) {
+            el.t.value = data.polisher_temperature;
+            if (el.tv) el.tv.textContent = Number(data.polisher_temperature).toFixed(1);
+        }
+        if (el.m) {
+            el.m.textContent = data.has_key
+                ? "当前 Key：" + (data.key_prefix || "已设置")
+                : "尚未设置 API Key";
+        }
+        if (el.k) { el.k.placeholder = data.has_key ? "已设置，留空则保留原 Key" : "sk-..."; el.k.value = ""; }
+        return data;
+    } catch (e) { return {has_key: false}; }
+}
+
+const tempSlider = document.getElementById("polisher-temp-slider");
+const tempVal = document.getElementById("temp-value");
+if (tempSlider) {
+    tempSlider.addEventListener("input", () => {
+        if (tempVal) tempVal.textContent = Number(tempSlider.value).toFixed(1);
+    });
+}
+
+async function checkKey() {
+    // 不自动弹出配置页：默认进入聊天页，无 key 时发消息会引导（_doSend 内处理）
+    try {
+        await loadConfig();
+    } catch (e) { /* 服务未就绪，静默 */ }
+}
+
+document.getElementById("key-save").addEventListener("click", async () => {
+    const k = document.getElementById("key-input").value.trim();
+    const am = document.getElementById("analyzer-model-select").value;
+    const om = document.getElementById("organizer-model-select").value;
+    const pm = document.getElementById("polisher-model-select").value;
+    const eff = document.getElementById("polisher-effort-select").value;
+    const temp = parseFloat(tempSlider.value) || 0.5;
+    const msg = document.getElementById("config-msg");
+    const payload = {
+        analyzer_model: am, organizer_model: om, polisher_model: pm,
+        polisher_effort: eff, polisher_temperature: temp,
+    };
+    if (k) payload.api_key = k;
+    msg.textContent = "保存中…";
+    try {
+        const resp = await fetch("/set-config", { method: "POST",
+            headers: {"Content-Type": "application/json"}, body: JSON.stringify(payload) });
+        const data = await resp.json();
+        msg.textContent = data.ok ? "已保存" : "保存失败";
+    } catch (e) { msg.textContent = "网络错误"; }
+});
+
+// ═══════════════════════════════════════════
+// 消息渲染
+// ═══════════════════════════════════════════
+// ═══════════════════════════════════════════
+// 滚动到底部（rAF 延迟：等 DOM 更新/键盘 resize 后再滚，QQ/微信式自动拉底）
+// ═══════════════════════════════════════════
+function scrollToBottom() {
+    requestAnimationFrame(() => {
+        messagesEl.scrollTop = messagesEl.scrollHeight;
+    });
+}
+// 键盘弹起/收起导致可视高度变化时：若用户原本在底部则自动补滚
+if (window.visualViewport) {
+    window.visualViewport.addEventListener("resize", () => {
+        if (messagesEl.scrollTop + messagesEl.clientHeight >= messagesEl.scrollHeight - 60) {
+            scrollToBottom();
+        }
+    });
+}
+
+function _addAvatar(row, who) {    const img = document.createElement("img");
+    img.className = "msg-avatar";
+    if (who === "user") {
+        img.src = TB_AVATARS[tbChoice];
+        img.classList.add("tb-toggle");
+        img.title = "点击切换开拓者";
+        img.addEventListener("click", openAvatarPicker);
+        img.classList.add("tb-avatar");
+    } else {
+        img.src = "/流萤_头像.png";
+    }
+    row.insertBefore(img, row.firstChild);
+}
+
+function addTextMessage(text, who, prepend = false, seq = null) {
+    const row = document.createElement("div");
+    row.className = "msg-row " + (who === "user" ? "user" : "firefly");
+    if (seq !== null) row.dataset.seq = seq;
+    const bubble = document.createElement("div");
+    bubble.className = "bubble";
+    bubble.textContent = text;
+    row.appendChild(bubble);
+    _addAvatar(row, who);
+    if (prepend) { messagesEl.insertBefore(row, messagesEl.firstChild); }
+    else { messagesEl.appendChild(row); scrollToBottom(); }
+    return row;
+}
+
+function addSticker(stickerPath, who, prepend = false, seq = null) {
+    const row = document.createElement("div");
+    row.className = "msg-row " + (who === "user" ? "user" : "firefly");
+    if (seq !== null) row.dataset.seq = seq;
+    const img = document.createElement("img");
+    img.className = "sticker-img";
+    img.src = "/assets/" + stickerPath;
+    row.appendChild(img);
+    _addAvatar(row, who);
+    if (prepend) { messagesEl.insertBefore(row, messagesEl.firstChild); }
+    else { messagesEl.appendChild(row); scrollToBottom(); }
+    return row;
+}
+
+function addTimeDivider(timeStr) {
+    const div = document.createElement("div");
+    div.className = "time-divider";
+    div.textContent = timeStr;
+    messagesEl.appendChild(div);
+}
+
+function renderMessages(messages, who, data) {
+    if (!messages || messages.length === 0) return;
+    // 时间标注：取第一条消息的时间，放居中分割线
+    const ts = messages[0].time ? messages[0].time.slice(11, 16) : new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
+    addTimeDivider(ts);
+    let delay = 0;
+    messages.forEach((msg, i) => {
+        setTimeout(() => {
+            if (msg.type === "sticker") addSticker(msg.path, who);
+            else addTextMessage(msg.content, who);
+        }, delay);
+        // 按字数计算：0.6s ~ 2.0s，约 30ms/字
+        const chars = (msg.content || "").length;
+        const msgDelay = Math.max(600, Math.min(2000, chars * 30));
+        delay += msgDelay;
+    });
+}
+
+// ═══════════════════════════════════════════
+// 发送消息 — 四阶段模型：输入 → 发送 → 提交 → 回复
+//   输入：打字（内容只在输入框，不触发队列）
+//   发送：Enter / 发送按钮 / 点表情 → 内容入队 _pending（可合并），重置提交计时
+//   提交：5s 窗口结束 → _doSend 把整个队列发给后端
+//   回复：流萤回复渲染
+// 关键：发送 ≠ 提交。按 Enter 只是入队，5s 窗口内可继续发送合并；
+//      输入框未发送的内容永不提交（绝不自动发送）。
+// ═══════════════════════════════════════════
+async function _doSend() {
+    if (!_pending.length || waiting) return;
     waiting = true;
-    inputEl.value = "";
-    inputEl.disabled = true;
-    sendBtn.disabled = true;
-
-    addTextMessage(text, "user");
-    undoBtn.disabled = false;
-
-    // 打字占位
-    const typingRow = addTextMessage("...", "firefly");
-    typingRow.classList.add("typing");
-
+    clearTimeout(_sendTimer);
+    inputEl.disabled = true; sendBtn.disabled = true;
+    const statusEl = document.querySelector("#header .status");
+    const defaultStatus = statusEl.textContent;
+    statusEl.textContent = "对方正在输入...";
+    const msgs = _pending.slice();   // 混合数组：字符串=文字，{type:"sticker"}=表情
+    _pending = [];
     try {
         const resp = await fetch("/chat", {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ message: text, session_id: SESSION_ID }),
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({ messages: msgs, session_id: SESSION_ID }),
         });
         const data = await resp.json();
-
-        // 移除占位
-        typingRow.remove();
-
-        if (data.need_key) {
-            keyPanel.style.display = "flex";
-        } else if (data.messages) {
-            renderMessages(data.messages, "firefly", data);
-            if (data.state) renderState(data.state);
-        } else if (data.reply) {
-            // 兼容旧格式
-            addTextMessage(data.reply, "firefly");
-        }
+        statusEl.textContent = defaultStatus;
+        if (data.need_key) openMenu();
+        else if (data.messages) renderMessages(data.messages, "firefly", data);
+        else if (data.reply) addTextMessage(data.reply, "firefly");
     } catch (e) {
-        typingRow.remove();
+        statusEl.textContent = defaultStatus;
         addTextMessage("嗯…信号不太好，等会儿再试试？", "firefly");
     }
-
     waiting = false;
-    inputEl.disabled = false;
-    sendBtn.disabled = false;
+    inputEl.disabled = false; sendBtn.disabled = false;
     inputEl.focus();
 }
 
-// ── 事件 ─────────────────────────────────────
-sendBtn.addEventListener("click", send);
-inputEl.addEventListener("keydown", (e) => {
-    if (e.key === "Enter" && !e.shiftKey) {
-        e.preventDefault();
-        send();
-    }
-});
-
-// ── 休息按钮 ────────────────────────────────────
-if (restBtn) {
-    restBtn.addEventListener("click", async () => {
-        if (!confirm("让流萤去休息吗？她会整理这段对话的记忆。")) return;
-        restOverlay.style.display = "flex";
-        document.getElementById("rest-text").textContent = "流萤正在整理记忆…";
-        try {
-            const resp = await fetch("/rest", {
-                method: "POST",
-                headers: {"Content-Type": "application/json"},
-                body: JSON.stringify({ session_id: SESSION_ID }),
-            });
-            const data = await resp.json();
-            if (data.ok) {
-                document.getElementById("rest-text").textContent =
-                    `流萤已休息。新增记忆 ${data.added} 条，解决 ${data.resolved} 条。下次见。`;
-            } else {
-                document.getElementById("rest-text").textContent = "整理出了点问题：" + (data.error || "未知");
-            }
-        } catch (e) {
-            document.getElementById("rest-text").textContent = "信号不好，等会儿再试。";
-        }
-    });
+async function send() {
+    const text = inputEl.value.trim();
+    if (!text || waiting) return;
+    inputEl.value = "";
+    addTextMessage(text, "user");
+    _pending.push({type: "text", content: text});   // 统一消息对象类型
+    inputEl.focus();
+    clearTimeout(_sendTimer);
+    _sendTimer = setTimeout(_doSend, 5000);
 }
 
-// ── 起床状态检查 ────────────────────────────────
-async function checkWake() {
-    try {
-        const resp = await fetch("/wake-status");
-        const data = await resp.json();
-        if (data.interrupted) {
-            wakeOverlay.style.display = "flex";
-            document.getElementById("wake-text").textContent =
-                "流萤正在起床，记忆还在整理中，请稍候片刻再刷新…";
-        }
-    } catch (e) {}
-}
-checkWake();
+// ═══════════════════════════════════════════
+// 表情包面板（输入框内 😊 按钮）
+// ═══════════════════════════════════════════
+const stickerPanel = document.getElementById("sticker-panel");
+const stickerGrid = document.getElementById("sticker-grid");
+const stickerBtn = document.getElementById("sticker-btn");
 
-// ── 添加表情包 ────────────────────────────────────
-const stickerAddBtn = document.getElementById("sticker-add-btn");
-const stickerAddForm = document.getElementById("sticker-add-form");
-const stickerFile = document.getElementById("sticker-file");
-const stickerCategory = document.getElementById("sticker-category");
-const stickerLabel = document.getElementById("sticker-label");
-const stickerSubmit = document.getElementById("sticker-submit");
-const stickerAddMsg = document.getElementById("sticker-add-msg");
-
-if (stickerAddBtn) {
-    stickerAddBtn.addEventListener("click", () => {
-        stickerAddForm.style.display = stickerAddForm.style.display === "none" ? "flex" : "none";
-    });
-}
-
-if (stickerSubmit) {
-    stickerSubmit.addEventListener("click", async () => {
-        const file = stickerFile.files[0];
-        const category = stickerCategory.value;
-        const label = stickerLabel.value.trim();
-        if (!file) { stickerAddMsg.textContent = "请先选择图片文件"; return; }
-        if (!label) { stickerAddMsg.textContent = "请填写含义描述"; return; }
-
-        const formData = new FormData();
-        formData.append("file", file);
-        formData.append("category", category);
-        formData.append("label", label);
-
-        stickerSubmit.disabled = true;
-        stickerAddMsg.textContent = "保存中…";
-        try {
-            const resp = await fetch("/add-sticker", { method: "POST", body: formData });
-            const data = await resp.json();
-            if (data.ok) {
-                stickerAddMsg.textContent = "已添加：" + data.label + "（" + category + "）";
-                stickerFile.value = "";
-                stickerLabel.value = "";
-                // 若管理表打开，刷新列表
-                if (stickerManagePanel && stickerManagePanel.style.display !== "none") loadStickerList();
-            } else {
-                stickerAddMsg.textContent = "失败：" + (data.error || "未知");
-            }
-        } catch (e) {
-            stickerAddMsg.textContent = "网络错误，等会儿再试";
-        }
-        stickerSubmit.disabled = false;
-    });
-}
-
-// ── 表情包映射表（查看 / 改 label / 删除）──────────────
-const stickerManageBtn = document.getElementById("sticker-manage-btn");
-const stickerManagePanel = document.getElementById("sticker-manage-panel");
-const stickerListEl = document.getElementById("sticker-list");
-const stickerManageMsg = document.getElementById("sticker-manage-msg");
-
-if (stickerManageBtn) {
-    stickerManageBtn.addEventListener("click", () => {
-        const shown = stickerManagePanel.style.display !== "none";
-        stickerManagePanel.style.display = shown ? "none" : "flex";
-        if (!shown) loadStickerList();
-    });
-}
-
-async function loadStickerList() {
-    if (stickerManageMsg) stickerManageMsg.textContent = "加载中…";
-    try {
-        const resp = await fetch("/stickers");
-        const data = await resp.json();
-        renderStickerList(data.stickers || []);
-        if (stickerManageMsg) stickerManageMsg.textContent = `共 ${(data.stickers||[]).length} 个`;
-    } catch (e) {
-        if (stickerManageMsg) stickerManageMsg.textContent = "加载失败，等会儿再试";
-    }
-}
-
-function renderStickerList(stickers) {
-    if (!stickerListEl) return;
-    if (stickers.length === 0) {
-        stickerListEl.innerHTML = '<div style="color:#8a8a8a;font-size:0.85em;padding:8px 0">还没有表情包</div>';
+stickerBtn.addEventListener("click", async () => {
+    if (stickerPanel.classList.contains("show")) {
+        stickerPanel.classList.remove("show");
         return;
     }
-    stickerListEl.innerHTML = stickers.map(s => `
-        <div class="sticker-row" data-id="${s.id}">
-            <img class="stk-thumb" src="/assets/${s.file}" loading="lazy" onerror="this.style.opacity=0.2">
-            <div class="stk-cat">${s.category === "帅气" ? "帅" : "爱"}</div>
-            <input class="stk-label-input" type="text" value="${s.label}" maxlength="20" placeholder="含义">
-            <button class="stk-save" type="button" disabled>保存</button>
-            <button class="stk-del" type="button" ${s.is_default ? "disabled title=\"默认表情包不可删\"" : ""}>删</button>
-        </div>`).join("");
-
-    // 绑定每行交互
-    stickerListEl.querySelectorAll(".sticker-row").forEach(row => {
-        const id = row.dataset.id;
-        const input = row.querySelector(".stk-label-input");
-        const saveBtn = row.querySelector(".stk-save");
-        const delBtn = row.querySelector(".stk-del");
-        const original = input.value;
-
-        // 输入有变化才启用保存按钮
-        input.addEventListener("input", () => {
-            saveBtn.disabled = input.value.trim() === original.trim() || !input.value.trim();
-        });
-
-        saveBtn.addEventListener("click", async () => {
-            const label = input.value.trim();
-            if (!label) return;
-            saveBtn.disabled = true;
-            saveBtn.textContent = "…";
-            try {
-                const resp = await fetch("/sticker-update", {
-                    method: "POST",
-                    headers: {"Content-Type": "application/json"},
-                    body: JSON.stringify({id, label}),
+    stickerPanel.classList.add("show");
+    if (!stickerGrid.dataset.loaded) {
+        try {
+            const resp = await fetch("/stickers");
+            const data = await resp.json();
+            const list = data.stickers || [];
+            stickerGrid.innerHTML = list.map(s =>
+                `<img src="/assets/${s.file}" alt="${s.label}" data-label="${s.label}" data-file="${s.file}">`).join("");
+            stickerGrid.dataset.loaded = "1";
+            stickerGrid.querySelectorAll("img").forEach(img => {
+                img.addEventListener("click", () => {
+                    stickerPanel.classList.remove("show");
+                    sendStickerMessage(img.dataset.label, img.dataset.file);
                 });
-                const data = await resp.json();
-                if (data.ok) {
-                    input.value = data.label;
-                    saveBtn.textContent = "已存";
-                    if (stickerManageMsg) stickerManageMsg.textContent = `已更新：${data.label}`;
-                    setTimeout(() => { saveBtn.textContent = "保存"; saveBtn.disabled = true; }, 1200);
-                } else {
-                    saveBtn.textContent = "保存";
-                    saveBtn.disabled = false;
-                    if (stickerManageMsg) stickerManageMsg.textContent = "失败：" + (data.error || "未知");
-                }
-            } catch (e) {
-                saveBtn.textContent = "保存";
-                saveBtn.disabled = false;
-                if (stickerManageMsg) stickerManageMsg.textContent = "网络错误，等会儿再试";
-            }
-        });
+            });
+        } catch (e) { /* 静默 */ }
+    }
+});
+// 点击聊天区关闭表情面板
+messagesEl.addEventListener("click", () => stickerPanel.classList.remove("show"));
+document.getElementById("sticker-panel-close").addEventListener("click", () => stickerPanel.classList.remove("show"));
 
-        delBtn.addEventListener("click", async () => {
-            if (!confirm(`确认删除这个表情包？\n（图片文件会保留，只是从映射表移除）`)) return;
-            delBtn.disabled = true;
-            delBtn.textContent = "…";
-            try {
-                const resp = await fetch("/sticker-delete", {
-                    method: "POST",
-                    headers: {"Content-Type": "application/json"},
-                    body: JSON.stringify({id}),
-                });
-                const data = await resp.json();
-                if (data.ok) {
-                    row.remove();
-                    if (stickerManageMsg) stickerManageMsg.textContent = "已删除";
-                } else {
-                    delBtn.disabled = false;
-                    delBtn.textContent = "删";
-                    if (stickerManageMsg) stickerManageMsg.textContent = "失败：" + (data.error || "未知");
-                }
-            } catch (e) {
-                delBtn.disabled = false;
-                delBtn.textContent = "删";
-                if (stickerManageMsg) stickerManageMsg.textContent = "网络错误，等会儿再试";
-            }
-        });
-    });
+/** 发送表情包：作为一条消息入队并重新计时（与文字同一队列，不碰输入框内容） */
+function sendStickerMessage(label, file) {
+    if (waiting) return;
+    if (file) addSticker(file, "user");   // 本地立即渲染表情图
+    _pending.push({type: "sticker", label, file});
+    inputEl.focus();
+    clearTimeout(_sendTimer);
+    _sendTimer = setTimeout(_doSend, 5000);   // 表情入队 → 触发重新计时
 }
 
-// ── 历史加载 + 分层滚动 ────────────────────────────
-let _hasMoreHistory = false;
-let _loadingHistory = false;
-
-function renderHistoryMessage(m, prepend = false) {
-    const ts = m.time ? m.time.slice(11, 16) : null;
-    if (m.type === "sticker") {
-        addSticker(m.path, m.who, ts, prepend, m.seq);
+sendBtn.addEventListener("click", send);
+inputEl.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
+});
+// 提交窗口控制（四阶段：发送≠提交）：
+// - 队列有内容且输入框非空（未发送）→ 禁止提交，等开拓者说完（可见性感知）
+// - 输入框清空 → 重新 5 秒提交计时
+inputEl.addEventListener("input", () => {
+    if (!_pending.length) return;
+    clearTimeout(_sendTimer);
+    if (inputEl.value.trim()) {
+        _sendTimer = null;   // 有未发送内容：禁止提交（流萤在等开拓者）
     } else {
-        addTextMessage(m.content, m.who, ts, prepend, m.seq);
-    }
-}
-
-async function loadHistory(beforeSeq = null) {
-    if (_loadingHistory) return;
-    _loadingHistory = true;
-    const url = beforeSeq
-        ? `/history?limit=150&before_seq=${beforeSeq}`
-        : `/history?limit=150`;
-    try {
-        const resp = await fetch(url);
-        const data = await resp.json();
-        if (!data.messages || data.messages.length === 0) {
-            _hasMoreHistory = false;
-            return;
-        }
-        if (beforeSeq === null) {
-            // 首次加载：append 到末尾
-            data.messages.forEach(m => renderHistoryMessage(m, false));
-            messagesEl.scrollTop = messagesEl.scrollHeight;
-            undoBtn.disabled = false;
-        } else {
-            // 向上翻页：prepend 到顶部，保持滚动位置
-            const prevHeight = messagesEl.scrollHeight;
-            const prevScroll = messagesEl.scrollTop;
-            // 反序插入，使顶部到下保持时间正序
-            data.messages.slice().reverse().forEach(m => renderHistoryMessage(m, true));
-            // 滚动条停留在原来位置（新内容在上方插入）
-            messagesEl.scrollTop = prevScroll + (messagesEl.scrollHeight - prevHeight);
-        }
-        _hasMoreHistory = !!data.has_more;
-    } catch (e) {
-        console.error("加载历史失败", e);
-    } finally {
-        _loadingHistory = false;
-    }
-}
-
-// 向上滚动到顶 → 加载更早历史
-messagesEl.addEventListener("scroll", () => {
-    if (messagesEl.scrollTop === 0 && _hasMoreHistory && !_loadingHistory) {
-        const firstRow = messagesEl.firstChild;
-        const firstSeq = firstRow ? parseInt(firstRow.dataset.seq) : null;
-        if (firstSeq) loadHistory(firstSeq);
+        _sendTimer = setTimeout(_doSend, 5000);   // 清空：重新 5 秒后提交
     }
 });
 
-// 启动时加载历史（在 checkKey 之后，避免与配置面板冲突）
-checkKey().then(() => loadHistory());
+// ═══════════════════════════════════════════
+// 休息 / 清除 / 撤回
+// ═══════════════════════════════════════════
+const restOverlay = document.getElementById("rest-overlay");
+document.getElementById("menu-rest-btn").addEventListener("click", async () => {
+    if (!confirm("让流萤去休息吗？她会整理这段对话的记忆。")) return;
+    closeMenu();
+    restOverlay.style.display = "flex";
+    document.getElementById("rest-text").textContent = "流萤正在整理记忆…";
+    try {
+        const resp = await fetch("/rest", {
+            method: "POST", headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({ session_id: SESSION_ID }),
+        });
+        const data = await resp.json();
+        restOverlay.style.display = "none";   // 无论成败都收起遮罩（失败信息已在 text 中展示）
+        document.getElementById("rest-text").textContent = data.ok
+            ? `流萤已休息。新增记忆 ${data.added} 条，解决 ${data.resolved} 条。下次见。`
+            : "整理出了点问题：" + (data.error || "未知");
+    } catch (e) {
+        restOverlay.style.display = "none";
+        document.getElementById("rest-text").textContent = "信号不好，等会儿再试。";
+    }
+});
 
-// ── 配置标签切换 ──────────────────────────────
-function switchConfigTab(tab) {
-    document.getElementById("tab-api").className = tab === "api" ? "tab-btn active" : "tab-btn";
-    document.getElementById("tab-char").className = tab === "char" ? "tab-btn active" : "tab-btn";
-    document.getElementById("config-tab-api").style.display = tab === "api" ? "block" : "none";
-    document.getElementById("config-tab-char").style.display = tab === "char" ? "block" : "none";
-    if (tab === "char") loadCharFiles();
+document.getElementById("menu-clear-btn").addEventListener("click", async () => {
+    if (!confirm("确认清除全部对话历史？此操作不可撤销。")) return;
+    closeMenu();
+    try {
+        const resp = await fetch("/clear-history", {
+            method: "POST", headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({ session_id: SESSION_ID }),
+        });
+        const data = await resp.json();
+        if (data.ok) { messagesEl.innerHTML = ""; }
+    } catch (e) { alert("网络错误"); }
+});
+
+const undoBtn = document.getElementById("menu-undo-btn");
+undoBtn.addEventListener("click", async () => {
+    if (!confirm("撤回上一轮对话？")) return;
+    closeMenu();
+    undoBtn.disabled = true;
+    try {
+        const resp = await fetch("/undo", {
+            method: "POST", headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({ session_id: SESSION_ID }),
+        });
+        const data = await resp.json();
+        if (data.ok) {
+            // 删除最后一段连续 user 块及其后的所有消息（整轮）
+            const rows = messagesEl.querySelectorAll(".msg-row");
+            const users = [...rows].filter(r => r.classList.contains("user"));
+            if (users.length > 0) {
+                let start = users[users.length - 1];
+                let sib = start.previousElementSibling;
+                while (sib && sib.classList.contains("msg-row") && sib.classList.contains("user")) {
+                    start = sib; sib = sib.previousElementSibling;
+                }
+                let node = start;
+                while (node) {
+                    const nxt = node.nextElementSibling;
+                    node.remove();
+                    node = nxt;
+                }
+            }
+        }
+    } catch (e) {}
+    undoBtn.disabled = false;
+});
+
+// ═══════════════════════════════════════════
+// 状态 tab（数值状态系统已下线，接回后再渲染条）
+// ═══════════════════════════════════════════
+function loadStateTab() {
+    const list = document.getElementById("state-list");
+    if (list) {
+        list.innerHTML = '<div style="color:#8a8a8a;line-height:1.6">状态系统尚未接入。<br>当前流水线：分析 → 回复 → 表情包。</div>';
+    }
 }
 
-// ── 设定文件编辑器 ──────────────────────────────
+// ═══════════════════════════════════════════
+// 请求记录
+// ═══════════════════════════════════════════
+async function loadRequestLog() {
+    const list = document.getElementById("log-list");
+    const countEl = document.getElementById("log-count");
+    if (!list) return;
+    try {
+        const resp = await fetch("/requests");
+        const data = await resp.json();
+        if (countEl) countEl.textContent = `共 ${data.count} 次请求`;
+        const rows = (data.requests || []).slice().reverse();
+        if (rows.length === 0) {
+            list.innerHTML = '<div style="color:#8a8a8a;padding:10px">暂无记录</div>';
+            return;
+        }
+        list.innerHTML = rows.map(r => `
+        <div style="display:flex;align-items:center;gap:4px;padding:5px 0;border-bottom:1px solid rgba(255,255,255,0.06);font-size:0.8em;color:#c8d0e0">
+            <span style="flex-shrink:0;width:50px;color:#8a8a8a">${r.time || "?"}</span>
+            <span style="flex-shrink:0;width:64px">${r.module}</span>
+            <span style="flex-shrink:0;width:52px">${r.model || "?"}</span>
+            <span style="flex-shrink:0;width:22px;text-align:center">${r.success ? '<span style="color:#6c8">✓</span>' : '<span style="color:#c66">✗</span>'}</span>
+            <span style="flex:1;text-align:right">${r.total_tokens || 0}</span>
+            <span style="flex-shrink:0;width:70px;text-align:right;color:#8a8a8a">¥${(r.cost_cny || 0).toFixed(6)}</span>
+        </div>`).join("");
+    } catch (e) {
+        list.innerHTML = '<div style="color:#c66;padding:10px">加载失败</div>';
+    }
+}
+window.loadRequestLog = loadRequestLog;
+
+// ═══════════════════════════════════════════
+// 流程日志：每轮各阶段的输入/输出/思考过程
+// ═══════════════════════════════════════════
+function _esc(s) {
+    return String(s == null ? "" : s)
+        .replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
+}
+
+function _stageBlock(title, elapsed, fields) {
+    const rows = fields
+        .filter(([, v]) => v != null && String(v).trim() !== "")
+        .map(([k, v]) => {
+            const body = _esc(typeof v === "string" ? v : JSON.stringify(v, null, 1));
+            if (k === "思考过程") {
+                return `<details style="margin:2px 0"><summary style="cursor:pointer;color:#8a8a8a">思考过程（点开）</summary><pre style="white-space:pre-wrap;word-break:break-all;color:#8a8a8a;margin:4px 0;font-size:0.95em">${body}</pre></details>`;
+            }
+            return `<div style="margin:2px 0"><span style="color:#8a8a8a">${k}:</span> <span style="white-space:pre-wrap;word-break:break-all">${body}</span></div>`;
+        }).join("");
+    return `<details open style="margin:4px 0;padding:4px 8px;background:rgba(255,255,255,0.03);border-radius:6px">
+        <summary style="cursor:pointer;color:#c8d0e0">${title}${elapsed != null ? ` <span style="color:#8a8a8a;font-size:0.85em">${elapsed}s</span>` : ""}</summary>
+        <div style="padding:4px 0 2px">${rows}</div></details>`;
+}
+
+async function loadPipeline() {
+    const list = document.getElementById("pipeline-list");
+    const countEl = document.getElementById("pipeline-count");
+    if (!list) return;
+    try {
+        const resp = await fetch("/pipeline");
+        const data = await resp.json();
+        if (countEl) countEl.textContent = `最近 ${data.count} 轮`;
+        const rows = (data.pipeline || []).slice().reverse();
+        if (rows.length === 0) {
+            list.innerHTML = '<div style="color:#8a8a8a;padding:10px">暂无记录（本次启动后还没聊过）</div>';
+            return;
+        }
+        list.innerHTML = rows.map(p => {
+            let inner = "";
+            if (p.error) {
+                inner = `<div style="color:#c66;padding:4px 0">流水线异常: ${_esc(p.error)}</div>`;
+            } else {
+                const a = p.analyzer || {}, o = p.organizer || {}, po = p.polisher || {}, rt = p.retriever || {};
+                inner =
+                    _stageBlock("⓪ 知识检索", rt.elapsed, [
+                        ["摘要", rt.knowledge],
+                    ]) +
+                    _stageBlock("① 分析器", a.elapsed, [
+                        ["意图", a.intent],
+                        ["事实核查", (a.fact_check || []).length ? a.fact_check : ""],
+                        ["摘要", a.summary],
+                        ["原始输出", a.raw_json],
+                        ["思考过程", a.reasoning],
+                    ]) +
+                    _stageBlock("② 回复器", po.elapsed, [
+                        ["原始输出", po.raw],
+                        ["思考过程", po.reasoning],
+                    ]) +
+                    _stageBlock("③ 工具调度（表情包）", o.elapsed, [
+                        ["选图", o.sticker_label || "（不发）"],
+                        ["原始输出", o.raw],
+                        ["思考过程", o.reasoning],
+                    ]);
+            }
+            return `<div style="margin-bottom:14px;padding:8px;border:1px solid rgba(255,255,255,0.08);border-radius:8px;font-size:0.8em;color:#c8d0e0">
+                <div style="margin-bottom:4px"><span style="color:#8a8a8a">${p.time || "?"}</span> 开拓者: <span style="color:#e0d5c1">${_esc(p.user_input)}</span>${p.hint ? ` <span style="color:#8a8a8a">(hint:${p.hint})</span>` : ""}</div>
+                ${inner}
+            </div>`;
+        }).join("");
+    } catch (e) {
+        list.innerHTML = '<div style="color:#c66;padding:10px">加载失败</div>';
+    }
+}
+window.loadPipeline = loadPipeline;
+// ═══════════════════════════════════════════
 async function loadCharFiles() {
     const sel = document.getElementById("char-file-select");
     const editor = document.getElementById("char-file-editor");
@@ -577,14 +633,8 @@ async function loadCharFiles() {
         const resp = await fetch("/character-files");
         const data = await resp.json();
         sel.innerHTML = data.files.map(f => `<option value="${f.name}">${f.name}</option>`).join("");
-        if (data.files.length > 0) {
-            editor.value = data.files[0].content;
-            sel.value = data.files[0].name;
-        }
-        sel.onchange = () => {
-            const f = data.files.find(x => x.name === sel.value);
-            if (f) editor.value = f.content;
-        };
+        if (data.files.length > 0) { editor.value = data.files[0].content; sel.value = data.files[0].name; }
+        sel.onchange = () => { const f = data.files.find(x => x.name === sel.value); if (f) editor.value = f.content; };
         msg.textContent = `共 ${data.files.length} 个文件`;
     } catch (e) { msg.textContent = "加载失败"; }
 }
@@ -596,63 +646,194 @@ document.getElementById("char-file-save").addEventListener("click", async () => 
     msg.textContent = "保存中…";
     try {
         const resp = await fetch("/character-file-update", {
-            method: "POST",
-            headers: {"Content-Type": "application/json"},
+            method: "POST", headers: {"Content-Type": "application/json"},
             body: JSON.stringify({filename, content}),
         });
         const data = await resp.json();
-        msg.textContent = data.ok ? `✓ ${filename} 已保存，回复器已重载` : "失败：" + (data.error || "未知");
+        msg.textContent = data.ok ? `✓ 已保存` : "失败：" + (data.error || "未知");
+    } catch (e) { msg.textContent = "网络错误"; }
+});
+document.getElementById("char-file-reload").addEventListener("click", loadCharFiles);
+
+// 手账
+async function loadJournal() {
+    const editor = document.getElementById("journal-editor");
+    const msg = document.getElementById("journal-msg");
+    try {
+        const resp = await fetch("/journal");
+        const data = await resp.json();
+        if (editor) editor.value = data.content || "";
+        msg.textContent = data.content ? `${data.content.length} 字` : "空";
+    } catch (e) { if (msg) msg.textContent = "加载失败"; }
+}
+document.getElementById("journal-reload").addEventListener("click", loadJournal);
+document.getElementById("journal-save").addEventListener("click", async () => {
+    const content = document.getElementById("journal-editor").value;
+    const msg = document.getElementById("journal-msg");
+    msg.textContent = "保存中…";
+    try {
+        const resp = await fetch("/save-journal", {
+            method: "POST", headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({content}),
+        });
+        const data = await resp.json();
+        msg.textContent = data.ok ? `✓ 已保存（${content.length} 字）` : "失败";
     } catch (e) { msg.textContent = "网络错误"; }
 });
 
-document.getElementById("char-file-reload").addEventListener("click", loadCharFiles);
+// ═══════════════════════════════════════════
+// 表情包管理
+// ═══════════════════════════════════════════
+const stickerAddBtn = document.getElementById("sticker-add-btn");
+const stickerAddForm = document.getElementById("sticker-add-form");
+if (stickerAddBtn) stickerAddBtn.addEventListener("click", () => {
+    stickerAddForm.style.display = stickerAddForm.style.display === "none" ? "flex" : "none";
+});
 
-// ── 撤回逻辑 ───────────────────────────────────
-const undoBtn = document.getElementById("undo-btn");
-undoBtn.addEventListener("click", async () => {
-    if (!confirm("撤回上一轮对话？（消息将从界面和历史中移除）")) return;
-    undoBtn.disabled = true;
+document.getElementById("sticker-submit").addEventListener("click", async () => {
+    const file = document.getElementById("sticker-file").files[0];
+    const category = document.getElementById("sticker-category").value;
+    const label = document.getElementById("sticker-label").value.trim();
+    const msg = document.getElementById("sticker-add-msg");
+    if (!file) { msg.textContent = "请先选择图片"; return; }
+    if (!label) { msg.textContent = "请填写含义描述"; return; }
+    const fd = new FormData(); fd.append("file", file); fd.append("category", category); fd.append("label", label);
     try {
-        const resp = await fetch("/undo", {
-            method: "POST",
-            headers: {"Content-Type": "application/json"},
-            body: JSON.stringify({session_id: SESSION_ID}),
-        });
+        const resp = await fetch("/add-sticker", { method: "POST", body: fd });
         const data = await resp.json();
         if (data.ok) {
-            // 移除最后一条 user 消息
-            const userMsgs = messagesEl.querySelectorAll(".msg-row.user");
-            if (userMsgs.length > 0) userMsgs[userMsgs.length - 1].remove();
-            // 移除最后连续的 firefly 消息（含表情包）
-            while (true) {
-                const rows = messagesEl.querySelectorAll(".msg-row.firefly");
-                if (rows.length === 0) break;
-                const last = rows[rows.length - 1];
-                const prev = last.previousElementSibling;
-                if (prev && prev.classList.contains("msg-row") && prev.classList.contains("user")) break;
-                last.remove();
-                if (!prev || !prev.classList.contains("msg-row") || !prev.classList.contains("firefly")) break;
+            msg.textContent = "已添加：" + data.label;
+            document.getElementById("sticker-file").value = "";
+            document.getElementById("sticker-label").value = "";
+            loadStickerList();
+        } else msg.textContent = "失败：" + (data.error || "未知");
+    } catch(e) { msg.textContent = "网络错误"; }
+});
+
+document.getElementById("sticker-manage-btn").addEventListener("click", () => {
+    const panel = document.getElementById("sticker-manage-panel");
+    panel.style.display = panel.style.display === "none" ? "flex" : "none";
+    if (panel.style.display !== "none") loadStickerList();
+});
+
+async function loadStickerList() {
+    const msg = document.getElementById("sticker-manage-msg");
+    const list = document.getElementById("sticker-list");
+    msg.textContent = "加载中…";
+    try {
+        const resp = await fetch("/stickers");
+        const data = await resp.json();
+        const stickers = data.stickers || [];
+        msg.textContent = `共 ${stickers.length} 个`;
+        list.innerHTML = stickers.map(s => `
+        <div class="sticker-row" data-id="${s.id}">
+            <div class="stk-top">
+                <img class="stk-thumb" src="/assets/${s.file}" loading="lazy" onerror="this.style.opacity=0.2">
+                <select class="stk-cat-sel">
+                    <option value="可爱" ${s.category==="可爱"?"selected":""}>可爱</option>
+                    <option value="帅气" ${s.category==="帅气"?"selected":""}>帅气</option>
+                </select>
+                <button class="stk-save" disabled>保存</button>
+                <button class="stk-del" ${s.is_default ? "disabled" : ""}>删</button>
+            </div>
+            <input class="stk-label-input" type="text" value="${s.label}" maxlength="20">
+        </div>`).join("");
+        list.querySelectorAll(".sticker-row").forEach(row => {
+            const id = row.dataset.id;
+            const inp = row.querySelector(".stk-label-input");
+            const cat = row.querySelector(".stk-cat-sel");
+            const save = row.querySelector(".stk-save");
+            const del = row.querySelector(".stk-del");
+            const origLabel = inp.value;
+            const origCat = cat.value;
+
+            function checkChanged() {
+                save.disabled = (inp.value.trim() === origLabel && cat.value === origCat) || (!inp.value.trim() && !cat.value);
             }
-        } else {
-            alert(data.error || "撤回失败");
-        }
-    } catch (e) { alert("网络错误"); }
-    undoBtn.disabled = false;
+            inp.addEventListener("input", checkChanged);
+            cat.addEventListener("change", checkChanged);
+
+            save.addEventListener("click", async () => {
+                const label = inp.value.trim();
+                const category = cat.value;
+                try {
+                    const r = await fetch("/sticker-update", {
+                        method:"POST",
+                        headers:{"Content-Type":"application/json"},
+                        body:JSON.stringify({id, label: label || undefined, category}),
+                    });
+                    const d = await r.json();
+                    if (d.ok) {
+                        inp.value = d.label;
+                        cat.value = d.category;
+                        save.textContent="已存"; save.disabled=true;
+                        msg.textContent="已更新："+d.label;
+                    }
+                } catch(e) {}
+            });
+            del.addEventListener("click", async () => {
+                if (!confirm("确认删除？")) return;
+                try {
+                    await fetch("/sticker-delete", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({id}) });
+                    row.remove();
+                } catch(e) {}
+            });
+        });
+    } catch(e) { msg.textContent = "加载失败"; }
+}
+
+// ═══════════════════════════════════════════
+// 历史加载
+// ═══════════════════════════════════════════
+let _hasMore = false, _loading = false;
+let _lastWho = null;
+function renderHistoryMessage(m, prepend=false) {
+    const ts = m.time ? m.time.slice(11,16) : null;
+    // 发送方变化时插入时间分割线
+    if (m.who !== _lastWho && ts) {
+        addTimeDivider(ts);
+        _lastWho = m.who;
+    }
+    if (m.type==="sticker") addSticker(m.path, m.who, prepend, m.seq);
+    else addTextMessage(m.content, m.who, prepend, m.seq);
+}
+async function loadHistory(beforeSeq=null) {
+    if (_loading) return; _loading = true;
+    const url = beforeSeq ? `/history?limit=150&before_seq=${beforeSeq}` : `/history?limit=150`;
+    _lastWho = null;
+    try {
+        const resp = await fetch(url);
+        const data = await resp.json();
+        if (!data.messages || data.messages.length===0) { _hasMore=false; return; }
+        if (!beforeSeq) { data.messages.forEach(m=>renderHistoryMessage(m,false)); messagesEl.scrollTop=messagesEl.scrollHeight; undoBtn.disabled=false; }
+        else { const ph=messagesEl.scrollHeight, ps=messagesEl.scrollTop; data.messages.slice().reverse().forEach(m=>renderHistoryMessage(m,true)); messagesEl.scrollTop=ps+(messagesEl.scrollHeight-ph); }
+        _hasMore = !!data.has_more;
+    } catch(e) {} finally { _loading=false; }
+}
+messagesEl.addEventListener("scroll", () => {
+    if (messagesEl.scrollTop===0 && _hasMore && !_loading) {
+        const first = messagesEl.firstChild;
+        const seq = first ? parseInt(first.dataset.seq) : null;
+        if (seq) loadHistory(seq);
+    }
 });
 
-// ── 清历史逻辑 ─────────────────────────────────
-document.getElementById("clear-btn").addEventListener("click", async () => {
-    if (!confirm("确认清除全部对话历史？此操作不可撤销。")) return;
+// ═══════════════════════════════════════════
+// 起床检查
+// ═══════════════════════════════════════════
+async function checkWake() {
     try {
-        const resp = await fetch("/clear-history", {
-            method: "POST",
-            headers: {"Content-Type": "application/json"},
-            body: JSON.stringify({session_id: SESSION_ID}),
-        });
+        const resp = await fetch("/wake-status");
         const data = await resp.json();
-        if (data.ok) {
-            messagesEl.innerHTML = "";
-            undoBtn.disabled = true;
+        if (data.interrupted) {
+            document.getElementById("wake-overlay").style.display = "flex";
+            document.getElementById("wake-text").textContent = "流萤正在起床，记忆还在整理中…";
         }
-    } catch (e) { alert("网络错误"); }
-});
+    } catch(e) {}
+}
+
+// ═══════════════════════════════════════════
+// 启动
+// ═══════════════════════════════════════════
+checkWake();
+checkKey().then(() => { loadHistory(); });

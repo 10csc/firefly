@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""监控聚合 — 收集所有模块 get_counters() 为一个 dict，供 /metrics 端点消费"""
+"""监控聚合 — 收集所有模块 get_counters() 为一个 dict"""
 
 import logging
 
@@ -9,24 +9,15 @@ _COLLECT_COUNT = 0
 
 
 def collect() -> dict:
-    """聚合所有模块的 get_counters() 为一个 dict。延迟导入避免循环依赖。"""
     global _COLLECT_COUNT
     _COLLECT_COUNT += 1
 
     result = {}
 
     modules = [
-        ("state_updater", "modules.state_updater"),
-        ("mood_updater", "modules.mood_updater"),
-        ("state_decoder", "modules.state_decoder"),
-        ("planner", "modules.planner"),
-        ("tool_dispatcher", "modules.tool_dispatcher"),
-        ("reply_generator", "modules.reply_generator"),
-        ("composer", "modules.composer"),
-        ("refiner", "modules.refiner"),
-        ("sticker_picker", "tools.sticker_picker"),
-        ("bubble_updater", "tools.bubble_updater"),
-        ("memory_manager", "modules.memory_manager"),
+        ("analyzer", "modules.analyzer"),
+        ("organizer", "modules.organizer"),
+        ("polisher", "modules.polisher"),
         ("orchestrator", "orchestrator"),
     ]
 
@@ -39,5 +30,5 @@ def collect() -> dict:
             logger.warning("metrics: 无法加载 %s: %s", name, e)
             result[name] = {"error": str(e)}
 
-    result["metrics_collect_count"] = _COLLECT_COUNT
+    result["_collect_count"] = _COLLECT_COUNT
     return result

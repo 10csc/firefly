@@ -2,9 +2,9 @@
 """表情包选择器白盒测试"""
 
 import sys, os, tempfile, shutil
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "app"))
 
-from app.tools.sticker_picker import (
+from tools.sticker_picker import (
     pick_sticker, StickerEntry,
     get_all_stickers, get_counters,
     add_sticker, StickerAddError, VALID_CATEGORIES,
@@ -50,7 +50,7 @@ check("不存在分类→不抛异常", s is not None)
 # ══════════════════════════════════════════════════
 print("\n=== add_sticker ===")
 
-import app.tools.sticker_picker as sp
+import tools.sticker_picker as sp
 orig_registry = sp._REGISTRY_FILE
 tmpdir = tempfile.mkdtemp()
 try:

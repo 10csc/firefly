@@ -1,0 +1,2 @@
+# 流萤 (Firefly) — 独立角色扮演聊天 Agent
+requests>=2.28

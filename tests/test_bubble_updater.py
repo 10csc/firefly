@@ -2,9 +2,9 @@
 """气泡更新器白盒测试 — 简化版：AI 选 key，校验即用"""
 
 import sys, os
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "app"))
 
-from app.tools.bubble_updater import (
+from tools.bubble_updater import (
     apply_bubble, BubbleResult, BubbleDef, bubble_menu,
     get_bubble_info, get_all_bubbles, get_default_bubble, _BUBBLES,
 )

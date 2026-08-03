@@ -3,7 +3,40 @@ __pycache__/
 *.pyo
 .env
 *.log
-封装/
+封装（没指定就不读）/
 .claude/*.bak
-app/data/
 *.bak
+.pytest_cache/
+.vscode/
+
+# 密钥与用户运行时数据（禁止入库）
+app/config.json
+user_data/
+app/data/
+memory/data/
+
+# 构建产物与大文件
+build/
+dist/
+*.exe
+
+# 本地截图杂物
+屏幕截图*.png
+/开拓者_星.png
+/开拓者_穹.png
+/流萤_头像.png
+
+# ��׿ǩ��������Կ����ֹ�ύ��
+android/keystore/
+android/firefly.apk
+android/app/src/main/python/backend/
+android/build/
+android/sdk/
+android/local.properties
+android/firefly.apk
+
+# Gradle ����
+android/.gradle/
+
+# ˽�����أ����ύ��
+downloads/

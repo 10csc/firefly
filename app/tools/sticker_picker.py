@@ -38,8 +38,27 @@ _STICKERS_DEFAULT: dict[str, StickerEntry] = {
     "like_01":    StickerEntry("like_01",    "stickers/呜呜伯_期待.webp",           "可爱", "呜呜伯期待"),
 }
 
-# 用户添加项持久化路径
-_REGISTRY_FILE = Path(__file__).resolve().parent.parent / "assets" / "stickers" / "registry.json"
+# 用户添加项持久化路径：user_data/（打包 exe 后 app/assets/ 不可写）
+from modules.app_config import USER_DIR as _USER_DIR
+_REGISTRY_FILE = _USER_DIR / "stickers" / "registry.json"
+_REGISTRY_LEGACY = Path(__file__).resolve().parent.parent / "assets" / "stickers" / "registry.json"
+
+
+def _migrate_legacy_registry():
+    """旧位置（app/assets/stickers/）一次性迁移到 user_data/stickers/。"""
+    if not _REGISTRY_FILE.exists() and _REGISTRY_LEGACY.exists():
+        try:
+            _REGISTRY_FILE.parent.mkdir(parents=True, exist_ok=True)
+            _REGISTRY_FILE.write_text(
+                _REGISTRY_LEGACY.read_text(encoding="utf-8"), encoding="utf-8")
+            logger.info("registry.json 已迁移到 user_data/stickers/")
+        except Exception as e:
+            logger.warning("registry.json 迁移失败: %s", e)
+
+
+# 模块加载时迁移一次；不放在 _load_registry 里——测试替换 _REGISTRY_FILE 后
+# 每次加载都迁移会把真实数据拷进测试目录
+_migrate_legacy_registry()
 
 import threading
 _lock = threading.Lock()
@@ -130,9 +149,10 @@ def add_sticker(file: str, category: str, label: str) -> StickerEntry:
     if not label or not isinstance(label, str):
         raise StickerAddError("label 不能为空")
 
-    sid = "user_" + uuid.uuid4().hex[:8]
-    entry = StickerEntry(sid, file, category, label)
-    _save_user_entry(sid, file, category, label)
+    with _lock:
+        sid = "user_" + uuid.uuid4().hex[:8]
+        entry = StickerEntry(sid, file, category, label)
+        _save_user_entry(sid, file, category, label)
     logger.info("用户添加表情包: id=%s file=%s category=%s", sid, file, category)
     return entry
 
@@ -162,29 +182,34 @@ def _write_registry_all(stickers: dict[str, StickerEntry]) -> None:
         json.dumps({"stickers": user_items}, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
-def update_sticker_label(sid: str, new_label: str) -> StickerEntry:
-    """修改表情包的 label（含义说明）。category 不允许改（语义匹配只看 label）。
+def update_sticker(sid: str, new_label: str = None, new_category: str = None) -> StickerEntry:
+    """修改表情包的 label / category。传 None 的字段不修改。
 
-    默认项的 label 也可改——改的是 registry.json 里的覆盖值，不动代码内默认。
     Returns:
         更新后的 StickerEntry
     Raises:
-        StickerUpdateError: sid 不存在 / new_label 为空
+        StickerUpdateError: sid 不存在 / 没有可更新的内容
     """
     if not sid or not isinstance(sid, str):
         raise StickerUpdateError("sid 不能为空")
-    if not new_label or not isinstance(new_label, str) or not new_label.strip():
-        raise StickerUpdateError("label 不能为空")
-    new_label = new_label.strip()
+    has_label = new_label and isinstance(new_label, str) and new_label.strip()
+    has_category = new_category in ("可爱", "帅气")
+    if not has_label and not has_category:
+        raise StickerUpdateError("没有可更新的内容")
 
-    stickers = _load_registry()
-    if sid not in stickers:
-        raise StickerUpdateError(f"表情包不存在: {sid}")
+    # 读→改→写整体加锁，防并发丢更新
+    with _lock:
+        stickers = _load_registry()
+        if sid not in stickers:
+            raise StickerUpdateError(f"表情包不存在: {sid}")
 
-    s = stickers[sid]
-    s.label = new_label
-    _write_registry_all(stickers)
-    logger.info("用户修改表情包 label: id=%s → %s", sid, new_label)
+        s = stickers[sid]
+        if has_label:
+            s.label = new_label.strip()
+        if has_category:
+            s.category = new_category
+        _write_registry_all(stickers)
+    logger.info("用户修改表情包: id=%s label=%s category=%s", sid, s.label, s.category)
     return s
 
 
@@ -199,14 +224,15 @@ def delete_sticker(sid: str) -> None:
     if not sid or not isinstance(sid, str):
         raise StickerDeleteError("sid 不能为空")
 
-    stickers = _load_registry()
-    if sid not in stickers:
-        raise StickerDeleteError(f"表情包不存在: {sid}")
-    if sid in _STICKERS_DEFAULT:
-        raise StickerDeleteError("默认表情包不允许删除")
+    with _lock:
+        stickers = _load_registry()
+        if sid not in stickers:
+            raise StickerDeleteError(f"表情包不存在: {sid}")
+        if sid in _STICKERS_DEFAULT:
+            raise StickerDeleteError("默认表情包不允许删除")
 
-    del stickers[sid]
-    _write_registry_all(stickers)
+        del stickers[sid]
+        _write_registry_all(stickers)
     logger.info("用户删除表情包: id=%s", sid)
 
 
@@ -262,6 +288,21 @@ def pick_sticker_by_meaning(meaning: str) -> StickerEntry | None:
     top = [s for sc, s in scores if sc == max_score]
     with _lock: _PICK_COUNT += 1
     return random.choice(top)
+
+
+def pick_sticker_by_label(label: str) -> StickerEntry | None:
+    """按 label 精确匹配（工具调度器直接输出 label 原文时用），
+    未命中时降级字符重叠模糊匹配。"""
+    global _PICK_COUNT
+    if not isinstance(label, str) or not label.strip():
+        return None
+    label = label.strip()
+    stickers = _load_registry()
+    exact = [s for s in stickers.values() if s.label == label]
+    if exact:
+        with _lock: _PICK_COUNT += 1
+        return random.choice(exact)
+    return pick_sticker_by_meaning(label)
 
 
 def get_all_stickers() -> dict[str, StickerEntry]:

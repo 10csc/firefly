@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">流萤</string>
+    <string name="connect">连接</string>
+    <string name="server_ip_hint">服务器地址 (如 192.168.1.100:8765)</string>
+    <string name="connecting">连接中…</string>
+    <string name="connection_failed">连接失败，请检查地址和服务器状态</string>
+    <string name="settings">设置</string>
+</resources>

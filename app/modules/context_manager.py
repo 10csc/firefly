@@ -40,14 +40,14 @@ class ContextStats:
 # ── Token 估算（内化实现，不引外部库）─────────────
 def _estimate_tokens(text: str) -> int:
     """中英文混合 token 估算。
-    中文约 0.5 token/字，英文/符号约 4 字符折合 1 token。
+    DeepSeek 分词中文约 0.6 token/字，英文/符号约 4 字符折合 1 token。
     此为近似值，用于精力计算，不需要精确匹配 API 实际 token 数。
     """
     if not text:
         return 0
     chinese = sum(1 for c in text if '一' <= c <= '鿿')
     other = len(text) - chinese
-    return max(1, int(chinese * 1.5 + other * 0.25))
+    return max(1, int(chinese * 0.6 + other * 0.25))
 
 
 def _estimate_messages_tokens(messages: list) -> int:
@@ -137,6 +137,10 @@ class ContextManager:
         if i is None:
             return None
 
+        # 扩展到连续 user 块起点：一轮可能包含多条 user（分条发送），整轮撤回
+        while i > 0 and self._history[i - 1]["role"] == "user":
+            i -= 1
+
         # 从 i 往后找最后一个 role="assistant" 的消息索引
         j = None
         for idx in range(i + 1, len(self._history)):
@@ -156,13 +160,20 @@ class ContextManager:
 
     # ── 查询方法 ─────────────────────────────────
     def get_recent(self, n_turns: int = 10) -> list:
-        """获取最近 n 轮对话（n*2 条消息），返回副本"""
+        """获取最近 n 轮对话，返回副本。
+        按 user 消息数计轮次——历史中夹杂的 system 行为消息不挤占轮数。
+        """
         if not isinstance(n_turns, int) or n_turns <= 0:
             raise InputRejected(f"n_turns 必须为正整数，当前: {n_turns}")
-        count = n_turns * 2
-        if count >= len(self._history):
-            return deepcopy(self._history)
-        return deepcopy(self._history[-count:])
+        seen = 0
+        start = 0
+        for idx in range(len(self._history) - 1, -1, -1):
+            if self._history[idx]["role"] == "user":
+                seen += 1
+                if seen >= n_turns:
+                    start = idx
+                    break
+        return deepcopy(self._history[start:])
 
     def get_full(self) -> list:
         """获取完整历史，返回副本"""
@@ -181,8 +192,8 @@ class ContextManager:
 
     @property
     def turn_count(self) -> int:
-        """已存储的对话轮数"""
-        return len(self._history) // 2
+        """已存储的对话轮数（按 user 消息数计，system 行为消息不算轮）"""
+        return sum(1 for m in self._history if m["role"] == "user")
 
     # ── 内部计算 ─────────────────────────────────
     def _compute_stats(self) -> ContextStats:

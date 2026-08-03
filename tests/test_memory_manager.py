@@ -2,9 +2,11 @@
 """记忆管理器白盒测试 — mock LLM 测 rest/wake/中断"""
 
 import sys, os, json, tempfile
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "app"))
+_base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.join(_base, "app"))
+sys.path.insert(0, _base)
 
-from modules.memory_manager import MemoryManager, MemoryError, get_counters, wake as memory_wake
+from memory.memory_manager import MemoryManager, MemoryManagerError, get_counters, wake as memory_wake
 
 PASS, FAIL = 0, 0
 def check(desc, cond):
@@ -109,8 +111,8 @@ mm2 = MemoryManager(MockClient(), memory_file=fake_mem, index_file=tmp_idx)
 try:
     mm2.wake()
     check("中断应抛异常", False)
-except MemoryError:
-    check("中断抛 MemoryError", True)
+except MemoryManagerError:
+    check("中断抛 MemoryManagerError", True)
 
 # 正常情况：index + memory 都存在
 mm3 = MemoryManager(MockClient(), memory_file=mem_file, index_file=tmp_idx)
@@ -173,7 +175,7 @@ check("resolved 条目保留（未删除）", "下次带蛋糕" in content_r)
 print("\n=== 模块级 wake 中断降级 ===")
 
 # 用 monkey-patch 让模块级 _INDEX_FILE / _MEMORY_FILE 指向临时文件
-import modules.memory_manager as mm_mod
+import memory.memory_manager as mm_mod
 orig_mem = mm_mod._MEMORY_FILE
 orig_idx = mm_mod._INDEX_FILE
 

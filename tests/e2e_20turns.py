@@ -66,10 +66,14 @@ except Exception as e:
     proc.kill()
     sys.exit(1)
 
+all_replies = set()
+sticker_path_ok = True
+
 # 发消息
-print(f"\n{'='*60}")
-print(f"20轮对话测试 — 开始")
-print(f"{'='*60}")
+sep = "=" * 60
+print(f"\n{sep}")
+print("20轮对话测试 — 开始")
+print(sep)
 
 for i, msg in enumerate(CONVERSATION, 1):
     now = datetime.now().strftime("%H:%M:%S")
@@ -108,20 +112,18 @@ for i, msg in enumerate(CONVERSATION, 1):
     time.sleep(1.5)  # 间隔，避免 API 限流
 
 # ── 质量检查 ──────────────────────────────────────
-print(f"
-{'='*60}")
-print(f"质量检查")
-print(f"{'='*60}")
+print(f"\n{sep}")
+print("质量检查")
+print(sep)
 
 unique_count = len(all_replies)
 check(f"回复去重≥5（实际{unique_count}）", unique_count >= 5)
 check("sticker→path字段非空", sticker_path_ok)
 
 # 关服务器
-print(f"
-{'='*60}")
+print(f"\n{sep}")
 print(f"  通过: {PASS}  失败: {FAIL}")
-print(f"{'='*60}")
+print(sep)
 proc.kill()
 if FAIL > 0:
     sys.exit(1)

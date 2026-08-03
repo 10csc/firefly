@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.Firefly" parent="Theme.MaterialComponents.DayNight.NoActionBar">
+        <item name="colorPrimary">#1a1a2e</item>
+        <item name="colorPrimaryVariant">#16213e</item>
+        <item name="colorOnPrimary">#c8d0e0</item>
+        <item name="colorSecondary">#e0d5c1</item>
+        <item name="colorOnSecondary">#1a1a2e</item>
+        <item name="android:statusBarColor">#0f0f23</item>
+        <item name="android:navigationBarColor">#0f0f23</item>
+    </style>
+</resources>
