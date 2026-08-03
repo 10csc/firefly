@@ -95,7 +95,7 @@ pyinstaller firefly.spec --noconfirm
 ## 运行测试
 
 ```powershell
-cd F:\CodeFile\firefly
+cd firefly
 $env:PYTHONUTF8=1
 $tests = @("test_orchestrator","test_organizer","test_polisher","test_analyzer",
            "test_llm_retriever","test_memory_manager","test_conversation_store",
