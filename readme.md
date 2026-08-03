@@ -134,3 +134,11 @@ firefly/
 - **对话报"信号不好"**：API Key 无效或网络不通，检查设置页
 - **端口被占用**：`netstat -ano | findstr 8765` 找到进程后关闭
 - **改设定不生效**：设定文件在 `user_data/character/`，前端编辑保存后自动生效
+
+##尾言
+项目参考与引用：
+HeartEase1 / firefly-skill   https://github.com/HeartEase1/firefly-skill
+SyrieYume / starrail_ui   https://github.com/SyrieYume/starrail_ui
+B站wiki-崩坏：星穹铁道wiki  wiki.biligame.com/sr
+Fandom Wiki   honkai-star-rail.fandom.com
+以及个人整理数据与mihoyo官方资源
