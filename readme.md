@@ -135,7 +135,7 @@ firefly/
 - **端口被占用**：`netstat -ano | findstr 8765` 找到进程后关闭
 - **改设定不生效**：设定文件在 `user_data/character/`，前端编辑保存后自动生效
 
-##尾言
+## 尾言
 项目参考与引用：
 HeartEase1 / firefly-skill   https://github.com/HeartEase1/firefly-skill
 SyrieYume / starrail_ui   https://github.com/SyrieYume/starrail_ui
