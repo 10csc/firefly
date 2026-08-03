@@ -69,7 +69,7 @@ pyinstaller firefly.spec --noconfirm
 | 存储空间 | 建议 ≥200MB（APK 49MB + 运行时数据） |
 | 网络 | 需要联网（调用 DeepSeek API，无本地模型） |
 | 权限 | 仅 INTERNET（无其他权限） |
-| 已验证 | Android 15 真机（PJE110）、Android 16 模拟器（API 36.1） |
+| 已验证 | Android 15 国产旗舰真机、Android 16 模拟器（API 36.1） |
 
 **已知行为说明**：
 - 首次启动：内嵌服务初始化约 5-8 秒（加载设定资料库），随后进入聊天页
