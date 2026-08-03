@@ -40,3 +40,8 @@ android/.gradle/
 
 # 私人下载（勿提交）
 downloads/
+
+# 本地备份（个人内容，勿上传）
+firefly_backup_*.bundle
+firefly_keystore_backup_*/
+firefly_keystore_backup_*
