@@ -15,6 +15,7 @@ WizardStyle=modern
 PrivilegesRequired=lowest
 UninstallDisplayName=流萤 Firefly
 ArchitecturesInstallIn64BitMode=x64compatible
+SetupIconFile=F:\CodeFile\firefly\package\firefly.ico
 
 [Files]
 Source: "F:\CodeFile\firefly\dist\firefly\*"; DestDir: "{app}"; Flags: recursesubdirs ignoreversion
