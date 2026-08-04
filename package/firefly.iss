@@ -20,6 +20,12 @@ SetupIconFile=F:\CodeFile\firefly\package\firefly.ico
 [Files]
 Source: "F:\CodeFile\firefly\dist\firefly\*"; DestDir: "{app}"; Flags: recursesubdirs ignoreversion
 
+[InstallDelete]
+; 强制删除旧快捷方式，确保图标随新 exe 刷新
+Type: files; Name: "{autodesktop}\流萤 Firefly.lnk"
+Type: files; Name: "{autoprograms}\流萤 Firefly.lnk"
+Type: files; Name: "{userdesktop}\流萤 Firefly.lnk"
+
 [Icons]
 Name: "{autoprograms}\流萤 Firefly"; Filename: "{app}\firefly.exe"
 Name: "{autodesktop}\流萤 Firefly"; Filename: "{app}\firefly.exe"
