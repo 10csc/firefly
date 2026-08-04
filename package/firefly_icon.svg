@@ -1,23 +1,19 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- 与安卓 adaptive icon 完全一致的图形（ic_launcher_foreground + background） -->
+<!-- 与安卓 adaptive icon 一致，但去大背景渐变（小尺寸图标上太暗/太满，让萤火虫更突出） -->
 <svg xmlns="http://www.w3.org/2000/svg" width="108" height="108" viewBox="0 0 108 108">
-  <defs>
-    <linearGradient id="bg" x1="0%" y1="100%" x2="100%" y2="0%">
-      <stop offset="0%" stop-color="#0f0f23"/>
-      <stop offset="100%" stop-color="#1a1a3e"/>
-    </linearGradient>
-  </defs>
-  <rect width="108" height="108" fill="url(#bg)"/>
-  <!-- 光晕（大，alpha 0.18） -->
-  <circle cx="54" cy="54" r="26" fill="#FFD9A0" fill-opacity="0.18"/>
-  <!-- 光晕（中，0.35） -->
-  <circle cx="54" cy="54" r="16" fill="#FFE0B0" fill-opacity="0.35"/>
-  <!-- 核心光点 -->
+  <!-- 光晕（大，alpha 0.30 → 小尺寸仍有微弱光感） -->
+  <circle cx="54" cy="54" r="30" fill="#FFD9A0" fill-opacity="0.30"/>
+  <!-- 光晕（中，0.45） -->
+  <circle cx="54" cy="54" r="18" fill="#FFE0B0" fill-opacity="0.45"/>
+  <!-- 光晕（小，更强，0.7） -->
+  <circle cx="54" cy="54" r="11" fill="#FFE8B8" fill-opacity="0.7"/>
+  <!-- 核心光点（更大更亮，确保小尺寸可见） -->
   <circle cx="54" cy="54" r="9" fill="#FFF3D6"/>
-  <!-- 光点核心 -->
-  <circle cx="54" cy="54" r="4" fill="#FFFFFF"/>
-  <!-- 轨迹余韵 -->
-  <circle cx="74" cy="70" r="3" fill="#FFD9A0" fill-opacity="0.6"/>
-  <circle cx="80" cy="78" r="2" fill="#FFD9A0" fill-opacity="0.35"/>
-  <circle cx="84" cy="86" r="1.5" fill="#FFD9A0" fill-opacity="0.18"/>
+  <circle cx="54" cy="54" r="6" fill="#FFF8E0"/>
+  <!-- 光点核心（白） -->
+  <circle cx="54" cy="54" r="3" fill="#FFFFFF"/>
+  <!-- 轨迹余韵（小但亮） -->
+  <circle cx="74" cy="70" r="3" fill="#FFD9A0" fill-opacity="0.85"/>
+  <circle cx="80" cy="78" r="2" fill="#FFD9A0" fill-opacity="0.6"/>
+  <circle cx="84" cy="86" r="1.5" fill="#FFD9A0" fill-opacity="0.4"/>
 </svg>
