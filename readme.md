@@ -47,8 +47,9 @@ Linux / macOS：`cd app && python server.py` 即可（路径与编码自动处�
 
 | 平台 | 包 | 说明 |
 |------|-----|------|
+| Windows | `firefly-setup.exe` | **一键安装**（推荐），装完桌面/开始菜单有快捷方式，双击即启动 |
+| Windows | `firefly-win64.zip` | 绿色版，解压双击 `firefly.exe`（无安装器） |
 | Android | `firefly.apk` | 手机独立运行（Android 8.0+ 64 位），装完填 API Key 即用 |
-| Windows | `firefly-win64.zip` | 解压双击 `firefly.exe`，浏览器自动打开 |
 
 ### Windows（源码构建，可选）
 
