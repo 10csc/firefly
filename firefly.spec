@@ -71,6 +71,7 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+    icon='F:\\CodeFile\\firefly\\package\\firefly.ico',
 )
 
 coll = COLLECT(
