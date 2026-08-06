@@ -357,14 +357,19 @@ function addSticker(stickerPath, who, prepend = false, seq = null) {
 
 function addNarration(text, style, prepend = false, seq = null) {
     // 视觉小说式旁白：scene=居中小字（环境/事件），action=居中括号（动作）
+    // 防御：历史数据/LLM 可能自带括号，先剥离避免双重括号
+    let t = (text || "").trim();
+    if ((t.startsWith("（") && t.endsWith("）")) || (t.startsWith("(") && t.endsWith(")"))) {
+        t = t.slice(1, -1).trim();
+    }
     const row = document.createElement("div");
     row.className = "msg-row narration-row";
     if (seq !== null) row.dataset.seq = seq;
     if (!prepend) row.classList.add("float-in");
     const el = document.createElement("div");
     el.className = "narration " + (style === "scene" ? "narration-scene" : "narration-action");
-    if (style === "action") el.textContent = "（" + text + "）";
-    else el.textContent = text;
+    if (style === "action") el.textContent = "（" + t + "）";
+    else el.textContent = t;
     row.appendChild(el);
     if (prepend) { messagesEl.insertBefore(row, messagesEl.firstChild); }
     else { messagesEl.appendChild(row); scrollToBottom(); }
