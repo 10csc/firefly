@@ -643,44 +643,20 @@ body {
     cursor: pointer; letter-spacing: 2px; flex-shrink: 0;
 }
 .home-start:hover { background: var(--btn-bg-hover); }
-/* 春日手信占位层（覆盖首页，模式建设中） */
-#mode-placeholder {
-    position: fixed; inset: 0; z-index: 58;
-    background: var(--panel-solid);
-    display: none; align-items: center; justify-content: center;
-    padding: 24px;
-}
-#mode-placeholder.show { display: flex; }
-.placeholder-card {
-    background: var(--home-bg);
+/* 聊天页模式标签 */
+.chat-mode-tag {
+    display: inline-block;
+    margin-left: 8px;
+    padding: 1px 8px;
+    border-radius: 9px;
     border: 1px solid var(--border-mid);
-    border-radius: 16px;
-    padding: 28px 24px;
-    max-width: 320px; width: 100%;
-    text-align: center;
-    box-shadow: 0 10px 40px var(--shadow-panel);
+    background: var(--ctrl-bg-3);
+    color: var(--fg-muted);
+    font-size: 0.62em;
+    vertical-align: middle;
+    letter-spacing: 1px;
+    transform: translateY(-1px);
 }
-.placeholder-img {
-    width: 100%; max-height: 180px;
-    object-fit: contain;
-    border-radius: 10px;
-    margin-bottom: 14px;
-}
-.placeholder-title {
-    color: var(--fg-main); font-size: 1.15em;
-    letter-spacing: 2px; margin-bottom: 8px;
-}
-.placeholder-desc {
-    color: var(--fg-muted); font-size: 0.9em;
-    line-height: 1.7; margin-bottom: 18px;
-}
-.placeholder-btn {
-    padding: 10px 32px; border-radius: 20px; border: none;
-    background: var(--btn-bg); color: var(--fg-main);
-    font-family: inherit; font-size: 0.95em;
-    cursor: pointer; letter-spacing: 1px;
-}
-.placeholder-btn:hover { background: var(--btn-bg-hover); }
 /* 公告面板（覆盖层） */
 #notice-panel {
     position: fixed; inset: 0; z-index: 58;
