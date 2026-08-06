@@ -73,6 +73,9 @@ body.theme-light #bg { filter: blur(4px) brightness(1.1); }
     src: url("/assets/StarRailFont.ttf") format("truetype");
 }
 * { margin: 0; padding: 0; box-sizing: border-box; }
+/* 去除点击后的蓝色 focus 高亮框（移动端/桌面端统一），输入框用自定义聚焦样式 */
+*:focus { outline: none !important; }
+*:focus-visible { outline: none !important; }
 body {
     font-family: "StarRailFont", "Microsoft YaHei", sans-serif;
     height: 100vh; height: 100dvh; overflow: hidden;
@@ -165,6 +168,18 @@ body {
     border-radius: 16px 4px 16px 16px;
     border: 1px solid var(--bub-u-border);
 }
+
+/* 轻提示（轮播图入口占位等） */
+#app-toast {
+    position: fixed; left: 50%; bottom: 12vh; z-index: 99;
+    transform: translateX(-50%) translateY(10px);
+    padding: 10px 18px; border-radius: 20px;
+    background: var(--panel-solid); color: var(--fg-main);
+    font-size: 0.85em; box-shadow: 0 4px 16px var(--shadow-panel);
+    opacity: 0; pointer-events: none;
+    transition: opacity 0.25s, transform 0.25s;
+}
+#app-toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
 
 /* 消息浮入动画：新消息行从头像底部 ~50px 处上浮（游戏实测量），纯位移无淡入
    适配说明：本项目是滚动容器内追加（游戏为固定输入区+列表滚动）——
@@ -561,6 +576,16 @@ body {
     color: var(--fg-muted); font-size: 1.1em; cursor: pointer; z-index: 6;
 }
 #home-theme-btn { right: 54px; }
+#home-theme-btn img { width: 18px; height: 18px; image-rendering: pixelated; display: block; margin: 0 auto; }
+.home-feedback { left: 10px; right: auto; width: auto; padding: 0 12px; border-radius: 18px; font-size: 0.85em; white-space: nowrap; }
+.fb-link, .fb-item {
+    display: block; padding: 12px 14px; margin-bottom: 10px;
+    border-radius: 10px; background: var(--ctrl-bg-2);
+    color: var(--fg-bright); font-size: 0.9em;
+    text-decoration: none; line-height: 1.6;
+}
+.fb-link:hover { background: var(--btn-bg); }
+.menu-act-icon { width: 16px; height: 16px; image-rendering: pixelated; vertical-align: -2px; margin-right: 6px; }
 .home-settings:hover { color: var(--fg-main); border-color: var(--dot-bg); }
 /* 第一栏：公告标题（约 10% 高度） */
 .home-notice {
@@ -574,7 +599,8 @@ body {
     padding: 0 56px;
 }
 .home-notice:active { background: rgba(255,255,255,0.07); }
-.notice-icon { font-size: 1.1em; }
+.notice-icon { width: 20px; height: 20px; image-rendering: pixelated; flex-shrink: 0; }
+.notice-icon-sm { width: 18px; height: 18px; image-rendering: pixelated; vertical-align: -3px; }
 .notice-arrow { color: var(--fg-muted); font-size: 0.8em; transition: transform 0.2s; }
 /* 第二栏：滚动播放（约 30% 高度） */
 .home-carousel {
@@ -628,6 +654,15 @@ body {
     padding: env(safe-area-inset-top) 0 env(safe-area-inset-bottom);
 }
 #settings-panel.show { display: flex; }
+
+/* 反馈面板（首页 ✉ 打开） */
+#feedback-panel {
+    position: fixed; inset: 0; z-index: 58;
+    background: var(--panel-solid);
+    display: none; flex-direction: column;
+    padding: env(safe-area-inset-top) 0 env(safe-area-inset-bottom);
+}
+#feedback-panel.show { display: flex; }
 .settings-header {
     display: flex; justify-content: space-between; align-items: center;
     padding: 14px clamp(14px, 5vw, 20px);

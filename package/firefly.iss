@@ -2,7 +2,7 @@
 [Setup]
 AppId={{F1E7A3C5-9B2D-4E6A-8F1C-3D5B7A9E0C41}
 AppName=流萤 Firefly
-AppVersion=0.6.0
+AppVersion=0.7.0
 AppPublisher=Firefly Project
 DefaultDirName={localappdata}\Programs\Firefly
 DefaultGroupName=流萤 Firefly
@@ -18,7 +18,7 @@ ArchitecturesInstallIn64BitMode=x64compatible
 SetupIconFile=F:\CodeFile\firefly\package\firefly.ico
 
 [Files]
-Source: "F:\CodeFile\firefly\dist\firefly\*"; DestDir: "{app}"; Flags: recursesubdirs ignoreversion
+Source: "F:\CodeFile\firefly\dist\firefly\*"; DestDir: "{app}"; Flags: recursesubdirs ignoreversion; Excludes: "user_data"
 
 [InstallDelete]
 ; 强制删除旧快捷方式，确保图标随新 exe 刷新
