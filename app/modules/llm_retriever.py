@@ -17,7 +17,7 @@ import logging, threading
 from pathlib import Path
 from dataclasses import dataclass, field
 
-from modules.app_config import ROOT
+from modules.app_config import ROOT, DEFAULT_MODE
 from modules.llm_base import format_history, record_usage, record_error
 
 logger = logging.getLogger(__name__)
@@ -42,28 +42,30 @@ class RetrieveOutput:
     raw: str = ""                         # LLM 原始输出（调试观测用）
 
 
-# ── 知识库加载（模块级缓存）────────────────────────
+# ── 知识库加载（模块级缓存，按模式隔离）────────────
 # 与 build_index.py 同源：knowledge/（含 story/ 个人经历）+ database/dialogues_compiled/
-_SOURCE_DIRS = (
-    ROOT / "knowledge",
-    ROOT / "database" / "dialogues_compiled",
-)
+# story 模式：既有世界观资料库；haruno 模式资料库待设计（当前回退空）。
+def _source_dirs(mode: str = DEFAULT_MODE) -> tuple:
+    if mode == "story":
+        return (ROOT / "knowledge", ROOT / "database" / "dialogues_compiled")
+    return ()  # haruno：资料库未设计，不注入任何知识
+
+
 # 动态用户数据/过长原文/草稿不进知识库（与 build_index 排除规则一致）
 _EXCLUDE_NAMES = {"index.md", "手账.md", "memory.md", "dialogue-transcripts.md"}
-_KNOWLEDGE_CACHE: str | None = None
-_KNOWLEDGE_STATS: dict = {}
+_KNOWLEDGE_CACHE: dict[str, str | None] = {}
+_KNOWLEDGE_STATS: dict[str, dict] = {}
 
 
-def _load_knowledge() -> str:
-    """拼接全部设定资料库文本。模块级缓存（内容只在文件变更后重建）。"""
-    global _KNOWLEDGE_CACHE, _KNOWLEDGE_STATS
+def _load_knowledge(mode: str = DEFAULT_MODE) -> str:
+    """拼接 {mode} 设定资料库文本。模块级缓存（内容只在文件变更后重建）。"""
     with _lock:
-        if _KNOWLEDGE_CACHE is not None:
-            return _KNOWLEDGE_CACHE
+        if mode in _KNOWLEDGE_CACHE and _KNOWLEDGE_CACHE[mode] is not None:
+            return _KNOWLEDGE_CACHE[mode]
         parts = []
         total_chars = 0
         file_count = 0
-        for d in _SOURCE_DIRS:
+        for d in _source_dirs(mode):
             if not d.exists():
                 continue
             for fp in sorted(d.rglob("*.md")):
@@ -78,15 +80,15 @@ def _load_knowledge() -> str:
                 total_chars += len(text)
                 file_count += 1
                 parts.append(f"## {fp.relative_to(ROOT)}\n{text}")
-        _KNOWLEDGE_CACHE = "\n\n".join(parts)
-        _KNOWLEDGE_STATS = {"files": file_count, "chars": total_chars}
-        logger.info("知识库加载: %d 文件, %d 字符", file_count, total_chars)
-        return _KNOWLEDGE_CACHE
+        _KNOWLEDGE_CACHE[mode] = "\n\n".join(parts)
+        _KNOWLEDGE_STATS[mode] = {"files": file_count, "chars": total_chars}
+        logger.info("知识库加载[%s]: %d 文件, %d 字符", mode, file_count, total_chars)
+        return _KNOWLEDGE_CACHE[mode]
 
 
-def get_knowledge_stats() -> dict:
-    _load_knowledge()
-    return dict(_KNOWLEDGE_STATS)
+def get_knowledge_stats(mode: str = DEFAULT_MODE) -> dict:
+    _load_knowledge(mode)
+    return dict(_KNOWLEDGE_STATS.get(mode, {"files": 0, "chars": 0}))
 
 
 # ── Prompt（稳定层：知识库 + 指令，跨请求缓存命中）──
@@ -122,9 +124,10 @@ def get_counters() -> dict:
 # ── 子代理类 ──────────────────────────────────────
 class LlmRetriever:
     def __init__(self, client, model: str = "deepseek-v4-flash",
-                 temperature: float = 0.0, effort: str = "none"):
+                 temperature: float = 0.0, effort: str = "none", mode: str = DEFAULT_MODE):
         self._client = client
         self._model = model
+        self._mode = mode
         try:
             self._temperature = max(0.0, min(2.0, float(temperature)))
         except (TypeError, ValueError):
@@ -144,7 +147,10 @@ class LlmRetriever:
             _RETRIEVE_COUNT += 1
 
         # 2. 构建 prompt
-        knowledge = _load_knowledge()
+        knowledge = _load_knowledge(self._mode)
+        if not knowledge:
+            # 模式无资料库（haruno 待设计）或文件缺失：跳过检索，不产生额外 LLM 调用
+            return RetrieveOutput(knowledge="", raw="")
         sys_prompt = _SYSTEM_PROMPT.format(knowledge=knowledge)
         history_section = format_history(inp.recent_history) if inp.recent_history else "（无）"
         dynamic = f"## 最近对话\n{history_section}\n\n## 开拓者刚才说\n{inp.user_input}"
@@ -208,6 +214,5 @@ def _validate_input(inp: RetrieveInput):
 
 def reset_knowledge_cache():
     """强制重建知识库缓存（设定文件变更后调用）。"""
-    global _KNOWLEDGE_CACHE
     with _lock:
-        _KNOWLEDGE_CACHE = None
+        _KNOWLEDGE_CACHE.clear()

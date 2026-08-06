@@ -21,7 +21,9 @@ def check(desc, cond):
 
 tmpdir = tempfile.mkdtemp()
 try:
-    cs._CONV_FILE = Path(tmpdir) / "conversation.jsonl"
+    # 路径函数化后：patch conv_file 指向临时目录（保持测试隔离，不写真实 user_data）
+    _tmp_conv = Path(tmpdir) / "conversation.jsonl"
+    cs.conv_file = lambda mode="story": _tmp_conv
     cs._LEGACY_CONV = Path(tmpdir) / "legacy_missing.jsonl"
 
     # === 空文件 ===
@@ -93,7 +95,7 @@ try:
 
     # === 回灌 ===
     print("\n=== 回灌 ===")
-    cs._CONV_FILE = Path(tmpdir) / "hydrate.jsonl"
+    cs.conv_file = lambda mode="story": Path(tmpdir) / "hydrate.jsonl"
     append_message("user", {"type": "text", "content": "早"})
     append_message("firefly", {"type": "text", "content": "早呀"})
     append_message("firefly", {"type": "sticker", "path": "stickers/x.webp", "label": "比心"})

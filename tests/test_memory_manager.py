@@ -174,24 +174,24 @@ check("resolved 条目保留（未删除）", "下次带蛋糕" in content_r)
 # ============================================================
 print("\n=== 模块级 wake 中断降级 ===")
 
-# 用 monkey-patch 让模块级 _INDEX_FILE / _MEMORY_FILE 指向临时文件
+# 用 monkey-patch 让模块级 _memory_file / _index_file 指向临时文件
 import modules.memory_manager as mm_mod
-orig_mem = mm_mod._MEMORY_FILE
-orig_idx = mm_mod._INDEX_FILE
+orig_mem = mm_mod._memory_file
+orig_idx = mm_mod._index_file
 
 tmp_idx_w = _make_idx_path()
 with open(tmp_idx_w, "w", encoding="utf-8") as f:
     f.write(json.dumps({"last_integrated_turn": 5}))
 tmp_mem_w = _make_mem_path()  # 不存在，模拟中断
 
-mm_mod._MEMORY_FILE = tmp_mem_w
-mm_mod._INDEX_FILE = tmp_idx_w
+mm_mod._memory_file = lambda mode="story": tmp_mem_w
+mm_mod._index_file = lambda mode="story": tmp_idx_w
 try:
     head = memory_wake(MockClient())
     check("模块级 wake 中断降级返回空串", head == "")
 finally:
-    mm_mod._MEMORY_FILE = orig_mem
-    mm_mod._INDEX_FILE = orig_idx
+    mm_mod._memory_file = orig_mem
+    mm_mod._index_file = orig_idx
 
 
 # ============================================================

@@ -48,29 +48,28 @@ def _default_message() -> list:
     return [{"type": "text", "content": "嗯…信号不太好，等会儿再试试？"}]
 
 
-# ── 短信样本加载（模块级缓存，user_data 优先）─────────
-_SAMPLES_CACHE: str | None = None
+# ── 短信样本加载（模块级缓存，按模式隔离）─────────
+_SAMPLES_CACHE: dict[str, str] = {}
 _SAMPLES_LOCK = threading.Lock()
 
 
-def _load_samples() -> str:
-    global _SAMPLES_CACHE
+def _load_samples(mode: str = "story") -> str:
     with _SAMPLES_LOCK:
-        if _SAMPLES_CACHE is not None:
-            return _SAMPLES_CACHE
-        fp = resolve_character_file("sms_samples.md")
+        if mode in _SAMPLES_CACHE:
+            return _SAMPLES_CACHE[mode]
+        fp = resolve_character_file("sms_samples.md", mode)
         if fp.exists():
-            _SAMPLES_CACHE = fp.read_text(encoding="utf-8").strip()
+            _SAMPLES_CACHE[mode] = fp.read_text(encoding="utf-8").strip()
         else:
-            _SAMPLES_CACHE = ""
-        return _SAMPLES_CACHE
+            _SAMPLES_CACHE[mode] = ""
+        return _SAMPLES_CACHE[mode]
 
 
 def clear_samples_cache():
     """清除短信样本缓存（前端编辑 sms_samples.md 后调用）。"""
     global _SAMPLES_CACHE
     with _SAMPLES_LOCK:
-        _SAMPLES_CACHE = None
+        _SAMPLES_CACHE.clear()
 
 
 # ── 监控 ──────────────────────────────────────────
@@ -183,9 +182,10 @@ _POLISHER_SYSTEM = """你是流萤。你正在用手机给开拓者发消息。�
 # ── 回复器类 ──────────────────────────────────────
 class Polisher:
     def __init__(self, client, model: str = "deepseek-v4-flash",
-                 effort: str = "high", temperature: float = 0.5):
+                 effort: str = "high", temperature: float = 0.5, mode: str = "story"):
         self._client = client
         self._model = model
+        self._mode = mode
         try:
             self._temperature = max(0.0, min(2.0, float(temperature)))
         except (TypeError, ValueError):
@@ -207,11 +207,11 @@ class Polisher:
 
         # 2. 构建 prompt
         stable = _POLISHER_SYSTEM.format(
-            core=load_slot("core"),
-            identity=load_slot("identity"),
-            user_setting=load_slot("用户设定"),
-            journal=load_journal(),
-            sms_samples=_load_samples(),
+            core=load_slot("core", self._mode),
+            identity=load_slot("identity", self._mode),
+            user_setting=load_slot("用户设定", self._mode),
+            journal=load_journal(self._mode),
+            sms_samples=_load_samples(self._mode),
         )
 
         history_section = format_history(inp.recent_history)

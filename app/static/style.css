@@ -169,6 +169,12 @@ body {
     border: 1px solid var(--bub-u-border);
 }
 
+/* 设定文件编辑器的框外说明 */
+.field-tip {
+    color: var(--fg-muted); font-size: 0.7em; line-height: 1.7;
+    margin: 2px 0 6px;
+}
+
 /* 轻提示（轮播图入口占位等） */
 #app-toast {
     position: fixed; left: 50%; bottom: 12vh; z-index: 99;
@@ -637,6 +643,44 @@ body {
     cursor: pointer; letter-spacing: 2px; flex-shrink: 0;
 }
 .home-start:hover { background: var(--btn-bg-hover); }
+/* 春日手信占位层（覆盖首页，模式建设中） */
+#mode-placeholder {
+    position: fixed; inset: 0; z-index: 58;
+    background: var(--panel-solid);
+    display: none; align-items: center; justify-content: center;
+    padding: 24px;
+}
+#mode-placeholder.show { display: flex; }
+.placeholder-card {
+    background: var(--home-bg);
+    border: 1px solid var(--border-mid);
+    border-radius: 16px;
+    padding: 28px 24px;
+    max-width: 320px; width: 100%;
+    text-align: center;
+    box-shadow: 0 10px 40px var(--shadow-panel);
+}
+.placeholder-img {
+    width: 100%; max-height: 180px;
+    object-fit: contain;
+    border-radius: 10px;
+    margin-bottom: 14px;
+}
+.placeholder-title {
+    color: var(--fg-main); font-size: 1.15em;
+    letter-spacing: 2px; margin-bottom: 8px;
+}
+.placeholder-desc {
+    color: var(--fg-muted); font-size: 0.9em;
+    line-height: 1.7; margin-bottom: 18px;
+}
+.placeholder-btn {
+    padding: 10px 32px; border-radius: 20px; border: none;
+    background: var(--btn-bg); color: var(--fg-main);
+    font-family: inherit; font-size: 0.95em;
+    cursor: pointer; letter-spacing: 1px;
+}
+.placeholder-btn:hover { background: var(--btn-bg-hover); }
 /* 公告面板（覆盖层） */
 #notice-panel {
     position: fixed; inset: 0; z-index: 58;

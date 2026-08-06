@@ -17,43 +17,50 @@ from modules import app_config as cfg
 from modules.context_manager import ContextManager
 from modules.multipart import parse_multipart
 from orchestrator import handle_chat
+from modules.app_config import DEFAULT_MODE
 
 logger = logging.getLogger(__name__)
 
 
-# ── 会话状态 ─────────────────────────────────────
+# ── 会话状态（按 (sid, mode) 隔离）─────────────────
 sessions: dict[str, dict] = {}
 _SESSIONS_LOCK = threading.Lock()
 _SESSION_MAX = 30   # 会话上限：防任意 session_id 无限撑内存（超过删除最早创建的）
 
 
-def get_session(sid: str) -> dict:
+def _session_key(sid: str, mode: str) -> str:
+    return f"{sid}::{mode}"
+
+
+def get_session(sid: str, mode: str = DEFAULT_MODE) -> dict:
     # ThreadingHTTPServer 下并发首访同一 sid 会重复创建并互相覆盖 context，必须加锁
+    key = _session_key(sid, mode)
     with _SESSIONS_LOCK:
-        if sid not in sessions:
+        if key not in sessions:
             # 首次创建会话：加载记忆头部（无记忆/中断/异常都降级为空串，不阻塞会话）
             from modules.memory_manager import wake as memory_wake
             from modules.conversation_store import hydrate_context
             client = cfg.get_client()
-            memory_head = memory_wake(client, cfg.MODEL) if client else ""
+            memory_head = memory_wake(client, cfg.MODEL, mode) if client else ""
             ctx = ContextManager()
             try:
-                n = hydrate_context(ctx)
+                n = hydrate_context(ctx, mode=mode)
                 if n:
-                    logger.info("会话 %s 回灌 %d 轮历史", sid, n)
+                    logger.info("会话 %s[%s] 回灌 %d 轮历史", sid, mode, n)
             except Exception as e:
                 logger.warning("历史回灌失败（空上下文启动）: %s", e)
-            sessions[sid] = {
+            sessions[key] = {
                 "context": ctx,
                 "memory_head": memory_head,
+                "mode": mode,
                 # 会话级锁：chat/rest/undo/clear-history 串行化，防并发读写竞态
                 "lock": threading.Lock(),
             }
             # 超限清理（dict 保持插入序 = 创建序，删最早的一个）
             while len(sessions) > _SESSION_MAX:
-                oldest = next(k for k in sessions if k != sid)
+                oldest = next(k for k in sessions if k != key)
                 del sessions[oldest]
-        return sessions[sid]
+        return sessions[key]
 
 
 # JSON 请求体上限：防异常大 body 吃内存（本地单用户，1MB 足够）
@@ -71,6 +78,19 @@ def _read_json(h) -> dict:
         return body if isinstance(body, dict) else {}
     except Exception:
         return {}
+
+
+def _body_mode(body: dict) -> str:
+    """从请求体取模式，非法回退默认（审查约束）。"""
+    m = body.get("mode", DEFAULT_MODE)
+    return m if m in cfg.MODES else DEFAULT_MODE
+
+
+def _query_mode(h) -> str:
+    """从 query string 取模式（GET 接口用）。"""
+    qs = parse_qs(urlparse(h.path).query)
+    m = qs.get("mode", [DEFAULT_MODE])[0]
+    return m if m in cfg.MODES else DEFAULT_MODE
 
 
 # ══ POST 路由 ═══════════════════════════════════
@@ -131,12 +151,15 @@ def set_config(h):
 
 def save_journal(h):
     body = _read_json(h)
+    mode = _body_mode(body)
     content = body.get("content", "")
-    # 路径与 load_journal 同源，避免两处各写一遍公式再次分裂
-    from modules.llm_base import JOURNAL_FILE, reload_journal
-    JOURNAL_FILE.parent.mkdir(parents=True, exist_ok=True)
-    JOURNAL_FILE.write_text(content, encoding="utf-8")
-    reload_journal()
+    # 路径与 load_journal 同源（llm_base 内按模式公式），避免两处各写一遍公式再次分裂
+    from modules.llm_base import reload_journal
+    from modules.app_config import mode_journal_dir
+    fp = mode_journal_dir(mode) / "手账.md"
+    fp.parent.mkdir(parents=True, exist_ok=True)
+    fp.write_text(content, encoding="utf-8")
+    reload_journal(mode)
     h._json({"ok": True})
 
 
@@ -153,6 +176,7 @@ def chat(h):
     body = _read_json(h)
     session_id = body.get("session_id", "default")
     hint = (body.get("hint") or "").strip()
+    mode = _body_mode(body)
 
     # 即时写盘：用户消息一发就记。
     # 前端分条发送（messages 数组）→ 分条写盘（刷新后显示多条），
@@ -167,7 +191,7 @@ def chat(h):
             if isinstance(m, dict) and m.get("type") == "text" and m.get("content"):
                 text = str(m["content"]).strip()
                 if text:
-                    _append_msg("user", {"type": "text", "content": text})
+                    _append_msg("user", {"type": "text", "content": text}, mode=mode)
                     llm_parts.append(text)
             elif isinstance(m, dict) and m.get("type") == "sticker" and m.get("label"):
                 label = m["label"]
@@ -180,20 +204,20 @@ def chat(h):
                     except Exception:
                         path = ""
                 if path:
-                    _append_msg("user", {"type": "sticker", "label": label, "path": path})
+                    _append_msg("user", {"type": "sticker", "label": label, "path": path}, mode=mode)
                 llm_parts.append(f"[表情包：{label}]")
             elif isinstance(m, str) and m.strip():
                 # 兼容旧格式（纯字符串）
-                _append_msg("user", {"type": "text", "content": m.strip()})
+                _append_msg("user", {"type": "text", "content": m.strip()}, mode=mode)
                 llm_parts.append(m.strip())
     if llm_parts:
         user_input = "\n".join(llm_parts)
     else:
         user_input = (body.get("message") or "").strip()
         if user_input:
-            _append_msg("user", {"type": "text", "content": user_input})
+            _append_msg("user", {"type": "text", "content": user_input}, mode=mode)
 
-    session = get_session(session_id)
+    session = get_session(session_id, mode)
     # 会话级锁：同会话操作串行（chat 耗时长，防 undo/rest 并发读写 ctx）
     with session["lock"]:
         result = handle_chat(
@@ -210,6 +234,7 @@ def chat(h):
             polisher_temperature=cfg.config["polisher_temperature"],
             memory_head=session.get("memory_head", ""),
             hint=hint,
+            mode=mode,
         )
     # 即时写盘：流萤回复每条立刻记，并把 time 回传给前端
     enriched = []
@@ -217,14 +242,14 @@ def chat(h):
         record = {"type": m.get("type")}
         if m.get("type") == "text":
             record["content"] = m.get("content", "")
-            seq, t = _append_msg("firefly", {"type": "text", "content": record["content"]})
+            seq, t = _append_msg("firefly", {"type": "text", "content": record["content"]}, mode=mode)
         elif m.get("type") == "sticker":
             record["path"] = m.get("path", "")
             record["label"] = m.get("label", "")
-            seq, t = _append_msg("firefly", {"type": "sticker", "path": record["path"], "label": record["label"]})
+            seq, t = _append_msg("firefly", {"type": "sticker", "path": record["path"], "label": record["label"]}, mode=mode)
         else:
             record["content"] = str(m)
-            seq, t = _append_msg("firefly", {"type": "text", "content": record["content"]})
+            seq, t = _append_msg("firefly", {"type": "text", "content": record["content"]}, mode=mode)
         record["time"] = t
         enriched.append(record)
     h._json({"messages": enriched})
@@ -236,17 +261,18 @@ def rest(h):
         h._json({"ok": False, "error": "未设置 API Key"})
         return
     body = _read_json(h)
-    session = get_session(body.get("session_id", "default"))
+    mode = _body_mode(body)
+    session = get_session(body.get("session_id", "default"), mode)
     with session["lock"]:
         from modules.memory_manager import MemoryManager
-        mm = MemoryManager(client, cfg.MODEL)
+        mm = MemoryManager(client, cfg.MODEL, mode=mode)
         full_history = session["context"].get_full()
         result = mm.rest(full_history, session["context"].turn_count)
         # 休息成功后也更新手账
         if result.success:
             mm.update_journal(full_history[-100:])
             from modules.llm_base import reload_journal
-            reload_journal()
+            reload_journal(mode)
     h._json({"ok": result.success, "added": len(result.added_entries),
              "resolved": len(result.resolved_entries), "error": result.error})
 
@@ -313,6 +339,7 @@ def sticker_delete(h):
 
 def character_file_update(h):
     body = _read_json(h)
+    mode = _body_mode(body)
     filename = (body.get("filename") or "").strip()
     content = (body.get("content") or "")
     # 白名单：仅允许用户维护的补充设定（核心设定 core/identity/sms_samples 隐藏且不可经 API 修改）
@@ -322,7 +349,8 @@ def character_file_update(h):
     if not content:
         h._json({"ok": False, "error": "内容不能为空"}); return
     try:
-        filepath = cfg.USER_DIR / "character" / filename
+        filepath = cfg.mode_character_dir(mode) / filename
+        filepath.parent.mkdir(parents=True, exist_ok=True)
         filepath.write_text(content, encoding="utf-8")
         # 清除各模块的角色设定缓存
         from modules.llm_base import clear_cache
@@ -336,11 +364,12 @@ def character_file_update(h):
 
 def undo(h):
     body = _read_json(h)
-    session = get_session(body.get("session_id", "default"))
+    mode = _body_mode(body)
+    session = get_session(body.get("session_id", "default"), mode)
     with session["lock"]:
         result = session["context"].pop_last_turn()
         from modules.conversation_store import remove_last_turn
-        removed = remove_last_turn()
+        removed = remove_last_turn(mode=mode)
     # 以文件为准：重启后内存 context 为空但文件仍有历史，文件删成功就算成功
     if removed > 0 or result is not None:
         h._json({"ok": True, "removed_turn": 1, "files_removed": removed})
@@ -350,22 +379,25 @@ def undo(h):
 
 def clear_history(h):
     body = _read_json(h)
-    session = get_session(body.get("session_id", "default"))
+    mode = _body_mode(body)
+    session = get_session(body.get("session_id", "default"), mode)
     with session["lock"]:
         session["context"] = ContextManager()
         # 清空持久化文件
-        from modules.conversation_store import _CONV_FILE
+        from modules.conversation_store import conv_file
         try:
-            if _CONV_FILE.exists():
-                _CONV_FILE.write_text("", encoding="utf-8")
+            fp = conv_file(mode)
+            if fp.exists():
+                fp.write_text("", encoding="utf-8")
         except Exception:
             pass
         # 记忆整理进度必须同步归零：turn_count 已归零，旧 index 会让下次
         # 休息时把新对话全部误判为"已整理过"而跳过
         try:
-            from modules.memory_manager import _INDEX_FILE
-            if _INDEX_FILE.exists():
-                _INDEX_FILE.write_text(
+            from modules.memory_manager import _index_file
+            fp = _index_file(mode)
+            if fp.exists():
+                fp.write_text(
                     json.dumps({"last_integrated_turn": 0}, ensure_ascii=False),
                     encoding="utf-8")
         except Exception:
@@ -423,13 +455,14 @@ def get_requests(h):
 def get_pipeline(h):
     # 每轮对话各阶段的输入/输出/思考过程（调试答非所问用）
     from orchestrator import get_pipeline_log
-    log = get_pipeline_log(20)
+    log = get_pipeline_log(20, mode=_query_mode(h))
     h._json({"pipeline": log, "count": len(log)})
 
 
 def get_history(h):
-    # 分页加载历史：?limit=150&before_seq=N
+    # 分页加载历史：?limit=150&before_seq=N&mode=story
     from modules.conversation_store import load_recent, get_total_count, get_min_seq
+    mode = _query_mode(h)
     qs = parse_qs(urlparse(h.path).query)
     try:
         limit = int(qs.get("limit", ["150"])[0])
@@ -437,18 +470,19 @@ def get_history(h):
         limit = 150
     before_seq_raw = qs.get("before_seq", [None])[0]
     before_seq = int(before_seq_raw) if before_seq_raw else None
-    msgs = load_recent(limit=limit, before_seq=before_seq)
-    total = get_total_count()
+    msgs = load_recent(limit=limit, before_seq=before_seq, mode=mode)
+    total = get_total_count(mode=mode)
     # has_more：当前页最小 seq > 全局最小 seq 时还有更早历史
     cur_min = int(msgs[0]["seq"]) if msgs else 0
-    has_more = cur_min > get_min_seq() if total > 0 else False
+    has_more = cur_min > get_min_seq(mode=mode) if total > 0 else False
     h._json({"messages": msgs, "total": total, "has_more": has_more})
 
 
 def get_wake_status(h):
-    from modules.memory_manager import _INDEX_FILE, _MEMORY_FILE
-    interrupted = _INDEX_FILE.exists() and not _MEMORY_FILE.exists()
-    h._json({"interrupted": interrupted, "has_memory": _MEMORY_FILE.exists()})
+    from modules.memory_manager import _index_file, _memory_file
+    mode = _query_mode(h)
+    interrupted = _index_file(mode).exists() and not _memory_file(mode).exists()
+    h._json({"interrupted": interrupted, "has_memory": _memory_file(mode).exists()})
 
 
 def get_stickers(h):
@@ -465,10 +499,11 @@ def get_stickers(h):
 
 def get_character_files(h):
     from modules.llm_base import resolve_character_file
+    mode = _query_mode(h)
     files = []
     # 核心设定已隐藏，仅暴露用户可维护的补充设定文件
     for fname in ("用户设定.md",):
-        fp = resolve_character_file(fname)
+        fp = resolve_character_file(fname, mode)
         if fp.exists():
             files.append({"name": fname, "content": fp.read_text(encoding="utf-8")})
     h._json({"files": files})
@@ -476,17 +511,22 @@ def get_character_files(h):
 
 def get_user_memory(h):
     # 用户记忆 = 跨会话记忆文件（休息时自动整理），展示为可编辑
-    from modules.memory_manager import _MEMORY_FILE
-    content = _MEMORY_FILE.read_text(encoding="utf-8") if _MEMORY_FILE.exists() else ""
+    from modules.memory_manager import _memory_file
+    mode = _query_mode(h)
+    fp = _memory_file(mode)
+    content = fp.read_text(encoding="utf-8") if fp.exists() else ""
     h._json({"content": content})
 
 
 def save_user_memory(h):
-    from modules.memory_manager import _MEMORY_FILE
+    from modules.memory_manager import _memory_file
     body = _read_json(h)
+    mode = _body_mode(body)
     content = (body.get("content") or "")
     try:
-        _MEMORY_FILE.write_text(content, encoding="utf-8")
+        fp = _memory_file(mode)
+        fp.parent.mkdir(parents=True, exist_ok=True)
+        fp.write_text(content, encoding="utf-8")
         h._json({"ok": True})
     except Exception as e:
         h._json({"ok": False, "error": f"保存失败: {e}"})
@@ -494,7 +534,7 @@ def save_user_memory(h):
 
 def get_journal(h):
     from modules.llm_base import load_journal
-    h._json({"content": load_journal()})
+    h._json({"content": load_journal(_query_mode(h))})
 
 
 # ── 分发表 ───────────────────────────────────────
