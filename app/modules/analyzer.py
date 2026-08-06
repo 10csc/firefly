@@ -200,8 +200,11 @@ class Analyzer:
             record_usage("analyzer", resp)
             raw = resp.choices[0].message.content.strip()
             rc = (getattr(resp.choices[0].message, "reasoning_content", "") or "").strip()
+            # 思考模式极端情况：content 为空时从 reasoning 提取 JSON 兜底
             if not raw and rc:
-                raw = rc
+                import re as _re
+                _m = _re.search(r'\{.*\}', rc, _re.S)
+                raw = _m.group(0) if _m else rc
         except Exception as e:
             logger.error("分析器 LLM 失败: %s", e)
             with _lock:

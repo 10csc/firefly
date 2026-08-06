@@ -38,6 +38,27 @@ def _handle_direct(reason: str) -> list[str]:
     return _DIRECT_REPLIES.get(reason, ["嗯？我走神了…你刚才说了什么？"])
 
 
+def _merge_narrations(messages: list, narrations: list) -> list:
+    """旁白按 after 位置插入消息流（视觉小说式穿插演出）。
+
+    after=-1 前置；after=n 插在第 n+1 条消息之后；超出范围的追加末尾。
+    返回的新列表不含 after 字段。
+    """
+    narr_messages = [
+        {"type": "narration", "text": n["text"], "style": n["style"], "after": n.get("after", -1)}
+        for n in narrations
+    ]
+    merged = [m for m in narr_messages if m["after"] < 0]
+    for i, msg in enumerate(messages):
+        # 前置旁白已在开头放入，这里只处理 after >= 0 的穿插
+        merged.extend([m for m in narr_messages if m["after"] == i - 1 and m["after"] >= 0])
+        merged.append(msg)
+    merged.extend([m for m in narr_messages if m["after"] >= len(messages)])
+    for m in merged:
+        m.pop("after", None)
+    return merged
+
+
 # ── 开场演出（haruno 模式首条自动消息）────────────
 # 流萤在黄金时刻第一次见到开拓者的固定场景。纯文本演出，不调 LLM。
 # 旁白（scene/action）+ 流萤首条消息，写盘后供前端渲染。
@@ -259,13 +280,9 @@ def handle_chat(
                 entry = pick_sticker_by_label(org_output.sticker_label)
                 if entry:
                     messages.append({"type": "sticker", "path": entry.file, "label": entry.label})
-            # haruno 旁白：插在流萤消息之前（视觉小说式：先动作/环境，再说话）
+            # haruno 旁白：after=-1 前置；after=n 插在第 n+1 条消息之后（视觉小说式穿插演出）
             if org_output.narrations:
-                narr_messages = [
-                    {"type": "narration", "text": n["text"], "style": n["style"]}
-                    for n in org_output.narrations
-                ]
-                messages = narr_messages + messages
+                messages = _merge_narrations(messages, org_output.narrations)
         except Exception as e:
             logger.warning("工具调度失败（跳过表情包/旁白）: %s", e)
         _t3 = time.perf_counter()
