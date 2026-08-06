@@ -247,6 +247,11 @@ def chat(h):
             record["path"] = m.get("path", "")
             record["label"] = m.get("label", "")
             seq, t = _append_msg("firefly", {"type": "sticker", "path": record["path"], "label": record["label"]}, mode=mode)
+        elif m.get("type") == "narration":
+            # 视觉小说式旁白：scene=居中小字（环境/事件），action=居中括号（动作）
+            record["text"] = m.get("text", "")
+            record["style"] = m.get("style", "action")
+            seq, t = _append_msg("firefly", {"type": "narration", "text": record["text"], "style": record["style"]}, mode=mode)
         else:
             record["content"] = str(m)
             seq, t = _append_msg("firefly", {"type": "text", "content": record["content"]}, mode=mode)
@@ -537,6 +542,23 @@ def get_journal(h):
     h._json({"content": load_journal(_query_mode(h))})
 
 
+def open_mode(h):
+    """模式开场演出：haruno 首次进入时返回自动首条消息（旁白+流萤的话）。
+
+    幂等保护：会话已有历史时不再重复开场（重进不重演）。
+    """
+    body = _read_json(h)
+    mode = _body_mode(body)
+    if mode == "haruno":
+        from modules.conversation_store import get_total_count
+        if get_total_count(mode="haruno") == 0:
+            from orchestrator import haruno_opening
+            msgs = haruno_opening()
+            h._json({"messages": msgs, "opened": True})
+            return
+    h._json({"messages": [], "opened": False})
+
+
 # ── 分发表 ───────────────────────────────────────
 POST_ROUTES = {
     "/set-key": set_key,
@@ -545,6 +567,7 @@ POST_ROUTES = {
     "/save-user-memory": save_user_memory,
     "/check-key": check_key,
     "/chat": chat,
+    "/open-mode": open_mode,
     "/rest": rest,
     "/add-sticker": add_sticker_route,
     "/sticker-update": sticker_update,

@@ -657,6 +657,26 @@ body {
     letter-spacing: 1px;
     transform: translateY(-1px);
 }
+/* 视觉小说式旁白（haruno 模式演出） */
+.msg-row.narration-row {
+    justify-content: center;
+    padding: 4px 24px;
+}
+.msg-row.narration-row .avatar { display: none; }
+.narration {
+    text-align: center;
+    font-size: 0.78em;
+    line-height: 1.7;
+    color: var(--fg-muted);
+    user-select: none;
+}
+.narration-scene {
+    letter-spacing: 1px;
+}
+.narration-action {
+    color: var(--fg-muted);
+    opacity: 0.85;
+}
 /* 公告面板（覆盖层） */
 #notice-panel {
     position: fixed; inset: 0; z-index: 58;

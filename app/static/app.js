@@ -355,6 +355,22 @@ function addSticker(stickerPath, who, prepend = false, seq = null) {
     return row;
 }
 
+function addNarration(text, style, prepend = false, seq = null) {
+    // 视觉小说式旁白：scene=居中小字（环境/事件），action=居中括号（动作）
+    const row = document.createElement("div");
+    row.className = "msg-row narration-row";
+    if (seq !== null) row.dataset.seq = seq;
+    if (!prepend) row.classList.add("float-in");
+    const el = document.createElement("div");
+    el.className = "narration " + (style === "scene" ? "narration-scene" : "narration-action");
+    if (style === "action") el.textContent = "（" + text + "）";
+    else el.textContent = text;
+    row.appendChild(el);
+    if (prepend) { messagesEl.insertBefore(row, messagesEl.firstChild); }
+    else { messagesEl.appendChild(row); scrollToBottom(); }
+    return row;
+}
+
 function addTimeDivider(timeStr) {
     const div = document.createElement("div");
     div.className = "time-divider";
@@ -387,12 +403,13 @@ function renderMessages(messages, who, data) {
     const showNext = () => {
         if (seq >= messages.length) return;
         const msg = messages[seq++];
-        const chars = (msg.content || "").length;
+        const chars = (msg.content || msg.text || "").length;
         const loadMs = Math.min(1500, Math.max(700, 700 + chars * 25));
         const typingRow = addTypingBubble(who);
         setTimeout(() => {
             typingRow.remove();
             if (msg.type === "sticker") addSticker(msg.path, who);
+            else if (msg.type === "narration") addNarration(msg.text, msg.style);
             else addTextMessage(msg.content, who);
             setTimeout(showNext, 500);   // 消息间隔：0.5s 空白
         }, loadMs);
@@ -468,12 +485,30 @@ function showChat() {
     if (modeTag) modeTag.textContent = MODE_NAMES[CURRENT_MODE] || CURRENT_MODE;
     // 模式可能已切换：清空并重载当前模式历史（story/haruno 数据隔离）
     if (_lastMode !== CURRENT_MODE) {
+        const firstEnter = _lastMode === null;
+        const switched = _lastMode !== null;
         _lastMode = CURRENT_MODE;
         messagesEl.innerHTML = "";
         _hasMore = false;
         loadHistory();
+        // 进入 haruno：触发模式开场（流萤自动首条）。服务端幂等——无历史才生成。
+        if (CURRENT_MODE === "haruno" && (firstEnter || switched)) openModeOpening();
     }
     try { if (location.hash !== "#chat") history.pushState({chat: true}, "", "#chat"); } catch (e) {}
+}
+
+// haruno 模式开场：服务端幂等（无历史才生成），返回旁白+首条消息
+async function openModeOpening() {
+    try {
+        const resp = await fetch("/open-mode", {
+            method: "POST", headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({ mode: CURRENT_MODE }),
+        });
+        const data = await resp.json();
+        if (data.opened && data.messages && data.messages.length) {
+            renderMessages(data.messages, "firefly", data);
+        }
+    } catch (e) {}
 }
 
 // 轮播图功能入口：剧情模式 / 春日手信 → 各自模式的对话
@@ -1082,6 +1117,7 @@ function renderHistoryMessage(m, prepend=false) {
         _lastWho = m.who;
     }
     if (m.type==="sticker") addSticker(m.path, m.who, prepend, m.seq);
+    else if (m.type==="narration") addNarration(m.text, m.style, prepend, m.seq);
     else addTextMessage(m.content, m.who, prepend, m.seq);
 }
 async function loadHistory(beforeSeq=null) {
