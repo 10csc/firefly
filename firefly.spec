@@ -28,18 +28,12 @@ a = Analysis(
         (str(ROOT / "knowledge"), "knowledge"),
         # 原始资料库（wiki 抓取物，仅查证）
         (str(ROOT / "database"), "database"),
-        # 记忆模块（memory_manager 在 memory/ 下，作为 data 打包以支持动态 import）
-        (str(ROOT / "memory/memory_manager.py"), "memory"),
-        (str(ROOT / "memory/index.md"), "memory"),
-        (str(ROOT / "memory/experience.md"), "memory"),
-        (str(ROOT / "memory/story"), "memory/story"),
-        (str(ROOT / "memory/wiki-compiled"), "memory/wiki-compiled"),
         # 文档（错误总结等）
         (str(ROOT / "docs"), "docs"),
     ],
     hiddenimports=[
         "openai",
-        "memory.memory_manager",
+        "modules.memory_manager",
     ],
     hookspath=[str(ROOT / "_pyinstaller_hooks")],
     hooksconfig={},

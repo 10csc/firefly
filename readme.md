@@ -106,7 +106,7 @@ cd firefly
 $env:PYTHONUTF8=1
 $tests = @("test_orchestrator","test_organizer","test_polisher","test_analyzer",
            "test_llm_retriever","test_memory_manager","test_conversation_store",
-           "test_sticker_picker","test_bubble_updater","test_llm_base")
+           "test_sticker_picker","test_llm_base")
 foreach ($t in $tests) { python "tests/$t.py" }
 ```
 
@@ -114,25 +114,31 @@ foreach ($t in $tests) { python "tests/$t.py" }
 
 ```
 firefly/
-├── app/                    核心流程
-│   ├── server.py           HTTP 骨架（端口 8765，只绑 127.0.0.1）
+├── app/                    全部代码（按触发时间线组织）
+│   ├── server.py           HTTP 骨架（端口 8765，只绑 127.0.0.1）— 启动入口
 │   ├── routes.py           API 路由
 │   ├── orchestrator.py     编排器（子代理检索→分析器→回复器→表情包）
-│   ├── modules/
+│   ├── modules/            流水线模块（按调用顺序）
+│   │   ├── app_config.py   路径引导 + 配置状态（唯一 USER_DIR 公式）
+│   │   ├── llm_base.py     共享基础设施：设定加载/JSON解析/统计
 │   │   ├── llm_retriever.py  LLM 子代理检索（设定库压缩摘要）
-│   │   ├── analyzer.py      分析器：意图 + 事实核查
-│   │   ├── polisher.py      回复器：全权生成短信
-│   │   ├── organizer.py     组织器：表情包调度
-│   │   ├── llm_base.py      共享基础设施：设定加载/JSON解析/统计
-│   │   ├── app_config.py    路径引导 + 配置状态
-│   │   └── conversation_store.py 对话持久化
-│   ├── assets/character/   每轮必用的设定文件
+│   │   ├── analyzer.py     分析器：意图 + 事实核查
+│   │   ├── polisher.py     回复器：全权生成短信
+│   │   ├── organizer.py    组织器：表情包调度
+│   │   ├── context_manager.py / conversation_store.py  历史与持久化
+│   │   ├── memory_manager.py  记忆管理器（休息时整理 memory.md）
+│   │   └── metrics.py      监控聚合
+│   ├── tools/              表情包选择器
+│   ├── assets/character/   内置设定模板（core/identity/sms_samples/用户设定）
 │   └── static/             前端
-├── memory/                 记忆层（memory_manager.py + story/ 设定资料）
-├── knowledge/              知识层（星神/势力/地区/纪时表）
-├── database/               原始资料（wiki 抓取物，仅查证）
-├── android/                Android WebView 客户端
-└── tests/                  白盒测试
+├── knowledge/              只读知识层（检索器扫描区：世界观 + story/ 个人经历 + 剧本）
+├── database/               原始资料（wiki 抓取/对话原文，仅查证，不扫描）
+├── user_data/              运行时用户数据（升级保留；exe 同级 / 安卓内部存储）
+├── _trash/                 弃用文件暂存区（标注原位置与逻辑，见 _trash/README.md）
+├── docs/                   文档（需求设计/错误总结/待办/README 索引）
+├── android/                Android 客户端（backend 由 Gradle syncBackend 自动同步）
+├── tests/                  白盒测试
+└── package/  dist/         打包（Inno Setup 安装器 / PyInstaller 产物）
 ```
 
 ## 常见问题

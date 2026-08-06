@@ -22,7 +22,7 @@ class BubbleDef:
     name: str
     style: str
     text_color: str
-    asset: str
+    cls: str              # 前端 CSS 主题类（app.js 容器类，纯 CSS 气泡）
     keywords: list = None   # 规划器 suggestion 匹配关键词，单一数据源
 
     def __post_init__(self):
@@ -30,17 +30,17 @@ class BubbleDef:
             self.keywords = []
 
 _BUBBLES = {
-    "bubble_rabbit":   BubbleDef("bubble_rabbit", "兔子在哪里？", "可爱", "#f0f0f0", "bubbleStyle2.svg",
+    "bubble_rabbit":   BubbleDef("bubble_rabbit", "兔子在哪里？", "可爱", "#f0f0f0", "fb-rabbit",
                                  keywords=["可爱", "萌", "轻松", "活泼"]),
-    "bubble_trotter":  BubbleDef("bubble_trotter", "次元扑满", "活泼", "#f0f0f0", "bubbleStyle3.svg",
+    "bubble_trotter":  BubbleDef("bubble_trotter", "次元扑满", "活泼", "#f0f0f0", "fb-trotter",
                                  keywords=["活泼", "游戏", "动感"]),
-    "bubble_culture":  BubbleDef("bubble_culture", "星体培养皿", "科技/中性", "#f0f0f0", "bubbleStyle1.svg",
+    "bubble_culture":  BubbleDef("bubble_culture", "星体培养皿", "科技/中性", "#f0f0f0", "fb-culture",
                                  keywords=["科幻", "科技", "中性", "默认", "日常"]),
-    "bubble_tavern":   BubbleDef("bubble_tavern", "怪物酒馆", "暗色/酷", "#f0f0f0", "bubbleStyle4.svg",
+    "bubble_tavern":   BubbleDef("bubble_tavern", "怪物酒馆", "暗色/酷", "#f0f0f0", "fb-tavern",
                                  keywords=["酷", "暗色", "战斗", "帅气"]),
-    "bubble_cinema":   BubbleDef("bubble_cinema", "影城逐梦记", "文艺", "#f0f0f0", "bubbleStyle5.svg",
+    "bubble_cinema":   BubbleDef("bubble_cinema", "影城逐梦记", "文艺", "#f0f0f0", "fb-cinema",
                                  keywords=["文艺", "电影", "回忆", "安静"]),
-    "bubble_warmth":   BubbleDef("bubble_warmth", "光阴莫负", "温柔/暖棕", "#864756", "bubbleStyle6/main.png",
+    "bubble_warmth":   BubbleDef("bubble_warmth", "光阴莫负", "温柔/暖棕", "#864756", "fb-warmth",
                                  keywords=["温暖", "温柔", "暖心", "安抚"]),
 }
 

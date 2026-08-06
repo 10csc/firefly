@@ -114,9 +114,14 @@ def handle_chat(
     analyzer_model: str = "deepseek-v4-flash",
     organizer_model: str = "deepseek-v4-flash",
     polisher_model: str = "deepseek-v4-flash",
-    memory_head: str = "",
+    retriever_model: str = "deepseek-v4-flash",
+    retriever_effort: str = "none",
+    analyzer_effort: str = "high",
     polisher_effort: str = "high",
+    organizer_effort: str = "none",
+    retriever_temperature: float = 0.0,
     polisher_temperature: float = 0.5,
+    memory_head: str = "",
     hint: str = "",
 ) -> ChatResult:
     global _CHAT_COUNT, _DIRECT_COUNT, _ORCH_ERRORS
@@ -149,7 +154,9 @@ def handle_chat(
     try:
         anchor = [m for m in ctx.get_recent(10) if m.get("role") == "user"][-1:]
         _rt0 = time.perf_counter()
-        r_out = LlmRetriever(client).retrieve(RetrieveInput(
+        r_out = LlmRetriever(client, model=retriever_model,
+                             temperature=retriever_temperature,
+                             effort=retriever_effort).retrieve(RetrieveInput(
             user_input=user_input,
             recent_history=anchor,
         ))
@@ -170,7 +177,7 @@ def handle_chat(
             input_text = f"{user_input}\n（注意：开拓者还在输入第二条消息，可能还有下文）"
 
         _t0 = time.perf_counter()
-        analyzer = Analyzer(client, model=analyzer_model)
+        analyzer = Analyzer(client, model=analyzer_model, effort=analyzer_effort)
         analysis = analyzer.analyze(AnalyzerInput(
             user_input=input_text,
             recent_history=ctx.get_recent(20),
@@ -199,7 +206,7 @@ def handle_chat(
         # 失败只损失表情包，不影响文本回复
         org_output = None
         try:
-            organizer = Organizer(client, model=organizer_model)
+            organizer = Organizer(client, model=organizer_model, effort=organizer_effort)
             org_output = organizer.organize(OrganizerInput(
                 user_input=user_input,
                 reply_texts=[m["content"] for m in messages if m.get("type") == "text"],
@@ -219,6 +226,13 @@ def handle_chat(
             "user_input": user_input,
             "hint": hint,
             "environment": environment,
+            # 本轮实际生效的节点配置（调试：验证配置调整是否落地）
+            "config": {
+                "retriever": {"model": retriever_model, "effort": retriever_effort, "temperature": retriever_temperature},
+                "analyzer": {"model": analyzer_model, "effort": analyzer_effort},
+                "polisher": {"model": polisher_model, "effort": polisher_effort, "temperature": polisher_temperature},
+                "organizer": {"model": organizer_model, "effort": organizer_effort},
+            },
             "retriever": {
                 "elapsed": round(_rt1 - _rt0, 2),
                 "knowledge": retrieved_knowledge,     # 完整内容落盘，诊断不依赖截断

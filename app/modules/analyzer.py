@@ -77,6 +77,9 @@ _ANALYZER_SYSTEM = """你是一个分析助手。你的任务是在流萤回复�
 ## 人际关系与认知边界
 {identity}
 
+## 用户补充的剧情设定（与核心设定同等权威）
+{user_setting}
+
 ## 分析任务
 
 ### 1. 开拓者为什么这么说？（intent）
@@ -104,9 +107,13 @@ _ANALYZER_SYSTEM = """你是一个分析助手。你的任务是在流萤回复�
 
 # ── 分析器类 ──────────────────────────────────────
 class Analyzer:
-    def __init__(self, client, model: str = "deepseek-v4-flash"):
+    def __init__(self, client, model: str = "deepseek-v4-flash", effort: str = "high"):
         self._client = client
         self._model = model
+        # 思考模式：effort=none 显式关闭（温度才生效）；默认 high
+        self._thinking = effort != "none"
+        effort_map = {"low": "high", "high": "high", "max": "max"}
+        self._effort = effort_map.get(effort, "high")
 
     def analyze(self, inp: AnalyzerInput) -> AnalyzerOutput:
         global _ANALYZE_COUNT, _LLM_ERRORS
@@ -120,8 +127,11 @@ class Analyzer:
         # 2. 构建 prompt
         core = load_slot("core")
         identity = load_slot("identity")
+        user_setting = load_slot("用户设定")
 
-        stable = _ANALYZER_SYSTEM.format(core=core, identity=identity)
+        stable = _ANALYZER_SYSTEM.format(
+            core=core, identity=identity, user_setting=user_setting,
+        )
 
         history_lines = []
         turn = 0
@@ -156,6 +166,11 @@ class Analyzer:
 
         # 3. 调 LLM
         try:
+            if self._thinking:
+                # 思考模式下 temperature 无效（官方文档），不传避免误导
+                extra = {"thinking": {"type": "enabled"}, "reasoning_effort": self._effort}
+            else:
+                extra = {"thinking": {"type": "disabled"}}
             resp = self._client.chat.completions.create(
                 model=self._model,
                 messages=[
@@ -163,8 +178,7 @@ class Analyzer:
                     {"role": "user", "content": dynamic},
                 ],
                 max_tokens=10000,
-                # 思考模式下 temperature 无效（官方文档），不传避免误导
-                extra_body={"thinking": {"type": "enabled"}, "reasoning_effort": "high"},
+                extra_body=extra,
             )
             record_usage("analyzer", resp)
             raw = resp.choices[0].message.content.strip()

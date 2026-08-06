@@ -7,15 +7,11 @@ plugins {
     id("com.chaquo.python")
 }
 
-// 后端数据同步：把仓库根下的 app/ memory/ knowledge/ database/ 拷进 python 数据目录
+// 后端数据同步：把仓库根下的 app/ knowledge/ database/ 拷进 python 数据目录
 // （Chaquopy 把非 __init__.py 包目录当作数据文件打进 APK，运行时解压，只读）
 val syncBackend = tasks.register<Sync>("syncBackend") {
     from("../../app") {
         into("app")
-        exclude("**/__pycache__/**", "**/*.pyc")
-    }
-    from("../../memory") {
-        into("memory")
         exclude("**/__pycache__/**", "**/*.pyc")
     }
     from("../../knowledge") {

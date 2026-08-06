@@ -8,6 +8,136 @@
 </head>
 <body>
 <div id="bg"></div>
+
+<!-- ═══ 首页（独立视图） ═══ -->
+<div id="home-view">
+    <div class="home-topbar">
+        <div class="home-notice" onclick="toggleNotice()">
+            <span class="notice-icon">📢</span>
+            <span class="notice-title">公告 · 使用指南</span>
+            <span class="notice-arrow" id="notice-arrow">▾</span>
+        </div>
+        <button id="home-theme-btn" class="home-settings" onclick="toggleTheme()" title="切换配色">☀️</button>
+        <button id="home-settings-btn" class="home-settings" onclick="openSettings()" title="设置">⚙</button>
+    </div>
+    <div class="home-carousel" id="home-carousel">
+        <div class="carousel-track" id="carousel-track">
+            <img src="/剧情模式.png?v=2" alt="剧情模式">
+            <img src="/春日手信.png?v=2" alt="春日手信">
+        </div>
+        <div class="carousel-dots" id="carousel-dots"></div>
+    </div>
+    <div class="home-blank"></div>
+</div>
+
+<!-- ═══ 设置面板（首页 ⚙ 打开，API 配置独立于此） ═══ -->
+<div id="settings-panel">
+    <div class="settings-header">
+        <span>⚙ 设置 · API 配置</span>
+        <button onclick="closeSettings()">✕</button>
+    </div>
+    <div class="settings-body">
+        <div class="field">
+            <label>API Key</label>
+            <input id="key-input" type="password" placeholder="已设置，留空则保留原 Key">
+        </div>
+        <div style="margin:14px 0;padding-top:12px;border-top:1px solid var(--border-mid);color:var(--fg-muted);font-size:0.75em;line-height:1.7">
+            以下按对话流程顺序排列：<b style="color:var(--fg-main)">① 知识检索 → ② 意图分析 → ③ 生成回复 → ④ 表情包调度</b>
+        </div>
+        <div class="field">
+            <label>① 检索器模型（知识检索）</label>
+            <select id="retriever-model-select">
+                <option value="deepseek-v4-flash">Flash（快，便宜）</option>
+                <option value="deepseek-v4-pro">Pro（慢，贵，更强）</option>
+            </select>
+            <label style="margin-top:8px">思考等级（默认无思考）</label>
+            <select id="retriever-effort-select">
+                <option value="none">无思考（推荐）</option>
+                <option value="low">低（=高，官方映射）</option>
+                <option value="high">高</option>
+                <option value="max">最高（~2x token）</option>
+            </select>
+            <label style="margin-top:8px">温度（无思考时生效，控制摘要多样性）<span id="retriever-temp-value">0</span></label>
+            <input id="retriever-temp-slider" type="range" min="0" max="2" step="0.1" value="0">
+            <div style="color:var(--fg-muted);font-size:0.7em;margin-top:2px">默认 0 保证摘要格式稳定；仅此节点受温度影响</div>
+        </div>
+        <div class="field">
+            <label>② 分析器模型（意图 + 事实核查）</label>
+            <select id="analyzer-model-select">
+                <option value="deepseek-v4-flash">Flash（快，便宜）</option>
+                <option value="deepseek-v4-pro">Pro（慢，贵，更强）</option>
+            </select>
+            <label style="margin-top:8px">思考等级（默认高）</label>
+            <select id="analyzer-effort-select">
+                <option value="none">无思考（温度才生效）</option>
+                <option value="low">低（=高，官方映射）</option>
+                <option value="high">高（推荐）</option>
+                <option value="max">最高（~2x token）</option>
+            </select>
+        </div>
+        <div class="field">
+            <label>③ 回复器模型（生成短信）</label>
+            <select id="polisher-model-select">
+                <option value="deepseek-v4-flash">Flash（快，便宜）</option>
+                <option value="deepseek-v4-pro">Pro（慢，贵，更强）</option>
+            </select>
+            <label style="margin-top:8px">思考等级（默认高）</label>
+            <select id="polisher-effort-select">
+                <option value="none">无思考（温度才生效）</option>
+                <option value="low">低（=高，官方映射）</option>
+                <option value="high">高（推荐）</option>
+                <option value="max">最高（~2x token）</option>
+            </select>
+            <div style="color:var(--fg-muted);font-size:0.7em;margin-top:2px">回复器温度固定 0.5（思考模式温度无效，无思考时亦可接受）</div>
+        </div>
+        <div class="field">
+            <label>④ 组织器模型（表情包调度）</label>
+            <select id="organizer-model-select">
+                <option value="deepseek-v4-flash">Flash（快，便宜）</option>
+                <option value="deepseek-v4-pro">Pro（慢，贵，更强）</option>
+            </select>
+            <label style="margin-top:8px">思考等级（默认无思考）</label>
+            <select id="organizer-effort-select">
+                <option value="none">无思考（推荐）</option>
+                <option value="low">低（=高，官方映射）</option>
+                <option value="high">高</option>
+                <option value="max">最高（~2x token）</option>
+            </select>
+            <div style="color:var(--fg-muted);font-size:0.7em;margin-top:2px">组织器温度固定 0.3</div>
+        </div>
+        <div style="margin:16px 0 14px;padding-top:14px;border-top:1px solid var(--border-mid)">
+            <label style="display:block;color:var(--fg-main);font-size:0.85em;margin-bottom:8px">界面大小</label>
+            <div class="field" style="margin-bottom:0">
+                <label>消息 / 头像 / 气泡缩放 <span id="ui-scale-value">100%</span></label>
+                <input id="ui-scale-slider" type="range" min="80" max="130" step="5" value="100">
+                <div style="color:#8a8a8a;font-size:0.7em;margin-top:2px">80%~130%，实时预览</div>
+            </div>
+        </div>
+        <button id="key-save">保存</button>
+        <div id="config-msg"></div>
+    </div>
+</div>
+
+<!-- ═══ 公告面板（展开） ═══ -->
+<div id="notice-panel">
+    <div class="notice-header">
+        <span>📢 公告 · 使用指南</span>
+        <button onclick="closeNotice()">✕</button>
+    </div>
+    <div class="notice-body">
+        <h3>一、基础配置（首次使用必看）</h3>
+        <p>1. 在首页右上角点击 ⚙ 设置</p>
+        <p>2. 填入你的 DeepSeek API Key</p>
+        <p>3. 保存后即可开始与流萤对话</p>
+        <p class="notice-tip">Key 可在 platform.deepseek.com 申请，仅保存在本机，不会上传。</p>
+        <h3>二、关键功能</h3>
+        <p><b>让流萤休息</b>：对话积累后，在 ☰ 菜单点击「让流萤休息」——她会把这段时间聊过的内容整理进记忆与手账。醒来后，她会记得你们的约定、你的偏好和重要的事。</p>
+        <p><b>撤回上一轮</b>：☰ 菜单「撤回上一轮」可删除最近一轮对话。</p>
+        <p><b>表情包</b>：输入框右侧 😊 可打开表情包面板，选择表情发送。</p>
+        <p><b>设定文件</b>：☰ 菜单「设定文件」可查看与编辑流萤的角色设定、短信样本。</p>
+    </div>
+</div>
+
 <div id="app">
     <div id="header">
         <img class="avatar-sm" src="/流萤_头像.png" alt="流萤">
@@ -44,7 +174,6 @@
             <button onclick="closeMenu()">✕</button>
         </div>
         <div class="menu-tabs">
-            <button class="menu-tab active" data-tab="api">API 配置</button>
             <button class="menu-tab" data-tab="char">设定文件</button>
             <button class="menu-tab" data-tab="bubble">聊天气泡</button>
             <button class="menu-tab" data-tab="sticker">表情包</button>
@@ -53,69 +182,33 @@
             <button class="menu-tab" data-tab="pipeline">流程日志</button>
         </div>
         <div class="menu-actions">
+            <button onclick="showHome()">🏠 返回首页</button>
             <button id="menu-undo-btn">↩ 撤回上一轮</button>
-            <button id="menu-rest-btn">�?让流萤休息</button>
+            <button id="menu-rest-btn">🌙 让流萤休息</button>
             <button id="menu-clear-btn">🗑 清除历史</button>
         </div>
 
-        <!-- Tab: API -->
-        <div class="menu-content active" id="tab-api">
+        <!-- Tab: 设定文件（用户记忆 / 用户设定 / 流萤的手账） -->
+        <div class="menu-content active" id="tab-char">
             <div class="field">
-                <label>API Key</label>
-                <input id="key-input" type="password" placeholder="已设置，留空则保留原 Key">
+                <label>用户记忆 · 跨会话记忆（休息时自动整理）</label>
+                <textarea id="user-memory-editor" style="height:200px"></textarea>
+                <div class="btn-row">
+                    <button id="user-memory-reload" type="button">重新加载</button>
+                    <button id="user-memory-save" type="button">保存</button>
+                </div>
+                <div id="user-memory-msg" style="color:#8a8a8a;font-size:0.75em;margin-top:4px"></div>
             </div>
-            <div class="field">
-                <label>分析器模型（事实核查+意图分析）</label>
-                <select id="analyzer-model-select">
-                    <option value="deepseek-v4-flash">Flash（快，便宜）</option>
-                    <option value="deepseek-v4-pro">Pro（慢，贵，更强）</option>
-                </select>
+            <div style="margin:14px 0;padding-top:14px;border-top:1px solid rgba(255,255,255,0.08)">
+                <label>用户设定 · 补充剧情设定（与核心设定一起加载）</label>
+                <textarea id="user-setting-editor" style="height:200px"></textarea>
+                <div class="btn-row">
+                    <button id="user-setting-reload" type="button">重新加载</button>
+                    <button id="user-setting-save" type="button">保存</button>
+                </div>
+                <div id="char-file-msg" style="color:#8a8a8a;font-size:0.75em;margin-top:6px"></div>
             </div>
-            <div class="field">
-                <label>组织器模型（决定"说什么"）</label>
-                <select id="organizer-model-select">
-                    <option value="deepseek-v4-flash">Flash（快，便宜）</option>
-                    <option value="deepseek-v4-pro">Pro（慢，贵，更强）</option>
-                </select>
-            </div>
-            <div class="field">
-                <label>回复器模型（决定"怎么说"）</label>
-                <select id="polisher-model-select">
-                    <option value="deepseek-v4-flash">Flash（快，便宜）</option>
-                    <option value="deepseek-v4-pro">Pro（慢，贵，更强）</option>
-                </select>
-            </div>
-            <div class="field">
-                <label>思考等级（仅回复器）</label>
-                <select id="polisher-effort-select">
-                    <option value="none">无思考（温度才生效）</option>
-                    <option value="low">低（=高，官方映射）</option>
-                    <option value="high">高（推荐）</option>
-                    <option value="max">最高（~2x token）</option>
-                </select>
-            </div>
-            <div class="field">
-                <label>温度（仅"无思考"时生效）<span id="temp-value">0.5</span></label>
-                <input id="polisher-temp-slider" type="range" min="0" max="2" step="0.1" value="0.5">
-                <div style="color:#8a8a8a;font-size:0.7em;margin-top:2px">官方文档：思考模式下 temperature 无效（静默忽略）</div>
-            </div>
-            <button id="key-save">保存</button>
-            <div id="config-msg"></div>
-        </div>
-
-        <!-- Tab: 设定文件 -->
-        <div class="menu-content" id="tab-char">
-            <div class="field">
-                <label>选择文件</label>
-                <select id="char-file-select"></select>
-            </div>
-            <textarea id="char-file-editor"></textarea>
-            <div class="btn-row">
-                <button id="char-file-save">保存</button>
-                <button id="char-file-reload">重新加载</button>
-            </div>
-            <div id="char-file-msg"></div>
-            <div style="margin-top:24px;padding-top:14px;border-top:1px solid rgba(255,255,255,0.08)">
+            <div style="margin-top:14px;padding-top:14px;border-top:1px solid rgba(255,255,255,0.08)">
                 <label style="color:#e0d5c1;font-size:0.85em;margin-bottom:8px;display:block">流萤的手账</label>
                 <div class="btn-row" style="margin-bottom:8px">
                     <button id="journal-reload" style="flex:1">重新加载</button>

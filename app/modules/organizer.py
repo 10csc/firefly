@@ -81,9 +81,13 @@ def _build_sticker_list() -> str:
 
 # ── 组织器类 ──────────────────────────────────────
 class Organizer:
-    def __init__(self, client, model: str = "deepseek-v4-flash"):
+    def __init__(self, client, model: str = "deepseek-v4-flash", effort: str = "none"):
         self._client = client
         self._model = model
+        # 思考模式：effort=none 显式关闭（默认，温度生效）；其他档位思考模式
+        self._thinking = effort != "none"
+        effort_map = {"low": "high", "high": "high", "max": "max"}
+        self._effort = effort_map.get(effort, "high")
 
     def organize(self, inp: OrganizerInput) -> OrganizerOutput:
         global _ORGANIZE_COUNT, _LLM_ERRORS
@@ -123,6 +127,10 @@ class Organizer:
         # 非思考模式下 temperature 生效、思考链不会吃掉 max_tokens。
         # response_format 强制 JSON 输出。
         try:
+            if self._thinking:
+                extra = {"thinking": {"type": "enabled"}, "reasoning_effort": self._effort}
+            else:
+                extra = {"thinking": {"type": "disabled"}}
             resp = self._client.chat.completions.create(
                 model=self._model,
                 messages=[
@@ -131,7 +139,7 @@ class Organizer:
                 ],
                 max_tokens=10000, temperature=0.3,
                 response_format={"type": "json_object"},
-                extra_body={"thinking": {"type": "disabled"}},
+                extra_body=extra,
             )
             record_usage("organizer", resp)
             raw = resp.choices[0].message.content.strip()

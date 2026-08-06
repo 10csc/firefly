@@ -9,6 +9,8 @@ import json, logging, os, threading
 from pathlib import Path
 from dataclasses import dataclass
 
+from modules.app_config import ROOT, USER_DIR
+
 logger = logging.getLogger(__name__)
 _lock = threading.Lock()
 
@@ -33,26 +35,19 @@ class RestResult:
 # ── 文件路径 ──────────────────────────────────────
 # 用户记忆 = 运行时动态数据，必须放 user_data（与 conversation.jsonl 同级）：
 # 仓库内位置在打包(frozen)时位于 exe 内部 _internal/，更新安装包即被覆盖。
-import sys as _sys
-if os.environ.get("FIREFLY_ANDROID"):
-    _ROOT = Path(os.environ["FIREFLY_DATA_DIR"])           # 安卓：内部存储数据根（可写）
-else:
-    _ROOT = (
-        Path(_sys.executable).resolve().parent
-        if getattr(_sys, "frozen", False)
-        else Path(__file__).resolve().parent.parent
-    )
-_MEMORY_FILE = _ROOT / "user_data" / "data" / "memory.md"
-_INDEX_FILE = _ROOT / "user_data" / "data" / ".memory_index"
+# 统一从 app_config 取 USER_DIR/ROOT（frozen / android / 开发 三平台同一公式）。
+_MEMORY_FILE = USER_DIR / "data" / "memory.md"
+_INDEX_FILE = USER_DIR / "data" / ".memory_index"
 # 手账统一写 user_data/story/手账.md（与 llm_base.JOURNAL_FILE、server /save-journal 同一位置）
-_JOURNAL_FILE = _ROOT / "user_data" / "story" / "手账.md"
-_JOURNAL_LEGACY = Path(__file__).resolve().parent / "story" / "手账.md"
+_JOURNAL_FILE = USER_DIR / "story" / "手账.md"
+_JOURNAL_LEGACY = ROOT / "knowledge" / "story" / "手账.md"
 
 
 def _migrate_legacy():
     """一次性迁移：旧位置（memory/data/）有文件且 user_data 无 → 拷贝。
-    之后只读写 user_data，旧文件保留不删（防误删历史数据）。"""
-    legacy_dir = Path(__file__).resolve().parent / "data"
+    之后只读写 user_data，旧文件保留不删（防误删历史数据）。
+    旧目录 memory/data/ 已随结构整理移除，exists 检查自然跳过。"""
+    legacy_dir = ROOT / "memory" / "data"
     try:
         _MEMORY_FILE.parent.mkdir(parents=True, exist_ok=True)
     except OSError:

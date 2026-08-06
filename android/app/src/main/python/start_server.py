@@ -3,10 +3,9 @@
 
 数据布局（构建时由 Gradle syncBackend 从仓库根同步）：
   src/main/python/backend/
-    ├── app/          ← 后端代码（server.py 等）
-    ├── memory/       ← 设定资料（只读）
-    ├── knowledge/    ← 知识库（只读）
-    └── database/     ← 原始资料（只读）
+    ├── app/          ← 后端代码（server.py 等，含 modules/ 流水线与记忆管理器）
+    ├── knowledge/    ← 知识库（只读，检索器扫描区，含 story/ 个人经历）
+    └── database/     ← 原始资料（只读，仅查证）
 运行时全部解压到 app 私有目录，只读；用户数据写 os.environ["HOME"]/firefly_data。
 """
 

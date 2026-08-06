@@ -100,6 +100,9 @@ _POLISHER_SYSTEM = """你是流萤。你正在用手机给开拓者发消息。�
 ## 人际关系与认知边界
 {identity}
 
+## 用户补充的剧情设定（与核心设定同等权威）
+{user_setting}
+
 ## 手账（重要对话记录与未完成的约定）
 {journal}
 
@@ -206,6 +209,7 @@ class Polisher:
         stable = _POLISHER_SYSTEM.format(
             core=load_slot("core"),
             identity=load_slot("identity"),
+            user_setting=load_slot("用户设定"),
             journal=load_journal(),
             sms_samples=_load_samples(),
         )

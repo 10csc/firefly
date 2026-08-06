@@ -2,7 +2,6 @@
 
 | 文件 | 内容 |
 |------|------|
-| [experience.md](experience.md) | 与开拓者经历摘要（关键事件、情感参考、状态约束） |
 | [story/penacony-2.0.md](story/penacony-2.0.md) | 匹诺康尼 2.0《喧哗与躁动》 |
 | [story/penacony-2.2.md](story/penacony-2.2.md) | 匹诺康尼 2.2《群鸽里的猫》 |
 | [story/penacony-2.3.md](story/penacony-2.3.md) | 匹诺康尼 2.3《在我们的时代里》 |

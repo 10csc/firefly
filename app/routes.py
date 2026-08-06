@@ -32,7 +32,7 @@ def get_session(sid: str) -> dict:
     with _SESSIONS_LOCK:
         if sid not in sessions:
             # 首次创建会话：加载记忆头部（无记忆/中断/异常都降级为空串，不阻塞会话）
-            from memory.memory_manager import wake as memory_wake
+            from modules.memory_manager import wake as memory_wake
             from modules.conversation_store import hydrate_context
             client = cfg.get_client()
             memory_head = memory_wake(client, cfg.MODEL) if client else ""
@@ -85,10 +85,24 @@ def set_key(h):
 def set_config(h):
     body = _read_json(h)
     new_key = (body.get("api_key") or "").strip()
-    for key in ("analyzer_model", "organizer_model", "polisher_model"):
+    for key in ("analyzer_model", "organizer_model", "polisher_model", "retriever_model"):
         val = body.get(key, cfg.config[key])
         if val in cfg.VALID_MODELS:
             cfg.config[key] = val
+    for key in ("retriever_effort", "analyzer_effort", "polisher_effort", "organizer_effort"):
+        val = body.get(key, cfg.config[key])
+        if val in cfg.VALID_EFFORTS:
+            cfg.config[key] = val
+    try:
+        t = float(body.get("retriever_temperature", cfg.config["retriever_temperature"]))
+        cfg.config["retriever_temperature"] = max(0.0, min(2.0, t))
+    except (TypeError, ValueError):
+        pass
+    try:
+        t = float(body.get("polisher_temperature", cfg.config["polisher_temperature"]))
+        cfg.config["polisher_temperature"] = max(0.0, min(2.0, t))
+    except (TypeError, ValueError):
+        pass
     eff = body.get("polisher_effort", cfg.config["polisher_effort"])
     if eff in cfg.VALID_EFFORTS:
         cfg.config["polisher_effort"] = eff
@@ -105,7 +119,12 @@ def set_config(h):
         "analyzer_model": cfg.config["analyzer_model"],
         "organizer_model": cfg.config["organizer_model"],
         "polisher_model": cfg.config["polisher_model"],
+        "retriever_model": cfg.config["retriever_model"],
+        "retriever_effort": cfg.config["retriever_effort"],
+        "analyzer_effort": cfg.config["analyzer_effort"],
         "polisher_effort": cfg.config["polisher_effort"],
+        "organizer_effort": cfg.config["organizer_effort"],
+        "retriever_temperature": cfg.config["retriever_temperature"],
         "polisher_temperature": cfg.config["polisher_temperature"],
     })
 
@@ -182,9 +201,14 @@ def chat(h):
             analyzer_model=cfg.config["analyzer_model"],
             organizer_model=cfg.config["organizer_model"],
             polisher_model=cfg.config["polisher_model"],
-            memory_head=session.get("memory_head", ""),
+            retriever_model=cfg.config["retriever_model"],
+            retriever_effort=cfg.config["retriever_effort"],
+            analyzer_effort=cfg.config["analyzer_effort"],
             polisher_effort=cfg.config["polisher_effort"],
+            organizer_effort=cfg.config["organizer_effort"],
+            retriever_temperature=cfg.config["retriever_temperature"],
             polisher_temperature=cfg.config["polisher_temperature"],
+            memory_head=session.get("memory_head", ""),
             hint=hint,
         )
     # 即时写盘：流萤回复每条立刻记，并把 time 回传给前端
@@ -214,7 +238,7 @@ def rest(h):
     body = _read_json(h)
     session = get_session(body.get("session_id", "default"))
     with session["lock"]:
-        from memory.memory_manager import MemoryManager
+        from modules.memory_manager import MemoryManager
         mm = MemoryManager(client, cfg.MODEL)
         full_history = session["context"].get_full()
         result = mm.rest(full_history, session["context"].turn_count)
@@ -291,8 +315,8 @@ def character_file_update(h):
     body = _read_json(h)
     filename = (body.get("filename") or "").strip()
     content = (body.get("content") or "")
-    # 白名单：核心流程加载的设定文件
-    allowed = {"core.md", "identity.md", "sms_samples.md"}
+    # 白名单：仅允许用户维护的补充设定（核心设定 core/identity/sms_samples 隐藏且不可经 API 修改）
+    allowed = {"用户设定.md"}
     if filename not in allowed:
         h._json({"ok": False, "error": f"不允许的文件: {filename}"}); return
     if not content:
@@ -339,7 +363,7 @@ def clear_history(h):
         # 记忆整理进度必须同步归零：turn_count 已归零，旧 index 会让下次
         # 休息时把新对话全部误判为"已整理过"而跳过
         try:
-            from memory.memory_manager import _INDEX_FILE
+            from modules.memory_manager import _INDEX_FILE
             if _INDEX_FILE.exists():
                 _INDEX_FILE.write_text(
                     json.dumps({"last_integrated_turn": 0}, ensure_ascii=False),
@@ -359,7 +383,12 @@ def get_config(h):
         "analyzer_model": cfg.config["analyzer_model"],
         "organizer_model": cfg.config["organizer_model"],
         "polisher_model": cfg.config["polisher_model"],
+        "retriever_model": cfg.config["retriever_model"],
+        "retriever_effort": cfg.config["retriever_effort"],
+        "analyzer_effort": cfg.config["analyzer_effort"],
         "polisher_effort": cfg.config["polisher_effort"],
+        "organizer_effort": cfg.config["organizer_effort"],
+        "retriever_temperature": cfg.config["retriever_temperature"],
         "polisher_temperature": cfg.config["polisher_temperature"],
         "valid_models": list(cfg.VALID_MODELS),
         "valid_efforts": list(cfg.VALID_EFFORTS),
@@ -367,7 +396,7 @@ def get_config(h):
 
 
 def get_metrics(h):
-    from metrics import collect
+    from modules.metrics import collect
     h._json(collect())
 
 
@@ -417,7 +446,7 @@ def get_history(h):
 
 
 def get_wake_status(h):
-    from memory.memory_manager import _INDEX_FILE, _MEMORY_FILE
+    from modules.memory_manager import _INDEX_FILE, _MEMORY_FILE
     interrupted = _INDEX_FILE.exists() and not _MEMORY_FILE.exists()
     h._json({"interrupted": interrupted, "has_memory": _MEMORY_FILE.exists()})
 
@@ -437,11 +466,30 @@ def get_stickers(h):
 def get_character_files(h):
     from modules.llm_base import resolve_character_file
     files = []
-    for fname in ("core.md", "identity.md", "sms_samples.md"):
+    # 核心设定已隐藏，仅暴露用户可维护的补充设定文件
+    for fname in ("用户设定.md",):
         fp = resolve_character_file(fname)
         if fp.exists():
             files.append({"name": fname, "content": fp.read_text(encoding="utf-8")})
     h._json({"files": files})
+
+
+def get_user_memory(h):
+    # 用户记忆 = 跨会话记忆文件（休息时自动整理），展示为可编辑
+    from modules.memory_manager import _MEMORY_FILE
+    content = _MEMORY_FILE.read_text(encoding="utf-8") if _MEMORY_FILE.exists() else ""
+    h._json({"content": content})
+
+
+def save_user_memory(h):
+    from modules.memory_manager import _MEMORY_FILE
+    body = _read_json(h)
+    content = (body.get("content") or "")
+    try:
+        _MEMORY_FILE.write_text(content, encoding="utf-8")
+        h._json({"ok": True})
+    except Exception as e:
+        h._json({"ok": False, "error": f"保存失败: {e}"})
 
 
 def get_journal(h):
@@ -454,6 +502,7 @@ POST_ROUTES = {
     "/set-key": set_key,
     "/set-config": set_config,
     "/save-journal": save_journal,
+    "/save-user-memory": save_user_memory,
     "/check-key": check_key,
     "/chat": chat,
     "/rest": rest,
@@ -476,5 +525,6 @@ GET_ROUTES = {
     "/wake-status": get_wake_status,
     "/stickers": get_stickers,
     "/character-files": get_character_files,
+    "/user-memory": get_user_memory,
     "/journal": get_journal,
 }
