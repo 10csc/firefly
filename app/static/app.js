@@ -447,8 +447,10 @@ window.toggleTheme = toggleTheme;
 const homeView = document.getElementById("home-view");
 const appView = document.getElementById("app");
 
-// 当前模式：story=剧情模式（默认闭环）；haruno=春日手信（建设中）
+// 当前模式：story=剧情模式；haruno=春日手信（流萤想象的普通学生生活）
 let CURRENT_MODE = "story";
+let _lastMode = null;   // 上次进入聊天时的模式（切换时重载历史）
+const MODE_NAMES = { story: "剧情模式", haruno: "春日手信" };
 
 function showHome() {
     homeView.classList.add("show");
@@ -461,28 +463,23 @@ function showChat() {
     appView.style.display = "flex";     // 恢复聊天页
     startCarousel();
     scrollToBottom();
+    // 顶部显示当前模式名
+    const modeTag = document.getElementById("chat-mode-tag");
+    if (modeTag) modeTag.textContent = MODE_NAMES[CURRENT_MODE] || CURRENT_MODE;
+    // 模式可能已切换：清空并重载当前模式历史（story/haruno 数据隔离）
+    if (_lastMode !== CURRENT_MODE) {
+        _lastMode = CURRENT_MODE;
+        messagesEl.innerHTML = "";
+        _hasMore = false;
+        loadHistory();
+    }
     try { if (location.hash !== "#chat") history.pushState({chat: true}, "", "#chat"); } catch (e) {}
 }
 
-// 春日手信占位覆盖层
-function showModePlaceholder() {
-    const el = document.getElementById("mode-placeholder");
-    if (el) el.classList.add("show");
-}
-function closeModePlaceholder() {
-    const el = document.getElementById("mode-placeholder");
-    if (el) el.classList.remove("show");
-}
-
-// 轮播图功能入口：剧情模式 → 对话；春日手信 → 占位页（模式未设计，不进入聊天）
+// 轮播图功能入口：剧情模式 / 春日手信 → 各自模式的对话
 function enterCarouselAction() {
-    if (carouselIndex === 0) {
-        CURRENT_MODE = "story";         // 剧情模式（默认闭环，现有完整流程）
-        showChat();
-    } else {
-        CURRENT_MODE = "haruno";
-        showModePlaceholder();          // 春日手信占位：开发中，不进入聊天
-    }
+    CURRENT_MODE = carouselIndex === 0 ? "story" : "haruno";
+    showChat();
 }
 
 // 轻提示（3s 自动消失）

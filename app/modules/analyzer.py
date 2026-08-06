@@ -64,7 +64,7 @@ def get_counters() -> dict:
         }
 
 
-# ── Prompt ────────────────────────────────────────
+# ── Prompt（按模式，剧情专属段仅 story 注入）────────
 _ANALYZER_SYSTEM = """你是一个分析助手。你的任务是在流萤回复之前，分析开拓者刚才发来的消息。
 
 ## 你是谁
@@ -80,6 +80,8 @@ _ANALYZER_SYSTEM = """你是一个分析助手。你的任务是在流萤回复�
 ## 用户补充的剧情设定（与核心设定同等权威）
 {user_setting}
 
+{story_extra}
+
 ## 分析任务
 
 ### 1. 开拓者为什么这么说？（intent）
@@ -90,7 +92,7 @@ _ANALYZER_SYSTEM = """你是一个分析助手。你的任务是在流萤回复�
 逐条核查用户消息中涉及的每个具体说法：
 - "真实"：在设定文件中有明确记载 → 注明出处
 - "不存在"：设定文件中没有的角色/事件/概念 → 标记为不存在
-- "错误前提"：涉及流萤当前状态（能走能动/能去匹诺康尼/能做物理动作）→ 标记为错误
+- "错误前提"：涉及流萤当前状态（能走能动/能做物理动作）→ 标记为错误
 - 无法判断 → 标记为"不确定"
 
 ### 3. 结合检索到的知识和记忆，整理有用信息（summary）
@@ -103,6 +105,18 @@ _ANALYZER_SYSTEM = """你是一个分析助手。你的任务是在流萤回复�
 
 ## 输出格式（一行 JSON，禁止任何其他文字）
 {{"intent":"意图","fact_check":[{{"claim":"开拓者说的具体说法","verdict":"真实/不存在/错误前提/不确定","note":"说明"}}],"knowledge_query":["关键词"],"memory_query":["关键词"],"summary":"分析结果整理"}}"""
+
+
+# story 模式专属事实核查参考（剧情世界观），haruno 不注入
+_ANALYZER_STORY_EXTRA = """### 剧情事实核查补充（story 模式）
+涉及流萤当前状态的常见错误前提：能去匹诺康尼 / 能离开医疗舱 / 能吃东西 / 能做物理动作。
+这些在剧情设定中都是"错误前提"（重伤在医疗舱，无法入梦）。"""
+
+
+_ANALYZER_SYSTEMS = {
+    "story": _ANALYZER_SYSTEM,
+    "haruno": _ANALYZER_SYSTEM,
+}
 
 
 # ── 分析器类 ──────────────────────────────────────
@@ -130,9 +144,10 @@ class Analyzer:
         core = load_slot("core", self._mode)
         identity = load_slot("identity", self._mode)
         user_setting = load_slot("用户设定", self._mode)
+        story_extra = _ANALYZER_STORY_EXTRA if self._mode == "story" else ""
 
         stable = _ANALYZER_SYSTEM.format(
-            core=core, identity=identity, user_setting=user_setting,
+            core=core, identity=identity, user_setting=user_setting, story_extra=story_extra,
         )
 
         history_lines = []
