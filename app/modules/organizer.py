@@ -1,11 +1,11 @@
 # -*- coding: utf-8 -*-
-"""组织器 — 工具调度器（当前工具：表情包）
+"""组织器 — 模式化工具调度
 
-架构调整（方案B）：不再决定回复内容（那是回复器的事）。
-看流萤刚发出的消息，决定要不要配表情包、配哪张。
-未来的工具（气泡切换、主动消息等）也挂在这里。
+story 模式：表情包调度器（看流萤刚发出的消息，决定配不配表情包、配哪张）
+haruno 模式：旁白生成器（视觉小说式 RP——环境/动作描写，居中小字演出）
+
 模块铁律：接收输入 → 审查约束 → 模块处理 → 验证结果 → 最终输出
-模型: Flash Non-think（简单分类任务，无需推理）
+模型: story=Flash Non-think（简单分类）；haruno=Think High（创作任务）
 """
 
 import logging, threading
@@ -27,12 +27,14 @@ class InputRejected(OrganizerError): pass
 class OrganizerInput:
     user_input: str                  # 开拓者刚才说的话
     reply_texts: list = field(default_factory=list)  # 流萤刚生成的回复文本（条列表）
-    recent_history: list = field(default_factory=list)  # 最近几轮（含表情包行为记录，供频率感知）
+    recent_history: list = field(default_factory=list)  # 最近几轮（含行为记录，供频率感知）
+    mode: str = "story"
 
 
 @dataclass
 class OrganizerOutput:
-    sticker_label: str = ""          # 选中的表情包 label，"" = 不发
+    sticker_label: str = ""          # story：选中的表情包 label，"" = 不发
+    narrations: list = field(default_factory=list)  # haruno：[{"text","style"}] style=scene|action
     raw_json: str = ""
     reasoning: str = ""              # 调试观测用
 
@@ -79,17 +81,51 @@ def _build_sticker_list() -> str:
     return "\n".join(lines) if lines else "（无可用表情包）"
 
 
+# ── haruno 模式：旁白生成器（视觉小说式 RP 演出）──
+_NARRATION_SYSTEM = """你是流萤的故事演出助手。流萤刚发完一段话，你为这段对话配上环境/动作描写（旁白）。
+
+## 你的产出是什么
+旁白是"第三者视角"的演出文字，补充流萤的动作、神态和环境氛围。两种类型：
+- scene：环境/事件描写（居中小字，无括号）——如"就在这时，一位少女挺身而出打跑了他们。"
+- action：动作/神态描写（居中，用括号括起）——如"（少女在仔细观察你）"
+
+## 旁白写作规则
+- 从流萤的视角出发描写她：她的动作、神态、看向开拓者的目光、周围的环境变化
+- 动作要具体、克制：一个眼神、一次停顿、手指捏紧衣角——不要大段抒情
+- 环境描写只在氛围确实变化时出现（人流、灯光、风），不要每轮都写
+- 字数：每条 10-40 字。一条消息一个动作，不要堆砌
+- 频率：**不是每轮都必须有**。纯对话轮（就是聊天）不配旁白；只有流萤有明显动作/神态/环境变化时才写
+- 典型搭配：她说话的同时做了什么（说话前接、说话时做）、她听开拓者说话时的反应、她注意到的东西
+
+## 绝对禁止
+- 禁止写开拓者的动作和心理（那是用户的事，不代写）
+- 禁止旁白里出现"流萤说/流萤问"（对话本身就是消息，旁白只写动作和环境）
+- 禁止把短信内容复述进旁白
+- 禁止每轮都输出旁白——空数组是常态，有内容才写
+
+## 输出格式（一行 JSON，禁止任何其他文字）
+{{"narrations":[{{"text":"旁白内容","style":"scene"}}]}}
+没有旁白时：{{"narrations":[]}}"""
+
+
 # ── 组织器类 ──────────────────────────────────────
 class Organizer:
-    def __init__(self, client, model: str = "deepseek-v4-flash", effort: str = "none"):
+    def __init__(self, client, model: str = "deepseek-v4-flash", effort: str = "none",
+                 mode: str = "story"):
         self._client = client
         self._model = model
+        self._mode = mode
         # 思考模式：effort=none 显式关闭（默认，温度生效）；其他档位思考模式
         self._thinking = effort != "none"
         effort_map = {"low": "high", "high": "high", "max": "max"}
         self._effort = effort_map.get(effort, "high")
 
     def organize(self, inp: OrganizerInput) -> OrganizerOutput:
+        if inp.mode != "story":
+            return self._organize_narration(inp)
+        return self._organize_sticker(inp)
+
+    def _organize_sticker(self, inp: OrganizerInput) -> OrganizerOutput:
         global _ORGANIZE_COUNT, _LLM_ERRORS
 
         # 1. 审查
@@ -157,6 +193,71 @@ class Organizer:
         out.reasoning = rc
         return out
 
+    def _organize_narration(self, inp: OrganizerInput) -> OrganizerOutput:
+        global _ORGANIZE_COUNT, _LLM_ERRORS
+
+        # 1. 审查
+        _validate_input(inp)
+
+        with _lock:
+            _ORGANIZE_COUNT += 1
+
+        # 2. 构建 prompt
+        stable = _NARRATION_SYSTEM
+
+        recent_lines = []
+        for m in inp.recent_history:
+            role = m.get("role", "")
+            content = m.get("content", "")
+            if role == "user":
+                recent_lines.append(f"开拓者: {content}")
+            elif role == "assistant":
+                recent_lines.append(f"流萤: {content}")
+            elif role == "system":
+                recent_lines.append(content)  # 旁白/行为记录
+        recent_section = "\n".join(recent_lines) if recent_lines else "（无）"
+
+        reply_section = "\n".join(f"- {t}" for t in inp.reply_texts)
+
+        dynamic = (
+            f"## 最近几轮（含之前的旁白记录，避免重复描写）\n{recent_section}\n\n"
+            f"## 开拓者刚才说\n{inp.user_input}\n\n"
+            f"## 流萤刚发的话\n{reply_section}\n\n"
+            "请输出旁白 JSON："
+        )
+
+        # 3. 调 LLM（创作任务：Think High 默认，让旁白有灵性）
+        try:
+            if self._thinking:
+                extra = {"thinking": {"type": "enabled"}, "reasoning_effort": self._effort}
+            else:
+                extra = {"thinking": {"type": "enabled"}, "reasoning_effort": "high"}
+            resp = self._client.chat.completions.create(
+                model=self._model,
+                messages=[
+                    {"role": "system", "content": stable},
+                    {"role": "user", "content": dynamic},
+                ],
+                max_tokens=10000,
+                response_format={"type": "json_object"},
+                extra_body=extra,
+            )
+            record_usage("organizer", resp)
+            raw = resp.choices[0].message.content.strip()
+            rc = (getattr(resp.choices[0].message, "reasoning_content", "") or "").strip()
+            if not raw and rc:
+                raw = rc
+        except Exception as e:
+            logger.error("旁白生成器 LLM 失败: %s", e)
+            with _lock:
+                _LLM_ERRORS += 1
+            record_error("organizer", self._model, str(e))
+            return OrganizerOutput()  # 降级：无旁白
+
+        out = _parse_narration(raw)
+        out.reasoning = rc
+        return out
+
 
 # ── 辅助函数 ──────────────────────────────────────
 def _validate_input(inp: OrganizerInput):
@@ -184,3 +285,26 @@ def _parse_and_validate(raw: str) -> OrganizerOutput:
         label = ""
 
     return OrganizerOutput(sticker_label=label, raw_json=raw)
+
+
+def _parse_narration(raw: str) -> OrganizerOutput:
+    """解析旁白 JSON。输出 [{text, style}]，style 白名单 scene/action。"""
+    data = parse_json(raw)
+    if data is None:
+        logger.warning("旁白 JSON 解析失败，降级无旁白: %s", raw[:100] if raw else "(empty)")
+        return OrganizerOutput(raw_json=raw)
+
+    narrations = []
+    raw_list = data.get("narrations")
+    if isinstance(raw_list, list):
+        for item in raw_list:
+            if not isinstance(item, dict):
+                continue
+            text = str(item.get("text", "")).strip()
+            style = str(item.get("style", "action")).strip()
+            if style not in ("scene", "action"):
+                style = "action"
+            if text:
+                narrations.append({"text": text, "style": style})
+
+    return OrganizerOutput(narrations=narrations, raw_json=raw)

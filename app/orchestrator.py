@@ -38,6 +38,34 @@ def _handle_direct(reason: str) -> list[str]:
     return _DIRECT_REPLIES.get(reason, ["嗯？我走神了…你刚才说了什么？"])
 
 
+# ── 开场演出（haruno 模式首条自动消息）────────────
+# 流萤在黄金时刻第一次见到开拓者的固定场景。纯文本演出，不调 LLM。
+# 旁白（scene/action）+ 流萤首条消息，写盘后供前端渲染。
+_HARUNO_OPENING = {
+    "narrations": [
+        {"text": "黄金时刻，霓虹初上，人流如织。你初来乍到，正茫然四顾时，几个流氓围了上来。", "style": "scene"},
+        {"text": "就在这时，一位少女快步冲上前，三下两下把流氓赶跑了。", "style": "scene"},
+        {"text": "她喘着气转过身，仔细打量你。", "style": "action"},
+    ],
+    "first_message": "你还好吗？有没有哪里受伤？",
+}
+
+
+def haruno_opening() -> dict:
+    """返回 haruno 开场演出消息序列（含旁白与首条消息，均已写盘）。"""
+    from modules.conversation_store import append_message as _app
+    msgs = []
+    for n in _HARUNO_OPENING["narrations"]:
+        m = {"type": "narration", "text": n["text"], "style": n["style"]}
+        _app("firefly", m, mode="haruno")
+        msgs.append(dict(m))
+    m = {"type": "text", "content": _HARUNO_OPENING["first_message"]}
+    seq, t = _app("firefly", m, mode="haruno")
+    m["time"] = t
+    msgs.append(m)
+    return msgs
+
+
 # ── 环境 ─────────────────────────────────────────
 def _get_environment() -> str:
     now = datetime.now()
@@ -158,18 +186,24 @@ def handle_chat(
     # 输出压缩知识摘要。无本地模型依赖（安卓端可行），全局性覆盖。
     # 话题锚点只取上一条用户消息：指代消解；话题理解归 analyzer（20 轮历史），
     # 子代理不重复接收流萤自产回复（噪音 + miss 成本 + 话题漂移）。
+    # haruno 模式：无知识库可检索，直接跳过（省一次 LLM 调用）。
     try:
-        anchor = [m for m in ctx.get_recent(10) if m.get("role") == "user"][-1:]
-        _rt0 = time.perf_counter()
-        r_out = LlmRetriever(client, model=retriever_model,
-                             temperature=retriever_temperature,
-                             effort=retriever_effort, mode=mode).retrieve(RetrieveInput(
-            user_input=user_input,
-            recent_history=anchor,
-        ))
-        _rt1 = time.perf_counter()
-        retrieved_knowledge = r_out.knowledge
-        retrieved_memory = ""   # 子代理输出为混合摘要，两层合并
+        if mode == "haruno":
+            retrieved_knowledge = ""
+            retrieved_memory = ""
+            _rt0 = _rt1 = time.perf_counter()
+        else:
+            anchor = [m for m in ctx.get_recent(10) if m.get("role") == "user"][-1:]
+            _rt0 = time.perf_counter()
+            r_out = LlmRetriever(client, model=retriever_model,
+                                 temperature=retriever_temperature,
+                                 effort=retriever_effort, mode=mode).retrieve(RetrieveInput(
+                user_input=user_input,
+                recent_history=anchor,
+            ))
+            _rt1 = time.perf_counter()
+            retrieved_knowledge = r_out.knowledge
+            retrieved_memory = ""   # 子代理输出为混合摘要，两层合并
     except Exception as e:
         retrieved_knowledge = ""
         retrieved_memory = ""
@@ -209,23 +243,31 @@ def handle_chat(
         _t2 = time.perf_counter()
         messages = list(polish_output.messages)
 
-        # ── 3. 组织器（工具调度：表情包）─────────
-        # 失败只损失表情包，不影响文本回复
+        # ── 3. 组织器（story=表情包调度；haruno=旁白演出）──
+        # 失败只损失表情包/旁白，不影响文本回复
         org_output = None
         try:
-            organizer = Organizer(client, model=organizer_model, effort=organizer_effort)
+            organizer = Organizer(client, model=organizer_model, effort=organizer_effort, mode=mode)
             org_output = organizer.organize(OrganizerInput(
                 user_input=user_input,
                 reply_texts=[m["content"] for m in messages if m.get("type") == "text"],
                 recent_history=ctx.get_recent(5),
+                mode=mode,
             ))
             if org_output.sticker_label:
                 from tools.sticker_picker import pick_sticker_by_label
                 entry = pick_sticker_by_label(org_output.sticker_label)
                 if entry:
                     messages.append({"type": "sticker", "path": entry.file, "label": entry.label})
+            # haruno 旁白：插在流萤消息之前（视觉小说式：先动作/环境，再说话）
+            if org_output.narrations:
+                narr_messages = [
+                    {"type": "narration", "text": n["text"], "style": n["style"]}
+                    for n in org_output.narrations
+                ]
+                messages = narr_messages + messages
         except Exception as e:
-            logger.warning("工具调度失败（跳过表情包）: %s", e)
+            logger.warning("工具调度失败（跳过表情包/旁白）: %s", e)
         _t3 = time.perf_counter()
 
         _record_pipeline({
@@ -288,5 +330,8 @@ def handle_chat(
     for m in messages:
         if m.get("type") == "sticker":
             ctx.add_action("表情包", m.get("label", "表情"))
+        elif m.get("type") == "narration":
+            # 旁白进上下文：回复器下轮能看到"她做了什么动作/环境如何"
+            ctx.add_action("旁白", m.get("text", ""))
 
     return ChatResult(messages=messages, bubble=None)

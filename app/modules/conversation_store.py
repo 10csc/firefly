@@ -153,8 +153,11 @@ def append_message(who: str, msg: dict, mode: str = DEFAULT_MODE) -> tuple:
     elif mtype == "sticker":
         if not msg.get("path"):
             raise InputRejected("sticker 消息缺 path")
+    elif mtype == "narration":
+        if not msg.get("text"):
+            raise InputRejected("narration 消息缺 text")
     else:
-        raise InputRejected(f"type 必须为 text/sticker，实际: {mtype}")
+        raise InputRejected(f"type 必须为 text/sticker/narration，实际: {mtype}")
 
     with _lock:
         _ensure_dir(mode)
@@ -252,7 +255,7 @@ def hydrate_context(ctx, max_turns: int = 40, mode: str = DEFAULT_MODE) -> int:
         m = raw[i]
         if m.get("who") == "user" and m.get("type") == "text" and m.get("content"):
             user_texts = [m["content"]]
-            texts, stickers = [], []
+            texts, stickers, narrations = [], [], []
             i += 1
             # 连续 user 消息合并为一轮（分条写盘场景：5s 批处理的多条消息）
             while i < n and raw[i].get("who") == "user":
@@ -265,19 +268,23 @@ def hydrate_context(ctx, max_turns: int = 40, mode: str = DEFAULT_MODE) -> int:
                     texts.append(fm["content"])
                 elif fm.get("type") == "sticker":
                     stickers.append(fm.get("label") or "表情")
+                elif fm.get("type") == "narration" and fm.get("text"):
+                    narrations.append(fm["text"])
                 i += 1
-            if not texts and not stickers:
+            if not texts and not stickers and not narrations:
                 continue  # 未完成轮次（只有用户在打字）跳过
-            pending.append(("\n".join(user_texts), texts, stickers))
+            pending.append(("\n".join(user_texts), texts, stickers, narrations))
         else:
             i += 1
 
-    for user_text, texts, stickers in pending[-max_turns:]:
+    for user_text, texts, stickers, narrations in pending[-max_turns:]:
         reply = " ".join(texts) if texts else "(表情包)"
         try:
             ctx.add_turn(user_text, reply)
             for lab in stickers:
                 ctx.add_action("表情包", lab)
+            for n in narrations:
+                ctx.add_action("旁白", n)
             turns += 1
         except Exception as e:
             logger.warning("hydrate 跳过一轮: %s", e)
