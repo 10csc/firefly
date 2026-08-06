@@ -354,8 +354,14 @@ class Polisher:
             record_usage("polisher", resp)
             raw = resp.choices[0].message.content.strip()
             rc = (getattr(resp.choices[0].message, "reasoning_content", "") or "").strip()
+            # DeepSeek 思考模式：极端情况下全部 token 进 reasoning，content 为空。
+            # 此时从 reasoning 提取 [MSG] 行作为兜底（思考末尾常已写出消息）。
             if not raw and rc:
-                raw = rc
+                msgs_from_rc = _extract_msg_lines(rc)
+                if msgs_from_rc:
+                    raw = msgs_from_rc
+                else:
+                    raw = rc  # 退化为直接解析（大概率仍失败，走降级）
         except Exception as e:
             logger.error("回复器 LLM 失败: %s", e)
             with _lock:
@@ -382,6 +388,12 @@ def _validate_input(inp: PolisherInput):
 
 
 _MAX_REPLY_MESSAGES = 6   # 回复条数硬上限：防回复器循环输出刷屏（实测出现过 46 条）
+
+
+def _extract_msg_lines(text: str) -> str:
+    """从思考内容中提取 [MSG] 行（content 为空时的兜底）。"""
+    lines = [l.strip() for l in text.split("\n") if l.strip().startswith("[MSG]")]
+    return "\n".join(lines) if lines else ""
 
 
 def _parse_response(raw: str) -> list:

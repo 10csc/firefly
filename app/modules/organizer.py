@@ -82,12 +82,20 @@ def _build_sticker_list() -> str:
 
 
 # ── haruno 模式：旁白生成器（视觉小说式 RP 演出）──
-_NARRATION_SYSTEM = """你是流萤的故事演出助手。流萤刚发完一段话，你为这段对话配上环境/动作描写（旁白）。
+_NARRATION_SYSTEM = """你是流萤的故事演出助手。流萤刚发完一段话（可能分多条），你为这段对话配上环境/动作描写（旁白）。
 
 ## 你的产出是什么
 旁白是"第三者视角"的演出文字，补充流萤的动作、神态和环境氛围。两种类型：
 - scene：环境/事件描写（居中小字，无括号）——如"就在这时，一位少女挺身而出打跑了他们。"
 - action：动作/神态描写（居中，用括号括起）——如"（少女在仔细观察你）"
+
+## 旁白的位置（after 字段，关键）
+流萤的话是分条发的，旁白可以插在任意两条消息之间。after 指定"插在第几条消息之后"：
+- after=-1：放在所有消息**之前**（开场环境交代、大动作）——如"黄金时刻，霓虹初上"、少女冲上前
+- after=0：插在**第 1 条**消息之后
+- after=1：插在**第 2 条**消息之后
+- 以此类推，after=n 表示插在 reply_texts 第 n+1 条之后
+- 每个 after 至多一条旁白；不穿插时全用 -1
 
 ## 旁白写作规则
 - 从流萤的视角出发描写她：她的动作、神态、看向开拓者的目光、周围的环境变化
@@ -96,6 +104,7 @@ _NARRATION_SYSTEM = """你是流萤的故事演出助手。流萤刚发完一段
 - 字数：每条 10-40 字。一条消息一个动作，不要堆砌
 - 频率：**不是每轮都必须有**。纯对话轮（就是聊天）不配旁白；只有流萤有明显动作/神态/环境变化时才写
 - 典型搭配：她说话的同时做了什么（说话前接、说话时做）、她听开拓者说话时的反应、她注意到的东西
+- 分条节奏：流萤连发多条时，把最生动的动作插在两条之间（先做动作再发下一条），比全部堆前面更自然
 
 ## 绝对禁止
 - 禁止写开拓者的动作和心理（那是用户的事，不代写）
@@ -104,7 +113,7 @@ _NARRATION_SYSTEM = """你是流萤的故事演出助手。流萤刚发完一段
 - 禁止每轮都输出旁白——空数组是常态，有内容才写
 
 ## 输出格式（一行 JSON，禁止任何其他文字）
-{{"narrations":[{{"text":"旁白内容","style":"scene"}}]}}
+{{"narrations":[{{"text":"旁白内容","style":"scene","after":-1}}]}}
 没有旁白时：{{"narrations":[]}}"""
 
 
@@ -181,6 +190,8 @@ class Organizer:
             raw = resp.choices[0].message.content.strip()
             rc = (getattr(resp.choices[0].message, "reasoning_content", "") or "").strip()
             if not raw and rc:
+                raw = _extract_json(rc)
+            if not raw and rc:
                 raw = rc
         except Exception as e:
             logger.error("组织器 LLM 失败: %s", e)
@@ -245,6 +256,9 @@ class Organizer:
             record_usage("organizer", resp)
             raw = resp.choices[0].message.content.strip()
             rc = (getattr(resp.choices[0].message, "reasoning_content", "") or "").strip()
+            # 思考模式极端情况：content 为空时从 reasoning 提取 JSON 兜底
+            if not raw and rc:
+                raw = _extract_json(rc)
             if not raw and rc:
                 raw = rc
         except Exception as e:
@@ -260,6 +274,13 @@ class Organizer:
 
 
 # ── 辅助函数 ──────────────────────────────────────
+def _extract_json(text: str) -> str:
+    """从思考内容中提取第一个 JSON 对象（content 为空时的兜底）。"""
+    import re
+    m = re.search(r'\{.*\}', text, re.S)
+    return m.group(0) if m else ""
+
+
 def _validate_input(inp: OrganizerInput):
     if not isinstance(inp, OrganizerInput):
         raise InputRejected(f"inp 必须为 OrganizerInput，实际: {type(inp).__name__}")
@@ -288,7 +309,7 @@ def _parse_and_validate(raw: str) -> OrganizerOutput:
 
 
 def _parse_narration(raw: str) -> OrganizerOutput:
-    """解析旁白 JSON。输出 [{text, style}]，style 白名单 scene/action。"""
+    """解析旁白 JSON。输出 [{text, style, after}]，style 白名单 scene/action。"""
     data = parse_json(raw)
     if data is None:
         logger.warning("旁白 JSON 解析失败，降级无旁白: %s", raw[:100] if raw else "(empty)")
@@ -304,7 +325,12 @@ def _parse_narration(raw: str) -> OrganizerOutput:
             style = str(item.get("style", "action")).strip()
             if style not in ("scene", "action"):
                 style = "action"
+            # after：-1=全部前置（默认）；n=插在第 n+1 条消息之后
+            try:
+                after = int(item.get("after", -1))
+            except (TypeError, ValueError):
+                after = -1
             if text:
-                narrations.append({"text": text, "style": style})
+                narrations.append({"text": text, "style": style, "after": after})
 
     return OrganizerOutput(narrations=narrations, raw_json=raw)
