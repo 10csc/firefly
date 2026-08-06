@@ -107,9 +107,11 @@ _ANALYZER_SYSTEM = """你是一个分析助手。你的任务是在流萤回复�
 
 # ── 分析器类 ──────────────────────────────────────
 class Analyzer:
-    def __init__(self, client, model: str = "deepseek-v4-flash", effort: str = "high"):
+    def __init__(self, client, model: str = "deepseek-v4-flash", effort: str = "high",
+                 mode: str = "story"):
         self._client = client
         self._model = model
+        self._mode = mode
         # 思考模式：effort=none 显式关闭（温度才生效）；默认 high
         self._thinking = effort != "none"
         effort_map = {"low": "high", "high": "high", "max": "max"}
@@ -125,9 +127,9 @@ class Analyzer:
             _ANALYZE_COUNT += 1
 
         # 2. 构建 prompt
-        core = load_slot("core")
-        identity = load_slot("identity")
-        user_setting = load_slot("用户设定")
+        core = load_slot("core", self._mode)
+        identity = load_slot("identity", self._mode)
+        user_setting = load_slot("用户设定", self._mode)
 
         stable = _ANALYZER_SYSTEM.format(
             core=core, identity=identity, user_setting=user_setting,

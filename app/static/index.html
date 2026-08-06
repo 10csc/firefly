@@ -222,7 +222,8 @@
         <!-- Tab: 设定文件（用户记忆 / 用户设定 / 流萤的手账） -->
         <div class="menu-content active" id="tab-char">
             <div class="field">
-                <label>用户记忆 · 跨会话记忆（休息时自动整理）</label>
+                <label>用户记忆 · 跨会话记忆</label>
+                <div class="field-tip">记录开拓者（你）的相关信息与重要事情；「让流萤休息」时会由流萤自动整理进来，也可手动修改。保存后下次对话生效。</div>
                 <textarea id="user-memory-editor" style="height:200px"></textarea>
                 <div class="btn-row">
                     <button id="user-memory-reload" type="button">重新加载</button>
@@ -232,6 +233,7 @@
             </div>
             <div style="margin:14px 0;padding-top:14px;border-top:1px solid rgba(255,255,255,0.08)">
                 <label>用户设定 · 补充剧情设定（与核心设定一起加载）</label>
+                <div class="field-tip">你补充的剧情设定，与核心设定同等权威、每轮生效。格式：`[事实]` 长期成立 / `[经历]` 已发生 / `[若]` 触发条件 / `[原句]` 原话勿照搬（文件内有示例）。</div>
                 <textarea id="user-setting-editor" style="height:200px"></textarea>
                 <div class="btn-row">
                     <button id="user-setting-reload" type="button">重新加载</button>
@@ -241,6 +243,7 @@
             </div>
             <div style="margin-top:14px;padding-top:14px;border-top:1px solid rgba(255,255,255,0.08)">
                 <label style="color:#e0d5c1;font-size:0.85em;margin-bottom:8px;display:block">流萤的手账</label>
+                <div class="field-tip" style="margin-bottom:8px">流萤视角的重要对话记录与未完成的约定；「让流萤休息」时会自动更新，也可手动修改。</div>
                 <div class="btn-row" style="margin-bottom:8px">
                     <button id="journal-reload" style="flex:1">重新加载</button>
                     <button id="journal-save" style="flex:1">保存</button>
@@ -304,6 +307,16 @@
 <div id="rest-overlay" style="display:none">
     <div class="rest-card">
         <div id="rest-text">流萤正在整理记忆…</div>
+    </div>
+</div>
+
+<!-- 春日手信占位层（模式建设中，不进入聊天） -->
+<div id="mode-placeholder">
+    <div class="placeholder-card">
+        <img src="/春日手信.png?v=2" alt="春日手信" class="placeholder-img">
+        <div class="placeholder-title">春日手信</div>
+        <div class="placeholder-desc">该模式正在设计中，敬请期待 ✦</div>
+        <button class="placeholder-btn" onclick="closeModePlaceholder()">返回首页</button>
     </div>
 </div>
 

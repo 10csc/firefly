@@ -9,7 +9,7 @@ import json, logging, os, threading
 from pathlib import Path
 from dataclasses import dataclass
 
-from modules.app_config import ROOT, USER_DIR
+from modules.app_config import ROOT, USER_DIR, mode_data_dir, mode_journal_dir, DEFAULT_MODE
 
 logger = logging.getLogger(__name__)
 _lock = threading.Lock()
@@ -32,28 +32,37 @@ class RestResult:
     error: str = ""
 
 
-# ── 文件路径 ──────────────────────────────────────
+# ── 文件路径（按模式隔离）──────────────────────────
 # 用户记忆 = 运行时动态数据，必须放 user_data（与 conversation.jsonl 同级）：
 # 仓库内位置在打包(frozen)时位于 exe 内部 _internal/，更新安装包即被覆盖。
 # 统一从 app_config 取 USER_DIR/ROOT（frozen / android / 开发 三平台同一公式）。
-_MEMORY_FILE = USER_DIR / "data" / "memory.md"
-_INDEX_FILE = USER_DIR / "data" / ".memory_index"
-# 手账统一写 user_data/story/手账.md（与 llm_base.JOURNAL_FILE、server /save-journal 同一位置）
-_JOURNAL_FILE = USER_DIR / "story" / "手账.md"
+def _memory_file(mode: str = DEFAULT_MODE) -> Path:
+    return mode_data_dir(mode) / "memory.md"
+
+
+def _index_file(mode: str = DEFAULT_MODE) -> Path:
+    return mode_data_dir(mode) / ".memory_index"
+
+
+def _journal_file(mode: str = DEFAULT_MODE) -> Path:
+    # 与 llm_base 手账同一位置：{mode}/journal/手账.md
+    return mode_journal_dir(mode) / "手账.md"
+
+
 _JOURNAL_LEGACY = ROOT / "knowledge" / "story" / "手账.md"
 
 
-def _migrate_legacy():
-    """一次性迁移：旧位置（memory/data/）有文件且 user_data 无 → 拷贝。
-    之后只读写 user_data，旧文件保留不删（防误删历史数据）。
+def _migrate_legacy(mode: str = DEFAULT_MODE):
+    """一次性迁移：旧位置（memory/data/）有文件且 {mode} 无 → 拷贝。
+    之后只读写 {mode}，旧文件保留不删（防误删历史数据）。
     旧目录 memory/data/ 已随结构整理移除，exists 检查自然跳过。"""
     legacy_dir = ROOT / "memory" / "data"
     try:
-        _MEMORY_FILE.parent.mkdir(parents=True, exist_ok=True)
+        _memory_file(mode).parent.mkdir(parents=True, exist_ok=True)
     except OSError:
         return
-    for legacy, target in ((legacy_dir / "memory.md", _MEMORY_FILE),
-                           (legacy_dir / ".memory_index", _INDEX_FILE)):
+    for legacy, target in ((legacy_dir / "memory.md", _memory_file(mode)),
+                           (legacy_dir / ".memory_index", _index_file(mode))):
         try:
             if legacy.exists() and not target.exists():
                 target.write_text(legacy.read_text(encoding="utf-8"), encoding="utf-8")
@@ -116,12 +125,14 @@ _JOURNAL_PROMPT = r"""你是流萤。你在整理自己的手账。以第一人�
 # ── 核心类 ────────────────────────────────────────
 class MemoryManager:
     def __init__(self, client, model: str = "deepseek-v4-flash",
-                 memory_file: Path = _MEMORY_FILE, index_file: Path = _INDEX_FILE):
+                 mode: str = DEFAULT_MODE,
+                 memory_file: Path | None = None, index_file: Path | None = None):
         if client is None: raise InputRejected("client 不能为 None")
         self._client = client
         self._model = model
-        self._mem_file = memory_file
-        self._idx_file = index_file
+        self._mode = mode
+        self._mem_file = memory_file or _memory_file(mode)
+        self._idx_file = index_file or _index_file(mode)
         self._mem_file.parent.mkdir(parents=True, exist_ok=True)
 
     def load_head(self) -> str:
@@ -209,8 +220,9 @@ class MemoryManager:
                 lines.append(f"{role}: {m.get('content', '')}")
             new_dialogue = "\n".join(lines)
         old_journal = ""
-        src = _JOURNAL_FILE if _JOURNAL_FILE.exists() else _JOURNAL_LEGACY
-        if src.exists():
+        jf = _journal_file(self._mode)
+        src = jf if jf.exists() else (_JOURNAL_LEGACY if self._mode == DEFAULT_MODE else None)
+        if src is not None and src.exists():
             old_journal = src.read_text(encoding="utf-8").strip()
         try:
             prompt = _JOURNAL_PROMPT.format(old=old_journal or "（空）", new=new_dialogue)
@@ -226,8 +238,8 @@ class MemoryManager:
                 new_content = rc
             if not new_content or "我和开拓者聊了什么" not in new_content:
                 return False
-            _JOURNAL_FILE.parent.mkdir(parents=True, exist_ok=True)
-            _JOURNAL_FILE.write_text(new_content, encoding="utf-8")
+            jf.parent.mkdir(parents=True, exist_ok=True)
+            jf.write_text(new_content, encoding="utf-8")
             return True
         except Exception as e:
             logger.error("手账更新失败: %s", e)
@@ -353,19 +365,19 @@ def get_counters() -> dict:
         return {"rest_count": _REST_COUNT, "rest_errors": _REST_ERRORS}
 
 
-def wake(client=None, model: str = "deepseek-v4-flash") -> str:
-    """模块级起床入口：加载头部到会话。
+def wake(client=None, model: str = "deepseek-v4-flash", mode: str = DEFAULT_MODE) -> str:
+    """模块级起床入口：加载 {mode} 头部到会话。
 
     若 memory.md 不存在或为空，返回空字符串（首次启动、无记忆）。
     若检测到中断（index 存在但 memory.md 缺失），返回空串并记 error 计数——
     不抛异常，让会话以"无记忆"状态启动，避免一次中断锁死整个会话。
     """
-    mm = MemoryManager(client) if client is not None else MemoryManager.__new__(MemoryManager)
+    mm = MemoryManager(client, model=model, mode=mode) if client is not None else MemoryManager.__new__(MemoryManager)
     if client is not None:
         mm._client = client
         mm._model = model
-    mm._mem_file = _MEMORY_FILE
-    mm._idx_file = _INDEX_FILE
+    mm._mem_file = _memory_file(mode)
+    mm._idx_file = _index_file(mode)
     try:
         return mm.wake()
     except MemoryManagerError as e:

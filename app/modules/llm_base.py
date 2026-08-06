@@ -14,31 +14,31 @@ logger = logging.getLogger(__name__)
 # ── 运行时数据根目录 ─────────────────────────────────
 # 唯一来源：app_config。前端所有"编辑保存"类接口都写 user_data/，
 # 因此读取必须 user_data 优先，否则出现"前端显示已改、模型仍用旧文件"的静默分裂。
-from modules.app_config import USER_DIR, ROOT as _ROOT
+from modules.app_config import USER_DIR, ROOT as _ROOT, mode_character_dir, bundled_character_dir, mode_journal_dir, DEFAULT_MODE
 
-# ── 角色设定加载（共享缓存）──────────────────────────
-_CHAR_DIR = Path(__file__).resolve().parent.parent / "assets" / "character"
+# ── 角色设定加载（共享缓存，key 含模式，跨模式不串）──
 _CACHE = {}
 _CACHE_LOCK = threading.Lock()
 
 
-def resolve_character_file(name: str) -> Path:
-    """设定文件路径：user_data/character/ 优先，退回 bundled assets。"""
-    u = USER_DIR / "character" / name
-    return u if u.exists() else _CHAR_DIR / name
+def resolve_character_file(name: str, mode: str = DEFAULT_MODE) -> Path:
+    """设定文件路径：{mode} 数据目录优先，退回 bundled {mode} 默认。"""
+    u = mode_character_dir(mode) / name
+    return u if u.exists() else bundled_character_dir(mode) / name
 
 
-def load_slot(slot: str) -> str:
-    """按 slot 名读取角色设定（user_data 优先），模块级缓存。"""
+def load_slot(slot: str, mode: str = DEFAULT_MODE) -> str:
+    """按 slot 名读取角色设定（{mode} 优先），模块级缓存。"""
+    key = (slot, mode)
     with _CACHE_LOCK:
-        if slot in _CACHE:
-            return _CACHE[slot]
-        fp = resolve_character_file(f"{slot}.md")
+        if key in _CACHE:
+            return _CACHE[key]
+        fp = resolve_character_file(f"{slot}.md", mode)
         if fp.exists():
-            _CACHE[slot] = fp.read_text(encoding="utf-8").strip()
+            _CACHE[key] = fp.read_text(encoding="utf-8").strip()
         else:
-            _CACHE[slot] = ""
-        return _CACHE[slot]
+            _CACHE[key] = ""
+        return _CACHE[key]
 
 
 def clear_cache():
@@ -47,34 +47,37 @@ def clear_cache():
         _CACHE.clear()
 
 
-# ── 手账加载 ────────────────────────────────────────
-# 统一写入点：user_data/story/手账.md（前端保存、记忆管理器更新都写这里）。
+# ── 手账加载（按模式隔离）───────────────────────────
+# 统一写入点：{mode}/journal/手账.md（前端保存、记忆管理器更新都写这里）。
 # 读取 fallback 旧位置 knowledge/story/手账.md，兼容历史数据。
-JOURNAL_FILE = USER_DIR / "story" / "手账.md"
+def _journal_file(mode: str = DEFAULT_MODE) -> Path:
+    return mode_journal_dir(mode) / "手账.md"
+
+
 _JOURNAL_LEGACY = _ROOT / "knowledge" / "story" / "手账.md"
-_JOURNAL_CACHE = None
+_JOURNAL_CACHE: dict[str, str | None] = {}
 _JOURNAL_LOCK = threading.Lock()
 
 
-def load_journal() -> str:
-    """加载流萤的手账，模块级缓存。"""
-    global _JOURNAL_CACHE
+def load_journal(mode: str = DEFAULT_MODE) -> str:
+    """加载流萤的手账，模块级缓存。legacy 位置仅 story 模式兼容。"""
     with _JOURNAL_LOCK:
-        if _JOURNAL_CACHE is not None:
-            return _JOURNAL_CACHE
-        fp = JOURNAL_FILE if JOURNAL_FILE.exists() else _JOURNAL_LEGACY
+        if mode in _JOURNAL_CACHE:
+            return _JOURNAL_CACHE[mode] or ""
+        fp = _journal_file(mode)
+        if not fp.exists() and mode == DEFAULT_MODE:
+            fp = _JOURNAL_LEGACY
         if fp.exists():
-            _JOURNAL_CACHE = fp.read_text(encoding="utf-8").strip()
+            _JOURNAL_CACHE[mode] = fp.read_text(encoding="utf-8").strip()
         else:
-            _JOURNAL_CACHE = ""
-        return _JOURNAL_CACHE
+            _JOURNAL_CACHE[mode] = ""
+        return _JOURNAL_CACHE[mode] or ""
 
 
-def reload_journal():
+def reload_journal(mode: str = DEFAULT_MODE):
     """强制重新加载手账（休息后调用）。"""
-    global _JOURNAL_CACHE
     with _JOURNAL_LOCK:
-        _JOURNAL_CACHE = None
+        _JOURNAL_CACHE.pop(mode, None)
 
 
 # ── 历史格式化（各模块共享）──────────────────────────

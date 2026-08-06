@@ -442,10 +442,13 @@ window.toggleTheme = toggleTheme;
 })();
 
 // ═══════════════════════════════════════════
-// 首页：视图切换 / 滚动轮播 / 公告面板
+// 首页：视图切换 / 滚动轮播 / 公告面板 / 模式入口
 // ═══════════════════════════════════════════
 const homeView = document.getElementById("home-view");
 const appView = document.getElementById("app");
+
+// 当前模式：story=剧情模式（默认闭环）；haruno=春日手信（建设中）
+let CURRENT_MODE = "story";
 
 function showHome() {
     homeView.classList.add("show");
@@ -461,12 +464,24 @@ function showChat() {
     try { if (location.hash !== "#chat") history.pushState({chat: true}, "", "#chat"); } catch (e) {}
 }
 
-// 轮播图功能入口：剧情模式 → 对话；春日手信 → 独立路由（未实现，占位提示）
+// 春日手信占位覆盖层
+function showModePlaceholder() {
+    const el = document.getElementById("mode-placeholder");
+    if (el) el.classList.add("show");
+}
+function closeModePlaceholder() {
+    const el = document.getElementById("mode-placeholder");
+    if (el) el.classList.remove("show");
+}
+
+// 轮播图功能入口：剧情模式 → 对话；春日手信 → 占位页（模式未设计，不进入聊天）
 function enterCarouselAction() {
     if (carouselIndex === 0) {
-        showChat();                     // 剧情模式 → 对话
+        CURRENT_MODE = "story";         // 剧情模式（默认闭环，现有完整流程）
+        showChat();
     } else {
-        showToast("「春日手信」建设中，敬请期待 ✦");
+        CURRENT_MODE = "haruno";
+        showModePlaceholder();          // 春日手信占位：开发中，不进入聊天
     }
 }
 
@@ -595,7 +610,7 @@ async function _doSend() {
         const resp = await fetch("/chat", {
             method: "POST",
             headers: {"Content-Type": "application/json"},
-            body: JSON.stringify({ messages: msgs, session_id: SESSION_ID }),
+            body: JSON.stringify({ messages: msgs, session_id: SESSION_ID, mode: CURRENT_MODE }),
         });
         const data = await resp.json();
         statusEl.textContent = defaultStatus;
@@ -695,7 +710,7 @@ document.getElementById("menu-rest-btn").addEventListener("click", async () => {
     try {
         const resp = await fetch("/rest", {
             method: "POST", headers: {"Content-Type": "application/json"},
-            body: JSON.stringify({ session_id: SESSION_ID }),
+            body: JSON.stringify({ session_id: SESSION_ID, mode: CURRENT_MODE }),
         });
         const data = await resp.json();
         restOverlay.style.display = "none";   // 无论成败都收起遮罩（失败信息已在 text 中展示）
@@ -714,7 +729,7 @@ document.getElementById("menu-clear-btn").addEventListener("click", async () => 
     try {
         const resp = await fetch("/clear-history", {
             method: "POST", headers: {"Content-Type": "application/json"},
-            body: JSON.stringify({ session_id: SESSION_ID }),
+            body: JSON.stringify({ session_id: SESSION_ID, mode: CURRENT_MODE }),
         });
         const data = await resp.json();
         if (data.ok) { messagesEl.innerHTML = ""; }
@@ -729,7 +744,7 @@ undoBtn.addEventListener("click", async () => {
     try {
         const resp = await fetch("/undo", {
             method: "POST", headers: {"Content-Type": "application/json"},
-            body: JSON.stringify({ session_id: SESSION_ID }),
+            body: JSON.stringify({ session_id: SESSION_ID, mode: CURRENT_MODE }),
         });
         const data = await resp.json();
         if (data.ok) {
@@ -823,7 +838,7 @@ async function loadPipeline() {
     const countEl = document.getElementById("pipeline-count");
     if (!list) return;
     try {
-        const resp = await fetch("/pipeline");
+        const resp = await fetch(`/pipeline?mode=${CURRENT_MODE}`);
         const data = await resp.json();
         if (countEl) countEl.textContent = `最近 ${data.count} 轮`;
         const rows = (data.pipeline || []).slice().reverse();
@@ -876,7 +891,7 @@ async function loadUserMemory() {
     const msg = document.getElementById("user-memory-msg");
     if (!editor) return;
     try {
-        const resp = await fetch("/user-memory");
+        const resp = await fetch(`/user-memory?mode=${CURRENT_MODE}`);
         const data = await resp.json();
         editor.value = data.content || "";
         if (msg) msg.textContent = data.content ? `${data.content.length} 字` : "空";
@@ -890,7 +905,7 @@ document.getElementById("user-memory-save").addEventListener("click", async () =
     try {
         const resp = await fetch("/save-user-memory", {
             method: "POST", headers: {"Content-Type": "application/json"},
-            body: JSON.stringify({content: editor.value}),
+            body: JSON.stringify({content: editor.value, mode: CURRENT_MODE}),
         });
         const data = await resp.json();
         msg.textContent = data.ok ? "✓ 已保存（下次对话生效）" : "失败：" + (data.error || "未知");
@@ -902,7 +917,7 @@ document.getElementById("user-memory-reload").addEventListener("click", loadUser
 async function loadCharFiles() {
     const msg = document.getElementById("char-file-msg");
     try {
-        const resp = await fetch("/character-files");
+        const resp = await fetch(`/character-files?mode=${CURRENT_MODE}`);
         const data = await resp.json();
         const byName = {};
         (data.files || []).forEach(f => { byName[f.name] = f.content; });
@@ -920,7 +935,7 @@ async function saveUserFile(filename, editorId, msgEl) {
     try {
         const resp = await fetch("/character-file-update", {
             method: "POST", headers: {"Content-Type": "application/json"},
-            body: JSON.stringify({filename, content: editor.value}),
+            body: JSON.stringify({filename, content: editor.value, mode: CURRENT_MODE}),
         });
         const data = await resp.json();
         msg.textContent = data.ok ? "✓ 已保存" : "失败：" + (data.error || "未知");
@@ -935,7 +950,7 @@ async function loadJournal() {
     const editor = document.getElementById("journal-editor");
     const msg = document.getElementById("journal-msg");
     try {
-        const resp = await fetch("/journal");
+        const resp = await fetch(`/journal?mode=${CURRENT_MODE}`);
         const data = await resp.json();
         if (editor) editor.value = data.content || "";
         msg.textContent = data.content ? `${data.content.length} 字` : "空";
@@ -949,7 +964,7 @@ document.getElementById("journal-save").addEventListener("click", async () => {
     try {
         const resp = await fetch("/save-journal", {
             method: "POST", headers: {"Content-Type": "application/json"},
-            body: JSON.stringify({content}),
+            body: JSON.stringify({content, mode: CURRENT_MODE}),
         });
         const data = await resp.json();
         msg.textContent = data.ok ? `✓ 已保存（${content.length} 字）` : "失败";
@@ -1074,7 +1089,7 @@ function renderHistoryMessage(m, prepend=false) {
 }
 async function loadHistory(beforeSeq=null) {
     if (_loading) return; _loading = true;
-    const url = beforeSeq ? `/history?limit=150&before_seq=${beforeSeq}` : `/history?limit=150`;
+    const url = beforeSeq ? `/history?limit=150&before_seq=${beforeSeq}&mode=${CURRENT_MODE}` : `/history?limit=150&mode=${CURRENT_MODE}`;
     _lastWho = null;
     try {
         const resp = await fetch(url);
@@ -1098,7 +1113,7 @@ messagesEl.addEventListener("scroll", () => {
 // ═══════════════════════════════════════════
 async function checkWake() {
     try {
-        const resp = await fetch("/wake-status");
+        const resp = await fetch(`/wake-status?mode=${CURRENT_MODE}`);
         const data = await resp.json();
         if (data.interrupted) {
             document.getElementById("wake-overlay").style.display = "flex";

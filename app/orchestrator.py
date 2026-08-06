@@ -14,6 +14,7 @@ from modules.polisher import Polisher, PolisherInput
 from modules.context_manager import ContextManager
 from modules.llm_retriever import LlmRetriever, RetrieveInput
 from modules.llm_base import get_token_stats as _get_token_stats
+from modules.app_config import DEFAULT_MODE
 
 logger = logging.getLogger(__name__)
 
@@ -59,39 +60,44 @@ _DIRECT_COUNT = 0
 _ORCH_ERRORS = 0
 
 # ── 流水线观测：每轮各阶段的输入/输出/思考过程 ──────
-# 落盘持久化：pipeline.jsonl（user_data/data/），重启后仍可查（诊断不依赖复现）
-_PIPELINE_LOG: list[dict] = []
-_PIPELINE_MAX = 200
+# 落盘持久化：pipeline.jsonl（{mode}/data/），重启后仍可查（诊断不依赖复现）
 import json as _json
 from pathlib import Path as _Path
-_PIPELINE_FILE = _Path(__file__).resolve().parent.parent / "user_data" / "data" / "pipeline.jsonl"
+from modules.app_config import mode_data_dir as _mode_data_dir
+_PIPELINE_LOG: list[dict] = []
+_PIPELINE_MAX = 200
 _PIPELINE_ROTATE_BYTES = 8 * 1024 * 1024   # 文件超 8MB 轮转，保留最近 200 轮
 
 
-def _record_pipeline(entry: dict):
+def _pipeline_file(mode: str = DEFAULT_MODE) -> _Path:
+    return _mode_data_dir(mode) / "pipeline.jsonl"
+
+
+def _record_pipeline(entry: dict, mode: str = DEFAULT_MODE):
     with _lock:
         _PIPELINE_LOG.append(entry)
         if len(_PIPELINE_LOG) > _PIPELINE_MAX:
             _PIPELINE_LOG.pop(0)
     # 落盘（失败静默，不影响主流程）
     try:
-        _PIPELINE_FILE.parent.mkdir(parents=True, exist_ok=True)
-        with _PIPELINE_FILE.open("a", encoding="utf-8") as f:
+        fp = _pipeline_file(mode)
+        fp.parent.mkdir(parents=True, exist_ok=True)
+        with fp.open("a", encoding="utf-8") as f:
             f.write(_json.dumps(entry, ensure_ascii=False) + "\n")
-        if _PIPELINE_FILE.stat().st_size > _PIPELINE_ROTATE_BYTES:
-            lines = _PIPELINE_FILE.read_text(encoding="utf-8").splitlines()
-            _PIPELINE_FILE.write_text("\n".join(lines[-_PIPELINE_MAX:]) + "\n", encoding="utf-8")
+        if fp.stat().st_size > _PIPELINE_ROTATE_BYTES:
+            lines = fp.read_text(encoding="utf-8").splitlines()
+            fp.write_text("\n".join(lines[-_PIPELINE_MAX:]) + "\n", encoding="utf-8")
     except Exception:
         pass
 
 
-def get_pipeline_log(limit: int = 20) -> list[dict]:
+def get_pipeline_log(limit: int = 20, mode: str = DEFAULT_MODE) -> list[dict]:
     """返回最近的流水线记录（/pipeline 调试面板）。内存为空（重启后）时从落盘文件恢复。"""
     with _lock:
         if _PIPELINE_LOG:
             return list(_PIPELINE_LOG[-limit:])
     try:
-        lines = _PIPELINE_FILE.read_text(encoding="utf-8").splitlines()
+        lines = _pipeline_file(mode).read_text(encoding="utf-8").splitlines()
         return [_json.loads(l) for l in lines[-limit:]]
     except Exception:
         return []
@@ -123,6 +129,7 @@ def handle_chat(
     polisher_temperature: float = 0.5,
     memory_head: str = "",
     hint: str = "",
+    mode: str = DEFAULT_MODE,
 ) -> ChatResult:
     global _CHAT_COUNT, _DIRECT_COUNT, _ORCH_ERRORS
     with _lock:
@@ -156,7 +163,7 @@ def handle_chat(
         _rt0 = time.perf_counter()
         r_out = LlmRetriever(client, model=retriever_model,
                              temperature=retriever_temperature,
-                             effort=retriever_effort).retrieve(RetrieveInput(
+                             effort=retriever_effort, mode=mode).retrieve(RetrieveInput(
             user_input=user_input,
             recent_history=anchor,
         ))
@@ -177,7 +184,7 @@ def handle_chat(
             input_text = f"{user_input}\n（注意：开拓者还在输入第二条消息，可能还有下文）"
 
         _t0 = time.perf_counter()
-        analyzer = Analyzer(client, model=analyzer_model, effort=analyzer_effort)
+        analyzer = Analyzer(client, model=analyzer_model, effort=analyzer_effort, mode=mode)
         analysis = analyzer.analyze(AnalyzerInput(
             user_input=input_text,
             recent_history=ctx.get_recent(20),
@@ -189,7 +196,7 @@ def handle_chat(
 
         # ── 2. 回复器（全权生成回复文本）────────
         polisher = Polisher(client, model=polisher_model,
-                            effort=polisher_effort, temperature=polisher_temperature)
+                            effort=polisher_effort, temperature=polisher_temperature, mode=mode)
         polish_output = polisher.polish(PolisherInput(
             user_input=user_input,
             analyzer_summary=analysis.summary,
@@ -223,6 +230,7 @@ def handle_chat(
 
         _record_pipeline({
             "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "mode": mode,
             "user_input": user_input,
             "hint": hint,
             "environment": environment,
@@ -257,7 +265,7 @@ def handle_chat(
                 "raw": org_output.raw_json if org_output else "",
             },
             "messages": messages,
-        })
+        }, mode=mode)
 
     except Exception as e:
         logger.error("编排器异常 [%s]: %s", type(e).__name__, e)
@@ -265,11 +273,12 @@ def handle_chat(
             _ORCH_ERRORS += 1
         _record_pipeline({
             "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "mode": mode,
             "user_input": user_input,
             "hint": hint,
             "environment": environment,
             "error": f"{type(e).__name__}: {e}",
-        })
+        }, mode=mode)
         messages = [{"type":"text","content":m} for m in _handle_direct("api:error")]
         return ChatResult(messages=messages, bubble=None)
 

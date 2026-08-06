@@ -40,21 +40,87 @@ VALID_EFFORTS = ("none", "low", "high", "max")
 
 CONFIG_FILE = USER_DIR / "config.json"
 
+# ── 模式（多模式隔离）─────────────────────────────
+# 每个模式独立数据根：USER_DIR/{mode}/，其下 character/ data/ journal/ 各一份。
+# story = 剧情模式（现有闭环，数据迁移自旧平铺目录）；haruno = 春日手信（待设计）。
+MODES = ("story", "haruno")
+DEFAULT_MODE = "story"
+
+
+def mode_root(mode: str = DEFAULT_MODE) -> Path:
+    """模式数据根：USER_DIR/{mode}/。非法 mode 回退 story（审查约束）。"""
+    m = mode if mode in MODES else DEFAULT_MODE
+    d = USER_DIR / m
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def mode_character_dir(mode: str = DEFAULT_MODE) -> Path:
+    return mode_root(mode) / "character"
+
+
+def mode_data_dir(mode: str = DEFAULT_MODE) -> Path:
+    return mode_root(mode) / "data"
+
+
+def mode_journal_dir(mode: str = DEFAULT_MODE) -> Path:
+    return mode_root(mode) / "journal"
+
+
+def bundled_character_dir(mode: str = DEFAULT_MODE) -> Path:
+    """bundled 默认设定目录：assets/character/{mode}/（只读，退回路径）。"""
+    return ASSETS_DIR / "character" / mode
+
+
 # ── 首次启动引导：建目录 + 拷贝默认文件 ─────────────
 USER_DIR.mkdir(parents=True, exist_ok=True)
-for _sub in ("character", "stickers", "data", "story"):
+for _sub in ("stickers",):
     (USER_DIR / _sub).mkdir(exist_ok=True)
 
 # 默认源路径：frozen 时数据在 _internal/，开发时在 app/；BASE_DIR 已指向对应位置
 _DEFAULTS = {
     USER_DIR / "config.json": ROOT / "config.json",
-    USER_DIR / "character" / "core.md": ASSETS_DIR / "character" / "core.md",
-    USER_DIR / "character" / "identity.md": ASSETS_DIR / "character" / "identity.md",
-    USER_DIR / "character" / "sms_samples.md": ASSETS_DIR / "character" / "sms_samples.md",
+    mode_character_dir() / "core.md": bundled_character_dir() / "core.md",
+    mode_character_dir() / "identity.md": bundled_character_dir() / "identity.md",
+    mode_character_dir() / "sms_samples.md": bundled_character_dir() / "sms_samples.md",
 }
 for _dst, _src in _DEFAULTS.items():
     if not _dst.exists() and _src.exists():
         _dst.write_text(_src.read_text(encoding="utf-8"), encoding="utf-8")
+
+
+# ── 老数据迁移（一次性，幂等）──────────────────────
+# 目录级隔离前：user_data/character/ data/ story/手账.md 平铺。
+# 迁移到 story 模式：user_data/story/{character,data,journal}/。
+# 用 move（同盘 rename 原子），迁移后旧位置不再读写，避免新旧双份分裂。
+def _migrate_legacy_layout():
+    import shutil as _sh
+    targets = (
+        (USER_DIR / "character", mode_character_dir("story")),
+        (USER_DIR / "data", mode_data_dir("story")),
+    )
+    for _src, _dst in targets:
+        if not _src.exists():
+            continue
+        _dst.mkdir(parents=True, exist_ok=True)
+        for _f in _src.iterdir():
+            if _f.is_file() and not (_dst / _f.name).exists():
+                try:
+                    _sh.move(str(_f), str(_dst / _f.name))
+                except OSError:
+                    pass
+    # 旧手账位置 user_data/story/手账.md → story/journal/手账.md
+    _old_journal = USER_DIR / "story" / "手账.md"
+    _new_journal = mode_journal_dir("story") / "手账.md"
+    if _old_journal.exists() and not _new_journal.exists():
+        _new_journal.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            _sh.move(str(_old_journal), str(_new_journal))
+        except OSError:
+            pass
+
+
+_migrate_legacy_layout()
 
 
 def resolve_asset(path: str) -> Path:
