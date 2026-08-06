@@ -87,7 +87,7 @@ _NARRATION_SYSTEM = """你是流萤的故事演出助手。流萤刚发完一段
 ## 你的产出是什么
 旁白是"第三者视角"的演出文字，补充流萤的动作、神态和环境氛围。两种类型：
 - scene：环境/事件描写（居中小字，无括号）——如"就在这时，一位少女挺身而出打跑了他们。"
-- action：动作/神态描写（居中，用括号括起）——如"（少女在仔细观察你）"
+- action：动作/神态描写（前端会自动加括号，**你输出的文本不要带括号**）——如"少女在仔细观察你"
 
 ## 旁白的位置（after 字段，关键）
 流萤的话是分条发的，旁白可以插在任意两条消息之间。after 指定"插在第几条消息之后"：
@@ -325,6 +325,11 @@ def _parse_narration(raw: str) -> OrganizerOutput:
             style = str(item.get("style", "action")).strip()
             if style not in ("scene", "action"):
                 style = "action"
+            # 防御：LLM 可能仍输出带括号的 action（前端渲染会再加括号，必须剥掉）
+            if text.startswith("（") and text.endswith("）"):
+                text = text[1:-1].strip()
+            elif text.startswith("(") and text.endswith(")"):
+                text = text[1:-1].strip()
             # after：-1=全部前置（默认）；n=插在第 n+1 条消息之后
             try:
                 after = int(item.get("after", -1))
