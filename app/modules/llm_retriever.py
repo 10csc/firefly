@@ -43,10 +43,9 @@ class RetrieveOutput:
 
 
 # ── 知识库加载（模块级缓存）────────────────────────
-# 与 build_index.py 同源：knowledge/ + memory/story/ + database/dialogues_compiled/
+# 与 build_index.py 同源：knowledge/（含 story/ 个人经历）+ database/dialogues_compiled/
 _SOURCE_DIRS = (
     ROOT / "knowledge",
-    ROOT / "memory" / "story",
     ROOT / "database" / "dialogues_compiled",
 )
 # 动态用户数据/过长原文/草稿不进知识库（与 build_index 排除规则一致）
@@ -122,13 +121,18 @@ def get_counters() -> dict:
 
 # ── 子代理类 ──────────────────────────────────────
 class LlmRetriever:
-    def __init__(self, client, model: str = "deepseek-v4-flash", temperature: float = 0.0):
+    def __init__(self, client, model: str = "deepseek-v4-flash",
+                 temperature: float = 0.0, effort: str = "none"):
         self._client = client
         self._model = model
         try:
             self._temperature = max(0.0, min(2.0, float(temperature)))
         except (TypeError, ValueError):
             self._temperature = 0.0
+        # 思考模式：effort=none 显式关闭（默认，温度生效）；其他档位思考模式（温度无效）
+        self._thinking = effort != "none"
+        effort_map = {"low": "high", "high": "high", "max": "max"}
+        self._effort = effort_map.get(effort, "high")
 
     def retrieve(self, inp: RetrieveInput) -> RetrieveOutput:
         global _RETRIEVE_COUNT, _LLM_ERRORS
@@ -145,8 +149,12 @@ class LlmRetriever:
         history_section = format_history(inp.recent_history) if inp.recent_history else "（无）"
         dynamic = f"## 最近对话\n{history_section}\n\n## 开拓者刚才说\n{inp.user_input}"
 
-        # 3. 调 LLM（Non-think：temperature 生效，0 温度保证摘要格式稳定）
+        # 3. 调 LLM（默认 Non-think：temperature 生效，0 温度保证摘要格式稳定）
         try:
+            if self._thinking:
+                extra = {"thinking": {"type": "enabled"}, "reasoning_effort": self._effort}
+            else:
+                extra = {"thinking": {"type": "disabled"}}
             resp = self._client.chat.completions.create(
                 model=self._model,
                 messages=[
@@ -154,7 +162,7 @@ class LlmRetriever:
                     {"role": "user", "content": dynamic},
                 ],
                 max_tokens=10000, temperature=self._temperature,
-                extra_body={"thinking": {"type": "disabled"}},
+                extra_body=extra,
             )
             record_usage("llm_retriever", resp)
             raw = resp.choices[0].message.content.strip()

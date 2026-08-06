@@ -6,7 +6,7 @@ _base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(_base, "app"))
 sys.path.insert(0, _base)
 
-from memory.memory_manager import MemoryManager, MemoryManagerError, get_counters, wake as memory_wake
+from modules.memory_manager import MemoryManager, MemoryManagerError, get_counters, wake as memory_wake
 
 PASS, FAIL = 0, 0
 def check(desc, cond):
@@ -175,7 +175,7 @@ check("resolved 条目保留（未删除）", "下次带蛋糕" in content_r)
 print("\n=== 模块级 wake 中断降级 ===")
 
 # 用 monkey-patch 让模块级 _INDEX_FILE / _MEMORY_FILE 指向临时文件
-import memory.memory_manager as mm_mod
+import modules.memory_manager as mm_mod
 orig_mem = mm_mod._MEMORY_FILE
 orig_idx = mm_mod._INDEX_FILE
 

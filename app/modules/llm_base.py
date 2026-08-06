@@ -49,9 +49,9 @@ def clear_cache():
 
 # ── 手账加载 ────────────────────────────────────────
 # 统一写入点：user_data/story/手账.md（前端保存、记忆管理器更新都写这里）。
-# 读取 fallback 旧位置 memory/story/手账.md，兼容历史数据。
+# 读取 fallback 旧位置 knowledge/story/手账.md，兼容历史数据。
 JOURNAL_FILE = USER_DIR / "story" / "手账.md"
-_JOURNAL_LEGACY = _ROOT / "memory" / "story" / "手账.md"
+_JOURNAL_LEGACY = _ROOT / "knowledge" / "story" / "手账.md"
 _JOURNAL_CACHE = None
 _JOURNAL_LOCK = threading.Lock()
 

@@ -50,13 +50,26 @@ menuOverlay.addEventListener("click", closeMenu);
 function openMenu() {
     menuDrawer.classList.add("open");
     menuOverlay.classList.add("show");
-    document.getElementById("tab-api").classList.add("active");
+    // 默认 tab 是设定文件（DOM active），无点击事件，需主动加载
+    loadCharFiles(); loadJournal(); loadUserMemory();
 }
 function closeMenu() {
     menuDrawer.classList.remove("open");
     menuOverlay.classList.remove("show");
 }
 window.closeMenu = closeMenu;
+
+// ═══════════════════════════════════════════
+// 设置面板（首页 ⚙ 打开，API 配置独立于此）
+// ═══════════════════════════════════════════
+const settingsPanel = document.getElementById("settings-panel");
+function openSettings() {
+    settingsPanel.classList.add("show");
+    loadConfig();
+}
+function closeSettings() { settingsPanel.classList.remove("show"); }
+window.openSettings = openSettings;
+window.closeSettings = closeSettings;
 
 // 点击 drawer 背景（非内容区域）也关闭菜单
 menuDrawer.addEventListener("click", (e) => {
@@ -71,7 +84,7 @@ document.querySelectorAll(".menu-tab").forEach(btn => {
         btn.classList.add("active");
         const target = document.getElementById("tab-" + btn.dataset.tab);
         if (target) target.classList.add("active");
-        if (btn.dataset.tab === "char") { loadCharFiles(); loadJournal(); }
+        if (btn.dataset.tab === "char") { loadCharFiles(); loadJournal(); loadUserMemory(); }
         if (btn.dataset.tab === "bubble") renderBubbleGrid();
         if (btn.dataset.tab === "state") loadStateTab();
         if (btn.dataset.tab === "log") loadRequestLog();
@@ -80,53 +93,35 @@ document.querySelectorAll(".menu-tab").forEach(btn => {
 });
 
 // ═══════════════════════════════════════════
-// 气泡选择（流萤 + 用户各自可选）
+// 气泡选择（流萤 + 用户各自可选）— 纯 CSS 主题，class 挂在 #messages 容器上
 // ═══════════════════════════════════════════
 const BUBBLES = [
-    { key: "bubble_culture", name: "光阴莫负", src: "/assets/bubbles/bubbleStyle1.svg" },
-    { key: "bubble_rabbit",  name: "逐兔之夏", src: "/assets/bubbles/bubbleStyle2.svg" },
-    { key: "bubble_trotter", name: "补天司命", src: "/assets/bubbles/bubbleStyle3.svg" },
-    { key: "bubble_tavern",  name: "孤独的疗愈", src: "/assets/bubbles/bubbleStyle4.svg" },
-    { key: "bubble_cinema",  name: "大娱乐家", src: "/assets/bubbles/bubbleStyle5.svg" },
-    { key: "bubble_warmth",  name: "何枝可依", src: "/assets/bubbles/bubbleStyle6/main.png" },
+    { key: "bubble_culture", name: "星体培养皿", cls: "fb-culture" },
+    { key: "bubble_rabbit",  name: "逐兔之夏",   cls: "fb-rabbit" },
+    { key: "bubble_trotter", name: "补天司命",   cls: "fb-trotter" },
+    { key: "bubble_tavern",  name: "孤独的疗愈", cls: "fb-tavern" },
+    { key: "bubble_cinema",  name: "大娱乐家",   cls: "fb-cinema" },
+    { key: "bubble_warmth",  name: "何枝可依",   cls: "fb-warmth" },
 ];
-let _fireflyBubble = "bubble_culture";
+let _fireflyBubble = "none";
 let _userBubble = "none";
 
-function applyFireflyBubble(key) {
+function _applyBubbleCls(key, prefix) {
     const b = BUBBLES.find(x => x.key === key);
-    const styleId = "bubble-firefly";
-    const old = document.getElementById(styleId);
-    if (old) old.remove();
-    if (!b) { _fireflyBubble = "none"; return; }   // 无气泡：移除旧样式即可
-    const s = document.createElement("style");
-    s.id = styleId;
-    s.textContent = ".msg-row.firefly .bubble {" +
-        "border-image: url('" + b.src + "') 30 30 30 30 fill stretch !important;" +
-        "border-width: 16px !important; border-style: solid !important;" +
-        "border-color: transparent !important; padding: 8px !important;" +
-        "background: none !important; }";
-    document.head.appendChild(s);
-    _fireflyBubble = key;
-    try { localStorage.setItem("firefly-bubble2", key); } catch(e) {}
+    BUBBLES.forEach(x => messagesEl.classList.remove(x.cls));
+    if (b) messagesEl.classList.add(b.cls);
+    return b ? key : "none";
+}
+
+function applyFireflyBubble(key) {
+    _fireflyBubble = _applyBubbleCls(key);
+    try { localStorage.setItem("firefly-bubble2", _fireflyBubble); } catch(e) {}
 }
 
 function applyUserBubble(key) {
-    const b = BUBBLES.find(x => x.key === key);
-    const styleId = "bubble-user";
-    const old = document.getElementById(styleId);
-    if (old) old.remove();
-    if (!b) { _userBubble = "none"; return; }   // 无气泡：移除旧样式即可
-    const s = document.createElement("style");
-    s.id = styleId;
-    s.textContent = ".msg-row.user .bubble {" +
-        "border-image: url('" + b.src + "') 30 30 30 30 fill stretch !important;" +
-        "border-width: 16px !important; border-style: solid !important;" +
-        "border-color: transparent !important; padding: 8px !important;" +
-        "background: none !important; }";
-    document.head.appendChild(s);
-    _userBubble = key;
-    try { localStorage.setItem("user-bubble", key); } catch(e) {}
+    // 用户侧与流萤侧共用主题色（镜像圆角由 CSS 处理），仅记录选择状态
+    _userBubble = BUBBLES.some(x => x.key === key) ? key : "none";
+    try { localStorage.setItem("user-bubble", _userBubble); } catch(e) {}
 }
 
 function renderBubbleGrid() {
@@ -141,7 +136,8 @@ function renderBubbleGrid() {
             <div class="bubble-none">默认</div><span>无气泡</span></div>` +
         BUBBLES.map(b => `
         <div class="bubble-card ${_fireflyBubble === b.key ? 'selected' : ''}" onclick="pickFireflyBubble('${b.key}')">
-            <img src="${b.src}" alt="${b.name}"><span>${b.name}</span>
+            <div class="bubble-demo ${b.cls.replace('fb-', 'demo-')}">${b.name}</div>
+            <span>${b.name}</span>
         </div>`).join("");
     grid.appendChild(ff);
     // 用户气泡
@@ -152,7 +148,8 @@ function renderBubbleGrid() {
             <div class="bubble-none">默认</div><span>无气泡</span></div>` +
         BUBBLES.map(b => `
         <div class="bubble-card ${_userBubble === b.key ? 'selected' : ''}" onclick="pickUserBubble('${b.key}')">
-            <img src="${b.src}" alt="${b.name}"><span>${b.name}</span>
+            <div class="bubble-demo ${b.cls.replace('fb-', 'demo-')}">${b.name}</div>
+            <span>${b.name}</span>
         </div>`).join("");
     grid.appendChild(us);
 }
@@ -175,9 +172,12 @@ document.addEventListener("DOMContentLoaded", () => {
 // ═══════════════════════════════════════════
 async function loadConfig() {
     const ids = {
-        a: "analyzer-model-select", o: "organizer-model-select",
-        p: "polisher-model-select", e: "polisher-effort-select",
-        t: "polisher-temp-slider", tv: "temp-value",
+        a: "analyzer-model-select", r: "retriever-model-select",
+        o: "organizer-model-select",
+        p: "polisher-model-select",
+        re: "retriever-effort-select", ae: "analyzer-effort-select",
+        pe: "polisher-effort-select", oe: "organizer-effort-select",
+        rt: "retriever-temp-slider", rtv: "retriever-temp-value",
         k: "key-input", m: "config-msg",
     };
     try {
@@ -187,12 +187,16 @@ async function loadConfig() {
         for (const [k, id] of Object.entries(ids)) el[k] = document.getElementById(id);
 
         if (el.a) el.a.value = data.analyzer_model || "deepseek-v4-flash";
+        if (el.r) el.r.value = data.retriever_model || "deepseek-v4-flash";
         if (el.o) el.o.value = data.organizer_model || "deepseek-v4-flash";
         if (el.p) el.p.value = data.polisher_model || "deepseek-v4-flash";
-        if (el.e) el.e.value = data.polisher_effort || "high";
-        if (data.polisher_temperature != null && el.t) {
-            el.t.value = data.polisher_temperature;
-            if (el.tv) el.tv.textContent = Number(data.polisher_temperature).toFixed(1);
+        if (el.re) el.re.value = data.retriever_effort || "none";
+        if (el.ae) el.ae.value = data.analyzer_effort || "high";
+        if (el.pe) el.pe.value = data.polisher_effort || "high";
+        if (el.oe) el.oe.value = data.organizer_effort || "none";
+        if (data.retriever_temperature != null && el.rt) {
+            el.rt.value = data.retriever_temperature;
+            if (el.rtv) el.rtv.textContent = Number(data.retriever_temperature).toFixed(1);
         }
         if (el.m) {
             el.m.textContent = data.has_key
@@ -204,11 +208,11 @@ async function loadConfig() {
     } catch (e) { return {has_key: false}; }
 }
 
-const tempSlider = document.getElementById("polisher-temp-slider");
-const tempVal = document.getElementById("temp-value");
-if (tempSlider) {
-    tempSlider.addEventListener("input", () => {
-        if (tempVal) tempVal.textContent = Number(tempSlider.value).toFixed(1);
+const retrieverTempSlider = document.getElementById("retriever-temp-slider");
+const retrieverTempVal = document.getElementById("retriever-temp-value");
+if (retrieverTempSlider) {
+    retrieverTempSlider.addEventListener("input", () => {
+        if (retrieverTempVal) retrieverTempVal.textContent = Number(retrieverTempSlider.value).toFixed(1);
     });
 }
 
@@ -222,14 +226,19 @@ async function checkKey() {
 document.getElementById("key-save").addEventListener("click", async () => {
     const k = document.getElementById("key-input").value.trim();
     const am = document.getElementById("analyzer-model-select").value;
+    const rm = document.getElementById("retriever-model-select").value;
     const om = document.getElementById("organizer-model-select").value;
     const pm = document.getElementById("polisher-model-select").value;
-    const eff = document.getElementById("polisher-effort-select").value;
-    const temp = parseFloat(tempSlider.value) || 0.5;
+    const re = document.getElementById("retriever-effort-select").value;
+    const ae = document.getElementById("analyzer-effort-select").value;
+    const pe = document.getElementById("polisher-effort-select").value;
+    const oe = document.getElementById("organizer-effort-select").value;
+    const rtemp = parseFloat(retrieverTempSlider.value) || 0.0;
     const msg = document.getElementById("config-msg");
     const payload = {
-        analyzer_model: am, organizer_model: om, polisher_model: pm,
-        polisher_effort: eff, polisher_temperature: temp,
+        analyzer_model: am, retriever_model: rm, organizer_model: om, polisher_model: pm,
+        retriever_effort: re, analyzer_effort: ae, polisher_effort: pe, organizer_effort: oe,
+        retriever_temperature: rtemp,
     };
     if (k) payload.api_key = k;
     msg.textContent = "保存中…";
@@ -279,6 +288,7 @@ function addTextMessage(text, who, prepend = false, seq = null) {
     const row = document.createElement("div");
     row.className = "msg-row " + (who === "user" ? "user" : "firefly");
     if (seq !== null) row.dataset.seq = seq;
+    if (!prepend) row.classList.add("float-in");   // 新消息从下方浮现（历史加载不带动画）
     const bubble = document.createElement("div");
     bubble.className = "bubble";
     bubble.textContent = text;
@@ -293,6 +303,7 @@ function addSticker(stickerPath, who, prepend = false, seq = null) {
     const row = document.createElement("div");
     row.className = "msg-row " + (who === "user" ? "user" : "firefly");
     if (seq !== null) row.dataset.seq = seq;
+    if (!prepend) row.classList.add("float-in");
     const img = document.createElement("img");
     img.className = "sticker-img";
     img.src = "/assets/" + stickerPath;
@@ -310,23 +321,184 @@ function addTimeDivider(timeStr) {
     messagesEl.appendChild(div);
 }
 
+/** 消息加载占位：三个流水灯圆点（0.5~1s 后替换为真实内容） */
+function addTypingBubble(who) {
+    const row = document.createElement("div");
+    row.className = "msg-row " + (who === "user" ? "user" : "firefly");
+    const bubble = document.createElement("div");
+    bubble.className = "bubble typing-bubble";
+    bubble.innerHTML = "<span></span><span></span><span></span>";
+    row.appendChild(bubble);
+    _addAvatar(row, who);
+    messagesEl.appendChild(row);
+    scrollToBottom();
+    return row;
+}
+
 function renderMessages(messages, who, data) {
     if (!messages || messages.length === 0) return;
     // 时间标注：取第一条消息的时间，放居中分割线
     const ts = messages[0].time ? messages[0].time.slice(11, 16) : new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
     addTimeDivider(ts);
-    let delay = 0;
-    messages.forEach((msg, i) => {
+    // 逐条消息加载：先显示三圆点占位，再替换为真实内容（消息含文本与表情包）
+    // 加载时长按字数 0.7~1.5s（表情包按最短 0.7s）；消息之间留 0.5s 空白模拟游戏节奏
+    let seq = 0;
+    const showNext = () => {
+        if (seq >= messages.length) return;
+        const msg = messages[seq++];
+        const chars = (msg.content || "").length;
+        const loadMs = Math.min(1500, Math.max(700, 700 + chars * 25));
+        const typingRow = addTypingBubble(who);
         setTimeout(() => {
+            typingRow.remove();
             if (msg.type === "sticker") addSticker(msg.path, who);
             else addTextMessage(msg.content, who);
-        }, delay);
-        // 按字数计算：0.6s ~ 2.0s，约 30ms/字
-        const chars = (msg.content || "").length;
-        const msgDelay = Math.max(600, Math.min(2000, chars * 30));
-        delay += msgDelay;
+            setTimeout(showNext, 500);   // 消息间隔：0.5s 空白
+        }, loadMs);
+    };
+    showNext();
+}
+
+// ═══════════════════════════════════════════
+// 界面大小调节（消息/头像/气泡缩放，设置面板滑条）
+// ═══════════════════════════════════════════
+function applyUiScale(percent) {
+    document.body.style.setProperty("--ui-scale", (percent / 100).toFixed(2));
+    const val = document.getElementById("ui-scale-value");
+    if (val) val.textContent = percent + "%";
+}
+const uiSlider = document.getElementById("ui-scale-slider");
+if (uiSlider) {
+    let saved = 100;
+    try { saved = parseInt(localStorage.getItem("ui-scale")) || 100; } catch (e) {}
+    uiSlider.value = saved;
+    applyUiScale(saved);
+    uiSlider.addEventListener("input", () => {
+        const v = parseInt(uiSlider.value) || 100;
+        applyUiScale(v);
+        try { localStorage.setItem("ui-scale", String(v)); } catch (e) {}
     });
 }
+
+// ═══════════════════════════════════════════
+// 配色切换（暗色 / 游戏亮色，首页右上角）
+// ═══════════════════════════════════════════
+function toggleTheme() {
+    const light = document.body.classList.toggle("theme-light");
+    try { localStorage.setItem("theme", light ? "light" : "dark"); } catch (e) {}
+    const btn = document.getElementById("home-theme-btn");
+    if (btn) btn.textContent = light ? "🌙" : "☀️";
+}
+window.toggleTheme = toggleTheme;
+(function applyTheme() {
+    let t = "dark";
+    try { t = localStorage.getItem("theme") || "dark"; } catch (e) {}
+    if (t === "light") {
+        document.body.classList.add("theme-light");
+        const btn = document.getElementById("home-theme-btn");
+        if (btn) btn.textContent = "🌙";
+    }
+})();
+
+// ═══════════════════════════════════════════
+// 首页：视图切换 / 滚动轮播 / 公告面板
+// ═══════════════════════════════════════════
+const homeView = document.getElementById("home-view");
+const appView = document.getElementById("app");
+
+function showHome() {
+    homeView.classList.add("show");
+    appView.style.display = "none";     // 首页独立视图：真正隐藏聊天页（避免半透明透视）
+    closeMenu();
+    stopCarousel();
+}
+function showChat() {
+    homeView.classList.remove("show");
+    appView.style.display = "flex";     // 恢复聊天页
+    startCarousel();
+    scrollToBottom();
+}
+function toggleNotice() {
+    const panel = document.getElementById("notice-panel");
+    const open = panel.classList.toggle("show");
+    document.getElementById("notice-arrow").textContent = open ? "▴" : "▾";
+}
+function closeNotice() {
+    document.getElementById("notice-panel").classList.remove("show");
+    document.getElementById("notice-arrow").textContent = "▾";
+}
+
+// 滚动轮播（自动 + 触摸滑动）
+const carouselTrack = document.getElementById("carousel-track");
+const carouselDots = document.getElementById("carousel-dots");
+let carouselIndex = 0;
+let carouselTimer = null;
+const carouselCount = carouselTrack.children.length;
+
+for (let i = 0; i < carouselCount; i++) {
+    const dot = document.createElement("span");
+    if (i === 0) dot.classList.add("active");
+    dot.addEventListener("click", () => goCarousel(i));
+    carouselDots.appendChild(dot);
+}
+function goCarousel(i) {
+    carouselIndex = (i + carouselCount) % carouselCount;
+    carouselTrack.style.transform = `translateX(-${carouselIndex * 100}%)`;
+    [...carouselDots.children].forEach((d, di) => d.classList.toggle("active", di === carouselIndex));
+}
+function startCarousel() {
+    stopCarousel();
+    carouselTimer = setInterval(() => goCarousel(carouselIndex + 1), 3000);
+}
+function stopCarousel() { if (carouselTimer) { clearInterval(carouselTimer); carouselTimer = null; } }
+// 触摸滑动/点击：只绑定轮播图图片区（carouselTrack），其余区域不触发
+let touchX = null;
+carouselTrack.addEventListener("touchstart", (e) => { touchX = e.touches[0].clientX; }, {passive: true});
+carouselTrack.addEventListener("touchend", (e) => {
+    if (touchX === null) return;
+    const dx = e.changedTouches[0].clientX - touchX;
+    if (Math.abs(dx) > 40) goCarousel(carouselIndex + (dx < 0 ? 1 : -1));
+    else showChat();   // 触摸点击轮播图 → 进入对话
+    touchX = null;
+}, {passive: true});
+
+// ── PC 鼠标支持：拖拽滑动 + 滚轮切换 + 点击进入对话 ──
+let dragState = null;
+carouselTrack.addEventListener("mousedown", (e) => {
+    dragState = { startX: e.clientX, curX: e.clientX, moved: false };
+    stopCarousel();
+    e.preventDefault();
+});
+window.addEventListener("mousemove", (e) => {
+    if (!dragState) return;
+    dragState.curX = e.clientX;
+    const dx = dragState.curX - dragState.startX;
+    if (Math.abs(dx) > 5) dragState.moved = true;
+    carouselTrack.style.transform = `translateX(calc(-${carouselIndex * 100}% + ${dx}px))`;
+});
+window.addEventListener("mouseup", (e) => {
+    if (!dragState) return;
+    const dx = dragState.curX - dragState.startX;
+    const moved = dragState.moved;
+    dragState = null;
+    carouselTrack.style.transform = `translateX(-${carouselIndex * 100}%)`;
+    if (Math.abs(dx) > 40) {
+        goCarousel(carouselIndex + (dx < 0 ? 1 : -1));   // 拖拽切换
+    } else if (!moved) {
+        showChat();   // 点击（未拖动）→ 进入对话
+    }
+    startCarousel();
+});
+carouselTrack.addEventListener("wheel", (e) => {
+    e.preventDefault();
+    if (e.deltaY > 0) goCarousel(carouselIndex + 1);
+    else goCarousel(carouselIndex - 1);
+}, {passive: false});
+
+// 页面加载默认显示首页
+document.addEventListener("DOMContentLoaded", () => {
+    showHome();
+});
 
 // ═══════════════════════════════════════════
 // 发送消息 — 四阶段模型：输入 → 发送 → 提交 → 回复
@@ -355,7 +527,7 @@ async function _doSend() {
         });
         const data = await resp.json();
         statusEl.textContent = defaultStatus;
-        if (data.need_key) openMenu();
+        if (data.need_key) openSettings();
         else if (data.messages) renderMessages(data.messages, "firefly", data);
         else if (data.reply) addTextMessage(data.reply, "firefly");
     } catch (e) {
@@ -625,35 +797,66 @@ async function loadPipeline() {
 }
 window.loadPipeline = loadPipeline;
 // ═══════════════════════════════════════════
+// 用户记忆（= 跨会话记忆 memory.md，休息时自动整理）/ 用户设定（补充设定）
+// ═══════════════════════════════════════════
+async function loadUserMemory() {
+    const editor = document.getElementById("user-memory-editor");
+    const msg = document.getElementById("user-memory-msg");
+    if (!editor) return;
+    try {
+        const resp = await fetch("/user-memory");
+        const data = await resp.json();
+        editor.value = data.content || "";
+        if (msg) msg.textContent = data.content ? `${data.content.length} 字` : "空";
+    } catch (e) { if (msg) msg.textContent = "加载失败"; }
+}
+
+document.getElementById("user-memory-save").addEventListener("click", async () => {
+    const editor = document.getElementById("user-memory-editor");
+    const msg = document.getElementById("user-memory-msg");
+    msg.textContent = "保存中…";
+    try {
+        const resp = await fetch("/save-user-memory", {
+            method: "POST", headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({content: editor.value}),
+        });
+        const data = await resp.json();
+        msg.textContent = data.ok ? "✓ 已保存（下次对话生效）" : "失败：" + (data.error || "未知");
+    } catch (e) { msg.textContent = "网络错误"; }
+});
+document.getElementById("user-memory-reload").addEventListener("click", loadUserMemory);
+
+// 用户设定（补充剧情设定）
 async function loadCharFiles() {
-    const sel = document.getElementById("char-file-select");
-    const editor = document.getElementById("char-file-editor");
     const msg = document.getElementById("char-file-msg");
     try {
         const resp = await fetch("/character-files");
         const data = await resp.json();
-        sel.innerHTML = data.files.map(f => `<option value="${f.name}">${f.name}</option>`).join("");
-        if (data.files.length > 0) { editor.value = data.files[0].content; sel.value = data.files[0].name; }
-        sel.onchange = () => { const f = data.files.find(x => x.name === sel.value); if (f) editor.value = f.content; };
-        msg.textContent = `共 ${data.files.length} 个文件`;
-    } catch (e) { msg.textContent = "加载失败"; }
+        const byName = {};
+        (data.files || []).forEach(f => { byName[f.name] = f.content; });
+        const us = document.getElementById("user-setting-editor");
+        if (us) us.value = byName["用户设定.md"] ?? "";
+        if (msg) msg.textContent = "已加载";
+    } catch (e) { if (msg) msg.textContent = "加载失败"; }
 }
 
-document.getElementById("char-file-save").addEventListener("click", async () => {
-    const filename = document.getElementById("char-file-select").value;
-    const content = document.getElementById("char-file-editor").value;
-    const msg = document.getElementById("char-file-msg");
+async function saveUserFile(filename, editorId, msgEl) {
+    const editor = document.getElementById(editorId);
+    const msg = document.getElementById(msgEl);
+    if (!editor) return;
     msg.textContent = "保存中…";
     try {
         const resp = await fetch("/character-file-update", {
             method: "POST", headers: {"Content-Type": "application/json"},
-            body: JSON.stringify({filename, content}),
+            body: JSON.stringify({filename, content: editor.value}),
         });
         const data = await resp.json();
-        msg.textContent = data.ok ? `✓ 已保存` : "失败：" + (data.error || "未知");
+        msg.textContent = data.ok ? "✓ 已保存" : "失败：" + (data.error || "未知");
     } catch (e) { msg.textContent = "网络错误"; }
-});
-document.getElementById("char-file-reload").addEventListener("click", loadCharFiles);
+}
+
+document.getElementById("user-setting-save").addEventListener("click", () => saveUserFile("用户设定.md", "user-setting-editor", "char-file-msg"));
+document.getElementById("user-setting-reload").addEventListener("click", loadCharFiles);
 
 // 手账
 async function loadJournal() {

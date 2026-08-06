@@ -78,15 +78,23 @@ def _load_config() -> dict:
     cfg = {
         "api_key": "", "analyzer_model": "deepseek-v4-flash",
         "organizer_model": "deepseek-v4-flash", "polisher_model": "deepseek-v4-flash",
-        "polisher_effort": "high", "polisher_temperature": 0.5,
+        "retriever_model": "deepseek-v4-flash",
+        "retriever_effort": "none", "analyzer_effort": "high",
+        "polisher_effort": "high", "organizer_effort": "none",
+        "retriever_temperature": 0.0, "polisher_temperature": 0.5,
     }
     try:
         data = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
         if isinstance(data, dict):
             cfg["api_key"] = data.get("api_key", "") or ""
-            for key in ("analyzer_model", "organizer_model", "polisher_model"):
+            for key in ("analyzer_model", "organizer_model", "polisher_model", "retriever_model"):
                 val = data.get(key, "deepseek-v4-flash")
                 cfg[key] = val if val in VALID_MODELS else "deepseek-v4-flash"
+            _effort_defaults = {"retriever_effort": "none", "analyzer_effort": "high",
+                                "polisher_effort": "high", "organizer_effort": "none"}
+            for key in _effort_defaults:
+                val = data.get(key, _effort_defaults[key])
+                cfg[key] = val if val in VALID_EFFORTS else _effort_defaults[key]
             if "reply_model" in data and "polisher_model" not in data:
                 rm = data.get("reply_model", "deepseek-v4-flash")
                 cfg["polisher_model"] = rm if rm in VALID_MODELS else "deepseek-v4-flash"
@@ -97,6 +105,11 @@ def _load_config() -> dict:
                 cfg["polisher_temperature"] = max(0.0, min(2.0, t))
             except (TypeError, ValueError):
                 cfg["polisher_temperature"] = 0.5
+            try:
+                rt = float(data.get("retriever_temperature", 0.0))
+                cfg["retriever_temperature"] = max(0.0, min(2.0, rt))
+            except (TypeError, ValueError):
+                cfg["retriever_temperature"] = 0.0
     except Exception:
         pass
     if not cfg["api_key"]:
@@ -115,7 +128,12 @@ def save_config() -> None:
             "analyzer_model": config.get("analyzer_model", "deepseek-v4-flash"),
             "organizer_model": config.get("organizer_model", "deepseek-v4-flash"),
             "polisher_model": config.get("polisher_model", "deepseek-v4-flash"),
+            "retriever_model": config.get("retriever_model", "deepseek-v4-flash"),
+            "retriever_effort": config.get("retriever_effort", "none"),
+            "analyzer_effort": config.get("analyzer_effort", "high"),
             "polisher_effort": config.get("polisher_effort", "high"),
+            "organizer_effort": config.get("organizer_effort", "none"),
+            "retriever_temperature": config.get("retriever_temperature", 0.0),
             "polisher_temperature": config.get("polisher_temperature", 0.5),
         }, ensure_ascii=False),
         encoding="utf-8")
