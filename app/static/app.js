@@ -475,7 +475,7 @@ function showHome() {
     closeMenu();
     stopCarousel();
 }
-function showChat() {
+async function showChat() {
     homeView.classList.remove("show");
     appView.style.display = "flex";     // 恢复聊天页
     startCarousel();
@@ -485,14 +485,15 @@ function showChat() {
     if (modeTag) modeTag.textContent = MODE_NAMES[CURRENT_MODE] || CURRENT_MODE;
     // 模式可能已切换：清空并重载当前模式历史（story/haruno 数据隔离）
     if (_lastMode !== CURRENT_MODE) {
-        const firstEnter = _lastMode === null;
-        const switched = _lastMode !== null;
         _lastMode = CURRENT_MODE;
         messagesEl.innerHTML = "";
         _hasMore = false;
-        loadHistory();
-        // 进入 haruno：触发模式开场（流萤自动首条）。服务端幂等——无历史才生成。
-        if (CURRENT_MODE === "haruno" && (firstEnter || switched)) openModeOpening();
+        await loadHistory();   // 先加载历史（含已保存的开场）
+        // 历史为空（haruno 首次进入）：触发开场生成一次并保存为对话内容。
+        // 之后进入只走历史加载，不重复开场——与剧情模式行为一致。
+        if (CURRENT_MODE === "haruno" && messagesEl.children.length === 0) {
+            await openModeOpening();
+        }
     }
     try { if (location.hash !== "#chat") history.pushState({chat: true}, "", "#chat"); } catch (e) {}
 }
