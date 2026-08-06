@@ -68,31 +68,20 @@ def mode_journal_dir(mode: str = DEFAULT_MODE) -> Path:
 
 
 def bundled_character_dir(mode: str = DEFAULT_MODE) -> Path:
-    """bundled 默认设定目录：assets/character/{mode}/（只读，退回路径）。"""
-    return ASSETS_DIR / "character" / mode
+    """bundled 默认设定目录：{BASE_DIR}/assets/character/{mode}/（只读，退回路径）。
 
-
-# ── 首次启动引导：建目录 + 拷贝默认文件 ─────────────
-USER_DIR.mkdir(parents=True, exist_ok=True)
-for _sub in ("stickers",):
-    (USER_DIR / _sub).mkdir(exist_ok=True)
-
-# 默认源路径：frozen 时数据在 _internal/，开发时在 app/；BASE_DIR 已指向对应位置
-_DEFAULTS = {
-    USER_DIR / "config.json": ROOT / "config.json",
-    mode_character_dir() / "core.md": bundled_character_dir() / "core.md",
-    mode_character_dir() / "identity.md": bundled_character_dir() / "identity.md",
-    mode_character_dir() / "sms_samples.md": bundled_character_dir() / "sms_samples.md",
-}
-for _dst, _src in _DEFAULTS.items():
-    if not _dst.exists() and _src.exists():
-        _dst.write_text(_src.read_text(encoding="utf-8"), encoding="utf-8")
+    注意用 BASE_DIR 而非 ASSETS_DIR（ROOT/assets）：
+    - 开发：app/assets/character/；安卓：backend/app/assets/character/；frozen：_internal/assets/character/
+    - ASSETS_DIR 公式在安卓/开发下指向不存在的 backend/assets、仓库根/assets，历史遗留错误
+    """
+    return BASE_DIR / "assets" / "character" / mode
 
 
 # ── 老数据迁移（一次性，幂等）──────────────────────
 # 目录级隔离前：user_data/character/ data/ story/手账.md 平铺。
 # 迁移到 story 模式：user_data/story/{character,data,journal}/。
 # 用 move（同盘 rename 原子），迁移后旧位置不再读写，避免新旧双份分裂。
+# 顺序铁律：迁移必须先于默认拷贝——否则默认文件占位导致用户数据迁移被跳过丢失。
 def _migrate_legacy_layout():
     import shutil as _sh
     targets = (
@@ -121,6 +110,24 @@ def _migrate_legacy_layout():
 
 
 _migrate_legacy_layout()
+
+
+# ── 首次启动引导：建目录 + 拷贝默认文件（在迁移之后）──
+USER_DIR.mkdir(parents=True, exist_ok=True)
+for _sub in ("stickers",):
+    (USER_DIR / _sub).mkdir(exist_ok=True)
+
+# 默认源路径：frozen 时数据在 _internal/，开发时在 app/；BASE_DIR 已指向对应位置
+_DEFAULTS = {
+    USER_DIR / "config.json": ROOT / "config.json",
+    mode_character_dir() / "core.md": bundled_character_dir() / "core.md",
+    mode_character_dir() / "identity.md": bundled_character_dir() / "identity.md",
+    mode_character_dir() / "sms_samples.md": bundled_character_dir() / "sms_samples.md",
+}
+for _dst, _src in _DEFAULTS.items():
+    if not _dst.exists() and _src.exists():
+        _dst.parent.mkdir(parents=True, exist_ok=True)
+        _dst.write_text(_src.read_text(encoding="utf-8"), encoding="utf-8")
 
 
 def resolve_asset(path: str) -> Path:
