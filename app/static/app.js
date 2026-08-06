@@ -71,6 +71,47 @@ function closeSettings() { settingsPanel.classList.remove("show"); }
 window.openSettings = openSettings;
 window.closeSettings = closeSettings;
 
+// 反馈面板（首页 ✉ 打开）
+const feedbackPanel = document.getElementById("feedback-panel");
+function openFeedback() { feedbackPanel.classList.add("show"); }
+function closeFeedback() { feedbackPanel.classList.remove("show"); }
+window.openFeedback = openFeedback;
+window.closeFeedback = closeFeedback;
+
+// ═══════════════════════════════════════════
+// 检查更新（GitHub Releases 对比当前版本）
+// ═══════════════════════════════════════════
+const CURRENT_VERSION = "0.7.0";   // 与 android versionName / 安装器 AppVersion 保持一致
+function compareVersions(a, b) {
+    const pa = String(a).split(".").map(n => parseInt(n) || 0);
+    const pb = String(b).split(".").map(n => parseInt(n) || 0);
+    for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+        const d = (pa[i] || 0) - (pb[i] || 0);
+        if (d !== 0) return d;
+    }
+    return 0;
+}
+async function checkUpdate() {
+    const msg = document.getElementById("update-msg");
+    if (!msg) return;
+    msg.textContent = "检查中…";
+    try {
+        const resp = await fetch("https://api.github.com/repos/10csc/firefly/releases/latest", {cache: "no-store"});
+        if (!resp.ok) throw new Error("HTTP " + resp.status);
+        const data = await resp.json();
+        const latest = String(data.tag_name || "").replace(/^v/i, "");
+        if (!latest) throw new Error("no tag");
+        if (compareVersions(latest, CURRENT_VERSION) > 0) {
+            msg.innerHTML = `发现新版本 <b style="color:var(--fg-accent)">${latest}</b>（当前 ${CURRENT_VERSION}） → <a href="${data.html_url || "https://github.com/10csc/firefly/releases"}" target="_blank" rel="noopener" style="color:var(--fg-bright)">去下载</a>`;
+        } else {
+            msg.textContent = `已是最新版本 ${CURRENT_VERSION} ✓`;
+        }
+    } catch (e) {
+        msg.textContent = "检查失败（网络或仓库不可达）";
+    }
+}
+document.getElementById("check-update-btn").addEventListener("click", checkUpdate);
+
 // 点击 drawer 背景（非内容区域）也关闭菜单
 menuDrawer.addEventListener("click", (e) => {
     if (e.target === menuDrawer) closeMenu();
@@ -386,8 +427,8 @@ if (uiSlider) {
 function toggleTheme() {
     const light = document.body.classList.toggle("theme-light");
     try { localStorage.setItem("theme", light ? "light" : "dark"); } catch (e) {}
-    const btn = document.getElementById("home-theme-btn");
-    if (btn) btn.textContent = light ? "🌙" : "☀️";
+    const icon = document.getElementById("theme-icon");
+    if (icon) icon.src = light ? "/assets/theme_moon.png" : "/assets/theme_sun.png";
 }
 window.toggleTheme = toggleTheme;
 (function applyTheme() {
@@ -395,8 +436,8 @@ window.toggleTheme = toggleTheme;
     try { t = localStorage.getItem("theme") || "dark"; } catch (e) {}
     if (t === "light") {
         document.body.classList.add("theme-light");
-        const btn = document.getElementById("home-theme-btn");
-        if (btn) btn.textContent = "🌙";
+        const icon = document.getElementById("theme-icon");
+        if (icon) icon.src = "/assets/theme_moon.png";
     }
 })();
 
@@ -417,7 +458,37 @@ function showChat() {
     appView.style.display = "flex";     // 恢复聊天页
     startCarousel();
     scrollToBottom();
+    try { if (location.hash !== "#chat") history.pushState({chat: true}, "", "#chat"); } catch (e) {}
 }
+
+// 轮播图功能入口：剧情模式 → 对话；春日手信 → 独立路由（未实现，占位提示）
+function enterCarouselAction() {
+    if (carouselIndex === 0) {
+        showChat();                     // 剧情模式 → 对话
+    } else {
+        showToast("「春日手信」建设中，敬请期待 ✦");
+    }
+}
+
+// 轻提示（3s 自动消失）
+let toastTimer = null;
+function showToast(msg) {
+    let el = document.getElementById("app-toast");
+    if (!el) {
+        el = document.createElement("div");
+        el.id = "app-toast";
+        document.body.appendChild(el);
+    }
+    el.textContent = msg;
+    el.classList.add("show");
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => el.classList.remove("show"), 3000);
+}
+
+// 返回键支持（PC 浏览器后退 / Android WebView goBack → popstate → 回首页）
+window.addEventListener("popstate", () => {
+    if (location.hash !== "#chat") showHome();
+});
 function toggleNotice() {
     const panel = document.getElementById("notice-panel");
     const open = panel.classList.toggle("show");
@@ -448,7 +519,7 @@ function goCarousel(i) {
 }
 function startCarousel() {
     stopCarousel();
-    carouselTimer = setInterval(() => goCarousel(carouselIndex + 1), 3000);
+    carouselTimer = setInterval(() => goCarousel(carouselIndex + 1), 10000);
 }
 function stopCarousel() { if (carouselTimer) { clearInterval(carouselTimer); carouselTimer = null; } }
 // 触摸滑动/点击：只绑定轮播图图片区（carouselTrack），其余区域不触发
@@ -458,7 +529,7 @@ carouselTrack.addEventListener("touchend", (e) => {
     if (touchX === null) return;
     const dx = e.changedTouches[0].clientX - touchX;
     if (Math.abs(dx) > 40) goCarousel(carouselIndex + (dx < 0 ? 1 : -1));
-    else showChat();   // 触摸点击轮播图 → 进入对话
+    else enterCarouselAction();   // 触摸点击轮播图 → 按功能入口进入
     touchX = null;
 }, {passive: true});
 
@@ -485,7 +556,7 @@ window.addEventListener("mouseup", (e) => {
     if (Math.abs(dx) > 40) {
         goCarousel(carouselIndex + (dx < 0 ? 1 : -1));   // 拖拽切换
     } else if (!moved) {
-        showChat();   // 点击（未拖动）→ 进入对话
+        enterCarouselAction();   // 点击（未拖动）→ 按功能入口进入
     }
     startCarousel();
 });
@@ -495,9 +566,10 @@ carouselTrack.addEventListener("wheel", (e) => {
     else goCarousel(carouselIndex - 1);
 }, {passive: false});
 
-// 页面加载默认显示首页
+// 页面加载默认显示首页（若从对话页刷新则恢复对话页）
 document.addEventListener("DOMContentLoaded", () => {
-    showHome();
+    if (location.hash === "#chat") showChat();
+    else showHome();
 });
 
 // ═══════════════════════════════════════════

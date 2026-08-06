@@ -2,6 +2,7 @@ package com.firefly.android
 
 import android.annotation.SuppressLint
 import android.content.Context
+import android.content.Intent
 import android.graphics.Bitmap
 import android.os.Bundle
 import android.os.Handler
@@ -12,6 +13,8 @@ import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.FrameLayout
+import android.widget.Toast
+import androidx.activity.OnBackPressedCallback
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.WindowCompat
 import com.chaquo.python.Python
@@ -23,6 +26,7 @@ class MainActivity : AppCompatActivity() {
 
     private var webView: WebView? = null
     private val uiHandler = Handler(Looper.getMainLooper())
+    private var exitBackPressedAt = 0L   // 双击退出计时
 
     companion object {
         private const val SERVER_URL = "http://127.0.0.1:8765"
@@ -38,9 +42,43 @@ class MainActivity : AppCompatActivity() {
         container.setBackgroundColor(0xFF0f0f23.toInt())
         setContentView(container)
 
+        // 后台保活：前台服务（对话流程较长，防止切后台/锁屏时进程被杀导致内容丢失）
+        startForegroundService(Intent(this, KeepAliveService::class.java))
+
+        // 返回键：聊天页 → 回首页；首页 → 双击退出
+        onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() {
+                handleBackPressed()
+            }
+        })
+
         startEmbeddedServer()
         waitForServerReady {
             loadWebView(SERVER_URL)
+        }
+    }
+
+    /** 返回键策略：聊天页返回首页，首页双击退出 */
+    private fun handleBackPressed() {
+        val wv = webView
+        if (wv == null) { finish(); return }
+        wv.evaluateJavascript(
+            "document.getElementById('home-view') ? document.getElementById('home-view').classList.contains('show') : true"
+        ) { result ->
+            val onHome = result == "true"
+            if (onHome) {
+                val now = System.currentTimeMillis()
+                if (now - exitBackPressedAt < 2000) {
+                    exitBackPressedAt = 0
+                    finish()   // 双击退出
+                } else {
+                    exitBackPressedAt = now
+                    Toast.makeText(this, "再按一次返回键退出", Toast.LENGTH_SHORT).show()
+                }
+            } else {
+                // 聊天页：回到首页（不退出）
+                wv.evaluateJavascript("showHome()", null)
+            }
         }
     }
 
@@ -126,13 +164,5 @@ class MainActivity : AppCompatActivity() {
             loadUrl(baseUrl)
         }
         (findViewById<ViewGroup>(android.R.id.content)).addView(webView)
-    }
-
-    override fun onBackPressed() {
-        if (webView?.canGoBack() == true) {
-            webView?.goBack()
-        } else {
-            super.onBackPressed()
-        }
     }
 }

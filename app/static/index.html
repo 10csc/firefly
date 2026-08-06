@@ -12,12 +12,13 @@
 <!-- ═══ 首页（独立视图） ═══ -->
 <div id="home-view">
     <div class="home-topbar">
+        <button id="home-feedback-btn" class="home-settings home-feedback" onclick="openFeedback()" title="反馈">✉ 反馈</button>
         <div class="home-notice" onclick="toggleNotice()">
-            <span class="notice-icon">📢</span>
+            <img class="notice-icon" src="/assets/notice_speaker.png?v=1" alt="">
             <span class="notice-title">公告 · 使用指南</span>
             <span class="notice-arrow" id="notice-arrow">▾</span>
         </div>
-        <button id="home-theme-btn" class="home-settings" onclick="toggleTheme()" title="切换配色">☀️</button>
+        <button id="home-theme-btn" class="home-settings" onclick="toggleTheme()" title="切换配色"><img id="theme-icon" src="/assets/theme_sun.png?v=1" alt="切换配色"></button>
         <button id="home-settings-btn" class="home-settings" onclick="openSettings()" title="设置">⚙</button>
     </div>
     <div class="home-carousel" id="home-carousel">
@@ -28,6 +29,22 @@
         <div class="carousel-dots" id="carousel-dots"></div>
     </div>
     <div class="home-blank"></div>
+</div>
+
+<!-- ═══ 反馈面板（首页 ✉ 打开） ═══ -->
+<div id="feedback-panel">
+    <div class="settings-header">
+        <span>✉ 反馈 · 联系</span>
+        <button onclick="closeFeedback()">✕</button>
+    </div>
+    <div class="settings-body">
+        <p style="color:var(--fg-muted);font-size:0.8em;line-height:1.8;margin-bottom:16px">
+            遇到问题或有建议？欢迎通过以下方式反馈：
+        </p>
+        <a class="fb-link" href="https://github.com/10csc/firefly/issues" target="_blank" rel="noopener">🐙 GitHub Issue（推荐：提 bug / 建议）</a>
+        <div class="fb-item">💬 QQ交流群：<b style="color:var(--fg-main)">1097936258</b></div>
+        <div class="fb-item">✉ 邮箱：<a href="mailto:fangliang2604@163.com" style="color:var(--fg-bright)">fangliang2604@163.com</a></div>
+    </div>
 </div>
 
 <!-- ═══ 设置面板（首页 ⚙ 打开，API 配置独立于此） ═══ -->
@@ -91,7 +108,7 @@
             <div style="color:var(--fg-muted);font-size:0.7em;margin-top:2px">回复器温度固定 0.5（思考模式温度无效，无思考时亦可接受）</div>
         </div>
         <div class="field">
-            <label>④ 组织器模型（表情包调度）</label>
+            <label>④ 组织器模型（工具调度）</label>
             <select id="organizer-model-select">
                 <option value="deepseek-v4-flash">Flash（快，便宜）</option>
                 <option value="deepseek-v4-pro">Pro（慢，贵，更强）</option>
@@ -113,6 +130,14 @@
                 <div style="color:#8a8a8a;font-size:0.7em;margin-top:2px">80%~130%，实时预览</div>
             </div>
         </div>
+        <div style="margin:16px 0 14px;padding-top:14px;border-top:1px solid var(--border-mid)">
+            <label style="display:block;color:var(--fg-main);font-size:0.85em;margin-bottom:8px">版本</label>
+            <div class="field" style="margin-bottom:0">
+                <label>当前版本 <span id="current-version">v0.7 测试版</span></label>
+                <button id="check-update-btn" type="button">检查更新</button>
+                <div id="update-msg" style="color:var(--fg-muted);font-size:0.75em;margin-top:6px"></div>
+            </div>
+        </div>
         <button id="key-save">保存</button>
         <div id="config-msg"></div>
     </div>
@@ -121,7 +146,7 @@
 <!-- ═══ 公告面板（展开） ═══ -->
 <div id="notice-panel">
     <div class="notice-header">
-        <span>📢 公告 · 使用指南</span>
+        <span><img class="notice-icon-sm" src="/assets/notice_speaker.png?v=1" alt=""> 公告 · 使用指南</span>
         <button onclick="closeNotice()">✕</button>
     </div>
     <div class="notice-body">
@@ -131,10 +156,16 @@
         <p>3. 保存后即可开始与流萤对话</p>
         <p class="notice-tip">Key 可在 platform.deepseek.com 申请，仅保存在本机，不会上传。</p>
         <h3>二、关键功能</h3>
-        <p><b>让流萤休息</b>：对话积累后，在 ☰ 菜单点击「让流萤休息」——她会把这段时间聊过的内容整理进记忆与手账。醒来后，她会记得你们的约定、你的偏好和重要的事。</p>
-        <p><b>撤回上一轮</b>：☰ 菜单「撤回上一轮」可删除最近一轮对话。</p>
-        <p><b>表情包</b>：输入框右侧 😊 可打开表情包面板，选择表情发送。</p>
-        <p><b>设定文件</b>：☰ 菜单「设定文件」可查看与编辑流萤的角色设定、短信样本。</p>
+        <p><b>开始聊天</b>：点击首页轮播图「剧情模式」即可进入对话；「春日手信」敬请期待。</p>
+        <p><b>让流萤休息</b>：☰ 菜单「让流萤休息」——她会把这段时间聊过的内容整理进记忆与手账。醒来后，她会记得你们的约定、你的偏好和重要的事。</p>
+        <p><b>撤回 / 清除</b>：☰ 菜单「撤回上一轮」删除最近一轮对话；「清除历史」清空全部。</p>
+        <p><b>表情包</b>：输入框右侧 😊 打开表情包面板，选择表情发送。</p>
+        <p><b>设定文件</b>：☰ 菜单「设定文件」包含三块——<b>用户记忆</b>（跨会话记忆，休息时自动整理）、<b>用户设定</b>（补充剧情设定，与核心设定一起生效）、<b>流萤的手账</b>。</p>
+        <p><b>外观</b>：首页右上角 ☀️/🌙 切换暗色 / 亮色；⚙ 设置里可调界面大小（80%~130%）、模型与思考档位、检索器温度。</p>
+        <p><b>返回键</b>：聊天页按返回 → 回到首页；首页按返回 → 提示，双击退出。</p>
+        <h3>三、交流与反馈</h3>
+        <p>QQ交流群：<b>1097936258</b></p>
+        <p>反馈问题可点击首页左上角「反馈」按钮，或在 GitHub 提 Issue。</p>
     </div>
 </div>
 
@@ -182,10 +213,10 @@
             <button class="menu-tab" data-tab="pipeline">流程日志</button>
         </div>
         <div class="menu-actions">
-            <button onclick="showHome()">🏠 返回首页</button>
-            <button id="menu-undo-btn">↩ 撤回上一轮</button>
-            <button id="menu-rest-btn">🌙 让流萤休息</button>
-            <button id="menu-clear-btn">🗑 清除历史</button>
+            <button onclick="showHome()"><img class="menu-act-icon" src="/assets/icon_home.png?v=1" alt=""> 返回首页</button>
+            <button id="menu-undo-btn"><img class="menu-act-icon" src="/assets/icon_undo.png?v=1" alt=""> 撤回上一轮</button>
+            <button id="menu-rest-btn"><img class="menu-act-icon" src="/assets/icon_rest.png?v=1" alt=""> 让流萤休息</button>
+            <button id="menu-clear-btn"><img class="menu-act-icon" src="/assets/icon_trash.png?v=1" alt=""> 清除历史</button>
         </div>
 
         <!-- Tab: 设定文件（用户记忆 / 用户设定 / 流萤的手账） -->
