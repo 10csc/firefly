@@ -367,6 +367,15 @@ function addSticker(stickerPath, who, prepend = false, seq = null) {
     const img = document.createElement("img");
     img.className = "sticker-img";
     img.src = "/assets/" + stickerPath;
+    // 容错：表情包文件缺失（历史遗留/用户删除）时降级为文字占位，不显示裂图
+    img.onerror = () => {
+        if (img.dataset.fallback) return;
+        img.dataset.fallback = "1";
+        const span = document.createElement("span");
+        span.className = "sticker-fallback";
+        span.textContent = "（表情包已失效）";
+        row.replaceChild(span, img);
+    };
     row.appendChild(img);
     _addAvatar(row, who);
     if (prepend) { messagesEl.insertBefore(row, messagesEl.firstChild); }
@@ -498,12 +507,14 @@ function showHome() {
     appView.style.display = "none";     // 首页独立视图：真正隐藏聊天页（避免半透明透视）
     closeMenu();
     stopCarousel();
+    goCarousel(0);   // 回到首页重置轮播位置
+    startCarousel();   // 重新开始自动轮播
     stopInitiativePolling();
 }
 async function showChat() {
     homeView.classList.remove("show");
     appView.style.display = "flex";     // 恢复聊天页
-    startCarousel();
+    stopCarousel();   // 聊天页轮播不可见，停止自动轮播（避免返回首页时位置已乱）
     scrollToBottom();
     startInitiativePolling();
     // 顶部显示当前模式名
@@ -622,15 +633,21 @@ function startCarousel() {
     carouselTimer = setInterval(() => goCarousel(carouselIndex + 1), 10000);
 }
 function stopCarousel() { if (carouselTimer) { clearInterval(carouselTimer); carouselTimer = null; } }
+// 手动滑动/点击后暂停自动轮播：用户主动浏览时不打扰（避免"滑不回来"的错觉）。
+// 返回首页时 showHome 会 stopCarousel；再次进入聊天页不会自动轮播。
 // 触摸滑动/点击：只绑定轮播图图片区（carouselTrack），其余区域不触发
 let touchX = null;
-carouselTrack.addEventListener("touchstart", (e) => { touchX = e.touches[0].clientX; }, {passive: true});
+carouselTrack.addEventListener("touchstart", (e) => {
+    touchX = e.touches[0].clientX;
+    stopCarousel();   // 手动触摸时暂停自动轮播
+}, {passive: true});
 carouselTrack.addEventListener("touchend", (e) => {
     if (touchX === null) return;
     const dx = e.changedTouches[0].clientX - touchX;
     if (Math.abs(dx) > 40) goCarousel(carouselIndex + (dx < 0 ? 1 : -1));
     else enterCarouselAction();   // 触摸点击轮播图 → 按功能入口进入
     touchX = null;
+    // 手动交互后不恢复自动轮播（用户已接管）
 }, {passive: true});
 
 // ── PC 鼠标支持：拖拽滑动 + 滚轮切换 + 点击进入对话 ──
