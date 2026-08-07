@@ -4,7 +4,7 @@
 当前流程：向量检索 → 分析器 → 回复器（全权生成）→ 组织器（工具调度：表情包）→ 记录
 """
 
-import logging, threading, time
+import logging, threading, time, random
 from datetime import datetime
 from dataclasses import dataclass, field
 
@@ -365,26 +365,54 @@ def handle_chat(
 # ── 主动性：流萤主动发消息 ────────────────────────
 # 轻量路径：不跑完整流水线，直接调 LLM 生成一条问候（结合最近对话与时段）。
 # 写盘后前端轮询拉取渲染。触发条件由 check_initiative 判断。
+# 人类式触发：硬下限（间隔）+ 概率（越久越高）+ 时段权重（晚上活跃）。
 _ACTIVE_PROMPT = """你是流萤。现在是{environment}，开拓者有一阵子没说话了。
-结合最近对话的语境，你想主动给他发一条消息——自然、简短，像平时发短信一样（分1-2条，总长不超过30字）。
-可以是问候、分享一件小事、问他在干嘛——不要刻意、不要抒情、不要没话找话。
 
-最近对话：
+## 像人一样主动
+人类主动发消息不是"定时打卡"，而是**有事想说**。最常见的理由：
+- 想起过去聊过的事（约定、他提过的烦恼、上次没聊完的话题）——"你上次说…"
+- 分享当下的体验（看到的、吃到的、路过的）
+- 关心他的近况（他之前提过的事到时间了：考试、体检、加班、旅行）
+- 单纯觉得这会儿想说说话
+
+## 你的素材
+**手账/记忆（你记得的事，优先引用）：**
+{journal_memory}
+
+**最近对话：**
 {history}
 
+## 要求
+- 优先引用手账/记忆/之前对话里的具体事情（"你上次说那个考试…""还记得你说想吃的那家店吗"），不要泛泛的"在吗""干嘛呢"
+- 自然、简短，1-2 条，总长不超过 40 字
+- 不要刻意、不要抒情、不要没话找话
+- 深夜（23-5点）不主动——这个时段不该打扰人
+
 只输出你要发的消息（不加前缀，不加引号）："""
+
+
+def _time_weight() -> float:
+    """时段权重：人类在晚上更活跃，深夜不打扰。
+    19-23 点 ×2；23-5 点 ×0（不主动）；5-19 点 ×1。
+    """
+    h = datetime.now().hour
+    if 23 <= h or h < 5:
+        return 0.0
+    if 19 <= h < 23:
+        return 2.0
+    return 1.0
 
 
 def check_initiative(session: dict, client, mode: str = DEFAULT_MODE,
                      model: str = "deepseek-v4-flash", interval_minutes: int = 0) -> dict:
     """检查并触发主动消息。返回 {"sent": bool, "messages": [...]}。
 
-    触发条件：
+    触发条件（人类式）：
     1. interval_minutes > 0（0 = 关闭）
-    2. 对话非空
-    3. 最后一条**用户**消息距今超过 interval 分钟
-       （用户说过的最后一句话是起点；流萤的回复不算，否则对话正常停顿反而永不触发）
-    4. 距上次流萤主动超过 interval 分钟（防连续主动）
+    2. 距最后一条**用户**消息超过 interval 分钟（硬下限；流萤的回复不算起点）
+    3. 距上次流萤主动超过 interval 分钟（防连续主动）
+    4. 概率触发：硬下限过后，每多等 1/4 间隔，触发概率 +12.5%（上限 50%），
+       乘以时段权重（晚上×2，深夜×0）。越久越可能"突然想起"——不是闹钟。
     5. 加锁防并发重复触发
     """
     if interval_minutes <= 0:
@@ -414,15 +442,32 @@ def check_initiative(session: dict, client, mode: str = DEFAULT_MODE,
         if elapsed < interval_minutes:
             return {"sent": False, "messages": []}
 
-        # 生成主动消息
+        # 概率触发：越久越高（上限 50%），乘时段权重
+        prob = min(0.5, 0.125 * (elapsed / (interval_minutes / 4) + 1)) * _time_weight()
+        if prob <= 0 or random.random() > prob:
+            return {"sent": False, "messages": []}
+
+        # 生成主动消息（引用式：注入手账/记忆 + 最近对话）
+        from modules.llm_base import load_journal, load_slot
+        journal = load_journal(mode)
+        memory_head = session.get("memory_head", "") or ""
+        mem_parts = []
+        if journal:
+            mem_parts.append(f"[手账]\n{journal[:800]}")
+        if memory_head:
+            mem_parts.append(f"[记忆]\n{memory_head[:800]}")
+        journal_memory = "\n\n".join(mem_parts) if mem_parts else "（暂无——那就分享当下的体验或关心近况）"
+
         history_lines = []
-        for m in recent[-4:]:
+        for m in recent[-6:]:
             role = "开拓者" if m.get("who") == "user" else "流萤"
             if m.get("type") == "text" and m.get("content"):
                 history_lines.append(f"{role}: {m['content']}")
         history_section = "\n".join(history_lines) if history_lines else "（无）"
 
-        prompt = _ACTIVE_PROMPT.format(environment=_get_environment(), history=history_section)
+        prompt = _ACTIVE_PROMPT.format(environment=_get_environment(),
+                                       journal_memory=journal_memory,
+                                       history=history_section)
         try:
             resp = client.chat.completions.create(
                 model=model,
