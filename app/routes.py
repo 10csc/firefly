@@ -132,8 +132,8 @@ def set_config(h):
     except (TypeError, ValueError):
         pass
     try:
-        ii = int(body.get("initiative_interval", cfg.config.get("initiative_interval", 0)))
-        cfg.config["initiative_interval"] = max(0, min(1440, ii))
+        ii = int(body.get("initiative_level", cfg.config.get("initiative_level", 0)))
+        cfg.config["initiative_level"] = max(0, min(100, ii))
     except (TypeError, ValueError):
         pass
     if new_key:
@@ -151,7 +151,7 @@ def set_config(h):
         "organizer_effort": cfg.config["organizer_effort"],
         "retriever_temperature": cfg.config["retriever_temperature"],
         "polisher_temperature": cfg.config["polisher_temperature"],
-        "initiative_interval": cfg.config.get("initiative_interval", 0),
+        "initiative_level": cfg.config.get("initiative_level", 0),
     })
 
 
@@ -433,7 +433,7 @@ def get_config(h):
         "organizer_effort": cfg.config["organizer_effort"],
         "retriever_temperature": cfg.config["retriever_temperature"],
         "polisher_temperature": cfg.config["polisher_temperature"],
-        "initiative_interval": cfg.config.get("initiative_interval", 0),
+        "initiative_level": cfg.config.get("initiative_level", 0),
         "valid_models": list(cfg.VALID_MODELS),
         "valid_efforts": list(cfg.VALID_EFFORTS),
     })
@@ -569,15 +569,19 @@ def open_mode(h):
 def check_initiative(h):
     """前端轮询：流萤是否该主动发消息了（主动性功能）。
 
+    initiative_level（0-100）：值越大越主动。
+    间隔换算：level=100 → 10 分钟；level=1 → 3 小时（线性递减）。
     无 key 或主动性关闭时直接返回未触发，不产生 LLM 调用。
     """
     client = cfg.get_client()
     body = _read_json(h)
     mode = _body_mode(body)
-    interval = int(cfg.config.get("initiative_interval", 0) or 0)
-    if not client or interval <= 0:
+    level = int(cfg.config.get("initiative_level", 0) or 0)
+    if not client or level <= 0:
         h._json({"sent": False, "messages": []})
         return
+    # 值越大 → 间隔越短 → 越主动：100→10分钟，1→180分钟
+    interval = max(10, 180 - (level - 1) * 170 // 99)
     session = get_session(body.get("session_id", "default"), mode)
     try:
         from orchestrator import check_initiative as _check

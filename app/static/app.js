@@ -245,13 +245,13 @@ async function loadConfig() {
                 : "尚未设置 API Key";
         }
         if (el.k) { el.k.placeholder = data.has_key ? "已设置，留空则保留原 Key" : "sk-..."; el.k.value = ""; }
-        // 主动性滑条
+        // 主动性滑条（0-100，值越大越主动）
         const initSlider = document.getElementById("initiative-slider");
         const initVal = document.getElementById("initiative-value");
-        if (initSlider && data.initiative_interval != null) {
-            initSlider.value = data.initiative_interval;
-            if (initVal) initVal.textContent = data.initiative_interval > 0
-                ? data.initiative_interval + " 分钟" : "关闭";
+        if (initSlider && data.initiative_level != null) {
+            initSlider.value = data.initiative_level;
+            if (initVal) initVal.textContent = data.initiative_level > 0
+                ? data.initiative_level + "%" : "关闭";
         }
         return data;
     } catch (e) { return {has_key: false}; }
@@ -262,7 +262,7 @@ const initiativeVal = document.getElementById("initiative-value");
 if (initiativeSlider) {
     initiativeSlider.addEventListener("input", () => {
         if (initiativeVal) initiativeVal.textContent = Number(initiativeSlider.value) > 0
-            ? initiativeSlider.value + " 分钟" : "关闭";
+            ? initiativeSlider.value + "%" : "关闭";
     });
 }
 
@@ -292,13 +292,13 @@ document.getElementById("key-save").addEventListener("click", async () => {
     const pe = document.getElementById("polisher-effort-select").value;
     const oe = document.getElementById("organizer-effort-select").value;
     const rtemp = parseFloat(retrieverTempSlider.value) || 0.0;
-    const initInterval = initiativeSlider ? parseInt(initiativeSlider.value) || 0 : 0;
+    const initLevel = initiativeSlider ? parseInt(initiativeSlider.value) || 0 : 0;
     const msg = document.getElementById("config-msg");
     const payload = {
         analyzer_model: am, retriever_model: rm, organizer_model: om, polisher_model: pm,
         retriever_effort: re, analyzer_effort: ae, polisher_effort: pe, organizer_effort: oe,
         retriever_temperature: rtemp,
-        initiative_interval: initInterval,
+        initiative_level: initLevel,
     };
     if (k) payload.api_key = k;
     msg.textContent = "保存中…";
