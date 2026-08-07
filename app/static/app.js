@@ -625,7 +625,14 @@ for (let i = 0; i < carouselCount; i++) {
 }
 function goCarousel(i) {
     carouselIndex = (i + carouselCount) % carouselCount;
-    carouselTrack.style.transform = `translateX(-${carouselIndex * 100}%)`;
+    // 安卓 WebView bug：transform 移动后的 img 合成层光栅化模糊。
+    // 改用 opacity 淡入淡出切换（无 transform、无 display 硬切，过渡平滑）。
+    [...carouselTrack.children].forEach((img, di) => {
+        const active = di === carouselIndex;
+        img.style.opacity = active ? "1" : "0";
+        img.style.pointerEvents = active ? "auto" : "none";   // 隐藏层不挡点击
+        img.style.zIndex = active ? "1" : "0";
+    });
     [...carouselDots.children].forEach((d, di) => d.classList.toggle("active", di === carouselIndex));
 }
 function startCarousel() {
@@ -662,14 +669,12 @@ window.addEventListener("mousemove", (e) => {
     dragState.curX = e.clientX;
     const dx = dragState.curX - dragState.startX;
     if (Math.abs(dx) > 5) dragState.moved = true;
-    carouselTrack.style.transform = `translateX(calc(-${carouselIndex * 100}% + ${dx}px))`;
 });
 window.addEventListener("mouseup", (e) => {
     if (!dragState) return;
     const dx = dragState.curX - dragState.startX;
     const moved = dragState.moved;
     dragState = null;
-    carouselTrack.style.transform = `translateX(-${carouselIndex * 100}%)`;
     if (Math.abs(dx) > 40) {
         goCarousel(carouselIndex + (dx < 0 ? 1 : -1));   // 拖拽切换
     } else if (!moved) {
@@ -685,6 +690,12 @@ carouselTrack.addEventListener("wheel", (e) => {
 
 // 页面加载默认显示首页（若从对话页刷新则恢复对话页）
 document.addEventListener("DOMContentLoaded", () => {
+    // 初始化轮播显隐（opacity 叠放，transform 方案废弃避开 WebView 合成 bug）
+    [...carouselTrack.children].forEach((img, di) => {
+        img.style.opacity = di === 0 ? "1" : "0";
+        img.style.pointerEvents = di === 0 ? "auto" : "none";
+        img.style.zIndex = di === 0 ? "1" : "0";
+    });
     if (location.hash === "#chat") showChat();
     else showHome();
 });
