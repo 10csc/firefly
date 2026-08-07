@@ -618,20 +618,36 @@ body {
 .notice-arrow { color: var(--fg-muted); font-size: 0.8em; transition: transform 0.2s; }
 /* 第二栏：滚动播放（约 30% 高度） */
 .home-carousel {
-    height: 30vh; min-height: 120px;
+    height: auto;
+    aspect-ratio: 2 / 1;   /* 适配轮播图本身比例（680x340），不裁剪不缩放 */
     position: relative; overflow: hidden; flex-shrink: 0;
     background: var(--carousel-bg);
+    /* 圆角框：border-radius + clip-path 双保险——
+       border-radius 对部分安卓 WebView 硬件加速时不裁剪内容，
+       clip-path 用裁剪路径强制弧形裁切四角（兼容性更好）。
+       图片文件本身不动，是显示层圆角。 */
+    border-radius: 18px;
+    clip-path: inset(0 round 18px);
+    margin: 0 10px;
 }
 .carousel-track {
-    display: flex; height: 100%;
-    transition: transform 0.45s ease;
+    position: relative; height: 100%; width: 100%;
+    border-radius: 18px; overflow: hidden;
+    clip-path: inset(0 round 18px);
+}
+/* 轮播图：去掉点击/触摸高亮（蓝色触发区不好看） */
+.carousel-track img,
+.home-carousel {
+    -webkit-tap-highlight-color: transparent;
+    -webkit-touch-callout: none;
 }
 .carousel-track img {
+    position: absolute; top: 0; left: 0;
     width: 100%; height: 100%;
     object-fit: contain; flex-shrink: 0;
     cursor: pointer;   /* 点击轮播图进入对应功能 */
     user-select: none; -webkit-user-drag: none;
-    /* 圆角已直接做进图片文件（四角透明），CSS 不再重复裁切 */
+    transition: opacity 0.4s ease;   /* 淡入淡出切换（替代 transform 滑动，避开 WebView 合成 bug） */
 }
 .carousel-dots {
     position: absolute; bottom: 8px; left: 0; right: 0;
