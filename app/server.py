@@ -58,7 +58,16 @@ class FireflyHandler(SimpleHTTPRequestHandler):
         elif path == "/" or path == "/index.html":
             self._serve_file(cfg.STATIC_DIR / "index.html")
         else:
-            super().do_GET()
+            # 根目录静态文件（轮播图等）：先按编码路径，再按原始中文路径尝试
+            # （SimpleHTTPRequestHandler 对未编码中文返回 404，这里统一用 unquote 处理）
+            name = unquote(path)
+            if name and not name.startswith("/"):
+                name = "/" + name
+            fp = cfg.STATIC_DIR / name.lstrip("/")
+            if fp.exists() and fp.is_file():
+                self._serve_file(fp)
+            else:
+                super().do_GET()
 
     # ── 响应工具（供 routes 调用）──────────────────
     _MIME = {

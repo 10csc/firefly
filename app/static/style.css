@@ -302,6 +302,14 @@ body {
     max-height: calc(min(140px, 34vw) * var(--ui-scale));
     border-radius: 10px; display: block;
 }
+.sticker-fallback {
+    display: inline-block;
+    padding: 10px 14px;
+    border-radius: 10px;
+    background: var(--ctrl-bg-2);
+    color: var(--fg-muted);
+    font-size: 0.8em;
+}
 
 /* ── 输入栏 ── */
 #input-bar {
@@ -613,20 +621,18 @@ body {
     height: 30vh; min-height: 120px;
     position: relative; overflow: hidden; flex-shrink: 0;
     background: var(--carousel-bg);
-    /* 圆角柔化：与整体 UI 风格协调，降低大图直角的硬度 */
-    border-radius: 14px;
-    margin: 0 12px;
 }
 .carousel-track {
     display: flex; height: 100%;
     transition: transform 0.45s ease;
-    border-radius: 14px; overflow: hidden;
 }
 .carousel-track img {
     width: 100%; height: 100%;
     object-fit: contain; flex-shrink: 0;
     cursor: pointer;   /* 点击轮播图进入对应功能 */
     user-select: none; -webkit-user-drag: none;
+    /* 圆角做在图片自身（像素画四角柔和），不做容器裁切 */
+    border-radius: 14px;
 }
 .carousel-dots {
     position: absolute; bottom: 8px; left: 0; right: 0;
