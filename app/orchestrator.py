@@ -87,7 +87,15 @@ def haruno_opening() -> dict:
     return msgs
 
 
-# ── 环境 ─────────────────────────────────────────
+# ── 主动性：流萤主动发消息 ────────────────────────
+# 轻量路径：不跑完整流水线，直接调 LLM 生成一条问候（结合最近对话与时段）。
+# 写盘后前端轮询拉取渲染。触发条件由 check_initiative 判断。
+# 前置条件：服务器进程存活（PC=exe 运行，安卓=App 进程存活）+ 前端页面打开轮询。
+# 后台保活（安卓前台服务/PC 托盘）不在本次范围。
+_active_lock = threading.Lock()
+_active_last: dict[str, float] = {}   # {mode: 上次主动的 epoch 秒}，防连续主动
+
+
 def _get_environment() -> str:
     now = datetime.now()
     h = now.hour
@@ -352,3 +360,95 @@ def handle_chat(
             ctx.add_action("旁白", m.get("text", ""))
 
     return ChatResult(messages=messages, bubble=None)
+
+
+# ── 主动性：流萤主动发消息 ────────────────────────
+# 轻量路径：不跑完整流水线，直接调 LLM 生成一条问候（结合最近对话与时段）。
+# 写盘后前端轮询拉取渲染。触发条件由 check_initiative 判断。
+_ACTIVE_PROMPT = """你是流萤。现在是{environment}，开拓者有一阵子没说话了。
+结合最近对话的语境，你想主动给他发一条消息——自然、简短，像平时发短信一样（分1-2条，总长不超过30字）。
+可以是问候、分享一件小事、问他在干嘛——不要刻意、不要抒情、不要没话找话。
+
+最近对话：
+{history}
+
+只输出你要发的消息（不加前缀，不加引号）："""
+
+
+def check_initiative(session: dict, client, mode: str = DEFAULT_MODE,
+                     model: str = "deepseek-v4-flash", interval_minutes: int = 0) -> dict:
+    """检查并触发主动消息。返回 {"sent": bool, "messages": [...]}。
+
+    触发条件：
+    1. interval_minutes > 0（0 = 关闭）
+    2. 对话非空
+    3. 最后一条**用户**消息距今超过 interval 分钟
+       （用户说过的最后一句话是起点；流萤的回复不算，否则对话正常停顿反而永不触发）
+    4. 距上次流萤主动超过 interval 分钟（防连续主动）
+    5. 加锁防并发重复触发
+    """
+    if interval_minutes <= 0:
+        return {"sent": False, "messages": []}
+
+    now = time.time()
+    with _active_lock:
+        # 防连续主动：距上次主动足够久
+        if now - _active_last.get(mode, 0) < interval_minutes * 60:
+            return {"sent": False, "messages": []}
+
+        # 找最后一条用户消息的时间
+        from modules.conversation_store import load_recent
+        recent = load_recent(limit=30, mode=mode)
+        last_user_time = None
+        for m in reversed(recent):
+            if m.get("who") == "user":
+                last_user_time = m.get("time")
+                break
+        if not last_user_time:
+            return {"sent": False, "messages": []}
+        try:
+            last_dt = datetime.strptime(str(last_user_time), "%Y-%m-%d %H:%M:%S")
+        except Exception:
+            return {"sent": False, "messages": []}
+        elapsed = (datetime.now() - last_dt).total_seconds() / 60
+        if elapsed < interval_minutes:
+            return {"sent": False, "messages": []}
+
+        # 生成主动消息
+        history_lines = []
+        for m in recent[-4:]:
+            role = "开拓者" if m.get("who") == "user" else "流萤"
+            if m.get("type") == "text" and m.get("content"):
+                history_lines.append(f"{role}: {m['content']}")
+        history_section = "\n".join(history_lines) if history_lines else "（无）"
+
+        prompt = _ACTIVE_PROMPT.format(environment=_get_environment(), history=history_section)
+        try:
+            resp = client.chat.completions.create(
+                model=model,
+                messages=[{"role": "system", "content": "你是流萤，正在用手机给开拓者发短信。"},
+                          {"role": "user", "content": prompt}],
+                max_tokens=500,
+                extra_body={"thinking": {"type": "enabled"}, "reasoning_effort": "high"},
+            )
+            raw = resp.choices[0].message.content.strip()
+            rc = (getattr(resp.choices[0].message, "reasoning_content", "") or "").strip()
+            if not raw and rc:
+                raw = rc
+            # 清理可能的 [MSG] 前缀或引号
+            text = raw.replace("[MSG]", "").strip().strip("\"'「」")
+            if not text:
+                return {"sent": False, "messages": []}
+            from modules.llm_base import record_usage
+            record_usage("initiative", resp)
+        except Exception as e:
+            logger.warning("主动消息生成失败: %s", e)
+            return {"sent": False, "messages": []}
+
+        # 写盘 + 进上下文 + 记录主动时间
+        from modules.conversation_store import append_message as _app
+        seq, t = _app("firefly", {"type": "text", "content": text}, mode=mode)
+        if "context" in session:
+            session["context"].add_turn("（流萤主动发来消息）", text)
+        _active_last[mode] = time.time()
+        return {"sent": True, "messages": [{"type": "text", "content": text, "time": t, "seq": seq}]}
