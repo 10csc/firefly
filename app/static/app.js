@@ -245,25 +245,8 @@ async function loadConfig() {
                 : "尚未设置 API Key";
         }
         if (el.k) { el.k.placeholder = data.has_key ? "已设置，留空则保留原 Key" : "sk-..."; el.k.value = ""; }
-        // 主动性滑条（0-100，值越大越主动）
-        const initSlider = document.getElementById("initiative-slider");
-        const initVal = document.getElementById("initiative-value");
-        if (initSlider && data.initiative_level != null) {
-            initSlider.value = data.initiative_level;
-            if (initVal) initVal.textContent = data.initiative_level > 0
-                ? data.initiative_level + "%" : "关闭";
-        }
         return data;
     } catch (e) { return {has_key: false}; }
-}
-
-const initiativeSlider = document.getElementById("initiative-slider");
-const initiativeVal = document.getElementById("initiative-value");
-if (initiativeSlider) {
-    initiativeSlider.addEventListener("input", () => {
-        if (initiativeVal) initiativeVal.textContent = Number(initiativeSlider.value) > 0
-            ? initiativeSlider.value + "%" : "关闭";
-    });
 }
 
 const retrieverTempSlider = document.getElementById("retriever-temp-slider");
@@ -292,13 +275,11 @@ document.getElementById("key-save").addEventListener("click", async () => {
     const pe = document.getElementById("polisher-effort-select").value;
     const oe = document.getElementById("organizer-effort-select").value;
     const rtemp = parseFloat(retrieverTempSlider.value) || 0.0;
-    const initLevel = initiativeSlider ? parseInt(initiativeSlider.value) || 0 : 0;
     const msg = document.getElementById("config-msg");
     const payload = {
         analyzer_model: am, retriever_model: rm, organizer_model: om, polisher_model: pm,
         retriever_effort: re, analyzer_effort: ae, polisher_effort: pe, organizer_effort: oe,
         retriever_temperature: rtemp,
-        initiative_level: initLevel,
     };
     if (k) payload.api_key = k;
     msg.textContent = "保存中…";
@@ -509,14 +490,12 @@ function showHome() {
     stopCarousel();
     goCarousel(0);   // 回到首页重置轮播位置
     startCarousel();   // 重新开始自动轮播
-    stopInitiativePolling();
 }
 async function showChat() {
     homeView.classList.remove("show");
     appView.style.display = "flex";     // 恢复聊天页
     stopCarousel();   // 聊天页轮播不可见，停止自动轮播（避免返回首页时位置已乱）
     scrollToBottom();
-    startInitiativePolling();
     // 顶部显示当前模式名
     const modeTag = document.getElementById("chat-mode-tag");
     if (modeTag) modeTag.textContent = MODE_NAMES[CURRENT_MODE] || CURRENT_MODE;
@@ -535,31 +514,7 @@ async function showChat() {
     try { if (location.hash !== "#chat") history.pushState({chat: true}, "", "#chat"); } catch (e) {}
 }
 
-// ── 主动性轮询（流萤主动发消息）──────────────────
-let _initiativeTimer = null;
-function startInitiativePolling() {
-    stopInitiativePolling();
-    _initiativeTimer = setInterval(pollInitiative, 30000);   // 30s 一次
-    pollInitiative();
-}
-function stopInitiativePolling() {
-    if (_initiativeTimer) { clearInterval(_initiativeTimer); _initiativeTimer = null; }
-}
-let _initiativeBusy = false;
-async function pollInitiative() {
-    if (_initiativeBusy || waiting) return;
-    _initiativeBusy = true;
-    try {
-        const resp = await fetch("/check-initiative", {
-            method: "POST", headers: {"Content-Type": "application/json"},
-            body: JSON.stringify({ session_id: SESSION_ID, mode: CURRENT_MODE }),
-        });
-        const data = await resp.json();
-        if (data.sent && data.messages && data.messages.length) {
-            renderMessages(data.messages, "firefly", data);
-        }
-    } catch (e) {} finally { _initiativeBusy = false; }
-}
+
 
 // haruno 模式开场：服务端幂等（无历史才生成），返回旁白+首条消息
 async function openModeOpening() {

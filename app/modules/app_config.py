@@ -155,8 +155,6 @@ def _load_config() -> dict:
         "retriever_effort": "none", "analyzer_effort": "high",
         "polisher_effort": "high", "organizer_effort": "none",
         "retriever_temperature": 0.0, "polisher_temperature": 0.5,
-        # 主动性强度：0-100，0=关闭。值越大流萤越主动（间隔越短、触发概率越高）。
-        "initiative_level": 0,
     }
     try:
         data = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
@@ -185,11 +183,6 @@ def _load_config() -> dict:
                 cfg["retriever_temperature"] = max(0.0, min(2.0, rt))
             except (TypeError, ValueError):
                 cfg["retriever_temperature"] = 0.0
-            try:
-                ii = int(data.get("initiative_level", 0))
-                cfg["initiative_level"] = max(0, min(100, ii))
-            except (TypeError, ValueError):
-                cfg["initiative_level"] = 0
     except Exception:
         pass
     if not cfg["api_key"]:
@@ -215,7 +208,6 @@ def save_config() -> None:
             "organizer_effort": config.get("organizer_effort", "none"),
             "retriever_temperature": config.get("retriever_temperature", 0.0),
             "polisher_temperature": config.get("polisher_temperature", 0.5),
-            "initiative_level": config.get("initiative_level", 0),
         }, ensure_ascii=False),
         encoding="utf-8")
 
