@@ -613,10 +613,14 @@ body {
     height: 30vh; min-height: 120px;
     position: relative; overflow: hidden; flex-shrink: 0;
     background: var(--carousel-bg);
+    /* 圆角柔化：与整体 UI 风格协调，降低大图直角的硬度 */
+    border-radius: 14px;
+    margin: 0 12px;
 }
 .carousel-track {
     display: flex; height: 100%;
     transition: transform 0.45s ease;
+    border-radius: 14px; overflow: hidden;
 }
 .carousel-track img {
     width: 100%; height: 100%;

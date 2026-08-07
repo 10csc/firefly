@@ -131,6 +131,11 @@ def set_config(h):
         cfg.config["polisher_temperature"] = t
     except (TypeError, ValueError):
         pass
+    try:
+        ii = int(body.get("initiative_interval", cfg.config.get("initiative_interval", 0)))
+        cfg.config["initiative_interval"] = max(0, min(1440, ii))
+    except (TypeError, ValueError):
+        pass
     if new_key:
         cfg.config["api_key"] = new_key
     cfg.save_config()
@@ -146,6 +151,7 @@ def set_config(h):
         "organizer_effort": cfg.config["organizer_effort"],
         "retriever_temperature": cfg.config["retriever_temperature"],
         "polisher_temperature": cfg.config["polisher_temperature"],
+        "initiative_interval": cfg.config.get("initiative_interval", 0),
     })
 
 
@@ -427,6 +433,7 @@ def get_config(h):
         "organizer_effort": cfg.config["organizer_effort"],
         "retriever_temperature": cfg.config["retriever_temperature"],
         "polisher_temperature": cfg.config["polisher_temperature"],
+        "initiative_interval": cfg.config.get("initiative_interval", 0),
         "valid_models": list(cfg.VALID_MODELS),
         "valid_efforts": list(cfg.VALID_EFFORTS),
     })
@@ -559,6 +566,29 @@ def open_mode(h):
     h._json({"messages": [], "opened": False})
 
 
+def check_initiative(h):
+    """前端轮询：流萤是否该主动发消息了（主动性功能）。
+
+    无 key 或主动性关闭时直接返回未触发，不产生 LLM 调用。
+    """
+    client = cfg.get_client()
+    body = _read_json(h)
+    mode = _body_mode(body)
+    interval = int(cfg.config.get("initiative_interval", 0) or 0)
+    if not client or interval <= 0:
+        h._json({"sent": False, "messages": []})
+        return
+    session = get_session(body.get("session_id", "default"), mode)
+    try:
+        from orchestrator import check_initiative as _check
+        with session["lock"]:
+            result = _check(session, client, mode=mode, interval_minutes=interval)
+        h._json(result)
+    except Exception as e:
+        logger.warning("主动性检查失败: %s", e)
+        h._json({"sent": False, "messages": []})
+
+
 # ── 分发表 ───────────────────────────────────────
 POST_ROUTES = {
     "/set-key": set_key,
@@ -567,6 +597,7 @@ POST_ROUTES = {
     "/save-user-memory": save_user_memory,
     "/check-key": check_key,
     "/chat": chat,
+    "/check-initiative": check_initiative,
     "/open-mode": open_mode,
     "/rest": rest,
     "/add-sticker": add_sticker_route,
