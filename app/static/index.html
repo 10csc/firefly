@@ -124,10 +124,10 @@
         </div>
         <div class="field" style="margin-top:14px;padding-top:14px;border-top:1px solid var(--border-mid)">
             <label>主动性（流萤主动发消息）<span id="initiative-value">关闭</span></label>
-            <input id="initiative-slider" type="range" min="0" max="60" step="5" value="0">
+            <input id="initiative-slider" type="range" min="0" max="100" step="5" value="0">
             <div style="color:var(--fg-muted);font-size:0.7em;margin-top:2px">
-                间隔分钟：对话空闲超过该时长后，流萤会主动发一条消息。0 = 关闭。
-                前置条件：程序运行中且聊天页打开（后台保活暂未实现）
+                数值越大流萤越主动：100 = 约 10 分钟会主动发一条消息，1 = 约 3 小时。
+                0 = 关闭。前置条件：程序运行中且聊天页打开（后台保活暂未实现）
             </div>
         </div>
         <div style="margin:16px 0 14px;padding-top:14px;border-top:1px solid var(--border-mid)">
