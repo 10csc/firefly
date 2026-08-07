@@ -631,8 +631,7 @@ body {
     object-fit: contain; flex-shrink: 0;
     cursor: pointer;   /* 点击轮播图进入对应功能 */
     user-select: none; -webkit-user-drag: none;
-    /* 圆角做在图片自身（像素画四角柔和），不做容器裁切 */
-    border-radius: 14px;
+    /* 圆角已直接做进图片文件（四角透明），CSS 不再重复裁切 */
 }
 .carousel-dots {
     position: absolute; bottom: 8px; left: 0; right: 0;
