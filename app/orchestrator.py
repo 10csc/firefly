@@ -442,8 +442,11 @@ def check_initiative(session: dict, client, mode: str = DEFAULT_MODE,
         if elapsed < interval_minutes:
             return {"sent": False, "messages": []}
 
-        # 概率触发：越久越高（上限 50%），乘时段权重
-        prob = min(0.5, 0.125 * (elapsed / (interval_minutes / 4) + 1)) * _time_weight()
+        # 概率触发（人类式渐进分布）：硬下限刚过概率低（10%），
+        # 随沉默时长线性上升，到 2 倍间隔封顶 50%——越久越可能"突然想起"。
+        # 之前公式有 bug：elapsed=interval 时 0.125*(4+1)=0.625 直接封顶 50%，
+        # 中间值永远不存在，分布退化为"0 或 50%"二元跳变。
+        prob = min(0.5, 0.10 + (elapsed - interval_minutes) / interval_minutes * 0.40) * _time_weight()
         if prob <= 0 or random.random() > prob:
             return {"sent": False, "messages": []}
 
