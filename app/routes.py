@@ -714,9 +714,14 @@ def _fetch_json(url: str, timeout: float = 15.0) -> dict:
 
 def _match_asset(assets, pattern):
     for a in assets or []:
-        name = str(a.get("name") or a.get("browser_download_url") or "")
-        if pattern.search(name):
-            return a.get("browser_download_url") or name
+        # 审查：非 dict 资产项直接跳过（防 API 脏数据导致 AttributeError 崩掉检测链）
+        if not isinstance(a, dict):
+            continue
+        name = str(a.get("name") or "")
+        url = str(a.get("browser_download_url") or "")
+        # 匹配 name 或 URL 任一（防资产 name 不带扩展名但 URL 是 .exe/.apk 的漏检）
+        if pattern.search(name) or pattern.search(url):
+            return url or name
     return ""
 
 
