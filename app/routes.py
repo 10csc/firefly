@@ -40,6 +40,7 @@ def get_session(sid: str, mode: str = DEFAULT_MODE) -> dict:
             # 首次创建会话：加载记忆头部（无记忆/中断/异常都降级为空串，不阻塞会话）
             from modules.memory_manager import wake as memory_wake
             from modules.conversation_store import hydrate_context
+            from modules.proactive import _restore_active_semaphore
             client = cfg.get_client()
             memory_head = memory_wake(client, cfg.MODEL, mode) if client else ""
             ctx = ContextManager()
@@ -49,6 +50,8 @@ def get_session(sid: str, mode: str = DEFAULT_MODE) -> dict:
                     logger.info("会话 %s[%s] 回灌 %d 轮历史", sid, mode, n)
             except Exception as e:
                 logger.warning("历史回灌失败（空上下文启动）: %s", e)
+            # 重启兜底：ACTIVE 信号量从 proactive_log 重建（防退出重进刷主动）
+            _restore_active_semaphore(mode)
             sessions[key] = {
                 "context": ctx,
                 "memory_head": memory_head,
@@ -131,6 +134,33 @@ def set_config(h):
         cfg.config["polisher_temperature"] = t
     except (TypeError, ValueError):
         pass
+    # 主动性插件配置（v2：轮次硬约束 + 概率软约束，替代 v1 时间制）
+    if "proactive_enabled" in body:
+        cfg.config["proactive_enabled"] = bool(body.get("proactive_enabled"))
+    if "proactive_hard" in body:
+        try:
+            ph = int(body.get("proactive_hard", 4))
+            cfg.config["proactive_hard"] = max(1, min(10, ph))
+        except (TypeError, ValueError):
+            pass
+    if "proactive_soft" in body:
+        try:
+            ps = float(body.get("proactive_soft", 0.5))
+            cfg.config["proactive_soft"] = max(0.0, min(1.0, ps))
+        except (TypeError, ValueError):
+            pass
+    # 概率式回复配置
+    if "prob_reply_enabled" in body:
+        cfg.config["prob_reply_enabled"] = bool(body.get("prob_reply_enabled"))
+    if "prob_reply_value" in body:
+        try:
+            pv = float(body.get("prob_reply_value", 0.3))
+            cfg.config["prob_reply_value"] = max(0.0, min(1.0, pv))
+        except (TypeError, ValueError):
+            pass
+    # 隐藏式回复配置（独立开关，关前台概率式不影响隐藏式）
+    if "hidden_reply_enabled" in body:
+        cfg.config["hidden_reply_enabled"] = bool(body.get("hidden_reply_enabled"))
     if new_key:
         cfg.config["api_key"] = new_key
     cfg.save_config()
@@ -146,6 +176,12 @@ def set_config(h):
         "organizer_effort": cfg.config["organizer_effort"],
         "retriever_temperature": cfg.config["retriever_temperature"],
         "polisher_temperature": cfg.config["polisher_temperature"],
+        "proactive_enabled": bool(cfg.config.get("proactive_enabled", True)),
+        "proactive_hard": cfg.config.get("proactive_hard", 4),
+        "proactive_soft": cfg.config.get("proactive_soft", 0.5),
+        "prob_reply_enabled": bool(cfg.config.get("prob_reply_enabled", True)),
+        "prob_reply_value": cfg.config.get("prob_reply_value", 0.3),
+        "hidden_reply_enabled": bool(cfg.config.get("hidden_reply_enabled", True)),
     })
 
 
@@ -217,47 +253,58 @@ def chat(h):
         if user_input:
             _append_msg("user", {"type": "text", "content": user_input}, mode=mode)
 
-    session = get_session(session_id, mode)
-    # 会话级锁：同会话操作串行（chat 耗时长，防 undo/rest 并发读写 ctx）
-    with session["lock"]:
-        result = handle_chat(
-            user_input, session, client,
-            analyzer_model=cfg.config["analyzer_model"],
-            organizer_model=cfg.config["organizer_model"],
-            polisher_model=cfg.config["polisher_model"],
-            retriever_model=cfg.config["retriever_model"],
-            retriever_effort=cfg.config["retriever_effort"],
-            analyzer_effort=cfg.config["analyzer_effort"],
-            polisher_effort=cfg.config["polisher_effort"],
-            organizer_effort=cfg.config["organizer_effort"],
-            retriever_temperature=cfg.config["retriever_temperature"],
-            polisher_temperature=cfg.config["polisher_temperature"],
-            memory_head=session.get("memory_head", ""),
-            hint=hint,
-            mode=mode,
-        )
-    # 即时写盘：流萤回复每条立刻记，并把 time 回传给前端
-    enriched = []
-    for m in result.messages:
-        record = {"type": m.get("type")}
-        if m.get("type") == "text":
-            record["content"] = m.get("content", "")
-            seq, t = _append_msg("firefly", {"type": "text", "content": record["content"]}, mode=mode)
-        elif m.get("type") == "sticker":
-            record["path"] = m.get("path", "")
-            record["label"] = m.get("label", "")
-            seq, t = _append_msg("firefly", {"type": "sticker", "path": record["path"], "label": record["label"]}, mode=mode)
-        elif m.get("type") == "narration":
-            # 视觉小说式旁白：scene=居中小字（环境/事件），action=居中括号（动作）
-            record["text"] = m.get("text", "")
-            record["style"] = m.get("style", "action")
-            seq, t = _append_msg("firefly", {"type": "narration", "text": record["text"], "style": record["style"]}, mode=mode)
-        else:
-            record["content"] = str(m)
-            seq, t = _append_msg("firefly", {"type": "text", "content": record["content"]}, mode=mode)
-        record["time"] = t
-        enriched.append(record)
-    h._json({"messages": enriched})
+    # 用户回应 → 主动性信号量复位（用户发送即解锁主动通道，接上响应式回复）
+    from modules.proactive import _active_reset
+    _active_reset(mode)
+
+    # 回复通道锁（阻塞）：用户消息不可丢，等待本模式任何主动生成完成后再处理
+    # （按模式分锁：不阻塞其他模式的回复通道）
+    from modules.proactive import reply_lock, reply_unlock
+    reply_lock(mode)
+    try:
+        session = get_session(session_id, mode)
+        # 会话级锁：同会话操作串行（chat 耗时长，防 undo/rest 并发读写 ctx）
+        with session["lock"]:
+            result = handle_chat(
+                user_input, session, client,
+                analyzer_model=cfg.config["analyzer_model"],
+                organizer_model=cfg.config["organizer_model"],
+                polisher_model=cfg.config["polisher_model"],
+                retriever_model=cfg.config["retriever_model"],
+                retriever_effort=cfg.config["retriever_effort"],
+                analyzer_effort=cfg.config["analyzer_effort"],
+                polisher_effort=cfg.config["polisher_effort"],
+                organizer_effort=cfg.config["organizer_effort"],
+                retriever_temperature=cfg.config["retriever_temperature"],
+                polisher_temperature=cfg.config["polisher_temperature"],
+                memory_head=session.get("memory_head", ""),
+                hint=hint,
+                mode=mode,
+            )
+        # 即时写盘：流萤回复每条立刻记，并把 time 回传给前端
+        enriched = []
+        for m in result.messages:
+            record = {"type": m.get("type")}
+            if m.get("type") == "text":
+                record["content"] = m.get("content", "")
+                seq, t = _append_msg("firefly", {"type": "text", "content": record["content"]}, mode=mode)
+            elif m.get("type") == "sticker":
+                record["path"] = m.get("path", "")
+                record["label"] = m.get("label", "")
+                seq, t = _append_msg("firefly", {"type": "sticker", "path": record["path"], "label": record["label"]}, mode=mode)
+            elif m.get("type") == "narration":
+                # 视觉小说式旁白：scene=居中小字（环境/事件），action=居中括号（动作）
+                record["text"] = m.get("text", "")
+                record["style"] = m.get("style", "action")
+                seq, t = _append_msg("firefly", {"type": "narration", "text": record["text"], "style": record["style"]}, mode=mode)
+            else:
+                record["content"] = str(m)
+                seq, t = _append_msg("firefly", {"type": "text", "content": record["content"]}, mode=mode)
+            record["time"] = t
+            enriched.append(record)
+        h._json({"messages": enriched})
+    finally:
+        reply_unlock(mode)
 
 
 def rest(h):
@@ -407,6 +454,26 @@ def clear_history(h):
                     encoding="utf-8")
         except Exception:
             pass
+        # 会话聊天产生的数据全部随历史清理（除配置/已写进设定文件的）：
+        # proactive_log（主动判断记录）、pipeline（流水线日志）、
+        # 内存信号量（ACTIVE 复位）+ 忽视计数清零
+        try:
+            from modules.proactive import _log_file, _active_set, _IGNORED, _HIDDEN
+            fp = _log_file(mode)
+            if fp.exists():
+                fp.unlink()
+            _active_set(mode, 1)
+            _IGNORED.pop(mode, None)
+            _HIDDEN.pop(mode, None)   # 隐藏式冷却随历史清理重置
+        except Exception:
+            pass
+        try:
+            from modules.app_config import mode_data_dir
+            fp = mode_data_dir(mode) / "pipeline.jsonl"
+            if fp.exists():
+                fp.unlink()
+        except Exception:
+            pass
     h._json({"ok": True})
 
 
@@ -427,6 +494,12 @@ def get_config(h):
         "organizer_effort": cfg.config["organizer_effort"],
         "retriever_temperature": cfg.config["retriever_temperature"],
         "polisher_temperature": cfg.config["polisher_temperature"],
+        "proactive_enabled": bool(cfg.config.get("proactive_enabled", True)),
+        "proactive_hard": cfg.config.get("proactive_hard", 4),
+        "proactive_soft": cfg.config.get("proactive_soft", 0.5),
+        "prob_reply_enabled": bool(cfg.config.get("prob_reply_enabled", True)),
+        "prob_reply_value": cfg.config.get("prob_reply_value", 0.3),
+        "hidden_reply_enabled": bool(cfg.config.get("hidden_reply_enabled", True)),
         "valid_models": list(cfg.VALID_MODELS),
         "valid_efforts": list(cfg.VALID_EFFORTS),
     })
@@ -559,6 +632,51 @@ def open_mode(h):
     h._json({"messages": [], "opened": False})
 
 
+def proactive_status(h):
+    """主动性检查入口：REPLY 预占用 → 主动式/概率式串联判断 → 生成 → 写盘。
+
+    前端轮询调用（空闲时）；每次调用都是独立判断，门控不通过则零成本返回
+    {"messages": []}。生成的主动消息直接写盘，返回 messages 供前端即时渲染
+    （与 /chat 返回格式一致）。
+
+    信号量：REPLY 非阻塞预占用（忙碌则放弃）；ACTIVE 在 proactive 模块内
+    管理（主动式/概率式互斥 + 用户回应复位 + 超时恢复）。
+    """
+    client = cfg.get_client()
+    if not client:
+        h._json({"messages": []}); return
+    body = _read_json(h)
+    mode = _body_mode(body)
+    session_id = body.get("session_id", "default")
+
+    from modules.proactive import check_and_generate, reply_try_lock, reply_unlock
+    if not reply_try_lock(mode):
+        h._json({"messages": []}); return   # 回复通道忙（响应式生成中/其他主动生成中）
+    try:
+        session = get_session(session_id, mode)
+        with session["lock"]:
+            result = check_and_generate(
+                session, client, mode=mode,
+                enabled=bool(cfg.config.get("proactive_enabled", True)),
+                hard=cfg.config.get("proactive_hard", 4),
+                soft=cfg.config.get("proactive_soft", 0.5),
+                prob_enabled=bool(cfg.config.get("prob_reply_enabled", True)),
+                prob_value=cfg.config.get("prob_reply_value", 0.3),
+                polisher_model=cfg.config["polisher_model"],
+                polisher_effort=cfg.config["polisher_effort"],
+                polisher_temperature=cfg.config["polisher_temperature"],
+                organizer_model=cfg.config["organizer_model"],
+                organizer_effort=cfg.config["organizer_effort"],
+                memory_head=session.get("memory_head", ""),
+            )
+    finally:
+        reply_unlock(mode)
+    if not result.messages or result.discarded:
+        h._json({"messages": [], "reason": result.reason_type})
+        return
+    h._json({"messages": result.messages, "proactive": True})
+
+
 
 
 # ── 分发表 ───────────────────────────────────────
@@ -570,6 +688,7 @@ POST_ROUTES = {
     "/check-key": check_key,
     "/chat": chat,
     "/open-mode": open_mode,
+    "/proactive-status": proactive_status,
     "/rest": rest,
     "/add-sticker": add_sticker_route,
     "/sticker-update": sticker_update,

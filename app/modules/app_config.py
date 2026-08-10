@@ -155,6 +155,9 @@ def _load_config() -> dict:
         "retriever_effort": "none", "analyzer_effort": "high",
         "polisher_effort": "high", "organizer_effort": "none",
         "retriever_temperature": 0.0, "polisher_temperature": 0.5,
+        "proactive_enabled": True, "proactive_hard": 4, "proactive_soft": 0.5,
+        "prob_reply_enabled": True, "prob_reply_value": 0.3,
+        "hidden_reply_enabled": True,
     }
     try:
         data = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
@@ -183,6 +186,27 @@ def _load_config() -> dict:
                 cfg["retriever_temperature"] = max(0.0, min(2.0, rt))
             except (TypeError, ValueError):
                 cfg["retriever_temperature"] = 0.0
+            # 主动性配置（缺省：开启 + 每 4 轮 1 次判断机会 + 50% 触发概率）
+            cfg["proactive_enabled"] = bool(data.get("proactive_enabled", True))
+            try:
+                ph = int(data.get("proactive_hard", 4))
+                cfg["proactive_hard"] = max(1, min(10, ph))
+            except (TypeError, ValueError):
+                cfg["proactive_hard"] = 4
+            try:
+                ps = float(data.get("proactive_soft", 0.5))
+                cfg["proactive_soft"] = max(0.0, min(1.0, ps))
+            except (TypeError, ValueError):
+                cfg["proactive_soft"] = 0.5
+            # 概率式回复配置（缺省：开启 + 30% 概率）
+            cfg["prob_reply_enabled"] = bool(data.get("prob_reply_enabled", True))
+            try:
+                pv = float(data.get("prob_reply_value", 0.3))
+                cfg["prob_reply_value"] = max(0.0, min(1.0, pv))
+            except (TypeError, ValueError):
+                cfg["prob_reply_value"] = 0.3
+            # 隐藏式回复配置（缺省：跟随概率式开启；独立开关，关前台概率式不影响隐藏式）
+            cfg["hidden_reply_enabled"] = bool(data.get("hidden_reply_enabled", True))
     except Exception:
         pass
     if not cfg["api_key"]:
@@ -208,6 +232,12 @@ def save_config() -> None:
             "organizer_effort": config.get("organizer_effort", "none"),
             "retriever_temperature": config.get("retriever_temperature", 0.0),
             "polisher_temperature": config.get("polisher_temperature", 0.5),
+            "proactive_enabled": bool(config.get("proactive_enabled", True)),
+            "proactive_hard": max(1, min(10, int(config.get("proactive_hard", 4)))),
+            "proactive_soft": max(0.0, min(1.0, float(config.get("proactive_soft", 0.5)))),
+            "prob_reply_enabled": bool(config.get("prob_reply_enabled", True)),
+            "prob_reply_value": max(0.0, min(1.0, float(config.get("prob_reply_value", 0.3)))),
+            "hidden_reply_enabled": bool(config.get("hidden_reply_enabled", True)),
         }, ensure_ascii=False),
         encoding="utf-8")
 

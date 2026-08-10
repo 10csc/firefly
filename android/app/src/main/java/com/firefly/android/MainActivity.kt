@@ -3,7 +3,9 @@ package com.firefly.android
 import android.annotation.SuppressLint
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.graphics.Bitmap
+import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -16,6 +18,8 @@ import android.widget.FrameLayout
 import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.app.ActivityCompat
+import androidx.core.content.ContextCompat
 import androidx.core.view.WindowCompat
 import com.chaquo.python.Python
 import com.chaquo.python.android.AndroidPlatform
@@ -31,6 +35,7 @@ class MainActivity : AppCompatActivity() {
     companion object {
         private const val SERVER_URL = "http://127.0.0.1:8765"
         private const val READY_TIMEOUT_MS = 60_000L
+        private const val NOTIF_PERMISSION_REQUEST = 1001
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -45,6 +50,9 @@ class MainActivity : AppCompatActivity() {
         // 后台保活：前台服务（对话流程较长，防止切后台/锁屏时进程被杀导致内容丢失）
         startForegroundService(Intent(this, KeepAliveService::class.java))
 
+        // 通知权限（Android 13+ 需动态申请）：后台概率触发需要状态栏通知
+        requestNotificationPermission()
+
         // 返回键：聊天页 → 回首页；首页 → 双击退出
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
@@ -55,6 +63,31 @@ class MainActivity : AppCompatActivity() {
         startEmbeddedServer()
         waitForServerReady {
             loadWebView(SERVER_URL)
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // 回到前台：暂停后台定时器（前端 10s 轮询接管主动性）
+        KeepAliveService.isForeground = true
+    }
+
+    override fun onPause() {
+        super.onPause()
+        // 切到后台：启动后台定时器（10-30 分钟随机间隔概率触发）
+        KeepAliveService.isForeground = false
+    }
+
+    private fun requestNotificationPermission() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {   // Android 13+
+            if (ContextCompat.checkSelfPermission(this, android.Manifest.permission.POST_NOTIFICATIONS)
+                != PackageManager.PERMISSION_GRANTED) {
+                ActivityCompat.requestPermissions(
+                    this,
+                    arrayOf(android.Manifest.permission.POST_NOTIFICATIONS),
+                    NOTIF_PERMISSION_REQUEST
+                )
+            }
         }
     }
 
@@ -134,6 +167,11 @@ class MainActivity : AppCompatActivity() {
                 ViewGroup.LayoutParams.MATCH_PARENT
             )
         })
+    }
+
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        // 通知权限结果：拒绝则后台概率触发的通知不可见（功能降级，不崩溃）
     }
 
     @SuppressLint("SetJavaScriptEnabled")

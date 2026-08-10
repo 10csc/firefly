@@ -47,6 +47,16 @@ class FireflyHandler(SimpleHTTPRequestHandler):
         if ".." in unquote(path):
             self.send_error(404)
             return
+        # 多开限制：新实例探测旧实例存活性/触发优雅关闭
+        if path == "/health":
+            self._json({"ok": True, "alive": True})
+            return
+        if path == "/shutdown":
+            # 优雅关闭：新实例启动时调用，保存文件后退出
+            self._json({"ok": True, "shutting_down": True})
+            import threading as _t
+            _t.Timer(0.3, lambda: _shutdown_server()).start()
+            return
         fn = routes.GET_ROUTES.get(path)
         if fn:
             fn(self)
@@ -102,6 +112,21 @@ class FireflyHandler(SimpleHTTPRequestHandler):
         pass  # 静默日志
 
 
+_SERVER_REF = {"server": None}
+
+
+def _shutdown_server():
+    """优雅关闭：HTTP 服务停止 + 进程退出（新实例启动时调用）。"""
+    srv = _SERVER_REF.get("server")
+    if srv:
+        try:
+            srv.shutdown()
+            srv.server_close()
+        except Exception:
+            pass
+    os._exit(0)
+
+
 def main():
     # 编码兜底：Windows 下输出重定向到文件（cmd > log.txt）时控制台编码变 GBK，
     # 中文 print 会 UnicodeEncodeError 崩溃——强制 UTF-8 + errors=replace
@@ -121,15 +146,61 @@ def main():
     except Exception as e:
         print(f"  [WARN] 知识库加载失败: {e}", flush=True)
 
-    # 端口占用检查——防止旧进程残留导致请求路由到旧代码
+    # 端口占用检查——防止旧进程残留导致请求路由到旧代码。
+    # 新实例检测到旧实例：先探测 /shutdown 优雅关闭（保存文件），
+    # 旧实例无响应（卡死）才兜底强杀。避免 taskkill /F 丢数据。
     import socket as _sock
     _probe = _sock.socket()
     _probe.settimeout(1)
     try:
         _probe.connect(("127.0.0.1", cfg.PORT))
-        print(f"  [ERROR] 端口 {cfg.PORT} 已有进程在监听，请先关闭旧进程")
-        print(f"  查找: netstat -ano | findstr {cfg.PORT}")
-        sys.exit(1)
+        # 端口被占：旧实例存在
+        import urllib.request as _ur
+        try:
+            with _ur.urlopen(f"http://127.0.0.1:{cfg.PORT}/health", timeout=2) as r:
+                if r.status == 200:
+                    # 旧实例活着 → 优雅关闭
+                    print("  检测到旧实例，正在优雅关闭...", flush=True)
+                    try:
+                        with _ur.urlopen(f"http://127.0.0.1:{cfg.PORT}/shutdown", timeout=5):
+                            pass
+                    except Exception:
+                        pass
+                    # 等端口释放（最多 5s）
+                    import time as _tm
+                    for _ in range(25):
+                        _tm.sleep(0.2)
+                        _probe2 = _sock.socket()
+                        _probe2.settimeout(0.5)
+                        try:
+                            _probe2.connect(("127.0.0.1", cfg.PORT))
+                        except (ConnectionRefusedError, OSError):
+                            _probe2.close()
+                            break
+                        _probe2.close()
+        except Exception:
+            pass
+        # 端口仍未释放 → 兜底强杀（找 PID）
+        try:
+            _probe3 = _sock.socket()
+            _probe3.settimeout(0.5)
+            _probe3.connect(("127.0.0.1", cfg.PORT))
+            print("  [WARN] 旧实例未响应优雅关闭，尝试强杀", flush=True)
+            _probe3.close()
+            _out = os.popen(f'netstat -ano | findstr ":{cfg.PORT}" | findstr LISTENING').read()
+            for _line in _out.splitlines():
+                _parts = _line.split()
+                if len(_parts) >= 5:
+                    try:
+                        os.system(f"taskkill /F /PID {_parts[-1]} >nul 2>&1")
+                    except Exception:
+                        pass
+                    break
+            _tm.sleep(1)
+        except (ConnectionRefusedError, OSError):
+            pass  # 端口已释放
+        finally:
+            _probe.close()
     except (ConnectionRefusedError, OSError):
         pass  # 端口空闲
     finally:
@@ -137,6 +208,7 @@ def main():
 
     # 只绑本机：局域网暴露会让任何人用你的 API Key 聊天/改设定
     server = ThreadingHTTPServer(("127.0.0.1", cfg.PORT), FireflyHandler)
+    _SERVER_REF["server"] = server
     print("\n  流萤聊天 App 启动中...")
     _key = cfg.config.get("api_key", "")
     if _key:
