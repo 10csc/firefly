@@ -79,9 +79,13 @@ window.openFeedback = openFeedback;
 window.closeFeedback = closeFeedback;
 
 // ═══════════════════════════════════════════
-// 检查更新（GitHub Releases 对比当前版本）
+// 检查更新（GitHub 优先，失败自动降级 Gitee——国内网络 Gitee 更稳）
 // ═══════════════════════════════════════════
 const CURRENT_VERSION = "0.7.0";   // 与 android versionName / 安装器 AppVersion 保持一致
+const UPDATE_SOURCES = [
+    { api: "https://api.github.com/repos/10csc/firefly/releases/latest", html: "https://github.com/10csc/firefly/releases" },
+    { api: "https://gitee.com/api/v5/repos/cpt-asymmetry/firefly/releases/latest", html: "https://gitee.com/cpt-asymmetry/firefly/releases" },
+];
 function compareVersions(a, b) {
     const pa = String(a).split(".").map(n => parseInt(n) || 0);
     const pb = String(b).split(".").map(n => parseInt(n) || 0);
@@ -91,26 +95,94 @@ function compareVersions(a, b) {
     }
     return 0;
 }
+// 资产匹配：PC 装包 exe / 安卓 apk（Gitee 资产名可能带前缀，模糊匹配）
+function _matchAsset(assets, re) {
+    if (!Array.isArray(assets)) return "";
+    for (const a of assets) {
+        const n = String(a.name || a.browser_download_url || "");
+        if (re.test(n)) return a.browser_download_url || n;
+    }
+    return "";
+}
 async function checkUpdate() {
     const msg = document.getElementById("update-msg");
     if (!msg) return;
     msg.textContent = "检查中…";
+    // 优先走本地后端（自动下载能力），失败退回纯前端双源检测
     try {
-        const resp = await fetch("https://api.github.com/repos/10csc/firefly/releases/latest", {cache: "no-store"});
-        if (!resp.ok) throw new Error("HTTP " + resp.status);
-        const data = await resp.json();
-        const latest = String(data.tag_name || "").replace(/^v/i, "");
-        if (!latest) throw new Error("no tag");
-        if (compareVersions(latest, CURRENT_VERSION) > 0) {
-            msg.innerHTML = `发现新版本 <b style="color:var(--fg-accent)">${latest}</b>（当前 ${CURRENT_VERSION}） → <a href="${data.html_url || "https://github.com/10csc/firefly/releases"}" target="_blank" rel="noopener" style="color:var(--fg-bright)">去下载</a>`;
-        } else {
-            msg.textContent = `已是最新版本 ${CURRENT_VERSION} ✓`;
+        const lr = await fetch("/check-update", {cache: "no-store"});
+        if (lr.ok) {
+            const d = await lr.json();
+            if (!d.ok) throw new Error(d.error || "check fail");
+            const latest = String(d.tag || "").replace(/^v/i, "");
+            if (!latest) throw new Error("no tag");
+            const isAndroid = /Android/i.test(navigator.userAgent) && !/Windows|Mac|Linux/i.test(navigator.userAgent);
+            const dlUrl = isAndroid ? (d.apk_url || d.html_url) : (d.exe_url || d.html_url);
+            if (compareVersions(latest, CURRENT_VERSION) > 0) {
+                msg.innerHTML = `发现新版本 <b style="color:var(--fg-accent)">${latest}</b>（当前 ${CURRENT_VERSION}）<br>` +
+                    `<button id="auto-update-btn" style="margin-top:6px;padding:4px 12px;border-radius:6px;border:none;background:var(--fg-accent);color:#fff;cursor:pointer">自动更新</button>` +
+                    ` ｜ <a href="${dlUrl}" target="_blank" rel="noopener" style="color:var(--fg-muted)">手动下载</a>` +
+                    ` ｜ <a href="${d.html_url}" target="_blank" rel="noopener" style="color:var(--fg-muted)">发行说明</a>`;
+                const btn = document.getElementById("auto-update-btn");
+                if (btn) btn.addEventListener("click", () => autoUpdate(isAndroid));
+            } else {
+                msg.textContent = `已是最新版本 ${CURRENT_VERSION} ✓`;
+            }
+            return;
         }
-    } catch (e) {
-        msg.textContent = "检查失败（网络或仓库不可达）";
+    } catch (e) { /* 降级到前端直连 */ }
+    // 前端直连双源（后端接口不可用时）
+    for (const src of UPDATE_SOURCES) {
+        try {
+            const resp = await fetch(src.api, {cache: "no-store"});
+            if (!resp.ok) throw new Error("HTTP " + resp.status);
+            const data = await resp.json();
+            const latest = String(data.tag_name || "").replace(/^v/i, "");
+            if (!latest) throw new Error("no tag");
+            const isAndroid = /Android/i.test(navigator.userAgent) && !/Windows|Mac|Linux/i.test(navigator.userAgent);
+            const exeUrl = _matchAsset(data.assets, /\.exe$/i);
+            const apkUrl = _matchAsset(data.assets, /\.apk$/i);
+            const dlUrl = isAndroid ? (apkUrl || src.html) : (exeUrl || src.html);
+            if (compareVersions(latest, CURRENT_VERSION) > 0) {
+                msg.innerHTML = `发现新版本 <b style="color:var(--fg-accent)">${latest}</b>（当前 ${CURRENT_VERSION}）<br>` +
+                    `<a href="${dlUrl}" target="_blank" rel="noopener" style="color:var(--fg-bright)">下载安装包</a>` +
+                    ` ｜ <a href="${src.html}" target="_blank" rel="noopener" style="color:var(--fg-muted)">发行说明</a>`;
+            } else {
+                msg.textContent = `已是最新版本 ${CURRENT_VERSION} ✓`;
+            }
+            return;
+        } catch (e) {
+            msg.textContent = "检查失败（网络或仓库不可达）";
+        }
     }
 }
-document.getElementById("check-update-btn").addEventListener("click", checkUpdate);
+// 自动更新：后端下载安装包 → PC 静默安装并重启；安卓引导系统安装器
+async function autoUpdate(isAndroid) {
+    const msg = document.getElementById("update-msg");
+    if (!msg) return;
+    msg.textContent = "下载中…（约 30-60 秒，请勿关闭应用）";
+    try {
+        const resp = await fetch("/update-download", {
+            method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({kind: isAndroid ? "apk" : "exe"}),
+        });
+        const data = await resp.json();
+        if (!data.ok) { msg.textContent = "下载失败：" + (data.error || ""); return; }
+        if (isAndroid) {
+            msg.innerHTML = `下载完成 → <a href="file://${data.path}" target="_blank" rel="noopener" style="color:var(--fg-bright)">点击安装</a>（或从文件管理器打开安装）`;
+            return;
+        }
+        if (data.installing) {
+            msg.textContent = "下载完成，安装程序即将启动…应用会自动关闭，请稍候。";
+            setTimeout(() => { location.href = "about:blank"; }, 1500);
+        } else {
+            msg.innerHTML = `下载完成 → <a href="file://${data.path}" target="_blank" rel="noopener" style="color:var(--fg-bright)">点击运行安装</a>`;
+        }
+    } catch (e) {
+        msg.textContent = "自动更新失败：" + e;
+    }
+}
 
 // 点击 drawer 背景（非内容区域）也关闭菜单
 menuDrawer.addEventListener("click", (e) => {
