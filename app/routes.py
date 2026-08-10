@@ -688,17 +688,26 @@ def proactive_status(h):
 
 
 # ══ 自动更新 ════════════════════════════════════
-# 检查最新版（GitHub 优先，失败降级 Gitee），返回 tag + 资产下载 URL
+# 规范（见 docs/版本更新规范.md）：
+# - 检测源双源：GitHub 优先（语义严格），失败降级 Gitee
+# - 下载 URL 固定 Gitee 优先（国内用户下载快），GitHub 降级——检测与下载解耦
+# - 资产名固定 firefly-setup.exe / firefly.apk（按扩展名匹配，不依赖版本号，跳版本天然兼容）
+# - 版本号只认 x.y.z 纯数字；前后端版本对比统一以 APP_VERSION 为权威
 _UPDATE_SOURCES = (
     ("https://api.github.com/repos/10csc/firefly/releases/latest",
      "https://github.com/10csc/firefly/releases"),
     ("https://gitee.com/api/v5/repos/cpt-asymmetry/firefly/releases/latest",
      "https://gitee.com/cpt-asymmetry/firefly/releases"),
 )
+# 下载源顺序：Gitee 资产优先（国内直连快），GitHub 降级
+_DOWNLOAD_SOURCES = (
+    "https://gitee.com/api/v5/repos/cpt-asymmetry/firefly/releases/latest",
+    "https://api.github.com/repos/10csc/firefly/releases/latest",
+)
 
 
 def _fetch_json(url: str, timeout: float = 15.0) -> dict:
-    req = urllib.request.Request(url, headers={"User-Agent": "Firefly/0.7"})
+    req = urllib.request.Request(url, headers={"User-Agent": "Firefly/" + cfg.APP_VERSION})
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         return json.loads(resp.read().decode("utf-8", errors="replace"))
 
@@ -712,53 +721,59 @@ def _match_asset(assets, pattern):
 
 
 def get_latest_release():
-    """返回 (tag, exe_url, apk_url, html_url) 或 None。"""
-    import re
+    """返回 (tag, html_url)。检测源：GitHub 优先，Gitee 降级。"""
     for api, html in _UPDATE_SOURCES:
         try:
             data = _fetch_json(api)
             tag = str(data.get("tag_name") or "").lstrip("v")
-            if not tag:
-                continue
-            exe = _match_asset(data.get("assets"), re.compile(r"\.exe$", re.I))
-            apk = _match_asset(data.get("assets"), re.compile(r"\.apk$", re.I))
-            return tag, exe, apk, html
+            if tag:
+                return tag, html
         except Exception:
             continue
     return None
 
 
-def check_update(h):
+def _get_asset_url(kind: str) -> str:
+    """按下载源顺序找资产 URL（Gitee 优先，GitHub 降级）。"""
     import re
-    from modules.app_config import MODEL
+    pat = re.compile(r"\.exe$", re.I) if kind == "exe" else re.compile(r"\.apk$", re.I)
+    for api in _DOWNLOAD_SOURCES:
+        try:
+            data = _fetch_json(api)
+            url = _match_asset(data.get("assets"), pat)
+            if url:
+                return url
+        except Exception:
+            continue
+    return ""
+
+
+def check_update(h):
     info = get_latest_release()
     if not info:
         h._json({"ok": False, "error": "检查失败（网络或仓库不可达）"})
         return
-    tag, exe, apk, html = info
-    # 版本对比（当前版本在 app_config 无全局变量，用模块内常量近似——前端已做主对比）
-    h._json({"ok": True, "tag": tag, "exe_url": exe, "apk_url": apk, "html_url": html})
+    tag, html = info
+    h._json({
+        "ok": True, "tag": tag, "current": cfg.APP_VERSION,
+        "html_url": html,
+    })
 
 
 def update_download(h):
-    """下载发行版资产到临时目录并返回本地路径。
+    """下载发行版资产到临时目录。
     PC(exe)：下载后由后端静默启动安装器（/VERYSILENT 覆盖安装，保留 user_data），
-            服务器随之关闭（安装器接管）；安卓(apk)：仅下载，前端引导系统安装器。"""
+             服务器随之关闭（安装器接管）；安卓(apk)：仅下载，前端引导系统安装器。"""
     body = _read_json(h)
     kind = body.get("kind", "exe")
-    info = get_latest_release()
-    if not info:
-        h._json({"ok": False, "error": "检查失败（网络或仓库不可达）"})
-        return
-    tag, exe, apk, html = info
-    url = exe if kind == "exe" else apk
+    url = _get_asset_url(kind)
     if not url:
-        h._json({"ok": False, "error": "发行版未附安装包资产"})
+        h._json({"ok": False, "error": "发行版未附安装包资产或仓库不可达"})
         return
     try:
         import tempfile
-        req = urllib.request.Request(url, headers={"User-Agent": "Firefly/0.7"})
-        with urllib.request.urlopen(req, timeout=300) as resp, tempfile.NamedTemporaryFile(
+        req = urllib.request.Request(url, headers={"User-Agent": "Firefly/" + cfg.APP_VERSION})
+        with urllib.request.urlopen(req, timeout=600) as resp, tempfile.NamedTemporaryFile(
                 suffix=".apk" if kind == "apk" else ".exe", delete=False, dir=tempfile.gettempdir()) as out:
             while True:
                 chunk = resp.read(65536)
@@ -779,9 +794,9 @@ def update_download(h):
                 except Exception:
                     pass
             _t.Timer(2.0, _close).start()
-            h._json({"ok": True, "path": local, "tag": tag, "installing": True})
+            h._json({"ok": True, "path": local, "installing": True})
             return
-        h._json({"ok": True, "path": local, "tag": tag})
+        h._json({"ok": True, "path": local})
     except Exception as e:
         h._json({"ok": False, "error": f"下载失败: {e}"})
 

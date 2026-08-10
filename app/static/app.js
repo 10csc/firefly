@@ -108,25 +108,24 @@ async function checkUpdate() {
     const msg = document.getElementById("update-msg");
     if (!msg) return;
     msg.textContent = "检查中…";
-    // 优先走本地后端（自动下载能力），失败退回纯前端双源检测
+    // 优先走本地后端（权威版本源 + 自动下载能力），失败退回纯前端双源检测
     try {
         const lr = await fetch("/check-update", {cache: "no-store"});
         if (lr.ok) {
             const d = await lr.json();
             if (!d.ok) throw new Error(d.error || "check fail");
             const latest = String(d.tag || "").replace(/^v/i, "");
+            const cur = String(d.current || CURRENT_VERSION);
             if (!latest) throw new Error("no tag");
             const isAndroid = /Android/i.test(navigator.userAgent) && !/Windows|Mac|Linux/i.test(navigator.userAgent);
-            const dlUrl = isAndroid ? (d.apk_url || d.html_url) : (d.exe_url || d.html_url);
-            if (compareVersions(latest, CURRENT_VERSION) > 0) {
-                msg.innerHTML = `发现新版本 <b style="color:var(--fg-accent)">${latest}</b>（当前 ${CURRENT_VERSION}）<br>` +
+            if (compareVersions(latest, cur) > 0) {
+                msg.innerHTML = `发现新版本 <b style="color:var(--fg-accent)">${latest}</b>（当前 ${cur}）<br>` +
                     `<button id="auto-update-btn" style="margin-top:6px;padding:4px 12px;border-radius:6px;border:none;background:var(--fg-accent);color:#fff;cursor:pointer">自动更新</button>` +
-                    ` ｜ <a href="${dlUrl}" target="_blank" rel="noopener" style="color:var(--fg-muted)">手动下载</a>` +
                     ` ｜ <a href="${d.html_url}" target="_blank" rel="noopener" style="color:var(--fg-muted)">发行说明</a>`;
                 const btn = document.getElementById("auto-update-btn");
                 if (btn) btn.addEventListener("click", () => autoUpdate(isAndroid));
             } else {
-                msg.textContent = `已是最新版本 ${CURRENT_VERSION} ✓`;
+                msg.textContent = `已是最新版本 ${cur} ✓`;
             }
             return;
         }
@@ -170,7 +169,8 @@ async function autoUpdate(isAndroid) {
         const data = await resp.json();
         if (!data.ok) { msg.textContent = "下载失败：" + (data.error || ""); return; }
         if (isAndroid) {
-            msg.innerHTML = `下载完成 → <a href="file://${data.path}" target="_blank" rel="noopener" style="color:var(--fg-bright)">点击安装</a>（或从文件管理器打开安装）`;
+            // WebView 无法直接用 file:// 装 APK：跳系统浏览器打开下载页
+            msg.innerHTML = `下载完成 → 请从 <a href="https://gitee.com/cpt-asymmetry/firefly/releases" target="_blank" rel="noopener" style="color:var(--fg-bright)">发行版页面</a> 下载 APK 安装（系统限制需手动确认）`;
             return;
         }
         if (data.installing) {
