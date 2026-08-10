@@ -58,6 +58,14 @@
             <label>API Key</label>
             <input id="key-input" type="password" placeholder="已设置，留空则保留原 Key">
         </div>
+        <div class="field" style="margin-top:10px">
+            <label>接口地址（用哪个 Key 服务）</label>
+            <select id="api-base-select">
+                <option value="https://api.deepseek.com/v1">DeepSeek 官方（需要 DeepSeek Key）</option>
+                <option value="https://opencode.ai/zen/go/v1">OpenCode Go（复用 opencode 登录 Key，模型一致）</option>
+            </select>
+            <div style="color:var(--fg-muted);font-size:0.7em;margin-top:2px">选 OpenCode Go 后填入 opencode.ai/auth 复制的 Key 即可，无需再申请 DeepSeek Key</div>
+        </div>
         <div style="margin:14px 0;padding-top:12px;border-top:1px solid var(--border-mid);color:var(--fg-muted);font-size:0.75em;line-height:1.7">
             以下按对话流程顺序排列：<b style="color:var(--fg-main)">① 知识检索 → ② 意图分析 → ③ 生成回复 → ④ 表情包调度</b>
         </div>

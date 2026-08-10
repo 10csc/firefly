@@ -161,11 +161,17 @@ def set_config(h):
     # 隐藏式回复配置（独立开关，关前台概率式不影响隐藏式）
     if "hidden_reply_enabled" in body:
         cfg.config["hidden_reply_enabled"] = bool(body.get("hidden_reply_enabled"))
+    # 接口地址：仅允许官方 / OpenCode Go 两个已知端点
+    if "api_base" in body:
+        _base = str(body.get("api_base") or "").strip()
+        if _base in (cfg.API_BASE, cfg.GO_BASE):
+            cfg.config["api_base"] = _base
     if new_key:
         cfg.config["api_key"] = new_key
     cfg.save_config()
     h._json({
         "ok": bool(cfg.config["api_key"]),
+        "api_base": cfg.config.get("api_base", cfg.API_BASE),
         "analyzer_model": cfg.config["analyzer_model"],
         "organizer_model": cfg.config["organizer_model"],
         "polisher_model": cfg.config["polisher_model"],
@@ -484,6 +490,8 @@ def get_config(h):
     h._json({
         "has_key": bool(cfg.get_api_key()),
         "key_prefix": key[:12] + "..." if key else "",
+        "api_base": cfg.config.get("api_base", cfg.API_BASE),
+        "api_bases": [cfg.API_BASE, cfg.GO_BASE],
         "analyzer_model": cfg.config["analyzer_model"],
         "organizer_model": cfg.config["organizer_model"],
         "polisher_model": cfg.config["polisher_model"],
