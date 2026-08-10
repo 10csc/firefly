@@ -8,8 +8,10 @@ server 拆分产物：server.py 只留 HTTP 骨架（分发/响应工具/启动�
 
 import json
 import logging
+import sys
 import threading
 import time
+import urllib.request
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs, unquote
 
@@ -685,6 +687,105 @@ def proactive_status(h):
     h._json({"messages": result.messages, "proactive": True})
 
 
+# ══ 自动更新 ════════════════════════════════════
+# 检查最新版（GitHub 优先，失败降级 Gitee），返回 tag + 资产下载 URL
+_UPDATE_SOURCES = (
+    ("https://api.github.com/repos/10csc/firefly/releases/latest",
+     "https://github.com/10csc/firefly/releases"),
+    ("https://gitee.com/api/v5/repos/cpt-asymmetry/firefly/releases/latest",
+     "https://gitee.com/cpt-asymmetry/firefly/releases"),
+)
+
+
+def _fetch_json(url: str, timeout: float = 15.0) -> dict:
+    req = urllib.request.Request(url, headers={"User-Agent": "Firefly/0.7"})
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        return json.loads(resp.read().decode("utf-8", errors="replace"))
+
+
+def _match_asset(assets, pattern):
+    for a in assets or []:
+        name = str(a.get("name") or a.get("browser_download_url") or "")
+        if pattern.search(name):
+            return a.get("browser_download_url") or name
+    return ""
+
+
+def get_latest_release():
+    """返回 (tag, exe_url, apk_url, html_url) 或 None。"""
+    import re
+    for api, html in _UPDATE_SOURCES:
+        try:
+            data = _fetch_json(api)
+            tag = str(data.get("tag_name") or "").lstrip("v")
+            if not tag:
+                continue
+            exe = _match_asset(data.get("assets"), re.compile(r"\.exe$", re.I))
+            apk = _match_asset(data.get("assets"), re.compile(r"\.apk$", re.I))
+            return tag, exe, apk, html
+        except Exception:
+            continue
+    return None
+
+
+def check_update(h):
+    import re
+    from modules.app_config import MODEL
+    info = get_latest_release()
+    if not info:
+        h._json({"ok": False, "error": "检查失败（网络或仓库不可达）"})
+        return
+    tag, exe, apk, html = info
+    # 版本对比（当前版本在 app_config 无全局变量，用模块内常量近似——前端已做主对比）
+    h._json({"ok": True, "tag": tag, "exe_url": exe, "apk_url": apk, "html_url": html})
+
+
+def update_download(h):
+    """下载发行版资产到临时目录并返回本地路径。
+    PC(exe)：下载后由后端静默启动安装器（/VERYSILENT 覆盖安装，保留 user_data），
+            服务器随之关闭（安装器接管）；安卓(apk)：仅下载，前端引导系统安装器。"""
+    body = _read_json(h)
+    kind = body.get("kind", "exe")
+    info = get_latest_release()
+    if not info:
+        h._json({"ok": False, "error": "检查失败（网络或仓库不可达）"})
+        return
+    tag, exe, apk, html = info
+    url = exe if kind == "exe" else apk
+    if not url:
+        h._json({"ok": False, "error": "发行版未附安装包资产"})
+        return
+    try:
+        import tempfile
+        req = urllib.request.Request(url, headers={"User-Agent": "Firefly/0.7"})
+        with urllib.request.urlopen(req, timeout=300) as resp, tempfile.NamedTemporaryFile(
+                suffix=".apk" if kind == "apk" else ".exe", delete=False, dir=tempfile.gettempdir()) as out:
+            while True:
+                chunk = resp.read(65536)
+                if not chunk:
+                    break
+                out.write(chunk)
+            local = out.name
+        if kind == "exe" and getattr(sys, "frozen", False):
+            # PC 发行版：静默启动安装器（覆盖安装保留 user_data），本服务随之退出
+            import subprocess
+            subprocess.Popen([local, "/VERYSILENT", "/NORESTART", "/SUPPRESSMSGBOXES"])
+            # 优雅关闭自身：请求 /shutdown（保存文件后退出），安装器接管
+            import threading as _t
+            def _close():
+                try:
+                    import urllib.request
+                    urllib.request.urlopen(f"http://127.0.0.1:{cfg.PORT}/shutdown", timeout=2)
+                except Exception:
+                    pass
+            _t.Timer(2.0, _close).start()
+            h._json({"ok": True, "path": local, "tag": tag, "installing": True})
+            return
+        h._json({"ok": True, "path": local, "tag": tag})
+    except Exception as e:
+        h._json({"ok": False, "error": f"下载失败: {e}"})
+
+
 
 
 # ── 分发表 ───────────────────────────────────────
@@ -702,6 +803,8 @@ POST_ROUTES = {
     "/sticker-update": sticker_update,
     "/sticker-delete": sticker_delete,
     "/character-file-update": character_file_update,
+    "/check-update": check_update,
+    "/update-download": update_download,
     "/undo": undo,
     "/clear-history": clear_history,
 }
