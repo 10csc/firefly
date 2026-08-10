@@ -1000,7 +1000,7 @@ undoBtn.addEventListener("click", async () => {
 function loadStateTab() {
     const list = document.getElementById("state-list");
     if (list) {
-        list.innerHTML = '<div style="color:#8a8a8a;line-height:1.6">状态系统尚未接入。<br>当前流水线：分析 → 回复 → 表情包。</div>';
+        list.innerHTML = '<div style="color:#8a8a8a;line-height:1.6">状态系统尚未接入。<br>当前流水线：检索 → 分析 → 回复 → 表情包。</div>';
     }
 }
 
