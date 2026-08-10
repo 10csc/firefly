@@ -33,6 +33,8 @@ ASSETS_DIR = ROOT / "assets"
 
 PORT = 8765
 API_BASE = "https://api.deepseek.com/v1"
+# OpenCode Go 兼容端点（OpenAI 兼容 chat/completions，模型 ID 与 DeepSeek 一致）
+GO_BASE = "https://opencode.ai/zen/go/v1"
 MODEL = "deepseek-v4-flash"
 
 VALID_MODELS = ("deepseek-v4-flash", "deepseek-v4-pro")
@@ -149,7 +151,8 @@ def resolve_asset(path: str) -> Path:
 def _load_config() -> dict:
     """加载配置。缺失字段用默认值。兼容旧 reply_* 字段自动映射到 polisher_*。"""
     cfg = {
-        "api_key": "", "analyzer_model": "deepseek-v4-flash",
+        "api_key": "", "api_base": API_BASE,
+        "analyzer_model": "deepseek-v4-flash",
         "organizer_model": "deepseek-v4-flash", "polisher_model": "deepseek-v4-flash",
         "retriever_model": "deepseek-v4-flash",
         "retriever_effort": "none", "analyzer_effort": "high",
@@ -163,6 +166,9 @@ def _load_config() -> dict:
         data = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
         if isinstance(data, dict):
             cfg["api_key"] = data.get("api_key", "") or ""
+            # 接口地址：仅允许官方 / Go 两个已知端点（防配置污染/注入）
+            _base = data.get("api_base", API_BASE) or API_BASE
+            cfg["api_base"] = _base if _base in (API_BASE, GO_BASE) else API_BASE
             for key in ("analyzer_model", "organizer_model", "polisher_model", "retriever_model"):
                 val = data.get(key, "deepseek-v4-flash")
                 cfg[key] = val if val in VALID_MODELS else "deepseek-v4-flash"
@@ -222,6 +228,7 @@ def save_config() -> None:
     CONFIG_FILE.write_text(
         json.dumps({
             "api_key": config.get("api_key", ""),
+            "api_base": config.get("api_base", API_BASE),
             "analyzer_model": config.get("analyzer_model", "deepseek-v4-flash"),
             "organizer_model": config.get("organizer_model", "deepseek-v4-flash"),
             "polisher_model": config.get("polisher_model", "deepseek-v4-flash"),
@@ -249,9 +256,10 @@ def get_api_key() -> str:
 
 def get_client():
     """获取当前 API 客户端，若未设置 Key 则返回 None。
-    requests 实现（api_client），安卓 Chaquopy 兼容，无 openai 依赖。"""
+    requests 实现（api_client），安卓 Chaquopy 兼容，无 openai 依赖。
+    base_url 跟随配置：官方 DeepSeek 或 OpenCode Go。"""
     key = get_api_key()
     if not key:
         return None
     from modules.api_client import _CompatClient
-    return _CompatClient(api_key=key, base_url=API_BASE, timeout=30.0)
+    return _CompatClient(api_key=key, base_url=config.get("api_base", API_BASE), timeout=30.0)

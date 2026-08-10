@@ -256,6 +256,11 @@ async function loadConfig() {
             if (el.prv) el.prv.textContent = Math.round(el.pr.value * 10) + "%";
         }
         if (el.hr_) el.hr_.checked = data.hidden_reply_enabled !== false;
+        const abSel = document.getElementById("api-base-select");
+        if (abSel && data.api_base) {
+            // 只认后端允许的已知端点；未知值保持当前
+            if ((data.api_bases || []).includes(data.api_base)) abSel.value = data.api_base;
+        }
         if (data.retriever_temperature != null && el.rt) {
             el.rt.value = data.retriever_temperature;
             if (el.rtv) el.rtv.textContent = Number(data.retriever_temperature).toFixed(1);
@@ -329,6 +334,7 @@ document.getElementById("key-save").addEventListener("click", async () => {
         prob_reply_enabled: document.getElementById("prob-reply-enabled").checked,
         prob_reply_value: (parseInt(probSlider.value) || 0) / 10,
         hidden_reply_enabled: document.getElementById("hidden-reply-enabled").checked,
+        api_base: document.getElementById("api-base-select").value,
     };
     if (k) payload.api_key = k;
     msg.textContent = "保存中…";
