@@ -76,6 +76,17 @@ body.theme-light #bg { filter: blur(4px) brightness(1.1); }
 /* 去除点击后的蓝色 focus 高亮框（移动端/桌面端统一），输入框用自定义聚焦样式 */
 *:focus { outline: none !important; }
 *:focus-visible { outline: none !important; }
+/* 全局去除安卓 WebView 点击蓝色触发范围（波纹/高亮）：所有元素生效，
+   之前只加了轮播图局部，其他按钮/菜单/圆点仍闪蓝框 */
+* {
+    -webkit-tap-highlight-color: transparent;
+    -webkit-touch-callout: none;
+}
+/* 输入框/文本域保留长按选择与粘贴（全局 touch-callout:none 会禁掉） */
+input, textarea {
+    -webkit-touch-callout: default;
+    user-select: text;
+}
 body {
     font-family: "StarRailFont", "Microsoft YaHei", sans-serif;
     height: 100vh; height: 100dvh; overflow: hidden;
