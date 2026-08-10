@@ -32,6 +32,15 @@ STATIC_DIR = BASE_DIR / "static"
 ASSETS_DIR = ROOT / "assets"
 
 PORT = 8765
+# ── 版本号（唯一权威源）──────────────────────────
+# 发版铁律：改这里必须同步改 4 处：
+#   1. 本文件 APP_VERSION
+#   2. app/static/app.js 的 CURRENT_VERSION
+#   3. android/app/build.gradle.kts 的 versionName
+#   4. package/firefly.iss 的 AppVersion
+# 用 tools/check_version.py 一键校验四者一致；格式 x.y.z 纯数字点分，
+# 禁止 -beta/-rc 后缀（Gitee 无 prerelease 概念，后缀会污染 releases/latest）。
+APP_VERSION = "0.7.0"
 API_BASE = "https://api.deepseek.com/v1"
 # OpenCode Go 兼容端点（OpenAI 兼容 chat/completions，模型 ID 与 DeepSeek 一致）
 GO_BASE = "https://opencode.ai/zen/go/v1"

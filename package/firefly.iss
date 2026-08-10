@@ -16,6 +16,9 @@ PrivilegesRequired=lowest
 UninstallDisplayName=流萤 Firefly
 ArchitecturesInstallIn64BitMode=x64compatible
 SetupIconFile=F:\CodeFile\firefly\package\firefly.ico
+; 自动更新必须：安装前关闭运行中的 firefly.exe（否则文件锁导致覆盖失败）
+CloseApplications=yes
+CloseApplicationsFilter=firefly.exe
 
 [Files]
 Source: "F:\CodeFile\firefly\dist\firefly\*"; DestDir: "{app}"; Flags: recursesubdirs ignoreversion; Excludes: "user_data"
