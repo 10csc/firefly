@@ -18,6 +18,7 @@ def collect() -> dict:
         ("analyzer", "modules.analyzer"),
         ("organizer", "modules.organizer"),
         ("polisher", "modules.polisher"),
+        ("proactive", "modules.proactive"),
         ("orchestrator", "orchestrator"),
     ]
 

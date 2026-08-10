@@ -94,8 +94,7 @@ class ContextManager:
     def add_turn(self, user_msg: str, assistant_msg: str) -> ContextStats:
         """添加一轮对话，返回更新后的统计。
         流程：审查 → 处理 → 验证 → 输出
-        """
-        # 1. 审查阶段 —— 不合法直接拒绝
+        """        # 1. 审查阶段 —— 不合法直接拒绝
         if not isinstance(user_msg, str):
             raise InputRejected(f"user_msg 必须为 str，实际: {type(user_msg).__name__}")
         if not isinstance(assistant_msg, str):
@@ -122,12 +121,50 @@ class ContextManager:
         # 4. 最终输出
         return stats
 
+    def add_proactive_turn(self, assistant_msg: str) -> ContextStats:
+        """添加一轮主动消息（流萤主动找开拓者，非回复）。
+
+        与 add_turn 的区别：只有 assistant 一方（无 user），且不计入
+        turn_count（用户轮计数）——主动轮单独划分，不影响硬约束轮次预算。
+        流程：审查 → 处理 → 验证 → 输出
+        """
+        if not isinstance(assistant_msg, str):
+            raise InputRejected(f"assistant_msg 必须为 str，实际: {type(assistant_msg).__name__}")
+        if not assistant_msg.strip():
+            raise InputRejected("assistant_msg 为空字符串，拒绝存储")
+
+        self._history.append({"role": "assistant", "content": assistant_msg, "proactive": True})
+        logger.debug("add_proactive_turn: 累计消息=%d", len(self._history))
+
+        stats = self._compute_stats()
+        if not (0 <= stats.energy <= self._energy_max):
+            raise InternalError(
+                f"energy 溢出: {stats.energy}，范围 [0, {self._energy_max}]"
+            )
+        if stats.total_tokens < 0:
+            raise InternalError(f"total_tokens 为负: {stats.total_tokens}")
+        return stats
+
     def pop_last_turn(self) -> tuple[str, str] | None:
         """移除最后一轮对话（user + assistant + 中间的 system action 消息）。
 
+        优先移除最后一段主动轮（assistant 且 proactive）——主动轮是独立轮次，
+        用户撤回"上一轮"时应优先撤回最近一次主动消息（含其后无 user 跟随的情况）。
+        否则走用户轮逻辑。
+
         Returns:
-            (user_msg, assistant_msg) 或 None（没有可撤回的轮次）
+            (user_msg, assistant_msg) 或 ("__proactive__", assistant_msg) 或 None
         """
+        # 末尾是主动消息（proactive 标记）→ 撤回最近一段连续主动轮
+        if self._history and self._history[-1].get("proactive"):
+            j = len(self._history) - 1
+            while j > 0 and self._history[j - 1].get("proactive"):
+                j -= 1
+            last = self._history[-1]["content"]
+            del self._history[j:]
+            logger.debug("pop_last_turn: 移除主动轮, 剩余消息=%d", len(self._history))
+            return "__proactive__", last
+
         # 从末尾向前找最后一个 role="user" 的消息索引
         i = None
         for idx in range(len(self._history) - 1, -1, -1):
@@ -157,6 +194,21 @@ class ContextManager:
 
         logger.debug("pop_last_turn: 移除轮次, 剩余消息=%d", len(self._history))
         return user_msg, assistant_msg
+
+    def turns_since_last_proactive(self) -> int | None:
+        """距上次主动轮的用户轮数。从未主动过返回 None。
+
+        硬约束轮次预算的数据源：主动轮不计入用户轮，因此直接按
+        用户轮数（turn_count）与"最后一个主动轮后的用户消息数"求差。
+        """
+        last_p = None
+        for idx in range(len(self._history) - 1, -1, -1):
+            if self._history[idx].get("proactive"):
+                last_p = idx
+                break
+        if last_p is None:
+            return None
+        return sum(1 for m in self._history[last_p + 1:] if m["role"] == "user")
 
     # ── 查询方法 ─────────────────────────────────
     def get_recent(self, n_turns: int = 10) -> list:

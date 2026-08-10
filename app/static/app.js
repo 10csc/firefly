@@ -220,6 +220,12 @@ async function loadConfig() {
         pe: "polisher-effort-select", oe: "organizer-effort-select",
         rt: "retriever-temp-slider", rtv: "retriever-temp-value",
         k: "key-input", m: "config-msg",
+        pe_: "proactive-enabled", ph: "proactive-hard-slider",
+        phv: "proactive-hard-value", ps: "proactive-soft-slider",
+        psv: "proactive-soft-value",
+        pr_: "prob-reply-enabled", pr: "prob-reply-slider",
+        prv: "prob-reply-value",
+        hr_: "hidden-reply-enabled",
     };
     try {
         const resp = await fetch("/config");
@@ -235,6 +241,21 @@ async function loadConfig() {
         if (el.ae) el.ae.value = data.analyzer_effort || "high";
         if (el.pe) el.pe.value = data.polisher_effort || "high";
         if (el.oe) el.oe.value = data.organizer_effort || "none";
+        if (el.pe_) el.pe_.checked = data.proactive_enabled !== false;
+        if (el.ph) {
+            el.ph.value = data.proactive_hard != null ? data.proactive_hard : 4;
+            if (el.phv) el.phv.textContent = el.ph.value;
+        }
+        if (el.ps) {
+            el.ps.value = data.proactive_soft != null ? Math.round(data.proactive_soft * 10) : 5;
+            if (el.psv) el.psv.textContent = Math.round(el.ps.value * 10) + "%";
+        }
+        if (el.pr_) el.pr_.checked = data.prob_reply_enabled !== false;
+        if (el.pr) {
+            el.pr.value = data.prob_reply_value != null ? Math.round(data.prob_reply_value * 10) : 3;
+            if (el.prv) el.prv.textContent = Math.round(el.pr.value * 10) + "%";
+        }
+        if (el.hr_) el.hr_.checked = data.hidden_reply_enabled !== false;
         if (data.retriever_temperature != null && el.rt) {
             el.rt.value = data.retriever_temperature;
             if (el.rtv) el.rtv.textContent = Number(data.retriever_temperature).toFixed(1);
@@ -254,6 +275,28 @@ const retrieverTempVal = document.getElementById("retriever-temp-value");
 if (retrieverTempSlider) {
     retrieverTempSlider.addEventListener("input", () => {
         if (retrieverTempVal) retrieverTempVal.textContent = Number(retrieverTempSlider.value).toFixed(1);
+    });
+}
+
+const proHardSlider = document.getElementById("proactive-hard-slider");
+const proHardVal = document.getElementById("proactive-hard-value");
+if (proHardSlider) {
+    proHardSlider.addEventListener("input", () => {
+        if (proHardVal) proHardVal.textContent = proHardSlider.value;
+    });
+}
+const proSoftSlider = document.getElementById("proactive-soft-slider");
+const proSoftVal = document.getElementById("proactive-soft-value");
+if (proSoftSlider) {
+    proSoftSlider.addEventListener("input", () => {
+        if (proSoftVal) proSoftVal.textContent = Math.round(proSoftSlider.value * 10) + "%";
+    });
+}
+const probSlider = document.getElementById("prob-reply-slider");
+const probVal = document.getElementById("prob-reply-value");
+if (probSlider) {
+    probSlider.addEventListener("input", () => {
+        if (probVal) probVal.textContent = Math.round(probSlider.value * 10) + "%";
     });
 }
 
@@ -280,6 +323,12 @@ document.getElementById("key-save").addEventListener("click", async () => {
         analyzer_model: am, retriever_model: rm, organizer_model: om, polisher_model: pm,
         retriever_effort: re, analyzer_effort: ae, polisher_effort: pe, organizer_effort: oe,
         retriever_temperature: rtemp,
+        proactive_enabled: document.getElementById("proactive-enabled").checked,
+        proactive_hard: parseInt(proHardSlider.value) || 4,
+        proactive_soft: (parseInt(proSoftSlider.value) || 0) / 10,
+        prob_reply_enabled: document.getElementById("prob-reply-enabled").checked,
+        prob_reply_value: (parseInt(probSlider.value) || 0) / 10,
+        hidden_reply_enabled: document.getElementById("hidden-reply-enabled").checked,
     };
     if (k) payload.api_key = k;
     msg.textContent = "保存中…";
@@ -408,6 +457,8 @@ function addTypingBubble(who) {
 
 function renderMessages(messages, who, data) {
     if (!messages || messages.length === 0) return;
+    const gen = _modeGen;   // 捕获渲染启动时的模式代际
+    _rendering = true;   // 渲染动画开始：防主动轮询中途插入乱序
     // 时间标注：取第一条消息的时间，放居中分割线
     const ts = messages[0].time ? messages[0].time.slice(11, 16) : new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
     addTimeDivider(ts);
@@ -415,12 +466,17 @@ function renderMessages(messages, who, data) {
     // 加载时长按字数 0.7~1.5s（表情包按最短 0.7s）；消息之间留 0.5s 空白模拟游戏节奏
     let seq = 0;
     const showNext = () => {
-        if (seq >= messages.length) return;
+        if (gen !== _modeGen) { _rendering = false; return; }   // 模式已切换：丢弃剩余动画
+        if (seq >= messages.length) {
+            _rendering = false;   // 渲染动画完成
+            return;
+        }
         const msg = messages[seq++];
         const chars = (msg.content || msg.text || "").length;
         const loadMs = Math.min(1500, Math.max(700, 700 + chars * 25));
         const typingRow = addTypingBubble(who);
         setTimeout(() => {
+            if (gen !== _modeGen) { typingRow.remove(); _rendering = false; return; }
             typingRow.remove();
             if (msg.type === "sticker") addSticker(msg.path, who);
             else if (msg.type === "narration") addNarration(msg.text, msg.style);
@@ -481,6 +537,7 @@ const appView = document.getElementById("app");
 // 当前模式：story=剧情模式；haruno=春日手信（流萤想象的普通学生生活）
 let CURRENT_MODE = "story";
 let _lastMode = null;   // 上次进入聊天时的模式（切换时重载历史）
+let _modeGen = 0;       // 模式代际：切换时递增，飞行中的异步渲染/历史加载任务作废丢弃
 const MODE_NAMES = { story: "剧情模式", haruno: "春日手信" };
 
 function showHome() {
@@ -502,6 +559,11 @@ async function showChat() {
     // 模式可能已切换：清空并重载当前模式历史（story/haruno 数据隔离）
     if (_lastMode !== CURRENT_MODE) {
         _lastMode = CURRENT_MODE;
+        _modeGen++;   // 模式代际递增：作废所有飞行中的异步渲染任务（防止串模式显示）
+        // 未提交的草稿队列作废：旧模式 5s 窗口内的消息不跨模式发送（防串写历史）
+        _pending = [];
+        clearTimeout(_sendTimer);
+        _sendTimer = null;
         messagesEl.innerHTML = "";
         _hasMore = false;
         await loadHistory();   // 先加载历史（含已保存的开场）
@@ -518,12 +580,14 @@ async function showChat() {
 
 // haruno 模式开场：服务端幂等（无历史才生成），返回旁白+首条消息
 async function openModeOpening() {
+    const gen = _modeGen;   // 捕获发起时的模式代际
     try {
         const resp = await fetch("/open-mode", {
             method: "POST", headers: {"Content-Type": "application/json"},
             body: JSON.stringify({ mode: CURRENT_MODE }),
         });
         const data = await resp.json();
+        if (gen !== _modeGen) return;   // 模式已切换：丢弃开场消息，防止渲染进新模式界面
         if (data.opened && data.messages && data.messages.length) {
             renderMessages(data.messages, "firefly", data);
         }
@@ -656,6 +720,89 @@ document.addEventListener("DOMContentLoaded", () => {
 });
 
 // ═══════════════════════════════════════════
+// 主动性轮询 — 流萤在合适的时候主动找开拓者说话
+// ═══════════════════════════════════════════
+// 轮询纪律（避免冲突）：
+// - 仅在聊天页可见且空闲时检查（不等待回复、不在打字、距离上次回复 > 2 分钟）
+// - 服务端门控保证频率（主动式=轮次+概率；概率式=时间静默+前端概率），不通过则零成本返回空
+// - 空闲判定（概率式硬性）：无输入、无提交、无处理中（waiting/pending/输入框非空）
+let _lastRenderTs = 0;          // 上次消息渲染时间戳（含主动消息）
+let _rendering = false;         // 消息动画渲染中标志（防主动轮询中途插入乱序）
+const _PROACTIVE_INTERVAL = 10 * 1000;   // 轮询周期 10s
+const _PROACTIVE_QUIET = 2 * 60 * 1000;  // 主动式：回复渲染后 2 分钟内不检查
+const _PROB_QUIET = 10 * 60 * 1000;      // 概率式：距上次渲染 10 分钟内不检查（与服务端静默阈值一致）
+
+function _chatVisible() {
+    return appView && appView.style.display !== "none";
+}
+
+// 空闲判定：无输入 / 无提交待发 / 无等待回复 / 无思考锁 / 无渲染动画
+function _idleOk() {
+    if (waiting) return false;
+    if (_rendering) return false;         // 主动消息渲染动画中
+    if (_pending.length > 0) return false;
+    if (inputEl && inputEl.value.trim()) return false;
+    return _chatVisible();
+}
+
+// 渲染主动消息：先锁定输入（思考 2~5s 模拟"想了想/想起什么"），期间禁止用户输入防竞态
+async function _renderProactiveWithThink(data) {
+    _lastRenderTs = Date.now();
+    waiting = true;
+    inputEl.disabled = true; sendBtn.disabled = true;
+    const statusEl = document.querySelector("#header .status");
+    const defaultStatus = statusEl ? statusEl.textContent : "";
+    if (statusEl) statusEl.textContent = "对方正在输入...";
+    const thinkMs = 2000 + Math.floor(Math.random() * 3000);
+    await new Promise(r => setTimeout(r, thinkMs));
+    if (statusEl) statusEl.textContent = defaultStatus;
+    waiting = false;
+    inputEl.disabled = false; sendBtn.disabled = false;
+    renderMessages(data.messages, "firefly", data);
+}
+
+async function checkProactive() {
+    if (!_idleOk()) return;
+    const gen = _modeGen;   // 捕获发起时的模式代际
+    try {
+        // 轮询探测：不改任何前端状态（大部分概率未中，闪状态是错的）
+        const resp = await fetch("/proactive-status", {
+            method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({ session_id: SESSION_ID, mode: CURRENT_MODE }),
+        });
+        const data = await resp.json();
+        if (gen !== _modeGen) return;   // 模式已切换：丢弃旧模式主动消息（已写盘原模式）
+        if (data.proactive && data.messages && data.messages.length) {
+            // 确定要回复：才锁输入框 + 显示状态 + 思考延迟 + 渲染（全程锁防乱序）
+            _lastRenderTs = Date.now();
+            waiting = true;
+            inputEl.disabled = true; sendBtn.disabled = true;
+            const statusEl = document.querySelector("#header .status");
+            const defaultStatus = statusEl ? statusEl.textContent : "";
+            if (statusEl) statusEl.textContent = "对方正在输入...";
+            const thinkMs = 2000 + Math.floor(Math.random() * 3000);
+            await new Promise(r => setTimeout(r, thinkMs));
+            if (statusEl) statusEl.textContent = defaultStatus;
+            waiting = false;
+            inputEl.disabled = false; sendBtn.disabled = false;
+            renderMessages(data.messages, "firefly", data);
+        }
+        // 无消息：前端状态完全不动
+    } catch (e) {
+        // 网络异常：无状态变更，无需恢复（静默等下一轮）
+    }
+}
+setInterval(checkProactive, _PROACTIVE_INTERVAL);
+
+// 消息渲染后记录时间（renderMessages 内调用）
+const _origRenderMessages = renderMessages;
+renderMessages = function (messages, who, data) {
+    _lastRenderTs = Date.now();
+    return _origRenderMessages(messages, who, data);
+};
+
+// ═══════════════════════════════════════════
 // 发送消息 — 四阶段模型：输入 → 发送 → 提交 → 回复
 //   输入：打字（内容只在输入框，不触发队列）
 //   发送：Enter / 发送按钮 / 点表情 → 内容入队 _pending（可合并），重置提交计时
@@ -674,6 +821,7 @@ async function _doSend() {
     statusEl.textContent = "对方正在输入...";
     const msgs = _pending.slice();   // 混合数组：字符串=文字，{type:"sticker"}=表情
     _pending = [];
+    const gen = _modeGen;   // 捕获发起时的模式代际
     try {
         const resp = await fetch("/chat", {
             method: "POST",
@@ -682,16 +830,25 @@ async function _doSend() {
         });
         const data = await resp.json();
         statusEl.textContent = defaultStatus;
+        if (gen !== _modeGen) {
+            // 模式已切换：丢弃回复（消息已写盘到原模式，不渲染）。
+            // 必须复位 waiting/输入框，否则新模式输入框永久卡死
+            waiting = false;
+            inputEl.disabled = false; sendBtn.disabled = false;
+            return;
+        }
         if (data.need_key) openSettings();
         else if (data.messages) renderMessages(data.messages, "firefly", data);
         else if (data.reply) addTextMessage(data.reply, "firefly");
     } catch (e) {
         statusEl.textContent = defaultStatus;
-        addTextMessage("嗯…信号不太好，等会儿再试试？", "firefly");
+        if (gen === _modeGen) addTextMessage("嗯…信号不太好，等会儿再试试？", "firefly");
     }
     waiting = false;
     inputEl.disabled = false; sendBtn.disabled = false;
     inputEl.focus();
+    // 响应式回复完成后 ≥1s 防抖，触发主动式判断（主动式未触发则服务端串联概率式）
+    setTimeout(() => { if (_idleOk()) checkProactive(); }, 1000);
 }
 
 async function send() {
@@ -1158,11 +1315,13 @@ function renderHistoryMessage(m, prepend=false) {
 }
 async function loadHistory(beforeSeq=null) {
     if (_loading) return; _loading = true;
+    const gen = _modeGen;   // 捕获发起时的模式代际
     const url = beforeSeq ? `/history?limit=150&before_seq=${beforeSeq}&mode=${CURRENT_MODE}` : `/history?limit=150&mode=${CURRENT_MODE}`;
     _lastWho = null;
     try {
         const resp = await fetch(url);
         const data = await resp.json();
+        if (gen !== _modeGen) return;   // 模式已切换：丢弃旧模式历史，防止渲染进新模式界面
         if (!data.messages || data.messages.length===0) { _hasMore=false; return; }
         if (!beforeSeq) { data.messages.forEach(m=>renderHistoryMessage(m,false)); messagesEl.scrollTop=messagesEl.scrollHeight; undoBtn.disabled=false; }
         else { const ph=messagesEl.scrollHeight, ps=messagesEl.scrollTop; data.messages.slice().reverse().forEach(m=>renderHistoryMessage(m,true)); messagesEl.scrollTop=ps+(messagesEl.scrollHeight-ph); }

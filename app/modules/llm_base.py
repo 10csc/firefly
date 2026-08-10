@@ -92,7 +92,10 @@ def format_history(messages: list) -> str:
             turn += 1
             lines.append(f"[第{turn}轮] 开拓者: {content}")
         elif role == "assistant":
-            lines.append(f"      流萤: {content}")
+            if m.get("proactive"):
+                lines.append(f"      流萤(主动): {content}")
+            else:
+                lines.append(f"      流萤: {content}")
         elif role == "system":
             lines.append(f"      {content}")
     return "\n".join(lines) if lines else "（无历史）"

@@ -78,7 +78,7 @@ def _next_seq(mode: str = DEFAULT_MODE) -> int:
 
 
 def remove_last_turn(mode: str = DEFAULT_MODE) -> int:
-    """移除 {mode} 最后一轮（从最后一条 user 消息到末尾）。
+    """移除 {mode} 最后一轮（优先最后一段主动轮，否则最后一条 user 到末尾）。
 
     Returns:
         移除的行数
@@ -94,6 +94,20 @@ def remove_last_turn(mode: str = DEFAULT_MODE) -> int:
 
         if not lines:
             return 0
+
+        # 优先：末尾是主动消息（proactive）→ 移除最后一段连续主动轮
+        # 主动轮是独立轮次（流萤主动发起），用户撤回"上一轮"时应优先撤回它
+        if _last_is_proactive(lines):
+            j = len(lines) - 1
+            while j > 0 and _line_is_proactive(lines[j - 1]):
+                j -= 1
+            original_len = len(lines)
+            lines = lines[:j]
+            with fp.open("w", encoding="utf-8") as f:
+                f.writelines(lines)
+            removed = original_len - len(lines)
+            logger.debug("remove_last_turn: 移除主动轮 %d 行", removed)
+            return removed
 
         i = None
         for idx in range(len(lines) - 1, -1, -1):
@@ -133,6 +147,23 @@ def remove_last_turn(mode: str = DEFAULT_MODE) -> int:
     removed = original_len - len(lines)
     logger.debug("remove_last_turn: 移除 %d 行, 剩余 %d 行", removed, len(lines))
     return removed
+
+
+def _line_is_proactive(line: str) -> bool:
+    try:
+        obj = json.loads(line.strip())
+        return isinstance(obj, dict) and obj.get("who") == "firefly" and obj.get("proactive")
+    except Exception:
+        return False
+
+
+def _last_is_proactive(lines: list) -> bool:
+    for line in reversed(lines):
+        line = line.strip()
+        if not line:
+            continue
+        return _line_is_proactive(line)
+    return False
 
 
 # ── 主入口 ────────────────────────────────────────
@@ -253,6 +284,22 @@ def hydrate_context(ctx, max_turns: int = 40, mode: str = DEFAULT_MODE) -> int:
 
     while i < n:
         m = raw[i]
+        # 主动轮：firefly + proactive 标记 → 独立轮次（不入用户轮）
+        if m.get("who") == "firefly" and m.get("proactive"):
+            texts, stickers, narrations = [], [], []
+            while i < n and raw[i].get("who") == "firefly" and raw[i].get("proactive"):
+                fm = raw[i]
+                if fm.get("type") == "text" and fm.get("content"):
+                    texts.append(fm["content"])
+                elif fm.get("type") == "sticker":
+                    stickers.append(fm.get("label") or "表情")
+                elif fm.get("type") == "narration" and fm.get("text"):
+                    narrations.append(fm["text"])
+                i += 1
+            if texts or stickers or narrations:
+                pending.append(("proactive", "\n".join(texts) if texts else "(表情包)",
+                                stickers, narrations))
+            continue
         if m.get("who") == "user" and m.get("type") == "text" and m.get("content"):
             user_texts = [m["content"]]
             texts, stickers, narrations = [], [], []
@@ -273,11 +320,25 @@ def hydrate_context(ctx, max_turns: int = 40, mode: str = DEFAULT_MODE) -> int:
                 i += 1
             if not texts and not stickers and not narrations:
                 continue  # 未完成轮次（只有用户在打字）跳过
-            pending.append(("\n".join(user_texts), texts, stickers, narrations))
+            pending.append(("user", "\n".join(user_texts), texts, stickers, narrations))
         else:
             i += 1
 
-    for user_text, texts, stickers, narrations in pending[-max_turns:]:
+    for item in pending[-max_turns:]:
+        kind = item[0]
+        if kind == "proactive":
+            _, reply, stickers, narrations = item
+            try:
+                ctx.add_proactive_turn(reply)
+                for lab in stickers:
+                    ctx.add_action("表情包", lab)
+                for n in narrations:
+                    ctx.add_action("旁白", n)
+                turns += 1
+            except Exception as e:
+                logger.warning("hydrate 跳过主动轮: %s", e)
+            continue
+        _, user_text, texts, stickers, narrations = item
         reply = " ".join(texts) if texts else "(表情包)"
         try:
             ctx.add_turn(user_text, reply)

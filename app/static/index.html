@@ -123,6 +123,44 @@
             <div style="color:var(--fg-muted);font-size:0.7em;margin-top:2px">组织器温度固定 0.3</div>
         </div>
         <div style="margin:16px 0 14px;padding-top:14px;border-top:1px solid var(--border-mid)">
+            <label style="display:block;color:var(--fg-main);font-size:0.85em;margin-bottom:8px">主动性（插件）</label>
+            <details id="proactive-panel" style="font-size:0.9em" open>
+                <summary style="cursor:pointer;color:var(--fg-bright);font-size:0.85em;margin-bottom:6px">
+                    主动设置（点击展开/收起）
+                </summary>
+                <div class="field" style="margin-bottom:10px">
+                    <label style="display:flex;align-items:center;gap:8px">
+                        <input id="proactive-enabled" type="checkbox" style="width:auto;accent-color:var(--fg-bright)">
+                        开启主动式回复（流萤在对话轮次间隙主动说话）
+                    </label>
+                    <label style="margin-top:8px">主动频率（每 <span id="proactive-hard-value">4</span> 轮对话 1 次机会）</label>
+                    <input id="proactive-hard-slider" type="range" min="1" max="10" step="1" value="4">
+                    <label style="margin-top:8px">触发概率 <span id="proactive-soft-value">50%</span></label>
+                    <input id="proactive-soft-slider" type="range" min="0" max="10" step="1" value="5">
+                    <div style="color:var(--fg-muted);font-size:0.7em;margin-top:2px">
+                        频率：每 N 轮用户对话给 1 次主动机会（数字越大越少）。概率：机会到来时真正发起的概率。
+                        主动消息只在有真实动机时发出（记忆里的约定、想分享的事、牵挂）——不会定时打扰。
+                    </div>
+                </div>
+                <div class="field" style="margin-bottom:0;border-top:1px solid var(--border-mid);padding-top:10px">
+                    <label style="display:flex;align-items:center;gap:8px">
+                        <input id="prob-reply-enabled" type="checkbox" style="width:auto;accent-color:var(--fg-bright)">
+                        开启概率式回复（用户在应用内但空闲时，流萤偶尔想起你）
+                    </label>
+                    <label style="margin-top:8px">触发概率 <span id="prob-reply-value">30%</span></label>
+                    <input id="prob-reply-slider" type="range" min="0" max="10" step="1" value="3">
+                    <label style="display:flex;align-items:center;gap:8px;margin-top:8px">
+                        <input id="hidden-reply-enabled" type="checkbox" style="width:auto;accent-color:var(--fg-bright)">
+                        开启隐藏式回复（App 在后台时，流萤偶尔发消息提醒你）
+                    </label>
+                    <div style="color:var(--fg-muted);font-size:0.7em;margin-top:2px">
+                        概率式：应用内空闲时按概率触发；隐藏式：应用在后台时低频触发（约 10-30 分钟一次机会）。
+                        两者都只在有真实动机时发出（约定、想分享的事、牵挂），且与主动式互不干扰。
+                    </div>
+                </div>
+            </details>
+        </div>
+        <div style="margin:16px 0 14px;padding-top:14px;border-top:1px solid var(--border-mid)">
             <label style="display:block;color:var(--fg-main);font-size:0.85em;margin-bottom:8px">界面大小</label>
             <div class="field" style="margin-bottom:0">
                 <label>消息 / 头像 / 气泡缩放 <span id="ui-scale-value">100%</span></label>

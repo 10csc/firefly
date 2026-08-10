@@ -34,6 +34,7 @@ class PolisherInput:
     recent_history: list = field(default_factory=list)
     memory_head: str = ""            # 跨会话核心记忆
     environment: str = ""            # 环境（时段描述等）
+    proactive_context: str = ""      # 非空 = 主动发消息场景（流萤找开拓者，不是回复）
 
 
 @dataclass
@@ -331,6 +332,15 @@ class Polisher:
         memory_section = f"## 核心记忆（跨会话）\n{inp.memory_head}\n\n" if inp.memory_head else ""
         env_section = f"## 当前环境\n{inp.environment}\n\n" if inp.environment else ""
 
+        # 主动场景：本条消息不是对开拓者的回复，而是流萤主动找他说话
+        if inp.proactive_context:
+            input_section = (
+                f"## 本条消息是你主动发给开拓者的（不是回复）\n{inp.proactive_context}\n\n"
+                "请直接输出你主动发给开拓者的短信序列（不需要[MSG]之外的内容）："
+            )
+        else:
+            input_section = f"## 开拓者刚才说\n{inp.user_input}\n\n请输出短信序列："
+
         fact_lines = []
         for fc in inp.analyzer_fact_check:
             if isinstance(fc, dict):
@@ -344,8 +354,7 @@ class Polisher:
             f"意图: {inp.analyzer_intent}\n"
             f"事实核查:\n{fact_section}\n"
             f"摘要: {inp.analyzer_summary}\n\n"
-            f"## 开拓者刚才说\n{inp.user_input}\n\n"
-            "请输出短信序列："
+            f"{input_section}"
         )
 
         # 3. 调 LLM
