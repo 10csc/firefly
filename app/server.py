@@ -27,10 +27,11 @@ if _PROJECT_ROOT not in sys.path:
 
 from modules import app_config as cfg
 import routes
+from shared_http import ResponseMixin, setup_stdio_utf8, preload_knowledge, shutdown_server, _SERVER_REF
 
 
 # ── HTTP 服务器 ──────────────────────────────────
-class FireflyHandler(SimpleHTTPRequestHandler):
+class FireflyHandler(ResponseMixin, SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=str(cfg.STATIC_DIR), **kwargs)
 
@@ -55,7 +56,7 @@ class FireflyHandler(SimpleHTTPRequestHandler):
             # 优雅关闭：新实例启动时调用，保存文件后退出
             self._json({"ok": True, "shutting_down": True})
             import threading as _t
-            _t.Timer(0.3, lambda: _shutdown_server()).start()
+            _t.Timer(0.3, lambda: shutdown_server()).start()
             return
         fn = routes.GET_ROUTES.get(path)
         if fn:
@@ -80,71 +81,12 @@ class FireflyHandler(SimpleHTTPRequestHandler):
                 super().do_GET()
 
     # ── 响应工具（供 routes 调用）──────────────────
-    _MIME = {
-        ".html": "text/html; charset=utf-8",
-        ".css": "text/css", ".js": "application/javascript",
-        ".ttf": "font/ttf", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
-        ".png": "image/png", ".svg": "image/svg+xml", ".webp": "image/webp",
-    }
-
-    def _serve_file(self, filepath: Path):
-        try:
-            content = filepath.read_bytes()
-            self.send_response(200)
-            mime = self._MIME.get(filepath.suffix.lower())
-            if mime:
-                self.send_header("Content-Type", mime)
-            self.send_header("Content-Length", len(content))
-            self.end_headers()
-            self.wfile.write(content)
-        except (FileNotFoundError, OSError):
-            self.send_error(404)
-
-    def _json(self, data: dict):
-        body = json.dumps(data, ensure_ascii=False).encode("utf-8")
-        self.send_response(200)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", len(body))
-        self.end_headers()
-        self.wfile.write(body)
-
-    def log_message(self, format, *args):
-        pass  # 静默日志
-
-
-_SERVER_REF = {"server": None}
-
-
-def _shutdown_server():
-    """优雅关闭：HTTP 服务停止 + 进程退出（新实例启动时调用）。"""
-    srv = _SERVER_REF.get("server")
-    if srv:
-        try:
-            srv.shutdown()
-            srv.server_close()
-        except Exception:
-            pass
-    os._exit(0)
+    # _MIME/_serve_file/_json/log_message 来自 shared_http.ResponseMixin
 
 
 def main():
-    # 编码兜底：Windows 下输出重定向到文件（cmd > log.txt）时控制台编码变 GBK，
-    # 中文 print 会 UnicodeEncodeError 崩溃——强制 UTF-8 + errors=replace
-    try:
-        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
-    except Exception:
-        pass
-
-    # 预加载知识库文本（避免首条消息等几秒拼接）
-    print("  预加载知识库...", flush=True)
-    try:
-        from modules.llm_retriever import _load_knowledge, get_knowledge_stats
-        _load_knowledge()
-        s = get_knowledge_stats()
-        print(f"  [OK] 知识库 {s['files']} 文件 {s['chars']} 字符", flush=True)
-    except Exception as e:
-        print(f"  [WARN] 知识库加载失败: {e}", flush=True)
+    setup_stdio_utf8()
+    preload_knowledge()
 
     # 端口占用检查——防止旧进程残留导致请求路由到旧代码。
     # 新实例检测到旧实例：先探测 /shutdown 优雅关闭（保存文件），

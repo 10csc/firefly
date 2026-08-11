@@ -1,8 +1,15 @@
 # -*- coding: utf-8 -*-
 """编排器白盒测试 — direct 路径 + mock 三模块（分析器→回复器→工具调度）"""
 
-import sys, os
+import sys, os, tempfile
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "app"))
+
+# 隔离 user_data：handle_chat 会写 pipeline.jsonl 到真实 user_data（实测污染过），
+# 重定向必须在导入 orchestrator 之前（sticker_picker 的模块级迁移同理）
+import modules.app_config as cfg
+_tmp = tempfile.mkdtemp(prefix="firefly_test_orch_")
+cfg.USER_DIR = __import__("pathlib").Path(_tmp)
+cfg.CONFIG_FILE = cfg.USER_DIR / "config.json"
 
 from modules.context_manager import ContextManager
 from orchestrator import handle_chat, ChatResult, get_pipeline_log

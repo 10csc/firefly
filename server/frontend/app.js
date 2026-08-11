@@ -1,12 +1,40 @@
 // 流萤聊天 App — 前端逻辑
-// ⚠️ 双份维护：服务器版有差异副本 server/frontend/app.js（UUID/Key 头注入、version.json 检测、
-// Key 存 localStorage）。改动本文件的通用逻辑时需同步另一份，差异点见 server/frontend/app.js 头部注释。
 
 const messagesEl = document.getElementById("messages");
 const inputEl = document.getElementById("msg-input");
 const sendBtn = document.getElementById("send-btn");
 const SESSION_ID = "firefly-" + Date.now();
 let waiting = false;
+
+// ═══════════════════════════════════════════
+// 服务器版：用户身份 + Key 请求头注入
+// ═══════════════════════════════════════════
+// 与本地版（app/static/app.js）的差异点：
+// 1. 匿名 UUID 标识用户（localStorage），服务器按此隔离数据（user_data/{uuid}/）
+// 2. API Key 只存用户浏览器（localStorage），每请求带 X-API-Key，服务器用后即弃不落盘
+// 3. api_base（DeepSeek 官方 / OpenCode Go）同样随请求头，用户自己的 Key 配自己的接口
+const FIREFLY_UID = (function () {
+    try {
+        let u = localStorage.getItem("firefly_uid");
+        if (!u) {
+            u = "u-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 10);
+            localStorage.setItem("firefly_uid", u);
+        }
+        return u;
+    } catch (e) { return "u-unknown"; }
+})();
+const _serverFetch = window.fetch;
+window.fetch = function (url, opts) {
+    opts = opts || {};
+    const headers = new Headers(opts.headers || {});
+    headers.set("X-User-Id", FIREFLY_UID);
+    let k = ""; try { k = localStorage.getItem("firefly_api_key") || ""; } catch (e) {}
+    let b = ""; try { b = localStorage.getItem("firefly_api_base") || ""; } catch (e) {}
+    if (k) headers.set("X-API-Key", k);
+    if (b) headers.set("X-API-Base", b);
+    opts = Object.assign({}, opts, { headers: headers });
+    return _serverFetch(url, opts);
+};
 
 // 开拓者头像
 const TB_AVATARS = { 穹: "/开拓者_穹.png", 星: "/开拓者_星.png" };
@@ -106,54 +134,23 @@ function _matchAsset(assets, re) {
     return "";
 }
 async function checkUpdate() {
+    // 服务器版差异：检查更新读服务器 version.json（由服务器管理员维护），不走 GitHub/Gitee
     const msg = document.getElementById("update-msg");
     if (!msg) return;
     msg.textContent = "检查中…";
-    // 优先走本地后端（权威版本源 + 自动下载能力），失败退回纯前端双源检测
     try {
-        const lr = await fetch("/check-update", {cache: "no-store"});
-        if (lr.ok) {
-            const d = await lr.json();
-            if (!d.ok) throw new Error(d.error || "check fail");
-            const latest = String(d.tag || "").replace(/^v/i, "");
-            const cur = String(d.current || CURRENT_VERSION);
-            if (!latest) throw new Error("no tag");
-            const isAndroid = /Android/i.test(navigator.userAgent) && !/Windows|Mac|Linux/i.test(navigator.userAgent);
-            if (compareVersions(latest, cur) > 0) {
-                msg.innerHTML = `发现新版本 <b style="color:var(--fg-accent)">${latest}</b>（当前 ${cur}）<br>` +
-                    `<button id="auto-update-btn" style="margin-top:6px;padding:4px 12px;border-radius:6px;border:none;background:var(--fg-accent);color:#fff;cursor:pointer">自动更新</button>` +
-                    ` ｜ <a href="${d.html_url}" target="_blank" rel="noopener" style="color:var(--fg-muted)">发行说明</a>`;
-                const btn = document.getElementById("auto-update-btn");
-                if (btn) btn.addEventListener("click", () => autoUpdate(isAndroid));
-            } else {
-                msg.textContent = `已是最新版本 ${cur} ✓`;
-            }
-            return;
+        const resp = await fetch("/version.json", {cache: "no-store"});
+        const d = await resp.json();
+        const latest = String(d.tag || "").replace(/^v/i, "");
+        const cur = String(CURRENT_VERSION);
+        if (!latest) throw new Error("no tag");
+        if (compareVersions(latest, cur) > 0) {
+            msg.innerHTML = `发现新版本 <b style="color:var(--fg-accent)">${latest}</b>（当前 ${cur}）<br>新版本由服务器管理员发布`;
+        } else {
+            msg.textContent = `已是最新版本 ${cur} ✓`;
         }
-    } catch (e) { /* 降级到前端直连 */ }
-    // 前端直连双源（后端接口不可用时）
-    for (const src of UPDATE_SOURCES) {
-        try {
-            const resp = await fetch(src.api, {cache: "no-store"});
-            if (!resp.ok) throw new Error("HTTP " + resp.status);
-            const data = await resp.json();
-            const latest = String(data.tag_name || "").replace(/^v/i, "");
-            if (!latest) throw new Error("no tag");
-            const isAndroid = /Android/i.test(navigator.userAgent) && !/Windows|Mac|Linux/i.test(navigator.userAgent);
-            const exeUrl = _matchAsset(data.assets, /\.exe$/i);
-            const apkUrl = _matchAsset(data.assets, /\.apk$/i);
-            const dlUrl = isAndroid ? (apkUrl || src.html) : (exeUrl || src.html);
-            if (compareVersions(latest, CURRENT_VERSION) > 0) {
-                msg.innerHTML = `发现新版本 <b style="color:var(--fg-accent)">${latest}</b>（当前 ${CURRENT_VERSION}）<br>` +
-                    `<a href="${dlUrl}" target="_blank" rel="noopener" style="color:var(--fg-bright)">下载安装包</a>` +
-                    ` ｜ <a href="${src.html}" target="_blank" rel="noopener" style="color:var(--fg-muted)">发行说明</a>`;
-            } else {
-                msg.textContent = `已是最新版本 ${CURRENT_VERSION} ✓`;
-            }
-            return;
-        } catch (e) {
-            msg.textContent = "检查失败（网络或仓库不可达）";
-        }
+    } catch (e) {
+        msg.textContent = "检查失败（服务器 version.json 不可达）";
     }
 }
 // 检查更新按钮接线（设置面板版本区；修复前该按钮无任何事件绑定，点击无反应）
@@ -334,20 +331,28 @@ async function loadConfig() {
         }
         if (el.hr_) el.hr_.checked = data.hidden_reply_enabled !== false;
         const abSel = document.getElementById("api-base-select");
-        if (abSel && data.api_base) {
+        // 服务器版差异：接口地址随用户 Key 存本机浏览器（localStorage）
+        const localBase = (function () { try { return localStorage.getItem("firefly_api_base") || ""; } catch (e) { return ""; } })();
+        if (abSel && localBase) {
             // 只认后端允许的已知端点；未知值保持当前
-            if ((data.api_bases || []).includes(data.api_base)) abSel.value = data.api_base;
+            if ((data.api_bases || []).includes(localBase)) abSel.value = localBase;
         }
         if (data.retriever_temperature != null && el.rt) {
             el.rt.value = data.retriever_temperature;
             if (el.rtv) el.rtv.textContent = Number(data.retriever_temperature).toFixed(1);
         }
         if (el.m) {
-            el.m.textContent = data.has_key
-                ? "当前 Key：" + (data.key_prefix || "已设置")
-                : "尚未设置 API Key";
+            // 服务器版差异：Key 状态看本机浏览器 localStorage（服务器不存用户 Key）
+            const localKey = (function () { try { return localStorage.getItem("firefly_api_key") || ""; } catch (e) { return ""; } })();
+            el.m.textContent = localKey
+                ? "当前 Key：已设置（存于本机浏览器）"
+                : "尚未设置 API Key（存于本机浏览器，不会上传服务器）";
         }
-        if (el.k) { el.k.placeholder = data.has_key ? "已设置，留空则保留原 Key" : "sk-..."; el.k.value = ""; }
+        if (el.k) {
+            const localKey = (function () { try { return localStorage.getItem("firefly_api_key") || ""; } catch (e) { return ""; } })();
+            el.k.placeholder = localKey ? "已设置，留空则保留" : "sk-...";
+            el.k.value = "";
+        }
         return data;
     } catch (e) { return {has_key: false}; }
 }
@@ -390,7 +395,11 @@ async function checkKey() {
 }
 
 document.getElementById("key-save").addEventListener("click", async () => {
+    // 服务器版差异：API Key 与接口地址只存本机浏览器（localStorage），
+    // 每请求经 X-API-Key / X-API-Base 头发给服务器，服务器用后即弃不落盘
     const k = document.getElementById("key-input").value.trim();
+    if (k) { try { localStorage.setItem("firefly_api_key", k); } catch (e) {} }
+    try { localStorage.setItem("firefly_api_base", document.getElementById("api-base-select").value); } catch (e) {}
     const am = document.getElementById("analyzer-model-select").value;
     const rm = document.getElementById("retriever-model-select").value;
     const om = document.getElementById("organizer-model-select").value;
@@ -411,9 +420,7 @@ document.getElementById("key-save").addEventListener("click", async () => {
         prob_reply_enabled: document.getElementById("prob-reply-enabled").checked,
         prob_reply_value: (parseInt(probSlider.value) || 0) / 10,
         hidden_reply_enabled: document.getElementById("hidden-reply-enabled").checked,
-        api_base: document.getElementById("api-base-select").value,
     };
-    if (k) payload.api_key = k;
     msg.textContent = "保存中…";
     try {
         const resp = await fetch("/set-config", { method: "POST",
@@ -639,7 +646,7 @@ async function showChat() {
     // 顶部显示当前模式名
     const modeTag = document.getElementById("chat-mode-tag");
     if (modeTag) modeTag.textContent = MODE_NAMES[CURRENT_MODE] || CURRENT_MODE;
-        // 模式可能已切换：清空并重载当前模式历史（story/haruno 数据隔离）
+    // 模式可能已切换：清空并重载当前模式历史（story/haruno 数据隔离）
     if (_lastMode !== CURRENT_MODE) {
         _lastMode = CURRENT_MODE;
         _modeGen++;   // 模式代际递增：作废所有飞行中的异步渲染任务（防止串模式显示）
@@ -936,7 +943,8 @@ async function _chatSend(msgs) {
     const defaultStatus = statusEl ? statusEl.textContent : "";
     const gen = _modeGen;   // 捕获发起时的模式代际
     // 后台保活（安卓 WebView JS Bridge）：回复流程（检索→分析→回复→调度）期间
-    // 持 CPU/WiFi 锁，用户切后台/锁屏也能完成回复；引用计数归零才释放
+    // 持 CPU/WiFi 锁，用户切后台/锁屏也能完成回复；引用计数归零才释放。
+    // 浏览器端（PC/服务器版）无 androidWakeLock，此段安全跳过
     if (window.androidWakeLock && _inflight === 1) { window.androidWakeLock.acquire(); }
     try {
         const resp = await fetch("/chat", {
