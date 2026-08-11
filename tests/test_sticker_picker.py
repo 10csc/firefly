@@ -4,6 +4,13 @@
 import sys, os, tempfile, shutil
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "app"))
 
+# 隔离 user_data：重定向必须在 import sticker_picker 之前——其模块级
+# _migrate_legacy_registry()（sticker_picker.py:61）会把 app 注册表拷进真实 user_data
+import modules.app_config as cfg
+_tmp = tempfile.mkdtemp(prefix="firefly_test_stk_")
+cfg.USER_DIR = __import__("pathlib").Path(_tmp)
+cfg.CONFIG_FILE = cfg.USER_DIR / "config.json"
+
 from tools.sticker_picker import (
     pick_sticker, StickerEntry,
     get_all_stickers, get_counters,

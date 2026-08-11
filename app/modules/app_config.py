@@ -7,7 +7,46 @@ server 拆分产物：路径引导、目录创建、默认文件拷贝、运行�
 """
 
 import json, os, sys
+import contextvars
 from pathlib import Path
+
+# ── 用户上下文（服务器版多用户隔离；本地版不设置，行为与之前完全一致）──
+# 每个请求一个上下文：user_dir（该用户数据根）、api_key/api_base（用户自己的 Key）。
+# 用 contextvars（Flask/Werkzeug 同款标准模式）：set 返回 Token，请求结束 reset 恢复。
+# ThreadingHTTPServer 每请求新线程 + reset 双保险，无跨请求泄漏。
+_user_ctx: contextvars.ContextVar = contextvars.ContextVar("firefly_user_ctx", default=None)
+
+
+def set_user_context(user_dir=None, api_key=None, api_base=None) -> contextvars.Token:
+    """设置当前请求的用户上下文，返回 Token（请求结束 reset_user_context 恢复）。"""
+    data = dict(_user_ctx.get() or {})
+    if user_dir is not None:
+        data["user_dir"] = Path(user_dir)
+    if api_key is not None:
+        data["api_key"] = api_key
+    if api_base is not None:
+        data["api_base"] = api_base
+    return _user_ctx.set(data)
+
+
+def reset_user_context(token) -> None:
+    """请求结束恢复上下文（try/finally 中调用，LLM 异常也会正确恢复）。"""
+    _user_ctx.reset(token)
+
+
+def _user_ctx_dir():
+    ctx = _user_ctx.get()
+    return ctx.get("user_dir") if ctx else None
+
+
+def user_scope_key() -> str:
+    """当前用户作用域标识（缓存 key 用）：服务器版 = 用户目录路径，本地版 = 空串。
+
+    各模块的按 mode 缓存（角色设定/手账/短信样本）必须带上此维度，
+    否则多用户并发下 A 的设定/手账会被 B 读到（缓存串扰）。
+    """
+    d = _user_ctx_dir()
+    return str(d) if d else ""
 
 # ── 路径 ────────────────────────────────────────
 BASE_DIR = Path(__file__).resolve().parent.parent          # app/（打包后 _internal/，安卓下=解压 backend/app/）
@@ -40,7 +79,7 @@ PORT = 8765
 #   4. package/firefly.iss 的 AppVersion
 # 用 tools/check_version.py 一键校验四者一致；格式 x.y.z 纯数字点分，
 # 禁止 -beta/-rc 后缀（Gitee 无 prerelease 概念，后缀会污染 releases/latest）。
-APP_VERSION = "0.7.0"
+APP_VERSION = "0.7.1"
 API_BASE = "https://api.deepseek.com/v1"
 # OpenCode Go 兼容端点（OpenAI 兼容 chat/completions，模型 ID 与 DeepSeek 一致）
 GO_BASE = "https://opencode.ai/zen/go/v1"
@@ -59,9 +98,10 @@ DEFAULT_MODE = "story"
 
 
 def mode_root(mode: str = DEFAULT_MODE) -> Path:
-    """模式数据根：USER_DIR/{mode}/。非法 mode 回退 story（审查约束）。"""
+    """模式数据根：{user_dir}/{mode}/（服务器版按用户隔离；本地版 = USER_DIR/{mode}）。非法 mode 回退 story（审查约束）。"""
     m = mode if mode in MODES else DEFAULT_MODE
-    d = USER_DIR / m
+    base = _user_ctx_dir() or USER_DIR
+    d = base / m
     d.mkdir(parents=True, exist_ok=True)
     return d
 
@@ -161,6 +201,9 @@ def _load_config() -> dict:
     """加载配置。缺失字段用默认值。兼容旧 reply_* 字段自动映射到 polisher_*。"""
     cfg = {
         "api_key": "", "api_base": API_BASE,
+        # 服务器地址（远程部署用）：空 = 本机（127.0.0.1:PORT），
+        # 非空 = 远程服务器（如 http://47.xx.xx.xx:8765）——前端按此地址连后端，需重启生效
+        "server_url": "",
         "analyzer_model": "deepseek-v4-flash",
         "organizer_model": "deepseek-v4-flash", "polisher_model": "deepseek-v4-flash",
         "retriever_model": "deepseek-v4-flash",
@@ -175,6 +218,9 @@ def _load_config() -> dict:
         data = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
         if isinstance(data, dict):
             cfg["api_key"] = data.get("api_key", "") or ""
+            # 服务器地址：仅允许 http/https 开头，防注入（空 = 本机）
+            _srv = str(data.get("server_url", "") or "").strip().rstrip("/")
+            cfg["server_url"] = _srv if _srv.startswith(("http://", "https://")) else ""
             # 接口地址：仅允许官方 / Go 两个已知端点（防配置污染/注入）
             _base = data.get("api_base", API_BASE) or API_BASE
             cfg["api_base"] = _base if _base in (API_BASE, GO_BASE) else API_BASE
@@ -238,6 +284,7 @@ def save_config() -> None:
         json.dumps({
             "api_key": config.get("api_key", ""),
             "api_base": config.get("api_base", API_BASE),
+            "server_url": config.get("server_url", ""),
             "analyzer_model": config.get("analyzer_model", "deepseek-v4-flash"),
             "organizer_model": config.get("organizer_model", "deepseek-v4-flash"),
             "polisher_model": config.get("polisher_model", "deepseek-v4-flash"),
@@ -259,16 +306,23 @@ def save_config() -> None:
 
 
 def get_api_key() -> str:
-    """当前生效的 API Key：配置优先，环境变量兜底。"""
+    """当前生效的 API Key：用户上下文（服务器版，用户自己的 Key）→ 配置 → 环境变量兜底。"""
+    ctx = _user_ctx.get()
+    if ctx and ctx.get("api_key"):
+        return ctx["api_key"]
     return config.get("api_key", "") or os.environ.get("DEEPSEEK_API_KEY", "").strip()
 
 
 def get_client():
     """获取当前 API 客户端，若未设置 Key 则返回 None。
     requests 实现（api_client），安卓 Chaquopy 兼容，无 openai 依赖。
-    base_url 跟随配置：官方 DeepSeek 或 OpenCode Go。"""
+    base_url 跟随配置：官方 DeepSeek 或 OpenCode Go（服务器版跟随用户上下文）。"""
     key = get_api_key()
     if not key:
         return None
     from modules.api_client import _CompatClient
-    return _CompatClient(api_key=key, base_url=config.get("api_base", API_BASE), timeout=30.0)
+    ctx = _user_ctx.get()
+    base = (ctx.get("api_base") if ctx else None) or config.get("api_base", API_BASE)
+    if base not in (API_BASE, GO_BASE):
+        base = API_BASE
+    return _CompatClient(api_key=key, base_url=base, timeout=30.0)

@@ -131,11 +131,6 @@ def set_config(h):
     eff = body.get("polisher_effort", cfg.config["polisher_effort"])
     if eff in cfg.VALID_EFFORTS:
         cfg.config["polisher_effort"] = eff
-    try:
-        t = max(0.0, min(2.0, float(body.get("polisher_temperature", cfg.config["polisher_temperature"]))))
-        cfg.config["polisher_temperature"] = t
-    except (TypeError, ValueError):
-        pass
     # 主动性插件配置（v2：轮次硬约束 + 概率软约束，替代 v1 时间制）
     if "proactive_enabled" in body:
         cfg.config["proactive_enabled"] = bool(body.get("proactive_enabled"))
@@ -211,6 +206,70 @@ def check_key(h):
     h._json({"has_key": bool(cfg.get_client())})
 
 
+# ── 聊天合并窗口（发送即达后端 + 后端 5 秒滑动窗口合并）────────
+# 前端 send() 消息实时 POST 后端；后端按 session 合并窗口：
+#   主请求（该 session 首个到达）挂起等待窗口结束 → 合并全部消息 → 流水线 → 返回回复；
+#   副请求（窗口内到达）消息已入队 → 立即返回 {"queued": True}（回复由主请求带回）。
+#   打字中（/chat/hint）重置窗口 deadline 继续等；提交窗口到期（/chat/flush）立即结束。
+#   前端切后台冻结不发 flush → 窗口 5 秒自然到期兜底处理（消息已实时在后端，不丢）。
+# key 含用户作用域：服务器版多用户各自独立窗口。
+_CHAT_WINDOW_SEC = 5.0
+_CHAT_WINDOW_IDLE = 600.0   # 窗口无活动超时（秒）：防止 session 废弃后窗口残留撑内存
+_CHAT_WINDOW_LOCK = threading.Lock()
+_CHAT_WINDOWS: dict[tuple, dict] = {}   # key -> {"msgs": [...], "deadline": float, "cond": Condition}
+
+
+def _chat_window_key(session_id: str, mode: str) -> tuple:
+    from modules.app_config import user_scope_key
+    return (session_id, mode, user_scope_key())
+
+
+def _chat_window_cleanup(now: float):
+    """清理长时间无活动的窗口（session 刷新/用户离开后防内存泄漏）。"""
+    stale = [k for k, w in _CHAT_WINDOWS.items() if now - w["deadline"] > _CHAT_WINDOW_IDLE]
+    for k in stale:
+        _CHAT_WINDOWS.pop(k, None)
+
+
+def _write_replies(result, mode: str) -> list:
+    """流萤回复写盘并返回 enriched（带 time 回传前端）。"""
+    from modules.conversation_store import append_message as _append_msg
+    enriched = []
+    for m in result.messages:
+        record = {"type": m.get("type")}
+        if m.get("type") == "text":
+            record["content"] = m.get("content", "")
+            seq, t = _append_msg("firefly", {"type": "text", "content": record["content"]}, mode=mode)
+        elif m.get("type") == "sticker":
+            record["path"] = m.get("path", "")
+            record["label"] = m.get("label", "")
+            seq, t = _append_msg("firefly", {"type": "sticker", "path": record["path"], "label": record["label"]}, mode=mode)
+        elif m.get("type") == "narration":
+            # 视觉小说式旁白：scene=居中小字（环境/事件），action=居中括号（动作）
+            record["text"] = m.get("text", "")
+            record["style"] = m.get("style", "action")
+            seq, t = _append_msg("firefly", {"type": "narration", "text": record["text"], "style": record["style"]}, mode=mode)
+        else:
+            record["content"] = str(m)
+            seq, t = _append_msg("firefly", {"type": "text", "content": record["content"]}, mode=mode)
+        record["time"] = t
+        enriched.append(record)
+    return enriched
+
+
+def _notify_reply_if_background(enriched: list):
+    """后台回复完成通知（安卓）：App 不在前台则状态栏提醒（复用隐藏式通知通道）。
+    PC/服务器版无 com.firefly.android 模块，try/except 静默跳过。"""
+    try:
+        from com.firefly.android import KeepAliveService
+        if not KeepAliveService.isAppForeground():
+            texts = [r.get("content", "") for r in enriched if r.get("type") == "text"]
+            if texts:
+                KeepAliveService.notify("流萤", "\n".join(texts)[:200])
+    except Exception:
+        pass
+
+
 def chat(h):
     client = cfg.get_client()
     if not client:
@@ -265,6 +324,70 @@ def chat(h):
     from modules.proactive import _active_reset
     _active_reset(mode)
 
+    # 合并窗口入队：消息实时到达后端即安全；窗口按 (session, mode, 用户) 隔离
+    if not user_input:
+        # 空消息（无内容可处理）：不进窗口，直接降级快速返回
+        from modules.proactive import reply_lock, reply_unlock
+        reply_lock(mode)
+        try:
+            session = get_session(session_id, mode)
+            with session["lock"]:
+                result = handle_chat("", session, client,
+                                     analyzer_model=cfg.config["analyzer_model"],
+                                     organizer_model=cfg.config["organizer_model"],
+                                     polisher_model=cfg.config["polisher_model"],
+                                     retriever_model=cfg.config["retriever_model"],
+                                     retriever_effort=cfg.config["retriever_effort"],
+                                     analyzer_effort=cfg.config["analyzer_effort"],
+                                     polisher_effort=cfg.config["polisher_effort"],
+                                     organizer_effort=cfg.config["organizer_effort"],
+                                     retriever_temperature=cfg.config["retriever_temperature"],
+                                     polisher_temperature=cfg.config["polisher_temperature"],
+                                     memory_head=session.get("memory_head", ""),
+                                     hint=hint,
+                                     mode=mode,
+                                     )
+            enriched = _write_replies(result, mode)
+            h._json({"messages": enriched})
+        finally:
+            reply_unlock(mode)
+        return
+
+    key = _chat_window_key(session_id, mode)
+    with _CHAT_WINDOW_LOCK:
+        _chat_window_cleanup(time.time())
+        win = _CHAT_WINDOWS.get(key)
+        if win is None:
+            win = {"msgs": [], "deadline": 0.0, "active": False,
+                   "cond": threading.Condition()}
+            _CHAT_WINDOWS[key] = win
+        with win["cond"]:
+            if not win["active"]:
+                win["active"] = True          # 本请求成为主请求（窗口首个/上一批已结束）
+                is_primary = True
+            else:
+                is_primary = False
+            win["msgs"].append(user_input)          # 入队（消息已写盘，不会丢）
+            win["deadline"] = time.time() + _CHAT_WINDOW_SEC   # 新消息重置 5 秒窗口
+            win["cond"].notify_all()
+
+    if not is_primary:
+        # 副请求：消息已入队，回复由主请求带回；立即返回，不挂起
+        h._json({"queued": True})
+        return
+
+    # 主请求：等待窗口结束（滑动 deadline；/chat/hint 重置延长，/chat/flush 立即结束）
+    with win["cond"]:
+        while True:
+            remaining = win["deadline"] - time.time()
+            if remaining <= 0:
+                merged_msgs = list(win["msgs"])
+                win["msgs"] = []
+                win["active"] = False   # 释放主请求权：后续消息开新一批
+                break
+            win["cond"].wait(timeout=min(remaining, 1.0))
+    user_input = "\n".join(merged_msgs)
+
     # 回复通道锁（阻塞）：用户消息不可丢，等待本模式任何主动生成完成后再处理
     # （按模式分锁：不阻塞其他模式的回复通道）
     from modules.proactive import reply_lock, reply_unlock
@@ -290,29 +413,46 @@ def chat(h):
                 mode=mode,
             )
         # 即时写盘：流萤回复每条立刻记，并把 time 回传给前端
-        enriched = []
-        for m in result.messages:
-            record = {"type": m.get("type")}
-            if m.get("type") == "text":
-                record["content"] = m.get("content", "")
-                seq, t = _append_msg("firefly", {"type": "text", "content": record["content"]}, mode=mode)
-            elif m.get("type") == "sticker":
-                record["path"] = m.get("path", "")
-                record["label"] = m.get("label", "")
-                seq, t = _append_msg("firefly", {"type": "sticker", "path": record["path"], "label": record["label"]}, mode=mode)
-            elif m.get("type") == "narration":
-                # 视觉小说式旁白：scene=居中小字（环境/事件），action=居中括号（动作）
-                record["text"] = m.get("text", "")
-                record["style"] = m.get("style", "action")
-                seq, t = _append_msg("firefly", {"type": "narration", "text": record["text"], "style": record["style"]}, mode=mode)
-            else:
-                record["content"] = str(m)
-                seq, t = _append_msg("firefly", {"type": "text", "content": record["content"]}, mode=mode)
-            record["time"] = t
-            enriched.append(record)
+        enriched = _write_replies(result, mode)
+        # 后台回复完成 → 状态栏通知（安卓；PC/服务器版静默跳过）
+        _notify_reply_if_background(enriched)
         h._json({"messages": enriched})
     finally:
         reply_unlock(mode)
+
+
+def chat_hint(h):
+    """用户打字中：重置该 session 合并窗口 deadline（窗口不存在则无操作）。
+    语义：输入框有内容（用户在打下一条）→ 流萤继续等，不提前提交。"""
+    body = _read_json(h)
+    session_id = body.get("session_id", "default")
+    mode = _body_mode(body)
+    key = _chat_window_key(session_id, mode)
+    with _CHAT_WINDOW_LOCK:
+        _chat_window_cleanup(time.time())
+        win = _CHAT_WINDOWS.get(key)
+        if win is not None:
+            with win["cond"]:
+                win["deadline"] = time.time() + _CHAT_WINDOW_SEC
+                win["cond"].notify_all()
+    h._json({"ok": True})
+
+
+def chat_flush(h):
+    """前端提交窗口到期：立即结束该 session 合并窗口（主请求从等待中醒来处理）。
+    切后台前端冻结不发 flush → 窗口 5 秒自然到期兜底，消息不丢。"""
+    body = _read_json(h)
+    session_id = body.get("session_id", "default")
+    mode = _body_mode(body)
+    key = _chat_window_key(session_id, mode)
+    with _CHAT_WINDOW_LOCK:
+        _chat_window_cleanup(time.time())
+        win = _CHAT_WINDOWS.get(key)
+        if win is not None:
+            with win["cond"]:
+                win["deadline"] = time.time()   # 立即到期
+                win["cond"].notify_all()
+    h._json({"ok": True})
 
 
 def rest(h):
@@ -557,7 +697,11 @@ def get_history(h):
     except Exception:
         limit = 150
     before_seq_raw = qs.get("before_seq", [None])[0]
-    before_seq = int(before_seq_raw) if before_seq_raw else None
+    # 审查约束：非法 before_seq 回退 None（防 /history?before_seq=abc 崩 500；同函数 limit 已有 try）
+    try:
+        before_seq = int(before_seq_raw) if before_seq_raw else None
+    except (TypeError, ValueError):
+        before_seq = None
     msgs = load_recent(limit=limit, before_seq=before_seq, mode=mode)
     total = get_total_count(mode=mode)
     # has_more：当前页最小 seq > 全局最小 seq 时还有更早历史
@@ -816,6 +960,8 @@ POST_ROUTES = {
     "/save-user-memory": save_user_memory,
     "/check-key": check_key,
     "/chat": chat,
+    "/chat/hint": chat_hint,
+    "/chat/flush": chat_flush,
     "/open-mode": open_mode,
     "/proactive-status": proactive_status,
     "/rest": rest,

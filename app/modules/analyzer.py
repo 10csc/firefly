@@ -9,7 +9,7 @@ import json, logging, threading
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from modules.llm_base import load_slot, record_usage, record_error, parse_json
+from modules.llm_base import load_slot, format_history, extract_json, record_usage, record_error, parse_json
 
 logger = logging.getLogger(__name__)
 _lock = threading.Lock()
@@ -150,17 +150,9 @@ class Analyzer:
             core=core, identity=identity, user_setting=user_setting, story_extra=story_extra,
         )
 
-        history_lines = []
-        turn = 0
-        for m in inp.recent_history:
-            role = m.get("role", "")
-            content = m.get("content", "")
-            if role == "user":
-                turn += 1
-                history_lines.append(f"[第{turn}轮] 开拓者: {content}")
-            elif role == "assistant":
-                history_lines.append(f"      流萤: {content}")
-        history_section = "\n".join(history_lines) if history_lines else "（无历史）"
+        # 历史格式化复用 llm_base.format_history（含 system 行为行与主动标记——
+        # 与 polisher/organizer 口径一致，prompt 更完整）
+        history_section = format_history(inp.recent_history)
 
         env_section = f"## 当前环境\n{inp.environment}\n" if inp.environment else ""
         knowledge_section = f"## 检索到的相关知识\n{inp.retrieved_knowledge}\n" if inp.retrieved_knowledge else ""
@@ -201,10 +193,9 @@ class Analyzer:
             raw = resp.choices[0].message.content.strip()
             rc = (getattr(resp.choices[0].message, "reasoning_content", "") or "").strip()
             # 思考模式极端情况：content 为空时从 reasoning 提取 JSON 兜底
+            # （用 llm_base.extract_json，处理字符串引号/转义，比贪婪正则健壮）
             if not raw and rc:
-                import re as _re
-                _m = _re.search(r'\{.*\}', rc, _re.S)
-                raw = _m.group(0) if _m else rc
+                raw = extract_json(rc) or rc
         except Exception as e:
             logger.error("分析器 LLM 失败: %s", e)
             with _lock:

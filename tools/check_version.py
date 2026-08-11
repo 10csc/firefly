@@ -25,7 +25,8 @@ sources = {
     "app_config.APP_VERSION":  ("app/modules/app_config.py", r'APP_VERSION\s*=\s*"([^"]+)"'),
     "app.js CURRENT_VERSION":  ("app/static/app.js",         r'CURRENT_VERSION\s*=\s*"([^"]+)"'),
     "android versionName":     ("android/app/build.gradle.kts", r'versionName\s*=\s*"([^"]+)"'),
-    "iss AppVersion":          ("package/firefly.iss",        r'AppVersion=([\d.]+)'),
+    "android versionCode":     ("android/app/build.gradle.kts", r'versionCode\s*=\s*(\d+)'),
+    "iss AppVersion":          ("package/firefly.iss",        r'AppVersion=(\d+\.\d+\.\d+)'),
 }
 
 print("=== 版本一致性检查 ===")
@@ -39,16 +40,34 @@ for name, (path, pat) in sources.items():
         versions[name] = v
         print(f"  {name}: {v}")
 
-if len(set(versions.values())) > 1:
+# 一致性比较：只比较 4 个版本号字符串；versionCode 是映射整数，单独走规则校验
+version_values = {v for k, v in versions.items() if k != "android versionCode"}
+if len(version_values) > 1:
     print("\n  X 版本不一致！")
     ok = False
-elif versions:
-    print(f"\n  一致: {next(iter(versions.values()))} ✓")
+elif version_values:
+    print(f"\n  一致: {next(iter(version_values))} ✓")
 
-# 版本格式检查：x.y.z 纯数字，禁止后缀
+# 版本格式检查：x.y.z 纯数字，禁止后缀（versionCode 是纯数字整数，不参与格式检查）
 for name, v in versions.items():
+    if name == "android versionCode":
+        continue
     if not re.fullmatch(r"\d+\.\d+\.\d+", v):
         print(f"  X {name}: '{v}' 不符合 x.y.z 纯数字格式（禁止 -beta/-rc 后缀）")
+        ok = False
+
+# versionCode 一致性（发版同步第 5 处）：versionCode = major*10000 + minor*100 + patch
+# 规则一次定死：0.7.1 → 701，1.0.0 → 10000，单调递增，安卓覆盖升级依赖
+if versions.get("android versionName") and versions.get("android versionCode"):
+    try:
+        vc = int(versions["android versionCode"])
+        mj, mi, pt = (int(x) for x in versions["android versionName"].split("."))
+        expected = mj * 10000 + mi * 100 + pt
+        if vc != expected:
+            print(f"  X android versionCode={vc} 与映射规则不符（{versions['android versionName']} 应为 {expected}）")
+            ok = False
+    except ValueError:
+        print("  X android versionCode/versionName 解析失败")
         ok = False
 
 print("\n结果:", "PASS 可发布" if ok else "FAIL 禁止发布")

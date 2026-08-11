@@ -1,14 +1,12 @@
 // 流萤聊天 App — 前端逻辑
+// ⚠️ 双份维护：服务器版有差异副本 server/frontend/app.js（UUID/Key 头注入、version.json 检测、
+// Key 存 localStorage）。改动本文件的通用逻辑时需同步另一份，差异点见 server/frontend/app.js 头部注释。
 
 const messagesEl = document.getElementById("messages");
 const inputEl = document.getElementById("msg-input");
 const sendBtn = document.getElementById("send-btn");
 const SESSION_ID = "firefly-" + Date.now();
 let waiting = false;
-
-// 输入检测器：5秒内无新输入则提交
-let _pending = [];
-let _sendTimer = null;
 
 // 开拓者头像
 const TB_AVATARS = { 穹: "/开拓者_穹.png", 星: "/开拓者_星.png" };
@@ -81,7 +79,10 @@ window.closeFeedback = closeFeedback;
 // ═══════════════════════════════════════════
 // 检查更新（GitHub 优先，失败自动降级 Gitee——国内网络 Gitee 更稳）
 // ═══════════════════════════════════════════
-const CURRENT_VERSION = "0.7.0";   // 与 android versionName / 安装器 AppVersion 保持一致
+const CURRENT_VERSION = "0.7.1";   // 与 android versionName / 安装器 AppVersion 保持一致
+// 设置面板版本号动态显示（单一版本源：CURRENT_VERSION；替代 index.html 硬编码文案）
+const curVersionEl = document.getElementById("current-version");
+if (curVersionEl) curVersionEl.textContent = "v" + CURRENT_VERSION;
 const UPDATE_SOURCES = [
     { api: "https://api.github.com/repos/10csc/firefly/releases/latest", html: "https://github.com/10csc/firefly/releases" },
     { api: "https://gitee.com/api/v5/repos/cpt-asymmetry/firefly/releases/latest", html: "https://gitee.com/cpt-asymmetry/firefly/releases" },
@@ -155,6 +156,10 @@ async function checkUpdate() {
         }
     }
 }
+// 检查更新按钮接线（设置面板版本区；修复前该按钮无任何事件绑定，点击无反应）
+const checkUpdateBtn = document.getElementById("check-update-btn");
+if (checkUpdateBtn) checkUpdateBtn.addEventListener("click", checkUpdate);
+
 // 自动更新：后端下载安装包 → PC 静默安装并重启；安卓引导系统安装器
 async function autoUpdate(isAndroid) {
     const msg = document.getElementById("update-msg");
@@ -634,14 +639,15 @@ async function showChat() {
     // 顶部显示当前模式名
     const modeTag = document.getElementById("chat-mode-tag");
     if (modeTag) modeTag.textContent = MODE_NAMES[CURRENT_MODE] || CURRENT_MODE;
-    // 模式可能已切换：清空并重载当前模式历史（story/haruno 数据隔离）
+        // 模式可能已切换：清空并重载当前模式历史（story/haruno 数据隔离）
     if (_lastMode !== CURRENT_MODE) {
         _lastMode = CURRENT_MODE;
         _modeGen++;   // 模式代际递增：作废所有飞行中的异步渲染任务（防止串模式显示）
-        // 未提交的草稿队列作废：旧模式 5s 窗口内的消息不跨模式发送（防串写历史）
-        _pending = [];
-        clearTimeout(_sendTimer);
-        _sendTimer = null;
+        // 未提交的提交窗口作废：旧模式的 flush/hint 计时器不跨模式触发（防串写历史）
+        clearTimeout(_flushTimer);
+        _flushTimer = null;
+        clearTimeout(_hintTimer);
+        _hintTimer = null;
         messagesEl.innerHTML = "";
         _hasMore = false;
         await loadHistory();   // 先加载历史（含已保存的开场）
@@ -814,11 +820,11 @@ function _chatVisible() {
     return appView && appView.style.display !== "none";
 }
 
-// 空闲判定：无输入 / 无提交待发 / 无等待回复 / 无思考锁 / 无渲染动画
+// 空闲判定：无输入 / 无请求在飞 / 无思考锁 / 无渲染动画
 function _idleOk() {
     if (waiting) return false;
     if (_rendering) return false;         // 主动消息渲染动画中
-    if (_pending.length > 0) return false;
+    if (_inflight > 0) return false;      // 发送请求在飞（等待回复）
     if (inputEl && inputEl.value.trim()) return false;
     return _chatVisible();
 }
@@ -883,23 +889,55 @@ renderMessages = function (messages, who, data) {
 // ═══════════════════════════════════════════
 // 发送消息 — 四阶段模型：输入 → 发送 → 提交 → 回复
 //   输入：打字（内容只在输入框，不触发队列）
-//   发送：Enter / 发送按钮 / 点表情 → 内容入队 _pending（可合并），重置提交计时
-//   提交：5s 窗口结束 → _doSend 把整个队列发给后端
+//   发送：Enter / 发送按钮 / 点表情 → 消息**立即 POST 后端**（不等 5 秒，切后台不丢）
+//   提交：后端 5 秒滑动窗口合并（后端控制；/chat/hint 重置窗口、/chat/flush 提前结束）
 //   回复：流萤回复渲染
-// 关键：发送 ≠ 提交。按 Enter 只是入队，5s 窗口内可继续发送合并；
-//      输入框未发送的内容永不提交（绝不自动发送）。
+// 关键：发送 ≠ 提交。后端窗口合并连续消息；输入框未发送的内容永不提交（绝不自动发送）。
 // ═══════════════════════════════════════════
-async function _doSend() {
-    if (!_pending.length || waiting) return;
-    waiting = true;
-    clearTimeout(_sendTimer);
-    inputEl.disabled = true; sendBtn.disabled = true;
+let _flushTimer = null;   // 提交窗口计时：输入框清空后 5 秒 → /chat/flush（提前结束后端窗口）
+let _hintTimer = null;    // 打字中 hint 防抖：输入停顿 2 秒 → /chat/hint（重置后端窗口）
+let _inflight = 0;        // 在飞请求数（WakeLock 引用计数：全部完成才释放）
+
+/** 打字中：重置后端合并窗口（流萤继续等开拓者说完）。
+ * 输入框仍有内容 → 持续定时重置（前端在且输入框有残留 = 用户在打字 → 永不提交）；
+ * 输入框清空/切后台 → 停止发 hint，后端窗口自然到期兜底。 */
+function _sendHint() {
+    fetch("/chat/hint", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({ session_id: SESSION_ID, mode: CURRENT_MODE }),
+    }).catch(() => {});
+    // 输入框仍有残留（用户还在打字/未清空）→ 继续定时重置窗口
+    if (inputEl && inputEl.value.trim()) {
+        _hintTimer = setTimeout(_sendHint, 2000);
+    }
+}
+
+/** 提交窗口到期：立即结束后端合并窗口（前台加速；切后台冻结不触发，后端窗口兜底）。
+ * 状态显示时机：只有提交（进入核心流水线）才显示"对方正在输入"，窗口等待期不显示。 */
+function _sendFlush() {
+    if (_inflight === 0) return;   // 无在飞请求（已完成）：不显示状态，防止卡"正在输入"
     const statusEl = document.querySelector("#header .status");
-    const defaultStatus = statusEl.textContent;
-    statusEl.textContent = "对方正在输入...";
-    const msgs = _pending.slice();   // 混合数组：字符串=文字，{type:"sticker"}=表情
-    _pending = [];
+    if (statusEl) statusEl.textContent = "对方正在输入...";
+    fetch("/chat/flush", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({ session_id: SESSION_ID, mode: CURRENT_MODE }),
+    }).catch(() => {});
+}
+
+/** 发送消息到后端并处理响应：
+ *  副请求（窗口内）→ 后端返回 {queued:true}，回复由主请求带回，忽略；
+ *  主请求（窗口结束/新窗口）→ 挂起等回复，返回后渲染。
+ *  状态显示不在此处设置——窗口等待期不显示"正在输入"，由 _sendFlush（提交）触发。 */
+async function _chatSend(msgs) {
+    _inflight++;
+    const statusEl = document.querySelector("#header .status");
+    const defaultStatus = statusEl ? statusEl.textContent : "";
     const gen = _modeGen;   // 捕获发起时的模式代际
+    // 后台保活（安卓 WebView JS Bridge）：回复流程（检索→分析→回复→调度）期间
+    // 持 CPU/WiFi 锁，用户切后台/锁屏也能完成回复；引用计数归零才释放
+    if (window.androidWakeLock && _inflight === 1) { window.androidWakeLock.acquire(); }
     try {
         const resp = await fetch("/chat", {
             method: "POST",
@@ -907,37 +945,39 @@ async function _doSend() {
             body: JSON.stringify({ messages: msgs, session_id: SESSION_ID, mode: CURRENT_MODE }),
         });
         const data = await resp.json();
-        statusEl.textContent = defaultStatus;
-        if (gen !== _modeGen) {
-            // 模式已切换：丢弃回复（消息已写盘到原模式，不渲染）。
-            // 必须复位 waiting/输入框，否则新模式输入框永久卡死
-            waiting = false;
-            inputEl.disabled = false; sendBtn.disabled = false;
-            return;
-        }
+        if (gen !== _modeGen) return;   // 模式已切换：丢弃回复（消息已写盘到原模式，不渲染）
         if (data.need_key) openSettings();
         else if (data.messages) renderMessages(data.messages, "firefly", data);
         else if (data.reply) addTextMessage(data.reply, "firefly");
+        // data.queued：副请求，回复由主请求带回，无 UI 操作
     } catch (e) {
-        statusEl.textContent = defaultStatus;
-        if (gen === _modeGen) addTextMessage("嗯…信号不太好，等会儿再试试？", "firefly");
+        if (gen === _modeGen && _inflight === 1) {
+            addTextMessage("嗯…信号不太好，等会儿再试试？", "firefly");
+        }
+    } finally {
+        if (window.androidWakeLock && _inflight === 1) { window.androidWakeLock.release(); }
+        _inflight--;
+        if (_inflight === 0) {
+            clearTimeout(_flushTimer); _flushTimer = null;   // 请求完成：提交计时器作废
+            if (statusEl) statusEl.textContent = defaultStatus;
+            inputEl.focus();
+            // 响应式回复完成后 ≥1s 防抖，触发主动式判断（主动式未触发则服务端串联概率式）
+            setTimeout(() => { if (_idleOk()) checkProactive(); }, 1000);
+        }
     }
-    waiting = false;
-    inputEl.disabled = false; sendBtn.disabled = false;
-    inputEl.focus();
-    // 响应式回复完成后 ≥1s 防抖，触发主动式判断（主动式未触发则服务端串联概率式）
-    setTimeout(() => { if (_idleOk()) checkProactive(); }, 1000);
 }
 
 async function send() {
     const text = inputEl.value.trim();
-    if (!text || waiting) return;
+    if (!text || waiting) return;   // 主动消息思考渲染中：禁止发送防乱序
     inputEl.value = "";
     addTextMessage(text, "user");
-    _pending.push({type: "text", content: text});   // 统一消息对象类型
     inputEl.focus();
-    clearTimeout(_sendTimer);
-    _sendTimer = setTimeout(_doSend, 5000);
+    // 输入框清空 → 停止 hint 循环 + 重置 5 秒提交窗口（到期 flush 结束后端窗口）
+    clearTimeout(_hintTimer);
+    clearTimeout(_flushTimer);
+    _flushTimer = setTimeout(_sendFlush, 5000);
+    _chatSend([{type: "text", content: text}]);   // 统一消息对象类型，立即发送
 }
 
 // ═══════════════════════════════════════════
@@ -974,30 +1014,31 @@ stickerBtn.addEventListener("click", async () => {
 messagesEl.addEventListener("click", () => stickerPanel.classList.remove("show"));
 document.getElementById("sticker-panel-close").addEventListener("click", () => stickerPanel.classList.remove("show"));
 
-/** 发送表情包：作为一条消息入队并重新计时（与文字同一队列，不碰输入框内容） */
+/** 发送表情包：作为一条消息立即发送（与文字同一窗口合并，不碰输入框内容） */
 function sendStickerMessage(label, file) {
-    if (waiting) return;
+    if (waiting) return;   // 主动消息思考渲染中：禁止发送防乱序
     if (file) addSticker(file, "user");   // 本地立即渲染表情图
-    _pending.push({type: "sticker", label, file});
     inputEl.focus();
-    clearTimeout(_sendTimer);
-    _sendTimer = setTimeout(_doSend, 5000);   // 表情入队 → 触发重新计时
+    clearTimeout(_flushTimer);
+    _flushTimer = setTimeout(_sendFlush, 5000);   // 表情入队 → 重置提交窗口
+    _chatSend([{type: "sticker", label, file}]);
 }
 
 sendBtn.addEventListener("click", send);
 inputEl.addEventListener("keydown", (e) => {
     if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
 });
-// 提交窗口控制（四阶段：发送≠提交）：
-// - 队列有内容且输入框非空（未发送）→ 禁止提交，等开拓者说完（可见性感知）
-// - 输入框清空 → 重新 5 秒提交计时
+// 提交窗口控制（发送≠提交，窗口在后端）：
+// - 输入框有内容（打字中）→ 暂停 flush + 防抖 hint（后端重置窗口，流萤等开拓者说完）
+// - 输入框清空 → 重新 5 秒 flush 计时（到期结束后端窗口；切后台冻结则后端窗口兜底）
 inputEl.addEventListener("input", () => {
-    if (!_pending.length) return;
-    clearTimeout(_sendTimer);
+    clearTimeout(_hintTimer);
     if (inputEl.value.trim()) {
-        _sendTimer = null;   // 有未发送内容：禁止提交（流萤在等开拓者）
+        clearTimeout(_flushTimer);
+        _flushTimer = null;   // 有未发送内容：暂停 flush，不提前结束后端窗口
+        _hintTimer = setTimeout(_sendHint, 2000);   // 停顿 2 秒发 hint 重置后端窗口（持续打字则持续等待）
     } else {
-        _sendTimer = setTimeout(_doSend, 5000);   // 清空：重新 5 秒后提交
+        _flushTimer = setTimeout(_sendFlush, 5000);   // 清空：5 秒后提交
     }
 });
 
@@ -1225,7 +1266,7 @@ async function loadCharFiles() {
         const byName = {};
         (data.files || []).forEach(f => { byName[f.name] = f.content; });
         const us = document.getElementById("user-setting-editor");
-        if (us) us.value = byName["用户设定.md"] ?? "";
+        if (us) us.value = byName["用户设定.md"] || "";   // ?? 为 ES2020（Chrome 80+），安卓 8.0 WebView 解析期 SyntaxError 全站失效，改用 ||（此处语义等价）
         if (msg) msg.textContent = "已加载";
     } catch (e) { if (msg) msg.textContent = "加载失败"; }
 }

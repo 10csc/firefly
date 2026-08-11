@@ -378,7 +378,7 @@ P.reply_unlock("story")
 print("=== 隐藏式回复（独立通道）===")
 reset_log()
 P._active_set("story", 1)
-P._HIDDEN.pop("story", None)
+P._HIDDEN.pop(P._state_key("story"), None)
 # 0. 时段权重表：傍晚高峰 > 上午 > 深夜
 H18 = P._hidden_hour_weight(18)
 H10 = P._hidden_hour_weight(10)
@@ -412,7 +412,7 @@ check("hidden: 冷却中→拒绝", not ok and "冷却" in reason)
 check("hidden: 冷却中 ACTIVE 仍=1", P._active_get("story") == 1)
 
 # 4. 冷却超时恢复（伪造旧时间 + 固定随机）
-P._HIDDEN["story"] = time.time() - 11 * 60
+P._HIDDEN[P._state_key("story")] = time.time() - 11 * 60
 P.random.random = lambda: 0.0
 ok, reason = P.hidden_gate_open(True, 1.0, mode="story", hour=18)
 P.random.random = _orig_rand_fn
@@ -445,7 +445,7 @@ log = P._load_log("story")
 hidden_entries = [l for l in log if l.get("hidden")]
 check("hidden: 记录带 hidden 标记", len(hidden_entries) >= 1)
 check("hidden: 记录无 turn/prob 字段", "turn" not in hidden_entries[0] and "prob" not in hidden_entries[0])
-check("hidden: 冷却已记录", P._HIDDEN.get("story", 0) > 0)
+check("hidden: 冷却已记录", P._HIDDEN.get(P._state_key("story"), 0) > 0)
 
 # 6. 重启重建：hidden 记录 → _restore_hidden_state 恢复冷却
 v = P._restore_hidden_state("story")
@@ -459,7 +459,7 @@ v3 = P._last_judge_turn("story")
 check("hidden: 不消耗主动式轮次机会", v3 is None)
 
 # 8. 清理 _HIDDEN（clear-history 语义）
-P._HIDDEN.pop("story", None)
+P._HIDDEN.pop(P._state_key("story"), None)
 check("hidden: 清理后冷却重置", P._HIDDEN.get("story") is None)
 
 print("=== 监控计数器 ===")

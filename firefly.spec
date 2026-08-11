@@ -32,7 +32,6 @@ a = Analysis(
         (str(ROOT / "docs"), "docs"),
     ],
     hiddenimports=[
-        "openai",
         "modules.memory_manager",
     ],
     hookspath=[str(ROOT / "_pyinstaller_hooks")],
@@ -65,7 +64,7 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon='F:\\CodeFile\\firefly\\package\\firefly.ico',
+    icon=str(ROOT / "package" / "firefly.ico"),
 )
 
 coll = COLLECT(

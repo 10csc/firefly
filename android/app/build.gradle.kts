@@ -46,12 +46,17 @@ android {
     namespace = "com.firefly.android"
     compileSdk = 35
 
+    buildFeatures {
+        // AGP 8+ 默认关闭 BuildConfig 生成；MainActivity 的 BuildConfig.DEBUG（WebView 调试开关）依赖它
+        buildConfig = true
+    }
+
     defaultConfig {
         applicationId = "com.firefly.android"
         minSdk = 26
         targetSdk = 35
-        versionCode = 7
-        versionName = "0.7.0"
+        versionCode = 701
+        versionName = "0.7.1"
         ndk {
             // 真机 arm64 + 模拟器 x86_64（Python 3.12 仅支持 64 位）
             abiFilters += listOf("arm64-v8a", "x86_64")

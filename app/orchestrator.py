@@ -182,6 +182,11 @@ def handle_chat(
     global _CHAT_COUNT, _DIRECT_COUNT, _ORCH_ERRORS
     with _lock:
         _CHAT_COUNT += 1
+        turn = _CHAT_COUNT
+
+    logger.info("[PIPELINE #%d] ====== 开始处理 chat 请求 ======", turn)
+    logger.info("[PIPELINE #%d] user_input=%s hint=%s", turn,
+                (user_input[:80] if user_input else "(empty)"), hint)
 
     ctx: ContextManager = session["context"]
 
@@ -215,6 +220,7 @@ def handle_chat(
         else:
             anchor = [m for m in ctx.get_recent(10) if m.get("role") == "user"][-1:]
             _rt0 = time.perf_counter()
+            logger.info("[PIPELINE #%d] ⓪ Retriever 开始...", turn)
             r_out = LlmRetriever(client, model=retriever_model,
                                  temperature=retriever_temperature,
                                  effort=retriever_effort, mode=mode).retrieve(RetrieveInput(
@@ -224,10 +230,12 @@ def handle_chat(
             _rt1 = time.perf_counter()
             retrieved_knowledge = r_out.knowledge
             retrieved_memory = ""   # 子代理输出为混合摘要，两层合并
+            logger.info("[PIPELINE #%d] ⓪ Retriever 完成 (%.1fs)", turn, _rt1 - _rt0)
     except Exception as e:
         retrieved_knowledge = ""
         retrieved_memory = ""
         _rt0 = _rt1 = time.perf_counter()
+        logger.warning("[PIPELINE #%d] ⓪ Retriever 失败: %s: %s", turn, type(e).__name__, e)
 
     try:
         # ── 1. 分析器 ──────────────────────────
@@ -238,6 +246,7 @@ def handle_chat(
             input_text = f"{user_input}\n（注意：开拓者还在输入第二条消息，可能还有下文）"
 
         _t0 = time.perf_counter()
+        logger.info("[PIPELINE #%d] ① Analyzer 开始...", turn)
         analyzer = Analyzer(client, model=analyzer_model, effort=analyzer_effort, mode=mode)
         analysis = analyzer.analyze(AnalyzerInput(
             user_input=input_text,
@@ -247,8 +256,11 @@ def handle_chat(
             environment=environment,
         ))
         _t1 = time.perf_counter()
+        logger.info("[PIPELINE #%d] ① Analyzer 完成 (%.1fs), intent=%s",
+                    turn, _t1 - _t0, (analysis.intent[:60] if analysis.intent else "?"))
 
         # ── 2. 回复器（全权生成回复文本）────────
+        logger.info("[PIPELINE #%d] ② Polisher 开始...", turn)
         polisher = Polisher(client, model=polisher_model,
                             effort=polisher_effort, temperature=polisher_temperature, mode=mode)
         polish_output = polisher.polish(PolisherInput(
@@ -262,9 +274,12 @@ def handle_chat(
         ))
         _t2 = time.perf_counter()
         messages = list(polish_output.messages)
+        logger.info("[PIPELINE #%d] ② Polisher 完成 (%.1fs), 生成 %d 条消息",
+                    turn, _t2 - _t1, len(messages))
 
         # ── 3. 组织器（story=表情包调度；haruno=旁白演出）──
         # 失败只损失表情包/旁白，不影响文本回复
+        logger.info("[PIPELINE #%d] ③ Organizer 开始...", turn)
         org_output = None
         try:
             organizer = Organizer(client, model=organizer_model, effort=organizer_effort, mode=mode)
@@ -285,6 +300,8 @@ def handle_chat(
         except Exception as e:
             logger.warning("工具调度失败（跳过表情包/旁白）: %s", e)
         _t3 = time.perf_counter()
+        logger.info("[PIPELINE #%d] ③ Organizer 完成 (%.1fs), sticker=%s",
+                    turn, _t3 - _t2, org_output.sticker_label if org_output else "无")
 
         _record_pipeline({
             "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
@@ -326,7 +343,9 @@ def handle_chat(
         }, mode=mode)
 
     except Exception as e:
-        logger.error("编排器异常 [%s]: %s", type(e).__name__, e)
+        import traceback
+        logger.error("[PIPELINE #%d] 编排器异常 %s: %s\n%s",
+                     turn, type(e).__name__, e, traceback.format_exc())
         with _lock:
             _ORCH_ERRORS += 1
         _record_pipeline({
@@ -341,6 +360,9 @@ def handle_chat(
         return ChatResult(messages=messages, bubble=None)
 
     # ── 4. 记录历史 ────────────────────────────
+    total_elapsed = _t3 - _rt0 if _t3 > 0 else 0
+    logger.info("[PIPELINE #%d] ====== 完成 (总耗时 %.1fs), 回复 %d 条 =====",
+                turn, total_elapsed, len(messages))
     texts = [m["content"] for m in messages if m.get("type") == "text"]
     ctx.add_turn(user_input, " ".join(texts) if texts else "(表情包)")
     for m in messages:

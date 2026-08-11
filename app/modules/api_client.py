@@ -10,11 +10,17 @@
 import json
 import logging
 import threading
+import time
 from types import SimpleNamespace
 
 import requests
 
 logger = logging.getLogger(__name__)
+
+# 网络重试配置：后台切前台/WiFi 省电恢复场景下，首次请求可能因 TCP 连接
+# 中断而失败，等待 2 秒让网络栈恢复后重试一次即可成功。
+_RETRY_DELAY = 2.0        # 重试前等待秒数
+_MAX_RETRIES = 1           # 最多重试 1 次（即总共 2 次尝试）
 
 
 class ApiError(Exception):
@@ -51,30 +57,59 @@ class _Completions:
         if extra_body:
             payload.update(extra_body)   # thinking / reasoning_effort 均为顶层参数
 
-        try:
-            resp = requests.post(
-                self._client._base_url + "/chat/completions",
-                headers={"Authorization": f"Bearer {self._client._api_key}",
-                         "Content-Type": "application/json"},
-                json=payload,
-                timeout=self._client._timeout,
-            )
-        except requests.RequestException as e:
-            raise ApiError(f"网络请求失败: {e}") from e
+        last_error = None
+        for attempt in range(_MAX_RETRIES + 1):
+            try:
+                resp = requests.post(
+                    self._client._base_url + "/chat/completions",
+                    headers={"Authorization": f"Bearer {self._client._api_key}",
+                             "Content-Type": "application/json"},
+                    json=payload,
+                    timeout=self._client._timeout,
+                )
+            except requests.RequestException as e:
+                last_error = ApiError(f"网络请求失败: {e}")
+                if attempt < _MAX_RETRIES:
+                    logger.warning("[API] 请求失败（尝试 %d/%d），%ss 后重试 — "
+                                   "model=%s %s: %s",
+                                   attempt + 1, _MAX_RETRIES + 1, _RETRY_DELAY,
+                                   model, type(e).__name__, e)
+                    time.sleep(_RETRY_DELAY)
+                    continue
+                logger.error("[API] 请求失败（已达最大重试）— model=%s %s: %s",
+                             model, type(e).__name__, e)
+                raise last_error from e
 
-        if resp.status_code != 200:
-            detail = resp.text[:300]
-            raise ApiError(f"HTTP {resp.status_code}: {detail}")
+            if resp.status_code != 200:
+                detail = resp.text[:300]
+                # 5xx 服务端错误可重试
+                if 500 <= resp.status_code < 600 and attempt < _MAX_RETRIES:
+                    logger.warning("[API] 服务端错误 HTTP %d（尝试 %d/%d），%ss 后重试 — model=%s",
+                                   resp.status_code, attempt + 1, _MAX_RETRIES + 1,
+                                   _RETRY_DELAY, model)
+                    time.sleep(_RETRY_DELAY)
+                    continue
+                last_error = ApiError(f"HTTP {resp.status_code}: {detail}")
+                logger.error("[API] HTTP 错误 — model=%s status=%d detail=%s",
+                             model, resp.status_code, detail[:100])
+                raise last_error
 
-        try:
-            data = resp.json()
-        except ValueError as e:
-            raise ApiError(f"响应解析失败: {e}") from e
+            try:
+                data = resp.json()
+            except ValueError as e:
+                last_error = ApiError(f"响应解析失败: {e}")
+                logger.error("[API] JSON 解析失败 — model=%s %s", model, e)
+                raise last_error from e
 
-        if "choices" not in data or not data["choices"]:
-            raise ApiError(f"响应缺少 choices: {json.dumps(data, ensure_ascii=False)[:300]}")
+            if "choices" not in data or not data["choices"]:
+                last_error = ApiError(f"响应缺少 choices: {json.dumps(data, ensure_ascii=False)[:300]}")
+                logger.error("[API] 响应缺少 choices — model=%s", model)
+                raise last_error
 
-        return self._build_response(data)
+            return self._build_response(data)
+
+        # 不应到达此处
+        raise last_error or ApiError("未知错误")
 
     @staticmethod
     def _build_response(data: dict) -> SimpleNamespace:

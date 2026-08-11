@@ -14,6 +14,7 @@ from modules.llm_base import (
     load_slot, load_journal, format_history,
     record_usage, record_error, resolve_character_file,
 )
+from modules.app_config import user_scope_key
 
 logger = logging.getLogger(__name__)
 _lock = threading.Lock()
@@ -56,14 +57,15 @@ _SAMPLES_LOCK = threading.Lock()
 
 def _load_samples(mode: str = "story") -> str:
     with _SAMPLES_LOCK:
-        if mode in _SAMPLES_CACHE:
-            return _SAMPLES_CACHE[mode]
+        ck = f"{mode}::{user_scope_key()}"   # 用户维度：防服务器版多用户缓存串扰
+        if ck in _SAMPLES_CACHE:
+            return _SAMPLES_CACHE[ck]
         fp = resolve_character_file("sms_samples.md", mode)
         if fp.exists():
-            _SAMPLES_CACHE[mode] = fp.read_text(encoding="utf-8").strip()
+            _SAMPLES_CACHE[ck] = fp.read_text(encoding="utf-8").strip()
         else:
-            _SAMPLES_CACHE[mode] = ""
-        return _SAMPLES_CACHE[mode]
+            _SAMPLES_CACHE[ck] = ""
+        return _SAMPLES_CACHE[ck]
 
 
 def clear_samples_cache():
@@ -384,7 +386,11 @@ class Polisher:
                 else:
                     raw = rc  # 退化为直接解析（大概率仍失败，走降级）
         except Exception as e:
-            logger.error("回复器 LLM 失败: %s", e)
+            import traceback
+            logger.error("[POLISHER] LLM 调用失败 — model=%s effort=%s thinking=%s "
+                         "exception=%s: %s\n%s",
+                         self._model, self._effort, self._thinking,
+                         type(e).__name__, e, traceback.format_exc())
             with _lock:
                 _LLM_ERRORS += 1
             record_error("polisher", self._model, str(e))
