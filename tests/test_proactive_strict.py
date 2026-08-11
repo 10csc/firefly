@@ -375,14 +375,14 @@ try:
 finally:
     cfg.get_client = _orig_client
 
-# E2 正常：显式合法 mode → 用之
+# E2 规则：显式 haruno → 隐藏式通道短路（春日手信模式不触发隐藏式，只保留主动式）
 reset_state()
 append_message("user", {"type": "text", "content": "你好"}, mode="haruno")
 cfg.config["api_key"] = "test-key"
 cfg.get_client = fake_client
 try:
     msgs = P.backdoor_proactive_check("haruno")
-    check("E2 显式 haruno 生效", msgs == ["今天天气真不错"])
+    check("E2 显式 haruno 不触发隐藏式（短路）", msgs == [])
 finally:
     cfg.get_client = _orig_client
 
