@@ -37,6 +37,47 @@ class KeepAliveService : Service() {
         private const val MIN_INTERVAL_MS = 10 * 60 * 1000L
         private const val MAX_INTERVAL_MS = 30 * 60 * 1000L
         @Volatile var isForeground = true   // App 前后台状态（MainActivity 通知）
+
+        // Python 侧（com.firefly.android.KeepAliveService）直调：后台回复完成通知
+        private var appContext: Context? = null
+
+        fun init(context: Context) {
+            appContext = context.applicationContext
+        }
+
+        /** 是否在前台：Python 回复完成后判断是否需要发通知 */
+        @JvmStatic
+        fun isAppForeground(): Boolean = isForeground
+
+        /** 后台回复完成通知（复用 AI 主动消息通道）。Python 流水线完成后直调。 */
+        @JvmStatic
+        fun notify(title: String, content: String) {
+            val ctx = appContext ?: return
+            val nm = ctx.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            nm.createNotificationChannel(
+                NotificationChannel(AI_CHANNEL_ID, "流萤的消息", NotificationManager.IMPORTANCE_HIGH)
+            )
+            val intent = Intent(ctx, MainActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            }
+            val pi = PendingIntent.getActivity(
+                ctx, 0, intent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+            val notification = Notification.Builder(ctx, AI_CHANNEL_ID)
+                .setContentTitle(title)
+                .setContentText(content)
+                .setStyle(Notification.BigTextStyle().bigText(content))
+                .setSmallIcon(R.mipmap.ic_launcher)
+                .setAutoCancel(true)
+                .setContentIntent(pi)
+                .build()
+            try {
+                nm.notify(AI_NOTIF_ID, notification)
+            } catch (e: SecurityException) {
+                // 通知权限被拒：静默
+            }
+        }
     }
 
     private val handler = Handler(Looper.getMainLooper())
@@ -55,6 +96,11 @@ class KeepAliveService : Service() {
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
+
+    override fun onCreate() {
+        super.onCreate()
+        init(applicationContext)
+    }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         startForeground(NOTIF_ID, buildNotification())
@@ -94,27 +140,7 @@ class KeepAliveService : Service() {
 
     /** AI 主动消息通知（状态栏 + 顶部横幅，类似 QQ/微信） */
     private fun sendAiNotification(title: String, content: String) {
-        val intent = Intent(this, MainActivity::class.java).apply {
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
-        }
-        val pi = PendingIntent.getActivity(
-            this, 0, intent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
-        val notification = Notification.Builder(this, AI_CHANNEL_ID)
-            .setContentTitle(title)
-            .setContentText(content)
-            .setStyle(Notification.BigTextStyle().bigText(content))
-            .setSmallIcon(R.mipmap.ic_launcher)
-            .setAutoCancel(true)
-            .setContentIntent(pi)
-            .build()
-        val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        try {
-            nm.notify(AI_NOTIF_ID, notification)
-        } catch (e: SecurityException) {
-            // 通知权限被拒：静默
-        }
+        notify(title, content)
     }
 
     private fun buildNotification(): Notification {

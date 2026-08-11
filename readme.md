@@ -99,6 +99,21 @@ pyinstaller firefly.spec --noconfirm
 
 > 旧版 WebView 客户端（连接电脑端服务）已由独立运行版取代；如需局域网远程模式，参考 git 历史。
 
+## 服务器版（可选，云端部署）
+
+把流萤部署到云服务器后，**鸿蒙 / iOS / PC 用浏览器打开 `http://<公网IP>:8765` 即可使用**（无需安装）：
+
+- **用户自带 API Key**：Key 只存在用户浏览器（localStorage），服务器只处理逻辑、用用户的 Key 调 DeepSeek API，**不落盘不存储**
+- **多用户隔离**：数据按匿名 UUID 分目录（`user_data/{uuid}/`），互不可见
+- **本地版零影响**：服务器版独立在 `server/`，复用 `app/modules` 全部流水线逻辑，`app/` 代码不变
+
+```bash
+# 部署（详见 docs/部署说明.md）
+scp -r server app knowledge database root@<公网IP>:/opt/firefly/
+# 服务器上：python3 -m venv venv && venv/bin/pip install requests
+nohup venv/bin/python server/server_app.py > /var/log/firefly.log 2>&1 &
+```
+
 ## 运行测试
 
 ```powershell
@@ -136,9 +151,12 @@ firefly/
 ├── user_data/              运行时用户数据（升级保留；exe 同级 / 安卓内部存储）
 ├── _trash/                 弃用文件暂存区（标注原位置与逻辑，见 _trash/README.md）
 ├── docs/                   文档（需求设计/错误总结/待办/README 索引）
-├── android/                Android 客户端（backend 由 Gradle syncBackend 自动同步）
-├── tests/                  白盒测试
-└── package/  dist/         打包（Inno Setup 安装器 / PyInstaller 产物）
+├── server/                服务器版（独立入口 server_app.py + frontend/，复用 app/modules）
+│   ├── server_app.py     服务器版入口（0.0.0.0:8765，多用户 + 用户自带 Key）
+│   └── frontend/          服务器版前端（index.html/app.js，样式复用 app/static）
+├── android/               Android 客户端（backend 由 Gradle syncBackend 自动同步）
+├── tests/                 白盒测试
+└── package/  dist/        打包（Inno Setup 安装器 / PyInstaller 产物）
 ```
 
 ## 常见问题

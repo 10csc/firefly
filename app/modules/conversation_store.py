@@ -220,6 +220,12 @@ def load_recent(limit: int = _PAGE_SIZE, before_seq: int = None, mode: str = DEF
                 try:
                     obj = json.loads(line)
                     if isinstance(obj, dict) and "seq" in obj:
+                        # seq 净化（审查约束）：损坏行（seq=null/"abc"）剔除，
+                        # 否则下方 sort/before_seq 的 int() 抛 TypeError 击穿 get_history/回灌链
+                        try:
+                            obj["seq"] = int(obj["seq"])
+                        except (TypeError, ValueError):
+                            continue
                         all_msgs.append(obj)
                 except Exception:
                     continue

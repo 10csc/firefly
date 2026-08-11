@@ -11,7 +11,7 @@ haruno 模式：旁白生成器（视觉小说式 RP——环境/动作描写，
 import logging, threading
 from dataclasses import dataclass, field
 
-from modules.llm_base import record_usage, record_error, parse_json
+from modules.llm_base import record_usage, record_error, extract_json, parse_json
 
 logger = logging.getLogger(__name__)
 _lock = threading.Lock()
@@ -275,10 +275,9 @@ class Organizer:
 
 # ── 辅助函数 ──────────────────────────────────────
 def _extract_json(text: str) -> str:
-    """从思考内容中提取第一个 JSON 对象（content 为空时的兜底）。"""
-    import re
-    m = re.search(r'\{.*\}', text, re.S)
-    return m.group(0) if m else ""
+    """从思考内容中提取第一个 JSON 对象（content 为空时的兜底）。
+    委托 llm_base.extract_json——处理字符串引号/转义，比贪婪正则健壮；消除双份实现。"""
+    return extract_json(text) or ""
 
 
 def _validate_input(inp: OrganizerInput):

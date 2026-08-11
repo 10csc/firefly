@@ -280,27 +280,27 @@ ok9, reason9 = P.hidden_gate_open(False, 1.0, mode="story", hour=18)
 check("C7 关闭→拒绝且原因='隐藏式已关闭'", ok9 is False and reason9 == "隐藏式已关闭")
 
 # C8 错误路径：冷却中 → 拒绝且原因含"冷却"和剩余分钟
-P._HIDDEN["story"] = time.time()
+P._mark_hidden_sent("story")
 ok10, reason10 = P.hidden_gate_open(True, 1.0, mode="story", hour=18)
 check("C8 冷却中→拒绝含'冷却'", ok10 is False and "冷却" in reason10 and "剩" in reason10)
 
 # C9 数据一致性：触发成功不碰 ACTIVE（前后台场景独立）
 reset_state()
 P._active_set("story", 0)
-P._HIDDEN.pop("story", None)
+P._HIDDEN.pop(P._state_key("story"), None)
 P.random.random = lambda: 0.0
 ok11, _ = P.hidden_gate_open(True, 1.0, mode="story", hour=18)
 check("C9 隐藏式放行不要求 ACTIVE=1", ok11 is True and P._active_get("story") == 0)
 
 # C10 数据一致性：冷却记录按 mode 隔离
 reset_state()
-P._HIDDEN["story"] = time.time()
+P._mark_hidden_sent("story")
 ok12, _ = P.hidden_gate_open(True, 1.0, mode="haruno", hour=18)
 check("C10 story 冷却不影响 haruno", ok12 is True)
 
 # C11 数据一致性：概率判定无副作用（拒绝不改状态）
 reset_state()
-P._HIDDEN.pop("story", None)
+P._HIDDEN.pop(P._state_key("story"), None)
 snap = dict(P._HIDDEN), dict(P._ACTIVE)
 P.random.random = lambda: 0.99
 P.hidden_gate_open(True, 1.0, mode="story", hour=18)
@@ -425,7 +425,7 @@ finally:
 # E6 错误路径：LLM 全程抛异常 → backdoor 不向上抛异常，返回 list（防 Android 线程崩溃）
 # 防 bug：后台入口必须吞掉一切 LLM 异常，否则 Android 后台线程未捕获异常会崩
 reset_state()
-P._HIDDEN.pop("story", None)
+P._HIDDEN.pop(P._state_key("story"), None)
 cfg.config["api_key"] = "test-key"
 class BoomClient:
     def __init__(self): self.chat = type("C", (), {"completions": type("CC", (), {
@@ -456,10 +456,10 @@ reset_state()
 append_message("user", {"type": "text", "content": "你好"}, mode="story")
 cfg.config["api_key"] = "test-key"
 cfg.get_client = fake_client
-P._HIDDEN.pop("story", None)
+P._HIDDEN.pop(P._state_key("story"), None)
 try:
     P.backdoor_proactive_check("story")
-    check("E8 触发后冷却已记录", P._HIDDEN.get("story", 0) > 0)
+    check("E8 触发后冷却已记录", P._HIDDEN.get(P._state_key("story"), 0) > 0)
 finally:
     cfg.get_client = _orig_client
 
@@ -515,7 +515,7 @@ print("=== G. check_and_generate 隐藏式独立通道 ===")
 # G1 正常：hidden=True 时 ACTIVE=0 也触发（独立通道）
 reset_state()
 P._active_set("story", 0)
-P._HIDDEN.pop("story", None)
+P._HIDDEN.pop(P._state_key("story"), None)
 s = make_session()
 client = MockClient([
     '{"should_speak": true, "reason_type": "share", "topic_hint": "云", "reason": "看到一朵云"}',
@@ -542,7 +542,7 @@ check("G2 记录带 hidden 且无 turn/prob", len(hidden_entries) >= 1
 
 # G3 边界：隐藏式冷却中 → 不触发（即使概率 1.0）
 reset_state()
-P._HIDDEN["story"] = time.time()
+P._mark_hidden_sent("story")
 s2 = make_session()
 client2 = MockClient([
     '{"should_speak": true, "reason_type": "share", "topic_hint": "x", "reason": "y"}',
@@ -562,7 +562,7 @@ check("G3 冷却中→不触发", len(r2.messages) == 0)
 
 # G4 错误路径：隐藏式开关关 → 不触发
 reset_state()
-P._HIDDEN.pop("story", None)
+P._HIDDEN.pop(P._state_key("story"), None)
 s3 = make_session()
 client3 = MockClient([
     '{"should_speak": true, "reason_type": "share", "topic_hint": "x", "reason": "y"}',
@@ -578,7 +578,7 @@ check("G4 隐藏式关闭→不触发", len(r3.messages) == 0)
 # G5 数据一致性：隐藏式触发成功 → HIDDEN 冷却记录（独立场景，防测试顺序耦合）
 reset_state()
 P._active_set("story", 1)
-P._HIDDEN.pop("story", None)
+P._HIDDEN.pop(P._state_key("story"), None)
 s5 = make_session()
 client5 = MockClient([
     '{"should_speak": true, "reason_type": "share", "topic_hint": "x", "reason": "y"}',
@@ -595,7 +595,7 @@ try:
 finally:
     P._hidden_hour_weight = _orig_w5
 check("G5 隐藏式触发成功", len(r5.messages) == 1)
-check("G5 隐藏式触发后冷却已记录", P._HIDDEN.get("story", 0) > 0)
+check("G5 隐藏式触发后冷却已记录", P._HIDDEN.get(P._state_key("story"), 0) > 0)
 
 # G6 数据一致性：隐藏式写盘 conversation 且带 proactive 标记（独立场景）
 from modules.conversation_store import load_recent

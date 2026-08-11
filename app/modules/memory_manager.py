@@ -288,18 +288,12 @@ class MemoryManager:
         return raw
 
     def _validate_output(self, raw: str):
-        """大括号深度匹配解析 JSON"""
-        start = raw.find("{")
-        if start >= 0:
-            depth = 0
-            for i in range(start, len(raw)):
-                if raw[i] == "{": depth += 1
-                elif raw[i] == "}":
-                    depth -= 1
-                    if depth == 0:
-                        raw = raw[start:i+1]; break
+        """解析 LLM 输出的 JSON（复用 llm_base.extract_json——处理字符串内引号/括号转义，
+        比手写括号深度扫描更健壮；消除重复实现）"""
+        from modules.llm_base import extract_json
+        extracted = extract_json(raw)
         try:
-            data = json.loads(raw)
+            data = json.loads(extracted)
         except json.JSONDecodeError:
             raise OutputInvalid(f"JSON 解析失败: {raw[:200]}")
         for k in ("new_head", "resolved", "added"):

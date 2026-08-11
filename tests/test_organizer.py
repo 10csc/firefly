@@ -1,8 +1,15 @@
 # -*- coding: utf-8 -*-
 """组织器（工具调度器）白盒测试"""
 
-import sys, os
+import sys, os, tempfile
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "app"))
+
+# 隔离 user_data：_build_sticker_list 延迟导入 sticker_picker，其模块级
+# _migrate_legacy_registry 会把 app 注册表拷进真实 user_data——重定向必须在导入之前
+import modules.app_config as cfg
+_tmp = tempfile.mkdtemp(prefix="firefly_test_org_")
+cfg.USER_DIR = __import__("pathlib").Path(_tmp)
+cfg.CONFIG_FILE = cfg.USER_DIR / "config.json"
 
 from modules.organizer import Organizer, OrganizerInput, OrganizerOutput, InputRejected, _parse_and_validate, _build_sticker_list
 

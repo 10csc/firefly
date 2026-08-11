@@ -37,8 +37,12 @@ downloads/
 firefly_backup_*.bundle
 firefly_keystore_backup_*/
 
+# ── 封装/训练产物（3GB，禁止入库）──
+封装（没指定就不读）/
+
 # ── 本地杂物 ──
 .vscode/
+.zcode/
 *.webp
 屏幕截图*.png
 /开拓者_*.png

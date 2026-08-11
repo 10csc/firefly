@@ -35,10 +35,16 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
-from modules.app_config import mode_data_dir, DEFAULT_MODE
+from modules.app_config import mode_data_dir, DEFAULT_MODE, user_scope_key
 
 logger = logging.getLogger(__name__)
 _lock = threading.Lock()
+
+
+def _state_key(mode: str = DEFAULT_MODE):
+    """状态作用域键（服务器版多用户隔离）：(mode, 用户作用域)。
+    本地版无用户上下文，scope 恒为空串，行为与原来一致。"""
+    return (mode, user_scope_key())
 
 # ── 信号量 ──────────────────────────────────────────
 # REPLY（回复通道锁，按 mode 隔离）：响应式/主动式/概率式共用。
@@ -51,10 +57,12 @@ _REPLY_LOCKS: dict[str, threading.Lock] = {}
 
 
 def _reply_lock_for(mode: str = DEFAULT_MODE) -> threading.Lock:
+    # 按 (mode, 用户) 分锁：服务器版多用户并发下，A 的回复流程不阻塞 B 的
     with _REPLY_LOCK_GUARD:
-        if mode not in _REPLY_LOCKS:
-            _REPLY_LOCKS[mode] = threading.Lock()
-        return _REPLY_LOCKS[mode]
+        key = _state_key(mode)
+        if key not in _REPLY_LOCKS:
+            _REPLY_LOCKS[key] = threading.Lock()
+        return _REPLY_LOCKS[key]
 
 
 def reply_try_lock(mode: str = DEFAULT_MODE) -> bool:
@@ -82,12 +90,12 @@ _HIDDEN: dict[str, float] = {}   # {mode: last_ts}，默认无记录（可触发
 
 
 def _active_get(mode: str = DEFAULT_MODE) -> int:
-    return _ACTIVE.get(mode, 1)
+    return _ACTIVE.get(_state_key(mode), 1)
 
 
 def _active_set(mode: str, val: int):
     with _lock:
-        _ACTIVE[mode] = 1 if val else 0
+        _ACTIVE[_state_key(mode)] = 1 if val else 0
 
 
 def _active_reset(mode: str = DEFAULT_MODE):
@@ -106,17 +114,17 @@ def _restore_active_semaphore(mode: str = DEFAULT_MODE) -> int:
     """
     rows = [r for r in _load_log(mode) if r.get("sent") and not r.get("hidden")]
     if not rows:
-        _ACTIVE[mode] = 1
+        _ACTIVE[_state_key(mode)] = 1
         return 1
     last_ts = rows[-1].get("_ts", 0)
     last_user_ts = _last_user_msg_ts(mode)
     if last_user_ts > last_ts:
-        _ACTIVE[mode] = 1   # 用户回应过
+        _ACTIVE[_state_key(mode)] = 1   # 用户回应过
     elif time.time() - last_ts >= _ACTIVE_RECOVER_MIN * 60:
-        _ACTIVE[mode] = 1   # 超时恢复
+        _ACTIVE[_state_key(mode)] = 1   # 超时恢复
     else:
-        _ACTIVE[mode] = 0   # 锁定中
-    return _ACTIVE[mode]
+        _ACTIVE[_state_key(mode)] = 0   # 锁定中
+    return _ACTIVE[_state_key(mode)]
 
 
 def _active_try_recover(mode: str = DEFAULT_MODE) -> bool:
@@ -125,16 +133,16 @@ def _active_try_recover(mode: str = DEFAULT_MODE) -> bool:
     替代 _active_expired + _active_set 的分离读写（两者间存在竞态窗口）。
     返回恢复后是否空闲（=1）。调用方无需再读 ACTIVE 判断恢复。
     """
-    if _ACTIVE.get(mode, 1) == 1:
+    if _ACTIVE.get(_state_key(mode), 1) == 1:
         return True
     # 锁外读日志（_load_log 自带锁，避免嵌套死锁），只把置位放锁内
     rows = [r for r in _load_log(mode) if r.get("sent") and not r.get("hidden")]
     expired = not rows or time.time() - rows[-1].get("_ts", 0) >= _ACTIVE_RECOVER_MIN * 60
     with _lock:
         if expired:
-            _ACTIVE[mode] = 1
+            _ACTIVE[_state_key(mode)] = 1
             return True
-        return _ACTIVE.get(mode, 1) == 1
+        return _ACTIVE.get(_state_key(mode), 1) == 1
 
 
 # ── 监控 ──────────────────────────────────────────
@@ -180,7 +188,7 @@ _IGNORED: dict[str, int] = {}
 
 
 def _ignored_count(mode: str = DEFAULT_MODE) -> int:
-    return _IGNORED.get(mode, 0)
+    return _IGNORED.get(_state_key(mode), 0)
 
 
 def _update_ignored(mode: str = DEFAULT_MODE):
@@ -192,7 +200,7 @@ def _update_ignored(mode: str = DEFAULT_MODE):
     rows = [r for r in _load_log(mode) if r.get("sent") and not r.get("hidden")]   # 先取数据（_load_log 自带锁）
     with _lock:
         if not rows:
-            _IGNORED[mode] = 0
+            _IGNORED[_state_key(mode)] = 0
             return
         last_ts = rows[-1].get("_ts", 0)
         responded = False
@@ -206,7 +214,7 @@ def _update_ignored(mode: str = DEFAULT_MODE):
                     break
         except Exception:
             pass
-        _IGNORED[mode] = 0 if responded else _IGNORED.get(mode, 0) + 1
+        _IGNORED[_state_key(mode)] = 0 if responded else _IGNORED.get(_state_key(mode), 0) + 1
 
 
 # ── 判断机会记录（proactive_log.jsonl）─────────────
@@ -230,7 +238,12 @@ def _append_log(entry: dict, mode: str = DEFAULT_MODE):
 
 
 def _load_log(mode: str = DEFAULT_MODE) -> list:
-    """读全部判断记录。与 _append_log 同锁。"""
+    """读全部判断记录。与 _append_log 同锁。
+
+    字段净化（审查约束）：磁盘文件可能被用户手改/损坏——JSON 解析失败的行跳过，
+    解析成功但值为 null/错类型的字段在此强转或剔除，防止下游 int()/时间比较
+    抛 TypeError 击穿调用链（_restore_active_semaphore / _last_judge_turn 等）。
+    """
     fp = _log_file(mode)
     if not fp.exists():
         return []
@@ -243,9 +256,25 @@ def _load_log(mode: str = DEFAULT_MODE) -> list:
                     if not line:
                         continue
                     try:
-                        rows.append(json.loads(line))
+                        row = json.loads(line)
+                        if not isinstance(row, dict):
+                            continue
                     except Exception:
                         continue
+                    # _ts 强转 float（失败置 0：视为超时，宽松恢复不崩）
+                    try:
+                        row["_ts"] = float(row.get("_ts") or 0)
+                    except (TypeError, ValueError):
+                        row["_ts"] = 0.0
+                    # turn 必须为 int（排除 bool，json true 会被 isinstance(int) 误收）
+                    if "turn" in row and not (isinstance(row.get("turn"), int) and not isinstance(row.get("turn"), bool)):
+                        row.pop("turn", None)
+                    # sent/hidden/prob 强转真布尔（字符串 "false" 的 truthy 会误判为真）；
+                    # 只归一已存在的键——不存在的键不新增（下游用 in 判断通道类型）
+                    for _k in ("sent", "hidden", "prob"):
+                        if _k in row:
+                            row[_k] = row.get(_k) in (True, 1)
+                    rows.append(row)
     except Exception:
         pass
     return rows
@@ -587,7 +616,7 @@ def hidden_gate_open(enabled: bool, prob_value: float, mode: str = DEFAULT_MODE,
     """
     if not enabled:
         return False, "隐藏式已关闭"
-    last_ts = _HIDDEN.get(mode, 0)
+    last_ts = _HIDDEN.get(_state_key(mode), 0)
     if last_ts and time.time() - last_ts < _HIDDEN_COOLDOWN_MIN * 60:
         mins = int((_HIDDEN_COOLDOWN_MIN * 60 - (time.time() - last_ts)) / 60)
         return False, f"隐藏式冷却中（剩 {mins} 分钟）"
@@ -604,16 +633,16 @@ def hidden_gate_open(enabled: bool, prob_value: float, mode: str = DEFAULT_MODE,
 
 def _mark_hidden_sent(mode: str = DEFAULT_MODE):
     """隐藏式触发成功 → 记录冷却时间（内存 + 持久化）。"""
-    _HIDDEN[mode] = time.time()
+    _HIDDEN[_state_key(mode)] = time.time()
 
 
 def _restore_hidden_state(mode: str = DEFAULT_MODE) -> float:
     """重启/初始化时从 proactive_log 重建 HIDDEN 冷却时间（最后一条 hidden sent 记录）。"""
     for r in reversed(_load_log(mode)):
         if r.get("hidden") and r.get("sent"):
-            _HIDDEN[mode] = r.get("_ts", 0)
-            return _HIDDEN[mode]
-    _HIDDEN.pop(mode, None)
+            _HIDDEN[_state_key(mode)] = r.get("_ts", 0)
+            return _HIDDEN[_state_key(mode)]
+    _HIDDEN.pop(_state_key(mode), None)
     return 0.0
 
 

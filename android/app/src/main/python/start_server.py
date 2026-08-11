@@ -16,6 +16,14 @@ from os.path import dirname, join
 
 _BACKEND = join(dirname(__file__), "backend")
 
+# 同进程只启动一次（安卓二次打开闪退的根因修复）：
+# MainActivity.onCreate 每次进入都调 start_in_thread()，而退出 App 后前台服务
+# （KeepAliveService）保活进程，Python 服务仍在监听 8765——重复启动会触发
+# server.py 的多开检测：探测 /health 成功 → 调 /shutdown → 旧实例 os._exit(0)
+# 直接终止整个 JVM 进程（含新实例）→ 二次打开闪退，三次冷启动正常，循环。
+_START_LOCK = threading.Lock()
+_STARTED = False
+
 
 def _setup_env():
     home = os.environ.get("HOME", "")
@@ -35,5 +43,10 @@ def start():
 
 
 def start_in_thread():
-    """后台线程启动服务（MainActivity 调用入口）。"""
+    """后台线程启动服务（MainActivity 调用入口）。同进程幂等：服务已在跑则跳过。"""
+    global _STARTED
+    with _START_LOCK:
+        if _STARTED:
+            return
+        _STARTED = True
     threading.Thread(target=start, daemon=True).start()
