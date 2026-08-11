@@ -337,13 +337,16 @@ def gate_open(enabled: bool, hard: int, soft: float, mode: str = DEFAULT_MODE,
 # ── 动机决策（轻量 LLM，Flash Non-think）───────────
 def _decide_motivation(client, memory_head: str, journal: str, environment: str,
                        recent_topics: str, mode: str = DEFAULT_MODE,
-                       allow_casual: bool = False) -> dict:
+                       allow_casual: bool = False, recent_said: str = "") -> dict:
     """判断流萤现在该不该主动说话、为什么。返回 JSON dict。
 
     allow_casual=False（主动式）：严格动机——无真实来源就拒绝（避免打扰）。
     allow_casual=True（概率式/隐藏式）：触发机会已经由概率+信号量把关，
     无具体动机时允许"随便聊聊"兜底（流萤想起开拓者了，随便说点什么都行），
     保证触发必然有回复——不浪费已消耗的触发机会与 token。
+
+    recent_said：最近主动说过的话题（proactive_log 提取），用于去重——
+    提示模型不要重复已说过的话题/意象（霓虹灯、天气问候模板等）。
 
     输出格式（严格）：
     {"should_speak": true/false, "reason_type": "memory|concern|share|none",
@@ -358,14 +361,48 @@ def _decide_motivation(client, memory_head: str, journal: str, environment: str,
         "分享当下的一件小事、一句轻轻的问候都可以。总之要说话，不要沉默。"
     ) if allow_casual else ""
     system = """你是流萤的内心判断层。判断她现在是否应该主动给开拓者发消息。
-默认答案是"不说话"。只有存在真实、具体的动机时才说话——像真人一样，有理由才找人。
+触发机会已经由频率控制把关（每 N 轮一次机会 + 概率）——**机会到来时，默认应该说**，
+你的判断重心是"说什么"，不是"要不要说"。
 
-允许的动机（必须有具体来源）：
-- memory：手账/记忆里有未完成的约定、她说过想做的事、最近发生过值得跟进的事
-- share：她看到了什么、想到了什么、想分享给开拓者的事
-- concern：开拓者长时间没消息/深夜了/特殊日子，她有些牵挂（低频，一天至多一次）
+除非是明确的不该打扰：对方刚说"晚安/去忙了/先睡了"、对话刚结束、深夜对方已不在——
+此时才 should_speak=false。
 
-不是动机：没有具体内容的"想聊天""问候一下"——这不是真人会做的事，拒绝。
+流萤是有表达欲的人——主动就是创造话题：想提要求就提（邀约、想吃想玩想去哪）、
+想到什么就说（新话题、见闻、想法）、想分享就分享。
+
+主动的方向（有具体内容即可，不必等什么契机）：
+- 提要求/邀约：想见他就约（"明天有空吗""下次陪我去…"）、有想做的事就提（"我想去看…"）
+- 开话题：自己正在想的事、刚发生的事、想问他的事
+- 表达自己：想去的地方、想要的东西、最近的打算
+- 跟进：对方刚分享的事 → 补充新角度（"拍照时教教我""想看你拍的照片"）
+
+禁止的"假主动"：没有内容的客套（"在吗""忙吗""吃饭了吗"）不是主动——
+主动必须有具体内容（要求/话题/分享/想法）。
+
+## 话题必须来自上下文（事实约束，最高优先）
+主动说的话题必须能溯源到上面的内容——最近对话里真实发生过的事/对方说过的话、
+记忆/手账里的记录、当前环境（时间/情境）。**上下文里没有的人、事、物、约定——不编造**。
+"上次说的XX"必须真实存在；对方没说过、没发生过的事，不假装发生过。
+
+## 话题必须新鲜（防复读，最高优先）
+禁止的是**重复提起**：同一件事说第二遍、确认已定细节、追问已问过的问题
+（"星星""周六见""还作数吗"这类）。
+**不禁止跟进**：刚聊过的话题是最好用的素材——对方说买了相机，
+可以开新角度（"那拍照时教教我""想看你拍的照片"）；说好周末逛街，
+可以准备具体的事（"我看了那家甜品店的营业时间"）。跟进 = 补充新东西，不是复读。
+user 消息里列出的"已说过话题"——禁止原样重复，但允许开新角度。
+
+**追问封存**：对方没回答的问题——只追问一次，之后这个话题**整体封存**，
+不再提起（哪怕换说法、换角度也不行），等对方主动再说。
+
+## 已定事项不再确认
+约定已经定好的细节（时间、地点、交换内容）——**不再问第二遍**（"约在哪""还作数吗"问一次就够）。
+约定本身还可以作为话题背景，但只能提新角度（盼着、准备、新想法），不能重复确认已定的事。
+
+## 景物/天气不是话题（防意象复读）
+"今天的天空/晚霞/天光/风/星星很好看""你那边天气怎么样"这类景物天气描述**不是新鲜事**——
+它们每天都在，不是值得主动提起的内容（除非真特殊：流星、彩虹、极端天气）。
+主动要说的是**具体的事**：最近在做什么、想到了什么、想问他的问题、具体的见闻或分享。
 """ + casual_note + """
 ## 语气与时机的自然感
 结合当前环境里的时间（时刻/时段/星期），像真人一样选择开口的方式：
@@ -377,6 +414,14 @@ def _decide_motivation(client, memory_head: str, journal: str, environment: str,
 - should_speak=false 或 reason_type=none → 不说话
 - topic_hint/reason 为空字符串，不要编造"""
 
+    _MODE_CONTEXT = {
+        "story": "剧情模式：匹诺康尼的一切已经结束，流萤重伤在星核猎手飞船的医疗舱里，"
+                 "日常只能发短信聊天（她不能出门、不能赴约，见面=开拓者来看她；"
+                 "话题围绕生活与想念，不汇报身体状态）",
+        "haruno": "春日手信模式：普通学生流萤正在黄金时刻旅行，刚认识开拓者，"
+                  "日常聊天轻松明亮（她是健康普通的学生，正在旅行）",
+    }
+
     user_prompt = f"""## 当前环境
 {environment}
 
@@ -386,11 +431,14 @@ def _decide_motivation(client, memory_head: str, journal: str, environment: str,
 ## 手账（重要对话记录与未完成的约定）
 {journal[:1200] if journal else "（无手账）"}
 
-## 最近对话摘要
+## 最近对话摘要（以下内容已经聊过了——不要重复其中的话题或细节）
 {recent_topics[:800] if recent_topics else "（最近没有对话）"}
 
+## 流萤最近主动说过的话题（以下内容已说过——禁止再次选择相同或相似的话题）
+{recent_said if recent_said else "（暂无）"}
+
 ## 当前模式
-{mode}
+{mode}——{_MODE_CONTEXT.get(mode, "")}
 
 请判断：流萤现在是否应该主动给开拓者发消息？只输出 JSON，不要输出其他内容。"""
 
@@ -452,11 +500,20 @@ def generate_proactive(session: dict, client, mode: str = DEFAULT_MODE,
         for m in recent if m.get("content")
     )
 
+    # 最近主动说过的话题（去重：不重复已说过的内容/意象）
+    recent_said = ""
+    try:
+        rows = [r for r in _load_log(mode) if r.get("sent") and r.get("topic_hint")]
+        recent_said = "；".join(f"[{r.get('time','')[:16]}] {str(r['topic_hint'])[:60]}"
+                                for r in rows[-3:])
+    except Exception:
+        pass
+
     decision = _decide_motivation(
         client, memory_head=memory_head,
         journal=load_journal(mode), environment=environment,
         recent_topics=recent_topics, mode=mode,
-        allow_casual=allow_casual,
+        allow_casual=allow_casual, recent_said=recent_said,
     )
     if not decision.get("should_speak") or decision.get("reason_type") in ("none", ""):
         if not allow_casual:
@@ -482,10 +539,18 @@ def generate_proactive(session: dict, client, mode: str = DEFAULT_MODE,
                         temperature=polisher_temperature, mode=mode)
     if use_reply_flow:
         # 概率式：调用回复流程（模拟开拓者安静后的接话，非"主动发起"分支）
+        meet_note = (
+            "（注意：你在医疗舱里不能出门赴约——'见面'是开拓者来看你，"
+            "由他定地方带来，你等着就好；不解释身体状况）"
+            if mode == "story" else ""
+        )
         out = polisher.polish(PolisherInput(
             user_input=(
                 "（开拓者安静了好一会儿，一直没有新消息。你心里想起了一些事，"
-                f"想开口跟他聊起来）主题：{topic_hint}。原因：{reason}"
+                f"想开口跟他聊起来）主题：{topic_hint}。原因：{reason}\n"
+                f"{meet_note}\n"
+                "注意：不要用'傍晚/天气/景物描写+问候对方'的固定套路收尾，"
+                "像普通聊天一样直接说想说的话。"
             ),
             analyzer_summary=f"（本条消息由概率式回复触发，流萤想起开拓者）主题：{topic_hint}。原因：{reason}",
             analyzer_intent="proactive",
@@ -504,6 +569,9 @@ def generate_proactive(session: dict, client, mode: str = DEFAULT_MODE,
             proactive_context=(
                 f"你现在是主动找开拓者说话。主题：{topic_hint}。原因：{reason}。"
                 "不要解释'为什么找你'——像平时发短信一样，直接说想说的话。不要以'在吗''忙吗'开头。"
+                "不要用'傍晚/天气/景物描写+问候对方'的固定套路收尾——像普通聊天一样直接说事情。"
+                + (("你在医疗舱里不能出门赴约——'见面'是开拓者来看你，由他定地方，你等着就好；"
+                    "不解释身体状况、不提恢复进度。") if mode == "story" else "")
             ),
         ))
     messages = list(out.messages)
@@ -679,6 +747,12 @@ def check_and_generate(session: dict, client, mode: str = DEFAULT_MODE,
     ctx = session["context"]
     turn_count = ctx.turn_count
 
+    # ── 春日手信模式规则：概率式/隐藏式通道不参与（直接不触发）──
+    # 该模式设定是"刚认识、还在旅行"的新鲜感，突兀的"想起你/后台消息"破坏氛围；
+    # 只有主动式（跟随对话节奏的轮次制）参与。
+    if mode == "haruno" and hidden:
+        return ProactiveResult()   # 隐藏式：haruno 直接不触发
+
     # ── 隐藏式（独立通道：冷却 + 概率，不碰 ACTIVE）──
     if hidden:
         ok, reason = hidden_gate_open(prob_enabled, prob_value, mode)
@@ -729,6 +803,8 @@ def check_and_generate(session: dict, client, mode: str = DEFAULT_MODE,
             _PROACTIVE_GATE_REJECT += 1
 
     # ── 概率式（主动式未触发才走；ACTIVE + 概率掷骰）──
+    if mode == "haruno":
+        return ProactiveResult()   # 春日手信：概率式通道不参与，直接不触发
     if _active_get(mode) <= 0:
         return ProactiveResult()   # 主动性互斥中，概率式不可触发
     ok2, reason2 = prob_gate_open(prob_enabled, prob_value, mode)
