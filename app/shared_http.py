@@ -39,9 +39,9 @@ class ResponseMixin:
         except (FileNotFoundError, OSError):
             self.send_error(404)
 
-    def _json(self, data: dict):
+    def _json(self, data: dict, status: int = 200):
         body = json.dumps(data, ensure_ascii=False).encode("utf-8")
-        self.send_response(200)
+        self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", len(body))
         self.end_headers()
