@@ -34,6 +34,7 @@ class ResponseMixin:
             self.send_header("Pragma", "no-cache")
             self.send_header("Expires", "0")
             self.send_header("Content-Length", len(content))
+            self._cors_headers()
             self.end_headers()
             self.wfile.write(content)
         except (FileNotFoundError, OSError):
@@ -44,8 +45,25 @@ class ResponseMixin:
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", len(body))
+        self._cors_headers()
         self.end_headers()
         self.wfile.write(body)
+
+    def _cors_headers(self):
+        """CORS：本地打包前端（file:// 或 appassets 域）请求服务器 API 需要跨域。
+        Bearer token 认证 + 无 Cookie，`*` 安全。"""
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers",
+                         "Authorization, Content-Type, X-API-Key, X-API-Base")
+        self.send_header("Access-Control-Max-Age", "86400")
+
+    def do_OPTIONS(self):
+        """CORS 预检：POST + Authorization 头会触发浏览器预检。"""
+        self.send_response(204)
+        self._cors_headers()
+        self.send_header("Content-Length", "0")
+        self.end_headers()
 
     def log_message(self, format, *args):
         pass  # 静默日志

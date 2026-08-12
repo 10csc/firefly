@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>流萤 Firefly · 管理台</title>
+<style>
+:root{--bg1:#0a0e1a;--bg2:#0f172a;--card:rgba(255,255,255,.045);--line:rgba(255,255,255,.09);--txt:#e2e8f0;--dim:#94a3b8;--amber:#fbbf24;--amber2:#f59e0b;--green:#4ade80;--red:#f87171}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:system-ui,-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;background:radial-gradient(1200px 600px at 80% -10%,#16203a 0%,var(--bg1) 55%),var(--bg2);color:var(--txt);min-height:100vh}
+/* 萤火虫光点 */
+.dot{position:fixed;border-radius:50%;pointer-events:none;animation:twinkle 4s ease-in-out infinite}
+.dot1{width:6px;height:6px;background:#fde68a;box-shadow:0 0 12px 4px rgba(253,230,138,.5);top:14%;left:8%}
+.dot2{width:4px;height:4px;background:#fcd34d;box-shadow:0 0 10px 3px rgba(252,211,77,.5);top:30%;right:12%;animation-delay:1.2s}
+.dot3{width:5px;height:5px;background:#fbbf24;box-shadow:0 0 11px 4px rgba(251,191,36,.5);top:68%;left:18%;animation-delay:2.1s}
+.dot4{width:3px;height:3px;background:#fde68a;box-shadow:0 0 8px 2px rgba(253,230,138,.45);top:82%;right:25%;animation-delay:3s}
+@keyframes twinkle{0%,100%{opacity:.25}50%{opacity:1}}
+.wrap{max-width:1020px;margin:0 auto;padding:36px 24px 72px;position:relative}
+/* 顶栏 */
+.top{display:flex;align-items:center;justify-content:space-between;margin-bottom:28px}
+.brand{display:flex;align-items:center;gap:14px}
+.logo{width:46px;height:46px;border-radius:13px;display:flex;align-items:center;justify-content:center;background:linear-gradient(160deg,#1e293b,#0f172a);border:1px solid var(--line);box-shadow:0 6px 20px rgba(251,191,36,.12)}
+h1{font-size:20px;letter-spacing:2px}
+h1 span{color:var(--amber)}
+.sub{font-size:12px;color:var(--dim);margin-top:3px}
+.btn{background:rgba(255,255,255,.07);border:1px solid var(--line);color:var(--txt);border-radius:10px;padding:9px 18px;font-size:13px;cursor:pointer;transition:all .2s}
+.btn:hover{filter:brightness(1.25);border-color:rgba(251,191,36,.4)}
+.btn:disabled{opacity:.4;cursor:not-allowed}
+/* 统计卡 */
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:16px;margin-bottom:24px}
+.stat{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:18px 20px;backdrop-filter:blur(8px)}
+.stat .num{font-size:30px;font-weight:700;letter-spacing:1px}
+.stat .lbl{font-size:12px;color:var(--dim);margin-top:4px}
+.stat.gold .num{color:var(--amber)}
+.stat.green .num{color:var(--green)}
+.stat.red .num{color:var(--red)}
+/* 工具条 */
+.toolbar{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;gap:12px}
+.search{flex:1;max-width:300px;position:relative}
+.search input{width:100%;padding:9px 14px 9px 36px;border-radius:10px;border:1px solid var(--line);background:rgba(255,255,255,.06);color:var(--txt);font-size:13px;outline:none}
+.search input:focus{border-color:rgba(251,191,36,.5)}
+.search::before{content:"⌕";position:absolute;left:12px;top:50%;transform:translateY(-50%);color:var(--dim);font-size:16px}
+.hint{font-size:12px;color:#64748b}
+/* 表格 */
+.tbl-wrap{background:var(--card);border:1px solid var(--line);border-radius:16px;overflow:hidden;backdrop-filter:blur(8px)}
+table{width:100%;border-collapse:collapse}
+th{text-align:left;padding:13px 16px;font-size:12px;font-weight:500;color:var(--dim);background:rgba(255,255,255,.03);border-bottom:1px solid var(--line);letter-spacing:1px}
+td{padding:13px 16px;font-size:13.5px;border-bottom:1px solid rgba(255,255,255,.05)}
+tr:last-child td{border-bottom:none}
+tbody tr{transition:background .15s}
+tbody tr:hover{background:rgba(251,191,36,.05)}
+.phone{font-weight:500;font-variant-numeric:tabular-nums}
+.uid{color:#64748b;font-size:12px}
+.badge{display:inline-flex;align-items:center;gap:5px;padding:3px 11px;border-radius:999px;font-size:11.5px}
+.badge::before{content:"";width:6px;height:6px;border-radius:50%;background:currentColor}
+.badge.admin{background:rgba(251,191,36,.13);color:var(--amber)}
+.badge.active{background:rgba(74,222,128,.1);color:var(--green)}
+.badge.banned{background:rgba(248,113,113,.12);color:var(--red)}
+.ops{white-space:nowrap}
+.op{border:1px solid var(--line);background:rgba(255,255,255,.06);color:var(--txt);border-radius:8px;padding:5px 13px;font-size:12px;cursor:pointer;margin-right:6px;transition:all .15s}
+.op:hover{filter:brightness(1.3)}
+.op.ban{color:var(--red);border-color:rgba(248,113,113,.3)}
+.op.unban{color:var(--green);border-color:rgba(74,222,128,.3)}
+.quota{display:inline-flex;align-items:center;gap:6px}
+.quota input{width:64px;padding:5px 8px;border-radius:8px;border:1px solid var(--line);background:rgba(255,255,255,.06);color:var(--txt);font-size:12.5px;outline:none;text-align:center}
+.quota input:focus{border-color:rgba(251,191,36,.5)}
+.quota .save{opacity:0;transition:opacity .2s;background:rgba(251,191,36,.15);border:1px solid rgba(251,191,36,.35);color:var(--amber);border-radius:8px;padding:5px 10px;font-size:12px;cursor:pointer}
+.quota:hover .save{opacity:1}
+.empty{padding:60px 0;text-align:center;color:#64748b;font-size:14px}
+/* 分页 */
+.page{display:flex;align-items:center;justify-content:flex-end;gap:12px;margin-top:18px;color:var(--dim);font-size:13px}
+.page .num{color:var(--amber);font-weight:600}
+/* Toast */
+#toast{position:fixed;top:24px;right:24px;z-index:99;background:rgba(15,23,42,.95);border:1px solid var(--line);border-radius:12px;padding:12px 20px;font-size:13px;box-shadow:0 10px 30px rgba(0,0,0,.4);transform:translateX(120%);transition:transform .3s ease;backdrop-filter:blur(8px)}
+#toast.show{transform:translateX(0)}
+#toast.ok{border-color:rgba(74,222,128,.4);color:var(--green)}
+#toast.err{border-color:rgba(248,113,113,.4);color:var(--red)}
+/* 加载骨架 */
+.skel td{color:transparent;position:relative;overflow:hidden}
+.skel td::after{content:"";position:absolute;inset:0;background:linear-gradient(90deg,transparent,rgba(255,255,255,.06),transparent);animation:shimmer 1.4s infinite}
+@keyframes shimmer{0%{transform:translateX(-100%)}100%{transform:translateX(100%)}}
+</style>
+</head>
+<body>
+<div class="dot dot1"></div><div class="dot dot2"></div><div class="dot dot3"></div><div class="dot dot4"></div>
+<div class="wrap">
+  <div class="top">
+    <div class="brand">
+      <div class="logo"><svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M12 3c1.2 4-1.8 6.2-1.8 9.4A4.2 4.2 0 0 0 12 20.6a4.2 4.2 0 0 0 1.8-8.2C12 9.2 15 7 12 3Z" stroke="#fbbf24"/><path d="M17 6.5c.6 2.4-.9 3.9-.9 5.7a2.6 2.6 0 0 0 .9 2.2M7 6.5c-.6 2.4.9 3.9.9 5.7a2.6 2.6 0 0 1-.9 2.2" stroke="#f59e0b"/></svg></div>
+      <div>
+        <h1>流萤 <span>Firefly</span> · 管理台</h1>
+        <div class="sub">本机私有通道 · 仅服务器持有者可访问</div>
+      </div>
+    </div>
+    <button class="btn" onclick="load()">⟳ 刷新</button>
+  </div>
+
+  <div class="stats">
+    <div class="stat gold"><div class="num" id="sTotal">-</div><div class="lbl">用户总数</div></div>
+    <div class="stat green"><div class="num" id="sActive">-</div><div class="lbl">正常用户</div></div>
+    <div class="stat red"><div class="num" id="sBanned">-</div><div class="lbl">已封禁</div></div>
+    <div class="stat"><div class="num" id="sAdmins">-</div><div class="lbl">管理员</div></div>
+  </div>
+
+  <div class="toolbar">
+    <div class="search"><input id="q" placeholder="搜索邮箱…" oninput="render()"></div>
+    <span class="hint" id="pageHint"></span>
+  </div>
+
+  <div class="tbl-wrap">
+    <table>
+      <thead><tr><th>ID</th><th>邮箱</th><th>角色</th><th>状态</th><th>最后登录</th><th>数据量</th><th>注册时间</th><th style="text-align:right">操作</th></tr></thead>
+      <tbody id="tbody"></tbody>
+    </table>
+  </div>
+
+  <div class="page">
+    <span>第 <span class="num" id="pageNow">1</span> / <span id="pageTotal">1</span> 页</span>
+    <button class="btn" id="prev" onclick="go(-1)">‹ 上一页</button>
+    <button class="btn" id="next" onclick="go(1)">下一页 ›</button>
+  </div>
+</div>
+<div id="toast"></div>
+
+<script>
+let page = 1, total = 0, limit = 20;
+let users = [];
+
+function toast(msg, ok = true) {
+  const t = document.getElementById("toast");
+  t.textContent = msg;
+  t.className = "show " + (ok ? "ok" : "err");
+  clearTimeout(t._timer);
+  t._timer = setTimeout(() => t.className = "", 2600);
+}
+
+async function load() {
+  const tbody = document.getElementById("tbody");
+  tbody.innerHTML = Array.from({length: 8}, () => '<tr class="skel"><td colspan="7">&nbsp;</td></tr>').join("");
+  try {
+    const r = await fetch("/admin/api/users?page=" + page);
+    const d = await r.json();
+    if (!r.ok) { toast(d.error || "加载失败", false); return; }
+    users = d.users; total = d.total;
+    document.getElementById("sTotal").textContent = total;
+    document.getElementById("sActive").textContent = d.users.reduce((n, u) => n + (u.status === "active"), 0);
+    document.getElementById("sBanned").textContent = d.users.reduce((n, u) => n + (u.status === "banned"), 0);
+    document.getElementById("sAdmins").textContent = d.users.reduce((n, u) => n + (u.role === "admin"), 0);
+    document.getElementById("pageNow").textContent = d.page;
+    document.getElementById("pageTotal").textContent = Math.max(1, Math.ceil(d.total / d.limit));
+    document.getElementById("pageHint").textContent = `共 ${d.total} 个用户 · 每页 ${d.limit}`;
+    document.getElementById("prev").disabled = d.page <= 1;
+    document.getElementById("next").disabled = d.page >= Math.ceil(d.total / d.limit);
+    render();
+  } catch (e) { toast("网络错误或服务未连接", false); }
+}
+
+function render() {
+  const q = document.getElementById("q").value.trim();
+  const tbody = document.getElementById("tbody");
+  const list = users.filter(u => !q || (u.email || "").includes(q));
+  if (!list.length) {
+    tbody.innerHTML = '<tr><td colspan="7"><div class="empty">' + (q ? "没有匹配的用户" : "暂无用户，等待第一位开拓者注册…") + "</div></td></tr>";
+    return;
+  }
+  tbody.innerHTML = list.map(u => {
+    const status = u.status === "banned"
+      ? '<span class="badge banned">已封禁</span>'
+      : '<span class="badge active">正常</span>';
+    const role = u.role === "admin" ? '<span class="badge admin">管理员</span>' : '<span class="badge" style="color:#94a3b8">用户</span>';
+    const op = u.role === "admin" ? '<span style="color:#64748b;font-size:12px">—</span>'
+      : u.status === "banned"
+        ? `<button class="op unban" onclick="setStatus(${u.id},'unban')">解封</button>`
+        : `<button class="op ban" onclick="setStatus(${u.id},'ban')">封禁</button>`;
+    const size = u.data_size > 0
+      ? (u.data_size >= 1048576 ? (u.data_size / 1048576).toFixed(1) + " MB" : Math.round(u.data_size / 1024) + " KB")
+      : '<span style="color:#64748b">-</span>';
+    const del = u.role === "admin" ? "" : `<button class="op ban" style="margin-left:6px" onclick="delUser(${u.id},'${u.email}')">删除</button>`;
+    return `<tr>
+      <td class="uid">#${u.id}</td>
+      <td class="phone">${u.email || "-"}</td>
+      <td>${role}</td>
+      <td>${status}</td>
+      <td style="color:#64748b;font-size:12.5px">${u.last_login || "-"}</td>
+      <td style="color:#64748b;font-size:12.5px">${size}</td>
+      <td style="color:#64748b;font-size:12.5px">${u.created_at}</td>
+      <td class="ops" style="text-align:right">${op}${del}</td>
+    </tr>`;
+  }).join("");
+}
+
+async function setStatus(uid, act) {
+  const label = act === "ban" ? "封禁" : "解封";
+  if (!confirm(`确定${label}该用户吗？`)) return;
+  try {
+    const r = await fetch("/admin/api/users/" + act, {method: "POST",
+      headers: {"Content-Type": "application/json"}, body: JSON.stringify({user_id: uid})});
+    const d = await r.json();
+    if (d.ok) { toast(label + "成功"); load(); } else toast(d.error || "操作失败", false);
+  } catch (e) { toast("网络错误", false); }
+}
+
+async function delUser(uid, email) {
+  // 删除 = 账号 + 全部对话数据，不可恢复：输入邮箱二次确认
+  const typed = prompt(`⚠️ 删除用户 ${email}（#${uid}）将永久删除其账号与全部对话数据，不可恢复。\n输入该邮箱确认删除：`, "");
+  if (typed !== email) { toast("邮箱不匹配，已取消", false); return; }
+  try {
+    const r = await fetch("/admin/api/users/delete", {method: "POST",
+      headers: {"Content-Type": "application/json"}, body: JSON.stringify({user_id: uid})});
+    const d = await r.json();
+    if (d.ok) { toast("用户已删除"); load(); } else toast(d.error || "删除失败", false);
+  } catch (e) { toast("网络错误", false); }
+}
+
+function go(delta) {
+  const next = page + delta;
+  if (next < 1) return;
+  page = next;
+  load();
+}
+
+load();
+</script>
+</body>
+</html>

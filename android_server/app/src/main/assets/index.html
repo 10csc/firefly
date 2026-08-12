@@ -1,0 +1,426 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>流萤</title>
+<link rel="stylesheet" href="style.css">
+<style>
+/* 服务器版：轮播图下登录/用户模块 */
+#auth-module{margin:14px 10px 0}
+#auth-module .am-card{
+  display:flex;align-items:center;justify-content:space-between;gap:12px;
+  background:var(--ctrl-bg-2);border:1px solid var(--border-mid);border-radius:14px;
+  padding:14px 16px;
+}
+#auth-module .am-info{flex:1;min-width:0}
+#auth-module .am-title{color:var(--fg-main);font-size:0.95em;font-weight:600}
+#auth-module .am-sub{color:var(--fg-muted);font-size:0.75em;margin-top:3px;line-height:1.5}
+#auth-module .am-btn{
+  flex-shrink:0;padding:9px 18px;border-radius:20px;border:none;cursor:pointer;
+  background:var(--btn-bg);color:var(--fg-bright);font-family:inherit;font-size:0.85em;
+  letter-spacing:1px;white-space:nowrap;
+}
+#auth-module .am-btn.ghost{background:transparent;border:1px solid var(--border-mid);color:var(--fg-muted)}
+</style>
+</head>
+<body>
+<div id="bg"></div>
+
+<!-- ═══ 首页（独立视图） ═══ -->
+<div id="home-view">
+    <div class="home-topbar">
+        <button id="home-feedback-btn" class="home-settings home-feedback" onclick="openFeedback()" title="反馈">✉ 反馈</button>
+        <div class="home-notice" onclick="toggleNotice()">
+            <img class="notice-icon" src="assets/notice_speaker.png?v=1" alt="">
+            <span class="notice-title">公告 · 使用指南</span>
+            <span class="notice-arrow" id="notice-arrow">▾</span>
+        </div>
+        <button id="home-theme-btn" class="home-settings" onclick="toggleTheme()" title="切换配色"><img id="theme-icon" src="assets/theme_sun.png?v=1" alt="切换配色"></button>
+        <button id="home-settings-btn" class="home-settings" onclick="openSettings()" title="设置">⚙</button>
+    </div>
+    <div class="home-carousel" id="home-carousel">
+        <div class="carousel-track" id="carousel-track">
+            <img src="剧情模式.png?v=3" alt="剧情模式">
+            <img src="春日手信.png?v=3" alt="春日手信">
+        </div>
+        <div class="carousel-dots" id="carousel-dots"></div>
+    </div>
+    <div class="home-blank">
+        <!-- 服务器版：登录/用户模块（点击跳转登录注册页） -->
+        <div id="auth-module" style="display:none">
+            <!-- 未登录：登录入口 -->
+            <div class="am-card" id="auth-login-entry">
+                <div class="am-info">
+                    <div class="am-title">登录后使用服务器版</div>
+                    <div class="am-sub">数据存服务器你的账号目录 · 密钥不落服务器</div>
+                </div>
+                <button class="am-btn" onclick="location.href='login.html'">登录 / 注册 →</button>
+            </div>
+            <!-- 已登录：用户信息 -->
+            <div class="am-card" id="auth-user-entry" style="display:none">
+                <div class="am-info">
+                    <div class="am-title" id="auth-email">加载中…</div>
+                    <div class="am-sub" id="auth-meta"></div>
+                </div>
+                <button class="am-btn ghost" onclick="logout()">退出登录</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- ═══ 反馈面板（首页 ✉ 打开） ═══ -->
+<div id="feedback-panel">
+    <div class="settings-header">
+        <span>✉ 反馈 · 联系</span>
+        <button onclick="closeFeedback()">✕</button>
+    </div>
+    <div class="settings-body">
+        <p style="color:var(--fg-muted);font-size:0.8em;line-height:1.8;margin-bottom:16px">
+            遇到问题或有建议？欢迎通过以下方式反馈：
+        </p>
+        <a class="fb-link" href="https://github.com/10csc/firefly/issues" target="_blank" rel="noopener">🐙 GitHub Issue（推荐：提 bug / 建议）</a>
+        <div class="fb-item">💬 QQ交流群：<b style="color:var(--fg-main)">1097936258</b></div>
+        <div class="fb-item">✉ 邮箱：<a href="mailto:fangliang2604@163.com" style="color:var(--fg-bright)">fangliang2604@163.com</a></div>
+    </div>
+</div>
+
+<!-- ═══ 设置面板（首页 ⚙ 打开，API 配置独立于此） ═══ -->
+<div id="settings-panel">
+    <div class="settings-header">
+        <span>⚙ 设置 · API 配置</span>
+        <button onclick="closeSettings()">✕</button>
+    </div>
+    <div class="settings-body">
+        <div class="field">
+            <label>API Key（存于本机浏览器，不会上传服务器）</label>
+            <input id="key-input" type="password" placeholder="已设置，留空则保留原 Key">
+        </div>
+        <div class="field" style="margin-top:10px">
+            <label>接口地址（用哪个 Key 服务）</label>
+            <select id="api-base-select">
+                <option value="https://api.deepseek.com/v1">DeepSeek 官方（需要 DeepSeek Key）</option>
+                <option value="https://opencode.ai/zen/go/v1">OpenCode Go（复用 opencode 登录 Key，模型一致）</option>
+            </select>
+            <div style="color:var(--fg-muted);font-size:0.7em;margin-top:2px">选 OpenCode Go 后填入 opencode.ai/auth 复制的 Key 即可，无需再申请 DeepSeek Key</div>
+        </div>
+        <div style="margin:14px 0;padding-top:12px;border-top:1px solid var(--border-mid);color:var(--fg-muted);font-size:0.75em;line-height:1.7">
+            以下按对话流程顺序排列：<b style="color:var(--fg-main)">① 知识检索 → ② 意图分析 → ③ 生成回复 → ④ 表情包调度</b>
+        </div>
+        <div class="field">
+            <label>① 检索器模型（知识检索）</label>
+            <select id="retriever-model-select">
+                <option value="deepseek-v4-flash">Flash（快，便宜）</option>
+                <option value="deepseek-v4-pro">Pro（慢，贵，更强）</option>
+            </select>
+            <label style="margin-top:8px">思考等级（默认无思考）</label>
+            <select id="retriever-effort-select">
+                <option value="none">无思考（推荐）</option>
+                <option value="low">低（=高，官方映射）</option>
+                <option value="high">高</option>
+                <option value="max">最高（~2x token）</option>
+            </select>
+            <label style="margin-top:8px">温度（无思考时生效，控制摘要多样性）<span id="retriever-temp-value">0</span></label>
+            <input id="retriever-temp-slider" type="range" min="0" max="2" step="0.1" value="0">
+            <div style="color:var(--fg-muted);font-size:0.7em;margin-top:2px">默认 0 保证摘要格式稳定；仅此节点受温度影响</div>
+        </div>
+        <div class="field">
+            <label>② 分析器模型（意图 + 事实核查）</label>
+            <select id="analyzer-model-select">
+                <option value="deepseek-v4-flash">Flash（快，便宜）</option>
+                <option value="deepseek-v4-pro">Pro（慢，贵，更强）</option>
+            </select>
+            <label style="margin-top:8px">思考等级（默认高）</label>
+            <select id="analyzer-effort-select">
+                <option value="none">无思考（温度才生效）</option>
+                <option value="low">低（=高，官方映射）</option>
+                <option value="high">高（推荐）</option>
+                <option value="max">最高（~2x token）</option>
+            </select>
+        </div>
+        <div class="field">
+            <label>③ 回复器模型（生成短信）</label>
+            <select id="polisher-model-select">
+                <option value="deepseek-v4-flash">Flash（快，便宜）</option>
+                <option value="deepseek-v4-pro">Pro（慢，贵，更强）</option>
+            </select>
+            <label style="margin-top:8px">思考等级（默认高）</label>
+            <select id="polisher-effort-select">
+                <option value="none">无思考（温度才生效）</option>
+                <option value="low">低（=高，官方映射）</option>
+                <option value="high">高（推荐）</option>
+                <option value="max">最高（~2x token）</option>
+            </select>
+            <div style="color:var(--fg-muted);font-size:0.7em;margin-top:2px">回复器温度固定 0.5（思考模式温度无效，无思考时亦可接受）</div>
+        </div>
+        <div class="field">
+            <label>④ 组织器模型（工具调度）</label>
+            <select id="organizer-model-select">
+                <option value="deepseek-v4-flash">Flash（快，便宜）</option>
+                <option value="deepseek-v4-pro">Pro（慢，贵，更强）</option>
+            </select>
+            <label style="margin-top:8px">思考等级（默认无思考）</label>
+            <select id="organizer-effort-select">
+                <option value="none">无思考（推荐）</option>
+                <option value="low">低（=高，官方映射）</option>
+                <option value="high">高</option>
+                <option value="max">最高（~2x token）</option>
+            </select>
+            <div style="color:var(--fg-muted);font-size:0.7em;margin-top:2px">组织器温度固定 0.3</div>
+        </div>
+        <div style="margin:16px 0 14px;padding-top:14px;border-top:1px solid var(--border-mid)">
+            <label style="display:block;color:var(--fg-main);font-size:0.85em;margin-bottom:8px">主动性（插件）</label>
+            <details id="proactive-panel" style="font-size:0.9em" open>
+                <summary style="cursor:pointer;color:var(--fg-bright);font-size:0.85em;margin-bottom:6px">
+                    主动设置（点击展开/收起）
+                </summary>
+                <div class="field" style="margin-bottom:10px">
+                    <label style="display:flex;align-items:center;gap:8px">
+                        <input id="proactive-enabled" type="checkbox" style="width:auto;accent-color:var(--fg-bright)">
+                        开启主动式回复（流萤在对话轮次间隙主动说话）
+                    </label>
+                    <label style="margin-top:8px">主动频率（每 <span id="proactive-hard-value">4</span> 轮对话 1 次机会）</label>
+                    <input id="proactive-hard-slider" type="range" min="1" max="10" step="1" value="4">
+                    <label style="margin-top:8px">触发概率 <span id="proactive-soft-value">50%</span></label>
+                    <input id="proactive-soft-slider" type="range" min="0" max="10" step="1" value="5">
+                    <div style="color:var(--fg-muted);font-size:0.7em;margin-top:2px">
+                        频率：每 N 轮用户对话给 1 次主动机会（数字越大越少）。概率：机会到来时真正发起的概率。
+                        主动消息只在有真实动机时发出（记忆里的约定、想分享的事、牵挂）——不会定时打扰。
+                    </div>
+                </div>
+                <div class="field" style="margin-bottom:0;border-top:1px solid var(--border-mid);padding-top:10px">
+                    <label style="display:flex;align-items:center;gap:8px">
+                        <input id="prob-reply-enabled" type="checkbox" style="width:auto;accent-color:var(--fg-bright)">
+                        开启概率式回复（用户在应用内但空闲时，流萤偶尔想起你）
+                    </label>
+                    <label style="margin-top:8px">触发概率 <span id="prob-reply-value">30%</span></label>
+                    <input id="prob-reply-slider" type="range" min="0" max="10" step="1" value="3">
+                    <label style="display:flex;align-items:center;gap:8px;margin-top:8px">
+                        <input id="hidden-reply-enabled" type="checkbox" style="width:auto;accent-color:var(--fg-bright)">
+                        开启隐藏式回复（App 在后台时，流萤偶尔发消息提醒你）
+                    </label>
+                    <div style="color:var(--fg-muted);font-size:0.7em;margin-top:2px">
+                        概率式：应用内空闲时按概率触发；隐藏式：App 在后台时低频触发。
+                        触发时机符合时段作息（傍晚最活跃、深夜几乎不打扰），触发概率随上方滑条整体调整。
+                        概率式/隐藏式优先带真实动机（约定、想分享的事、牵挂），想起你时也会偶尔轻轻问候。
+                    </div>
+                </div>
+            </details>
+        </div>
+        <div style="margin:16px 0 14px;padding-top:14px;border-top:1px solid var(--border-mid)">
+            <label style="display:block;color:var(--fg-main);font-size:0.85em;margin-bottom:8px">界面大小</label>
+            <div class="field" style="margin-bottom:0">
+                <label>消息 / 头像 / 气泡缩放 <span id="ui-scale-value">100%</span></label>
+                <input id="ui-scale-slider" type="range" min="80" max="130" step="5" value="100">
+                <div style="color:#8a8a8a;font-size:0.7em;margin-top:2px">80%~130%，实时预览</div>
+            </div>
+        </div>
+        <div style="margin:16px 0 14px;padding-top:14px;border-top:1px solid var(--border-mid)">
+            <label style="display:block;color:var(--fg-main);font-size:0.85em;margin-bottom:8px">版本</label>
+            <div class="field" style="margin-bottom:0">
+                <label>当前版本 <span id="current-version"></span></label>
+                <button id="check-update-btn" type="button">检查更新</button>
+                <div id="update-msg" style="color:var(--fg-muted);font-size:0.75em;margin-top:6px"></div>
+            </div>
+        </div>
+        <button id="key-save">保存</button>
+        <div id="config-msg"></div>
+    </div>
+</div>
+
+<!-- ═══ 公告面板（展开） ═══ -->
+<div id="notice-panel">
+    <div class="notice-header">
+        <span><img class="notice-icon-sm" src="assets/notice_speaker.png?v=1" alt=""> 公告 · 使用指南</span>
+        <button onclick="closeNotice()">✕</button>
+    </div>
+    <div class="notice-body">
+        <h3>一、基础配置（首次使用必看）</h3>
+        <p>1. 在首页右上角点击 ⚙ 设置</p>
+        <p>2. 填入你的 DeepSeek API Key</p>
+        <p>3. 保存后即可开始与流萤对话</p>
+        <p class="notice-tip">Key 可在 platform.deepseek.com 申请，仅保存在本机，不会上传。</p>
+        <h3>二、关键功能</h3>
+        <p><b>开始聊天</b>：点击首页轮播图「剧情模式」进入对话；「春日手信」是流萤想象的普通学生生活，两种模式各自独立的记忆与手账。</p>
+        <p><b>双模式切换</b>：聊天页返回首页 → 点击另一张轮播图即可切换。两个模式的数据（历史/记忆/手账/主动性状态）完全隔离。</p>
+        <p><b>主动性（三种回复方式）</b>：⚙ 设置 →「主动性」面板：<b>主动式</b>=对话轮次间隙主动说话（每 N 轮 1 次机会）；<b>概率式</b>=应用内空闲时偶尔想起你；<b>隐藏式</b>=App 在后台时低频发消息（安卓端通过通知送达）。三种都按真实作息节奏触发——傍晚最活跃、深夜几乎不打扰。</p>
+        <p><b>让流萤休息</b>：☰ 菜单「让流萤休息」——她会把这段时间聊过的内容整理进记忆与手账。醒来后，她会记得你们的约定、你的偏好和重要的事。</p>
+        <p><b>撤回 / 清除</b>：☰ 菜单「撤回上一轮」删除最近一轮对话；「清除历史」清空全部。</p>
+        <p><b>表情包</b>：输入框右侧 😊 打开表情包面板，选择表情发送。</p>
+        <p><b>设定文件</b>：☰ 菜单「设定文件」包含三块——<b>用户记忆</b>（跨会话记忆，休息时自动整理）、<b>用户设定</b>（补充剧情设定，与核心设定一起生效）、<b>流萤的手账</b>。</p>
+        <p><b>外观</b>：首页右上角 ☀️/🌙 切换暗色 / 亮色；⚙ 设置里可调界面大小（80%~130%）、模型与思考档位、检索器温度。</p>
+        <p><b>返回键</b>：聊天页按返回 → 回到首页；首页按返回 → 提示，双击退出。</p>
+        <h3>三、交流与反馈</h3>
+        <p>QQ交流群：<b>1097936258</b></p>
+        <p>反馈问题可点击首页左上角「反馈」按钮，或在 GitHub 提 Issue。</p>
+    </div>
+</div>
+
+<div id="app">
+    <div id="header">
+        <img class="avatar-sm" src="流萤_头像.png" alt="流萤">
+        <div style="flex:1">
+            <div class="name">流萤 <span id="chat-mode-tag" class="chat-mode-tag">剧情模式</span></div>
+            <div class="status">会找到的，属于我的梦...</div>
+        </div>
+        <button id="menu-btn" title="菜单">☰</button>
+    </div>
+    <div id="messages"></div>
+    <div id="input-bar">
+        <div class="input-wrap">
+            <input type="text" id="msg-input" placeholder="说点什么…" maxlength="500" autocomplete="off" autofocus>
+            <button id="sticker-btn" title="表情包">😊</button>
+        </div>
+        <button id="send-btn">发送</button>
+    </div>
+</div>
+
+<!-- 表情包面板 -->
+<div id="sticker-panel">
+    <div class="sp-title">
+        <span>选择表情包</span>
+        <button id="sticker-panel-close">✕</button>
+    </div>
+    <div id="sticker-grid"></div>
+</div>
+
+<!-- 汉堡菜单（移出 #app，避免 backdrop-filter 绑定 fixed 定位） -->
+<div id="menu-overlay"></div>
+    <div id="menu-drawer">
+        <div class="menu-header">
+            <span>菜单</span>
+            <button onclick="closeMenu()">✕</button>
+        </div>
+        <div class="menu-tabs">
+            <button class="menu-tab" data-tab="char">设定文件</button>
+            <button class="menu-tab" data-tab="bubble">聊天气泡</button>
+            <button class="menu-tab" data-tab="sticker">表情包</button>
+            <button class="menu-tab" data-tab="state">流萤状态</button>
+            <button class="menu-tab" data-tab="log">请求记录</button>
+            <button class="menu-tab" data-tab="pipeline">流程日志</button>
+        </div>
+        <div class="menu-actions">
+            <button onclick="showHome()"><img class="menu-act-icon" src="assets/icon_home.png?v=1" alt=""> 返回首页</button>
+            <button id="menu-undo-btn"><img class="menu-act-icon" src="assets/icon_undo.png?v=1" alt=""> 撤回上一轮</button>
+            <button id="menu-rest-btn"><img class="menu-act-icon" src="assets/icon_rest.png?v=1" alt=""> 让流萤休息</button>
+            <button id="menu-clear-btn"><img class="menu-act-icon" src="assets/icon_trash.png?v=1" alt=""> 清除历史</button>
+        </div>
+
+        <!-- Tab: 设定文件（用户记忆 / 用户设定 / 流萤的手账） -->
+        <div class="menu-content active" id="tab-char">
+            <div class="field">
+                <label>用户记忆 · 跨会话记忆</label>
+                <div class="field-tip">记录开拓者（你）的相关信息与重要事情；「让流萤休息」时会由流萤自动整理进来，也可手动修改。保存后下次对话生效。</div>
+                <textarea id="user-memory-editor" style="height:200px"></textarea>
+                <div class="btn-row">
+                    <button id="user-memory-reload" type="button">重新加载</button>
+                    <button id="user-memory-save" type="button">保存</button>
+                </div>
+                <div id="user-memory-msg" style="color:#8a8a8a;font-size:0.75em;margin-top:4px"></div>
+            </div>
+            <div style="margin:14px 0;padding-top:14px;border-top:1px solid rgba(255,255,255,0.08)">
+                <label>用户设定 · 补充剧情设定（与核心设定一起加载）</label>
+                <div class="field-tip">你补充的剧情设定，与核心设定同等权威、每轮生效。格式：`[事实]` 长期成立 / `[经历]` 已发生 / `[若]` 触发条件 / `[原句]` 原话勿照搬（文件内有示例）。</div>
+                <textarea id="user-setting-editor" style="height:200px"></textarea>
+                <div class="btn-row">
+                    <button id="user-setting-reload" type="button">重新加载</button>
+                    <button id="user-setting-save" type="button">保存</button>
+                </div>
+                <div id="char-file-msg" style="color:#8a8a8a;font-size:0.75em;margin-top:6px"></div>
+            </div>
+            <div style="margin-top:14px;padding-top:14px;border-top:1px solid rgba(255,255,255,0.08)">
+                <label style="color:#e0d5c1;font-size:0.85em;margin-bottom:8px;display:block">流萤的手账</label>
+                <div class="field-tip" style="margin-bottom:8px">流萤视角的重要对话记录与未完成的约定；「让流萤休息」时会自动更新，也可手动修改。</div>
+                <div class="btn-row" style="margin-bottom:8px">
+                    <button id="journal-reload" style="flex:1">重新加载</button>
+                    <button id="journal-save" style="flex:1">保存</button>
+                </div>
+                <textarea id="journal-editor" style="height:260px;color:#e0d5c1"></textarea>
+                <div id="journal-msg" style="color:#8a8a8a;font-size:0.75em;margin-top:4px"></div>
+            </div>
+        </div>
+
+        <!-- Tab: 气泡 -->
+        <div class="menu-content" id="tab-bubble">
+            <div id="bubble-grid"></div>
+        </div>
+
+        <!-- Tab: 表情包 -->
+        <div class="menu-content" id="tab-sticker">
+            <button id="sticker-add-btn" type="button">+ 添加表情包</button>
+            <div id="sticker-add-form" style="display:none">
+                <input type="file" id="sticker-file" accept="image/*">
+                <select id="sticker-category">
+                    <option value="可爱">可爱</option>
+                    <option value="帅气">帅气</option>
+                </select>
+                <input type="text" id="sticker-label" placeholder="含义描述（如：害羞）" maxlength="20">
+                <button id="sticker-submit" type="button">保存</button>
+                <div id="sticker-add-msg"></div>
+            </div>
+            <button id="sticker-manage-btn" type="button">表情包映射表</button>
+            <div id="sticker-manage-panel" style="display:none">
+                <div id="sticker-manage-msg"></div>
+                <div id="sticker-list"></div>
+            </div>
+        </div>
+
+        <!-- Tab: 状态 -->
+        <div class="menu-content" id="tab-state">
+            <div id="state-list"></div>
+        </div>
+
+        <!-- Tab: 请求记录 -->
+        <div class="menu-content" id="tab-log">
+            <div style="display:flex;justify-content:space-between;margin-bottom:8px">
+                <span style="color:#8a8a8a;font-size:0.75em" id="log-count"></span>
+                <button class="menu-tab" style="font-size:0.7em" onclick="loadRequestLog()">刷新</button>
+            </div>
+            <div id="log-list" style="max-height:60vh;overflow-y:auto"></div>
+        </div>
+
+        <!-- Tab: 流程日志（各阶段思考过程） -->
+        <div class="menu-content" id="tab-pipeline">
+            <div style="display:flex;justify-content:space-between;margin-bottom:8px">
+                <span style="color:#8a8a8a;font-size:0.75em" id="pipeline-count"></span>
+                <button class="menu-tab" style="font-size:0.7em" onclick="loadPipeline()">刷新</button>
+            </div>
+            <div id="pipeline-list" style="max-height:60vh;overflow-y:auto"></div>
+        </div>
+    </div>
+</div>
+
+<!-- 休息遮罩 -->
+<div id="rest-overlay" style="display:none">
+    <div class="rest-card">
+        <div id="rest-text">流萤正在整理记忆…</div>
+    </div>
+</div>
+
+<!-- 起床遮罩 -->
+<div id="wake-overlay" style="display:none">
+    <div class="rest-card">
+        <div id="wake-text">流萤正在起床，请稍候…</div>
+    </div>
+</div>
+
+    <!-- 开拓者头像选择弹窗 -->
+    <div id="avatar-picker" style="display:none;position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);
+        background:rgba(24,24,48,0.97);border-radius:12px;padding:20px;z-index:100;
+        box-shadow:0 0 30px rgba(0,0,0,0.6);text-align:center">
+        <div style="color:#e0d5c1;margin-bottom:14px;font-size:0.95em">选择开拓者形象</div>
+        <div style="display:flex;gap:20px;justify-content:center">
+            <div class="avatar-option" data-key="穹">
+                <img src="开拓者_穹.png" style="width:72px;height:72px;border-radius:50%;object-fit:cover">
+                <div style="color:#8a8a8a;font-size:0.75em;margin-top:6px">穹</div>
+            </div>
+            <div class="avatar-option" data-key="星">
+                <img src="开拓者_星.png" style="width:72px;height:72px;border-radius:50%;object-fit:cover">
+                <div style="color:#8a8a8a;font-size:0.75em;margin-top:6px">星</div>
+            </div>
+        </div>
+    </div>
+    <div id="avatar-picker-mask" style="display:none;position:fixed;inset:0;z-index:99;background:rgba(0,0,0,0.5)" onclick="closeAvatarPicker()"></div>
+<script src="app.js"></script>
+</body>
+</html>

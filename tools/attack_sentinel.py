@@ -156,6 +156,16 @@ def write_report(flag: dict, diag: dict, verdict: dict):
         pass
 
 
+def apply_shrink(verdict: dict) -> None:
+    """攻击应对（收缩服务）：severity high/critical → 服务器暂停注册/发码；
+    其余（含 unknown，避免误伤）→ 恢复。收缩标志 = /opt/firefly/.shrink。"""
+    sev = str(verdict.get("severity", "unknown")).lower()
+    if sev in ("high", "critical"):
+        run("touch /opt/firefly/.shrink")
+    else:
+        run("rm -f /opt/firefly/.shrink")
+
+
 def main():
     once = "--once" in sys.argv
     last_time = None
@@ -168,6 +178,7 @@ def main():
                 verdict = analyze_with_model(flag, diag)
                 notify(flag, verdict)
                 write_report(flag, diag, verdict)
+                apply_shrink(verdict)   # 攻击严重先收缩（暂停注册），平息自动恢复
                 last_time = t
         else:
             last_time = None

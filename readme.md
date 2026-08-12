@@ -101,10 +101,10 @@ pyinstaller firefly.spec --noconfirm
 
 ## 服务器版（可选，云端部署）
 
-把流萤部署到云服务器后，**鸿蒙 / iOS / PC 用浏览器打开 `http://<公网IP>:8765` 即可使用**（无需安装）：
+把流萤部署到云服务器后，**鸿蒙 / iOS / PC 用服务器版 APP（WebView 壳）加载服务器前端**（无需安装）：
 
 - **用户自带 API Key**：Key 只存在用户浏览器（localStorage），服务器只处理逻辑、用用户的 Key 调 DeepSeek API，**不落盘不存储**
-- **多用户隔离**：数据按匿名 UUID 分目录（`user_data/{uuid}/`），互不可见
+- **多用户隔离**：数据按按账号（user_id）分目录（`user_data/{uuid}/`），互不可见
 - **本地版零影响**：服务器版独立在 `server/`，复用 `app/modules` 全部流水线逻辑，`app/` 代码不变
 
 ```bash

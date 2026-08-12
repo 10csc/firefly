@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>流萤 Firefly · 登录</title>
+<style>
+:root{--bg1:#0a0e1a;--bg2:#0f172a;--line:rgba(255,255,255,.09);--txt:#e2e8f0;--dim:#94a3b8;--amber:#fbbf24;--amber2:#f59e0b;--red:#f87171;--green:#4ade80}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:system-ui,-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;background:radial-gradient(1000px 500px at 80% -10%,#16203a 0%,var(--bg1) 55%),var(--bg2);color:var(--txt);min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px}
+.card{width:400px;max-width:100%;background:rgba(255,255,255,.045);border:1px solid var(--line);border-radius:18px;padding:36px 30px;backdrop-filter:blur(8px)}
+h1{font-size:22px;text-align:center;letter-spacing:2px;margin-bottom:4px}
+h1 span{color:var(--amber)}
+.sub{text-align:center;color:var(--dim);font-size:12px;margin-bottom:28px}
+label{display:block;font-size:12.5px;color:var(--dim);margin:14px 0 6px}
+input{width:100%;padding:10px 12px;border-radius:9px;border:1px solid var(--line);background:rgba(255,255,255,.06);color:var(--txt);font-size:14px;outline:none}
+input:focus{border-color:rgba(251,191,36,.5)}
+.btn{display:block;width:100%;margin-top:22px;padding:11px 0;border:none;border-radius:10px;font-size:14px;font-weight:600;color:#1e293b;background:linear-gradient(135deg,var(--amber),var(--amber2));cursor:pointer}
+.btn:hover{filter:brightness(1.08)}
+.btn.ghost{margin-top:10px;background:rgba(255,255,255,.07);color:var(--dim)}
+.err{display:none;margin-top:14px;font-size:12.5px;color:var(--red);text-align:center}
+.tip{margin-top:16px;font-size:11.5px;color:#64748b;text-align:center;line-height:1.8}
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>流萤 <span>Firefly</span></h1>
+  <p class="sub">服务器版 · 登录后使用</p>
+
+  <!-- 登录表单 -->
+  <form id="loginForm">
+    <label>邮箱</label>
+    <input id="loginEmail" type="email" placeholder="QQ 邮箱" autocomplete="email">
+    <label>密码</label>
+    <input id="loginPass" type="password" placeholder="密码" autocomplete="current-password">
+    <button class="btn" type="submit">登 录</button>
+  </form>
+  <button class="btn ghost" id="toRegister">没有账号？注册</button>
+  <div class="err" id="loginErr"></div>
+
+  <!-- 注册表单（隐藏） -->
+  <form id="registerForm" style="display:none">
+    <label>邮箱</label>
+    <input id="regEmail" type="email" placeholder="QQ 邮箱（如 123456@qq.com）" autocomplete="email">
+    <label>邮箱验证码</label>
+    <div style="display:flex;gap:8px">
+      <input id="regCode" type="text" maxlength="6" placeholder="6 位验证码" style="flex:1">
+      <button type="button" id="sendCodeBtn" class="btn" style="width:auto;margin-top:0;padding:0 16px;flex-shrink:0">获取验证码</button>
+    </div>
+    <label>密码（至少 8 位）</label>
+    <input id="regPass" type="password" placeholder="密码">
+    <label>QQ 群号（下载 APP 可见，无需进群）</label>
+    <input id="regGroup" type="text" placeholder="QQ 群号">
+    <button class="btn" type="submit">注 册</button>
+  </form>
+  <button class="btn ghost" id="toLogin" style="display:none">已有账号？登录</button>
+  <div class="err" id="regErr"></div>
+
+  <p class="tip">数据仅存服务器你的账号目录 · 密钥不落服务器</p>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+const LOGIN = $("loginForm"), REG = $("registerForm");
+// 服务器 API 地址（本地打包前端 file:// 页面跨域调用；改服务器地址改这里）
+const API_BASE = "http://101.200.14.126:8787";
+const _api = p => API_BASE + p;
+/* ── 安装隐藏代码：首次访问生成，一个安装一个（注册门槛，重复注册需重装） ── */
+function getInstallId() {
+  try {
+    let id = localStorage.getItem("firefly_install_id");
+    if (!id) {
+      const rand = () => Math.floor(Math.random() * 0x100000000).toString(16).padStart(8, "0");
+      id = "inst-" + (rand() + rand() + rand() + rand());
+      localStorage.setItem("firefly_install_id", id);
+    }
+    return id;
+  } catch (e) { return ""; }
+}
+/* ── 表单切换与提交 ── */
+function showErr(el, msg) { el.textContent = msg; el.style.display = "block"; }
+function hideErr(el) { el.style.display = "none"; }
+
+$("toRegister").onclick = () => { LOGIN.style.display = "none"; REG.style.display = "block";
+  $("toLogin").style.display = "block"; $("toRegister").style.display = "none"; };
+$("toLogin").onclick = () => { REG.style.display = "none"; LOGIN.style.display = "block";
+  $("toLogin").style.display = "none"; $("toRegister").style.display = "block"; };
+
+LOGIN.onsubmit = e => {
+  e.preventDefault(); hideErr($("loginErr"));
+  fetch(_api("/auth/login"), {method: "POST", headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({email: $("loginEmail").value.trim(), password: $("loginPass").value, device: "web"})
+  }).then(r => r.json()).then(d => {
+    if (d.ok) {
+      localStorage.setItem("firefly_token", d.token);
+      location.href = "index.html";
+    } else showErr($("loginErr"), d.error || "登录失败");
+  }).catch(() => showErr($("loginErr"), "网络错误"));
+};
+
+/* 获取邮箱验证码（60s 倒计时） */
+let codeTimer = null;
+$("sendCodeBtn").onclick = () => {
+  const email = $("regEmail").value.trim();
+  const btn = $("sendCodeBtn");
+  hideErr($("regErr"));
+  if (!/^[^@\s]+@(qq\.com|foxmail\.com)$/.test(email)) { showErr($("regErr"), "请使用 QQ 邮箱"); return; }
+  if (codeTimer) return;
+  btn.disabled = true;
+  fetch(_api("/auth/mail-send"), {method: "POST", headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({email: email})
+  }).then(r => r.json()).then(d => {
+    if (d.ok) {
+      showErr($("regErr"), "验证码已发送，请查收邮箱");
+      let sec = 60;
+      btn.textContent = sec + "s";
+      codeTimer = setInterval(() => {
+        sec--;
+        if (sec <= 0) {
+          clearInterval(codeTimer); codeTimer = null;
+          btn.textContent = "获取验证码"; btn.disabled = false;
+        } else btn.textContent = sec + "s";
+      }, 1000);
+    } else {
+      btn.disabled = false;
+      showErr($("regErr"), d.error || "发送失败");
+    }
+  }).catch(() => { btn.disabled = false; showErr($("regErr"), "网络错误"); });
+};
+
+REG.onsubmit = e => {
+  e.preventDefault(); hideErr($("regErr"));
+  fetch(_api("/auth/register"), {method: "POST", headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({email: $("regEmail").value.trim(), password: $("regPass").value,
+      qq_group: $("regGroup").value.trim(), mail_code: $("regCode").value.trim(),
+      install_id: getInstallId()})
+  }).then(r => r.json()).then(d => {
+    if (d.ok) {
+      // 注册成功 → 自动切回登录表单并预填邮箱
+      REG.style.display = "none"; LOGIN.style.display = "block";
+      $("toLogin").style.display = "none"; $("toRegister").style.display = "block";
+      $("loginEmail").value = $("regEmail").value.trim();
+      $("loginPass").value = "";
+      showErr($("loginErr"), "注册成功，请登录");
+      $("loginPass").focus();
+    }
+    else { showErr($("regErr"), d.error || "注册失败"); }
+  }).catch(() => showErr($("regErr"), "网络错误"));
+};
+</script>
+</body>
+</html>

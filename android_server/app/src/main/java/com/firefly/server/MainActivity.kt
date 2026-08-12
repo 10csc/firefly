@@ -22,13 +22,15 @@ import android.widget.Toast
 class MainActivity : Activity() {
 
     private lateinit var webView: WebView
-    private val serverUrl = "http://101.200.14.126:8787/login"
+    private val serverBase = "http://101.200.14.126:8787"
+    private val localHome = "file:///android_asset/index.html"
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         webView = WebView(this)
         setContentView(webView)
+        WebView.setWebContentsDebuggingEnabled(true)   // 真机调试/测试用（需 adb 才能连接）
 
         webView.settings.apply {
             javaScriptEnabled = true
@@ -38,11 +40,16 @@ class MainActivity : Activity() {
             useWideViewPort = true
             cacheMode = WebSettings.LOAD_DEFAULT
             mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
+            allowFileAccess = true          // file:// 本地页面（打包的前端）
+            // file:// 页面加载跨域 http 资源（验证码图片/服务器资产等）——
+            // 默认禁止，必须放开；打包页面固定可信，无注入面
+            allowUniversalAccessFromFileURLs = true
+            allowFileAccessFromFileURLs = true
         }
         webView.webViewClient = object : WebViewClient() {
             override fun shouldOverrideUrlLoading(view: WebView, url: String): Boolean {
-                // 仅放行服务器域，外部链接交系统浏览器
-                if (url.startsWith(serverUrl.substringBefore("/login"))) {
+                // 仅放行本地页面与服务器域，外部链接交系统浏览器
+                if (url.startsWith("file:///android_asset/") || url.startsWith(serverBase)) {
                     return false
                 }
                 return super.shouldOverrideUrlLoading(view, url)
@@ -59,7 +66,7 @@ class MainActivity : Activity() {
             }
         }
         webView.webChromeClient = WebChromeClient()
-        webView.loadUrl(serverUrl)
+        webView.loadUrl(localHome)
     }
 
     override fun onBackPressed() {
