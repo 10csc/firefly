@@ -48,3 +48,9 @@ firefly_keystore_backup_*/
 /开拓者_*.png
 /流萤_头像.png
 settings.local.json
+
+# 服务器版安卓壳
+android_server/.gradle/
+android_server/app/build/
+android_server/local.properties
+android_server/firefly-server.apk
