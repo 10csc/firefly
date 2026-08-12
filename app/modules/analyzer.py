@@ -9,7 +9,7 @@ import json, logging, threading
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from modules.llm_base import load_slot, format_history, extract_json, record_usage, record_error, parse_json
+from modules.llm_base import load_slot, format_history, extract_json, record_usage, record_error, parse_json, ASSET_CORE, ASSET_IDENTITY, is_relay_client
 
 logger = logging.getLogger(__name__)
 _lock = threading.Lock()
@@ -146,8 +146,10 @@ class Analyzer:
             _ANALYZE_COUNT += 1
 
         # 2. 构建 prompt
-        core = load_slot("core", self._mode)
-        identity = load_slot("identity", self._mode)
+        # relay 模式：core/identity 为本地资产→占位符（APP 填充）；用户设定/模板常量在服务器
+        relay = is_relay_client(self._client)
+        core = ASSET_CORE if relay else load_slot("core", self._mode)
+        identity = ASSET_IDENTITY if relay else load_slot("identity", self._mode)
         user_setting = load_slot("用户设定", self._mode)
         story_extra = _ANALYZER_STORY_EXTRA if self._mode == "story" else ""
 

@@ -952,6 +952,94 @@ def update_download(h):
 
 
 
+# ══ 后端代理（relay 中转）═════════════════════════
+# 用户 Key 模式：服务器构建请求体（含资产占位符）→ APP 代发 DeepSeek（用户 Key）→ 回传。
+# 服务器不持有用户 Key；资产（知识库/设定）在 APP 本地，占位符由 APP 填充。
+def relay_pending(h):
+    """APP 轮询：取待代发的 LLM 请求体（可能含 __KNOWLEDGE__ 等资产占位符）。"""
+    from modules.api_client import relay_pending as _pending
+    item = _pending(cfg.user_scope_key() or "local")
+    if item:
+        h._json({"pending": True, "call_id": item["call_id"],
+                 "payload": item["payload"], "api_base": item["api_base"]})
+    else:
+        h._json({"pending": False})
+
+
+def relay_result(h):
+    """APP 回传 DeepSeek 响应，唤醒等待中的流水线线程。"""
+    body = _read_json(h)
+    from modules.api_client import relay_result as _result
+    ok = _result(cfg.user_scope_key() or "local",
+                 body.get("call_id", ""), body.get("response") or {})
+    h._json({"ok": ok})
+
+
+# ══ 资产清单（服务器告诉 APP 用哪些资产）═══════════
+_ASSET_MD5_CACHE: dict[str, str] = {}
+_ASSET_MD5_LOCK = threading.Lock()
+
+
+def _asset_md5(text: str) -> str:
+    """资产版本指纹（内容 hash 前 8 位，内容变化即版本变化）。"""
+    import hashlib
+    with _ASSET_MD5_LOCK:
+        key = text[:64]
+        if key in _ASSET_MD5_CACHE:
+            return _ASSET_MD5_CACHE[key]
+        digest = hashlib.md5(text.encode("utf-8")).hexdigest()[:8]
+        _ASSET_MD5_CACHE[key] = digest
+        return digest
+
+
+def assets_index(h):
+    """资产清单：服务器"告诉 APP 要用哪些资产"（版本指纹+大小）。
+    APP 比对本地版本，缺失/过期则从 /assets/raw 下载。"""
+    from modules.llm_retriever import _load_knowledge, get_knowledge_stats
+    from modules.llm_base import resolve_character_file
+
+    kb = _load_knowledge("story")
+    stats = get_knowledge_stats("story")
+
+    def _char_asset(name):
+        # resolve_character_file 不拼后缀（load_slot 才拼），这里显式拼 .md
+        fp = resolve_character_file(name + ".md", "story")
+        if fp.exists():
+            content = fp.read_text(encoding="utf-8")
+            return {"version": _asset_md5(content), "size": len(content)}
+        return {"version": "0", "size": 0}
+
+    h._json({
+        "knowledge": {"version": _asset_md5(kb), "size": len(kb),
+                      "chars": stats.get("chars", 0)},
+        "character": {
+            "core": _char_asset("core"),
+            "identity": _char_asset("identity"),
+            "sms_samples": _char_asset("sms_samples"),
+        },
+    })
+
+
+def assets_raw(h):
+    """资产下载（认证后可用）：APP 首次本地化 / 更新时拉取。
+    ?name=knowledge|core|identity|sms_samples"""
+    from modules.llm_retriever import _load_knowledge
+    from modules.llm_base import resolve_character_file
+    qs = parse_qs(urlparse(h.path).query)
+    name = qs.get("name", [""])[0]
+    if name == "knowledge":
+        h._json({"name": name, "content": _load_knowledge("story")})
+        return
+    if name in ("core", "identity", "sms_samples"):
+        fp = resolve_character_file(name + ".md", "story")
+        if fp.exists():
+            h._json({"name": name, "content": fp.read_text(encoding="utf-8")})
+            return
+        h._json({"error": "资产不存在"}, 404)
+        return
+    h._json({"error": "未知资产"}, 404)
+
+
 # ── 分发表 ───────────────────────────────────────
 POST_ROUTES = {
     "/set-key": set_key,
@@ -971,6 +1059,8 @@ POST_ROUTES = {
     "/character-file-update": character_file_update,
     "/check-update": check_update,
     "/update-download": update_download,
+    "/relay/pending": relay_pending,
+    "/relay/result": relay_result,
     "/undo": undo,
     "/clear-history": clear_history,
 }
@@ -988,4 +1078,6 @@ GET_ROUTES = {
     "/character-files": get_character_files,
     "/user-memory": get_user_memory,
     "/journal": get_journal,
+    "/assets/index": assets_index,
+    "/assets/raw": assets_raw,
 }

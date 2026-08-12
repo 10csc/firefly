@@ -18,7 +18,8 @@ from pathlib import Path
 from dataclasses import dataclass, field
 
 from modules.app_config import ROOT, DEFAULT_MODE
-from modules.llm_base import format_history, record_usage, record_error
+from modules.llm_base import (format_history, record_usage, record_error,
+                              ASSET_KNOWLEDGE, is_relay_client)
 
 logger = logging.getLogger(__name__)
 _lock = threading.Lock()
@@ -151,7 +152,9 @@ class LlmRetriever:
         if not knowledge:
             # 模式无资料库（haruno 待设计）或文件缺失：跳过检索，不产生额外 LLM 调用
             return RetrieveOutput(knowledge="", raw="")
-        sys_prompt = _SYSTEM_PROMPT.format(knowledge=knowledge)
+        # relay 模式：知识库→占位符（APP 本地资产填充，服务器只告诉 APP 用哪些资产）
+        inject = ASSET_KNOWLEDGE if is_relay_client(self._client) else knowledge
+        sys_prompt = _SYSTEM_PROMPT.format(knowledge=inject)
         history_section = format_history(inp.recent_history) if inp.recent_history else "（无）"
         dynamic = f"## 最近对话\n{history_section}\n\n## 开拓者刚才说\n{inp.user_input}"
 

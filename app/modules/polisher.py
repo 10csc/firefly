@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from modules.llm_base import (
     load_slot, load_journal, format_history,
     record_usage, record_error, resolve_character_file,
+    ASSET_CORE, ASSET_IDENTITY, ASSET_SMS_SAMPLES, is_relay_client,
 )
 from modules.app_config import user_scope_key
 
@@ -329,13 +330,16 @@ class Polisher:
             _POLISH_COUNT += 1
 
         # 2. 构建 prompt（按模式选择稳定层模板）
+        # relay 模式：core/identity/sms_samples 为本地资产→占位符（APP 填充）；
+        # 用户设定/手账（用户数据）在服务器。
+        relay = is_relay_client(self._client)
         sys_tpl = _POLISHER_SYSTEMS.get(self._mode, _POLISHER_SYSTEMS["story"])
         stable = sys_tpl.format(
-            core=load_slot("core", self._mode),
-            identity=load_slot("identity", self._mode),
+            core=ASSET_CORE if relay else load_slot("core", self._mode),
+            identity=ASSET_IDENTITY if relay else load_slot("identity", self._mode),
             user_setting=load_slot("用户设定", self._mode),
             journal=load_journal(self._mode),
-            sms_samples=_load_samples(self._mode),
+            sms_samples=ASSET_SMS_SAMPLES if relay else _load_samples(self._mode),
         )
 
         history_section = format_history(inp.recent_history)

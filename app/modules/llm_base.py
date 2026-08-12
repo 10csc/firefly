@@ -114,6 +114,29 @@ _model_prompt: dict[str, int] = {}
 _model_completion: dict[str, int] = {}
 
 
+# ── 资产占位符（relay 后端代理模式）────────────────
+# 静态资产（知识库/核心设定/短信样本）在 relay 模式下转为占位符下发，
+# 由 APP 本地填充（资产在用户设备，服务器只"告诉 APP 用哪些资产"）。
+# direct 模式（本地版）不受影响，仍注入真实内容。
+ASSET_CORE = "__CORE__"
+ASSET_IDENTITY = "__IDENTITY__"
+ASSET_SMS_SAMPLES = "__SMS_SAMPLES__"
+ASSET_KNOWLEDGE = "__KNOWLEDGE__"
+
+
+def is_relay_client(client) -> bool:
+    """判断 client 是否为中转客户端（relay 模式）。"""
+    from modules.api_client import RelayClient  # 延迟导入防循环
+    return isinstance(client, RelayClient)
+
+
+def asset_or_placeholder(client, loader, *args, **kwargs):
+    """relay 模式：资产→占位符（APP 本地填充）；direct 模式：真实内容。"""
+    if is_relay_client(client):
+        return kwargs.pop("placeholder", ASSET_KNOWLEDGE)
+    return loader(*args, **kwargs)
+
+
 # ── 请求日志 ─────────────────────────────────────────
 _REQUEST_LOG: list[dict] = []
 _REQUEST_LOG_MAX = 500

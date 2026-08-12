@@ -314,9 +314,18 @@ def get_api_key() -> str:
 
 
 def get_client():
-    """获取当前 API 客户端，若未设置 Key 则返回 None。
-    requests 实现（api_client），安卓 Chaquopy 兼容，无 openai 依赖。
-    base_url 跟随配置：官方 DeepSeek 或 OpenCode Go（服务器版跟随用户上下文）。"""
+    """获取当前 API 客户端。
+    服务器版默认 relay 模式（后端代理）：返回 RelayClient——请求体入队由 APP 代发
+    （用户 Key 在 APP 本地，资产占位符 APP 本地填充），服务器不持有用户 Key。
+    direct 模式（本地版）：原逻辑，Key 必须在服务器可用。"""
+    mode = config.get("api_mode", "relay" if _user_ctx.get() else "direct")
+    if mode == "relay":
+        from modules.api_client import RelayClient
+        ctx = _user_ctx.get()
+        base = (ctx.get("api_base") if ctx else None) or config.get("api_base", API_BASE)
+        if base not in (API_BASE, GO_BASE):
+            base = API_BASE
+        return RelayClient(user_key=user_scope_key() or "local", api_base=base)
     key = get_api_key()
     if not key:
         return None

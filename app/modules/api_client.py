@@ -151,3 +151,109 @@ class _CompatClient:
         self._base_url = base_url.rstrip("/")
         self._timeout = timeout
         self.chat = _Chat(self)
+
+
+# ══ 中转客户端（RelayClient）═════════════════════
+# 后端代理模式：服务器构建请求体（含资产占位符）→ APP 代发 DeepSeek（用户 Key）→ 回传
+# 服务器不持有用户 Key；APP 本地填充资产（知识库/设定）后调用。
+# 实现：create() 把 payload 入队（按用户隔离）并阻塞等待 APP 回传，超时抛 ApiError。
+_RELAY_TIMEOUT = 120.0   # APP 代发超时（秒），超时降级
+_relay_lock = threading.Lock()
+_relay_queues: dict[str, list] = {}     # user_key -> [{"call_id","payload","cond","result"}]
+_relay_seq = 0
+
+
+def relay_submit(user_key: str, payload: dict, api_base: str):
+    """请求体入队并阻塞等待 APP 回传。返回兼容响应结构（SimpleNamespace）。"""
+    global _relay_seq
+    with _relay_lock:
+        _relay_seq += 1
+        call_id = f"r{_relay_seq}"
+        item = {"call_id": call_id, "payload": payload, "api_base": api_base,
+                "cond": threading.Condition(), "result": None}
+        _relay_queues.setdefault(user_key, []).append(item)
+        q = _relay_queues[user_key]
+    with item["cond"]:
+        # 等待结果（或超时）
+        if not item["cond"].wait(timeout=_RELAY_TIMEOUT):
+            # 超时：从队列移除（可能已被取走，防误删新项——只删自己）
+            with _relay_lock:
+                try:
+                    if item in _relay_queues.get(user_key, []):
+                        _relay_queues[user_key].remove(item)
+                except Exception:
+                    pass
+            raise ApiError("APP 代发超时")
+        result = item["result"]
+    if isinstance(result, Exception):
+        raise result
+    return result
+
+
+def relay_pending(user_key: str) -> dict | None:
+    """取队首待转发请求体（APP 轮询）。返回 {call_id, payload, api_base} 或 None。"""
+    with _relay_lock:
+        q = _relay_queues.get(user_key)
+        if not q:
+            return None
+        item = q[0]
+        return {"call_id": item["call_id"], "payload": item["payload"],
+                "api_base": item["api_base"]}
+
+
+def relay_result(user_key: str, call_id: str, data: dict):
+    """APP 回传 DeepSeek 响应：唤醒等待线程。data 为原始响应 JSON。"""
+    with _relay_lock:
+        q = _relay_queues.get(user_key) or []
+        item = next((i for i in q if i["call_id"] == call_id), None)
+        if item is None:
+            return False
+        try:
+            result = _build_relay_response(data)
+        except Exception as e:
+            result = ApiError(f"APP 回传数据无效: {e}")
+        item["result"] = result
+        q.remove(item)
+        if not q:
+            _relay_queues.pop(user_key, None)
+    with item["cond"]:
+        item["cond"].notify_all()
+    return True
+
+
+def _build_relay_response(data: dict):
+    """把 APP 回传的 DeepSeek 原始 JSON 转成兼容响应结构（同 _CompatClient._build_response）。"""
+    if not isinstance(data, dict) or "choices" not in data or not data["choices"]:
+        raise ValueError("choices 缺失")
+    return _Completions._build_response(data)
+
+
+class _RelayCompletions:
+    def __init__(self, client: "RelayClient"):
+        self._client = client
+
+    def create(self, *, model, messages, max_tokens=2000, temperature=None,
+               extra_body=None, response_format=None):
+        payload = {"model": model, "messages": messages, "max_tokens": max_tokens}
+        if temperature is not None:
+            payload["temperature"] = temperature
+        if response_format is not None:
+            payload["response_format"] = response_format
+        if extra_body:
+            payload.update(extra_body)
+        return relay_submit(self._client._user_key, payload, self._client._api_base)
+
+
+class _RelayChat:
+    def __init__(self, client: "RelayClient"):
+        self.completions = _RelayCompletions(client)
+
+
+class RelayClient:
+    """中转客户端：请求体入队 → APP 代发（用户 Key，本地资产填充）→ 回传。
+    用法与 _CompatClient 一致（chat.completions.create），模块零改动。"""
+
+    def __init__(self, user_key: str, api_base: str = "https://api.deepseek.com/v1"):
+        self._user_key = user_key
+        self._api_base = api_base.rstrip("/")
+        self.chat = _RelayChat(self)
