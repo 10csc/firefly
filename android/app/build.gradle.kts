@@ -78,8 +78,8 @@ android {
         applicationId = "com.firefly.android"
         minSdk = 26
         targetSdk = 35
-        versionCode = 800
-        versionName = "0.8.0"
+        versionCode = 801
+        versionName = "0.7.2"
         ndk {
             // 真机 arm64 + 模拟器 x86_64（Python 3.12 仅支持 64 位）
             abiFilters += listOf("arm64-v8a", "x86_64")

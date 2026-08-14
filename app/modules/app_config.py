@@ -123,7 +123,7 @@ PORT = 8765
 #   4. package/firefly.iss 的 AppVersion
 # 用 tools/check_version.py 一键校验四者一致；格式 x.y.z 纯数字点分，
 # 禁止 -beta/-rc 后缀（Gitee 无 prerelease 概念，后缀会污染 releases/latest）。
-APP_VERSION = "0.8.0"
+APP_VERSION = "0.7.2"
 API_BASE = "https://api.deepseek.com/v1"
 # OpenCode Go 兼容端点（OpenAI 兼容 chat/completions，模型 ID 与 DeepSeek 一致）
 GO_BASE = "https://opencode.ai/zen/go/v1"

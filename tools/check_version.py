@@ -67,18 +67,19 @@ for name, v in versions.items():
         print(f"  X {name}: '{v}' 不符合 x.y.z 纯数字格式（禁止 -beta/-rc 后缀）")
         ok = False
 
-# versionCode 一致性（发版同步第 5 处）：versionCode = major*10000 + minor*100 + patch
-# 规则一次定死：0.7.1 → 701，1.0.0 → 10000，单调递增，安卓覆盖升级依赖
-if versions.get("android versionName") and versions.get("android versionCode"):
+# versionCode 一致性：安卓覆盖升级要求单调递增。
+# 历史最大值 800（0.8.0 整合版曾发布装机）；2026-08-14 起版本号回退显示 0.7.2，
+# versionCode 不再按 versionName 映射（0.7.2 的 702 < 800 会导致无法覆盖安装），
+# 改为校验：versionCode > PREV_VERSION_CODE（发版后手动更新本常量）。
+PREV_VERSION_CODE = 800
+if versions.get("android versionCode"):
     try:
         vc = int(versions["android versionCode"])
-        mj, mi, pt = (int(x) for x in versions["android versionName"].split("."))
-        expected = mj * 10000 + mi * 100 + pt
-        if vc != expected:
-            print(f"  X android versionCode={vc} 与映射规则不符（{versions['android versionName']} 应为 {expected}）")
+        if vc <= PREV_VERSION_CODE:
+            print(f"  X android versionCode={vc} 未递增（须 > {PREV_VERSION_CODE}，否则无法覆盖安装）")
             ok = False
     except ValueError:
-        print("  X android versionCode/versionName 解析失败")
+        print("  X android versionCode 解析失败")
         ok = False
 
 print("\n结果:", "PASS 可发布" if ok else "FAIL 禁止发布")
