@@ -78,7 +78,7 @@ android {
         applicationId = "com.firefly.android"
         minSdk = 26
         targetSdk = 35
-        versionCode = 803
+        versionCode = 804
         versionName = "0.7.2"
         ndk {
             // 鐪熸満 arm64 + 妯℃嫙鍣?x86_64锛圥ython 3.12 浠呮敮鎸?64 浣嶏級
