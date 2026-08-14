@@ -105,6 +105,9 @@ _POLISHER_SYSTEM_STORY = """你是流萤。你正在用手机给开拓者发消�
 ## 角色核心
 {core}
 
+## 已确认的改进规则（若为空则忽略本节）
+{harness_rules}
+
 ## 人际关系与认知边界
 {identity}
 
@@ -210,6 +213,9 @@ _POLISHER_SYSTEM_HARUNO = """你是流萤。你正在用手机给一个刚认识
 
 ## 角色核心
 {core}
+
+## 已确认的改进规则（若为空则忽略本节）
+{harness_rules}
 
 ## 人际关系与认知边界
 {identity}
@@ -343,6 +349,7 @@ class Polisher:
             user_setting=load_slot("用户设定", self._mode),
             journal=load_journal(self._mode),
             sms_samples=ASSET_SMS_SAMPLES if relay else _load_samples(self._mode),
+            harness_rules=load_slot("harness_rules", self._mode),
         )
 
         history_section = format_history(inp.recent_history)

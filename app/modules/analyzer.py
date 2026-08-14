@@ -80,6 +80,9 @@ _ANALYZER_SYSTEM = """你是一个分析助手。你的任务是在流萤回复�
 ## 用户补充的剧情设定（与核心设定同等权威）
 {user_setting}
 
+## 已确认的改进规则（若为空则忽略本节）
+{harness_rules}
+
 {story_extra}
 
 ## 分析任务
@@ -156,6 +159,7 @@ class Analyzer:
 
         stable = _ANALYZER_SYSTEM.format(
             core=core, identity=identity, user_setting=user_setting, story_extra=story_extra,
+            harness_rules=load_slot("harness_rules", self._mode),
         )
 
         # 历史格式化复用 llm_base.format_history（含 system 行为行与主动标记——

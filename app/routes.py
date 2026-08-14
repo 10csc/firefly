@@ -613,6 +613,53 @@ def character_file_update(h):
         h._json({"ok": False, "error": f"保存失败: {e}"})
 
 
+# ── 行为改进（harness P2）：候选批准 / 忽略 / 回滚 ──
+# 权限模型：候选由优化器离线生成（pending），这里的端点只做「人批准」与回滚。
+# 服务器版按 user context 天然 per-user 隔离；apply 前 registry 会再跑一次静态校验。
+
+def prompt_candidates(h):
+    mode = _query_mode(h)
+    try:
+        from modules.prompt_registry import get_status
+        st = get_status(mode)
+        h._json({"ok": True, **st})
+    except Exception as e:
+        h._json({"ok": False, "error": f"读取候选失败: {e}"})
+
+
+def prompt_apply(h):
+    body = _read_json(h)
+    mode = _body_mode(body)
+    try:
+        from modules.prompt_registry import apply
+        r = apply(mode)
+        h._json(r)
+    except Exception as e:
+        h._json({"ok": False, "error": f"应用失败: {e}"})
+
+
+def prompt_dismiss(h):
+    body = _read_json(h)
+    mode = _body_mode(body)
+    try:
+        from modules.prompt_registry import dismiss
+        r = dismiss(mode)
+        h._json(r)
+    except Exception as e:
+        h._json({"ok": False, "error": f"忽略失败: {e}"})
+
+
+def prompt_rollback(h):
+    body = _read_json(h)
+    mode = _body_mode(body)
+    try:
+        from modules.prompt_registry import rollback
+        r = rollback(mode)
+        h._json(r)
+    except Exception as e:
+        h._json({"ok": False, "error": f"回滚失败: {e}"})
+
+
 def undo(h):
     body = _read_json(h)
     mode = _body_mode(body)
@@ -626,6 +673,117 @@ def undo(h):
         h._json({"ok": True, "removed_turn": 1, "files_removed": removed})
     else:
         h._json({"ok": False, "error": "没有可撤回的轮次"})
+
+
+# ── 反馈采集（harness P1）────────────────────────────
+# 定位：失败案例采样器，不是投票计分器。计数不作质量统计，
+# 👎 的价值在上下文快照（归因器原料），👍 是风格样本来源。
+_FEEDBACK_LABELS = ("人设崩了", "记错了", "重复", "太冷淡", "太黏", "不像她", "其他")
+_FEEDBACK_REASON_MAX = 200       # 理由长度上限（字符）
+_FEEDBACK_SNAPSHOT_TURNS = 8     # 上下文快照轮数
+
+
+def feedback(h):
+    body = _read_json(h)
+    mode = _body_mode(body)
+    verdict = body.get("verdict")
+    if verdict not in ("like", "dislike"):
+        h._json({"ok": False, "error": "verdict 必须是 like 或 dislike"}); return
+    label = (body.get("reason_label") or "").strip()
+    if label and label not in _FEEDBACK_LABELS:
+        h._json({"ok": False, "error": "未知的反馈标签"}); return
+    text = (body.get("reason_text") or "").strip()[:_FEEDBACK_REASON_MAX]
+
+    session = get_session(body.get("session_id", "default"), mode)
+    with session["lock"]:
+        turn = int(getattr(session["context"], "turn_count", 0) or 0)
+        snapshot = [
+            {"role": str(m.get("role", "")), "content": str(m.get("content", ""))[:_FEEDBACK_SNAPSHOT_TURNS * 25]}
+            for m in session["context"].get_recent(_FEEDBACK_SNAPSHOT_TURNS)
+        ]
+
+    entry = {
+        "time": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "mode": mode,
+        "turn": turn,
+        "verdict": verdict,
+        "reason_label": label,
+        "reason_text": text,
+        "context": snapshot,
+    }
+    try:
+        fp = cfg.mode_data_dir(mode) / "feedback.jsonl"
+        fp.parent.mkdir(parents=True, exist_ok=True)
+        with open(fp, "a", encoding="utf-8") as f:
+            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+        h._json({"ok": True})
+    except Exception as e:
+        h._json({"ok": False, "error": f"反馈保存失败: {e}"})
+
+
+# ── 换一条（harness P1）────────────────────────────
+# 复用 undo 的轮次移除 + 完整流水线重跑：实现简单、复用全部逻辑，
+# 且能沉淀 (选中, 落选) 偏好对——比纯文本理由更可信的训练信号。
+def reroll(h):
+    client = cfg.get_client()
+    if not client:
+        h._json({"ok": False, "error": "请先设置 API Key", "need_key": True}); return
+    if cfg.relay_needs_key():
+        h._json({"ok": False, "error": "请先设置 API Key", "need_key": True}); return
+
+    body = _read_json(h)
+    session_id = body.get("session_id", "default")
+    mode = _body_mode(body)
+
+    from modules.proactive import reply_lock, reply_unlock
+    reply_lock(mode)
+    try:
+        session = get_session(session_id, mode)
+        with session["lock"]:
+            popped = session["context"].pop_last_turn()
+            if popped is None:
+                h._json({"ok": False, "error": "没有可重来的回复"}); return
+            user_msg, old_reply = popped
+            if user_msg == "__proactive__":
+                h._json({"ok": False, "error": "主动消息暂不支持换一条（可先撤回）"}); return
+            from modules.conversation_store import remove_last_turn
+            remove_last_turn(mode=mode)
+            result = handle_chat(
+                user_msg, session, client,
+                analyzer_model=cfg.config["analyzer_model"],
+                organizer_model=cfg.config["organizer_model"],
+                polisher_model=cfg.config["polisher_model"],
+                retriever_model=cfg.config["retriever_model"],
+                retriever_effort=cfg.config["retriever_effort"],
+                analyzer_effort=cfg.config["analyzer_effort"],
+                polisher_effort=cfg.config["polisher_effort"],
+                organizer_effort=cfg.config["organizer_effort"],
+                retriever_temperature=cfg.config["retriever_temperature"],
+                polisher_temperature=cfg.config["polisher_temperature"],
+                memory_head=session.get("memory_head", ""),
+                hint="",
+                mode=mode,
+            )
+        enriched = _write_replies(result, mode)
+        try:
+            fp = cfg.mode_data_dir(mode) / "preference.jsonl"
+            fp.parent.mkdir(parents=True, exist_ok=True)
+            with open(fp, "a", encoding="utf-8") as f:
+                f.write(json.dumps({
+                    "time": time.strftime("%Y-%m-%d %H:%M:%S"),
+                    "mode": mode,
+                    "turn": int(getattr(session["context"], "turn_count", 0) or 0),
+                    "chosen": [m.get("content", "") for m in enriched if m.get("type") == "text"],
+                    "rejected": old_reply,
+                }, ensure_ascii=False) + "\n")
+        except Exception as e:
+            logger.warning("偏好对落盘失败: %s", e)
+        resp = {"ok": True, "messages": enriched}
+        if result.error_code:
+            resp["error_code"] = result.error_code
+        h._json(resp)
+    finally:
+        reply_unlock(mode)
 
 
 def clear_history(h):
@@ -1454,6 +1612,11 @@ POST_ROUTES = {
     "/sync/upload": sync_upload,
     "/undo": undo,
     "/clear-history": clear_history,
+    "/feedback": feedback,
+    "/chat/reroll": reroll,
+    "/prompt-apply": prompt_apply,
+    "/prompt-dismiss": prompt_dismiss,
+    "/prompt-rollback": prompt_rollback,
 }
 
 GET_ROUTES = {
@@ -1472,6 +1635,7 @@ GET_ROUTES = {
     "/journal": get_journal,
     "/export-data": export_data,
     "/sync/download": sync_download,
+    "/prompt-candidates": prompt_candidates,
     "/assets/index": assets_index,
     "/assets/raw": assets_raw,
 }

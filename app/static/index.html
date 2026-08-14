@@ -37,6 +37,53 @@
 #auth-forms .err{display:none;color:var(--red,#ff7a6b);font-size:0.75em;margin-top:8px;line-height:1.6}
 #auth-forms .err.green{color:var(--green,#7fd9a8)}
 #auth-forms .af-linkbtn{background:none;border:none;padding:0;color:var(--fg-bright);font-size:0.8em;margin-top:10px;cursor:pointer;font-family:inherit}
+/* 回复反馈条 + 理由弹层（harness P1：失败案例采样器） */
+.msg-feedback-bar{display:flex;gap:8px;margin:4px 0 8px 46px;opacity:.72}
+.msg-feedback-bar button{
+  background:transparent;border:1px solid var(--border-mid);border-radius:12px;
+  color:var(--fg-muted);font-size:0.72em;padding:3px 9px;cursor:pointer;font-family:inherit;
+}
+.msg-feedback-bar button:hover{color:var(--fg-bright);border-color:var(--gold-line,#d8b878)}
+.msg-feedback-bar button.done{color:var(--fg-bright);border-color:var(--gold-line,#d8b878);background:var(--gold-glow,rgba(216,184,120,.12))}
+#feedback-reason-mask{position:fixed;inset:0;z-index:120;background:rgba(0,0,0,.55);display:none;align-items:center;justify-content:center}
+#feedback-reason-mask.show{display:flex}
+#feedback-reason-panel{
+  width:min(88vw,420px);max-height:80vh;overflow-y:auto;box-sizing:border-box;
+  background:var(--panel-bg,#14121a);border:1px solid var(--gold-line,#d8b878);border-radius:16px;
+  padding:16px 18px;
+}
+#feedback-reason-panel .fr-title{color:var(--fg-main);font-size:0.95em;font-weight:600;margin-bottom:12px}
+#fr-chips{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px}
+.fr-chip{
+  background:var(--ctrl-bg);border:1px solid var(--border-mid);border-radius:14px;
+  color:var(--fg-muted);font-size:0.78em;padding:5px 12px;cursor:pointer;font-family:inherit;
+}
+.fr-chip.sel{color:var(--fg-bright);border-color:var(--gold-line,#d8b878);background:var(--gold-glow,rgba(216,184,120,.12))}
+#fr-text{
+  width:100%;min-height:64px;box-sizing:border-box;resize:vertical;
+  background:var(--ctrl-bg);border:1px solid var(--border-mid);border-radius:10px;
+  color:var(--fg-main);font-family:inherit;font-size:0.82em;padding:10px 12px;
+}
+#fr-actions{display:flex;justify-content:flex-end;gap:10px;margin-top:14px}
+#fr-actions button{
+  padding:8px 18px;border-radius:16px;border:1px solid var(--border-mid);cursor:pointer;font-family:inherit;
+  background:transparent;color:var(--fg-muted);font-size:0.82em;
+}
+#fr-actions button.primary{background:var(--btn-bg);color:var(--fg-bright);border-color:transparent}
+/* 行为改进（反馈页内）：候选摘要/diff/批准按钮 */
+#harness-box .hb-summary{color:var(--fg-main);font-size:0.82em;margin:6px 0}
+#harness-diff{
+  white-space:pre-wrap;word-break:break-all;background:var(--ctrl-bg);
+  border:1px solid var(--border-mid);border-radius:8px;padding:8px 10px;
+  max-height:180px;overflow-y:auto;font-size:0.76em;margin:8px 0;
+}
+#harness-box .hb-row{display:flex;gap:8px;flex-wrap:wrap}
+#harness-box .hb-btn{
+  padding:6px 14px;border-radius:14px;border:1px solid var(--border-mid);cursor:pointer;
+  background:transparent;color:var(--fg-muted);font-family:inherit;font-size:0.78em;
+}
+#harness-box .hb-btn.primary{background:var(--btn-bg);color:var(--fg-bright);border-color:transparent}
+#harness-box .hb-meta{color:var(--fg-muted);font-size:0.72em;margin-top:6px}
 </style>
 </head>
 <body>
@@ -135,6 +182,23 @@
         <a class="fb-link" href="https://github.com/10csc/firefly/issues" target="_blank" rel="noopener">🐙 GitHub Issue（推荐：提 bug / 建议）</a>
         <div class="fb-item">💬 QQ交流群：<b style="color:var(--fg-main)">1097936258</b></div>
         <div class="fb-item">✉ 邮箱：<a href="mailto:fangliang2604@163.com" style="color:var(--fg-bright)">fangliang2604@163.com</a></div>
+        <div id="harness-box" style="margin-top:18px;padding-top:14px;border-top:1px solid var(--border-mid)">
+            <div style="color:var(--fg-main);font-size:0.9em;font-weight:600">✨ 流萤 · 行为改进</div>
+            <div id="harness-content" style="color:var(--fg-muted);font-size:0.78em;line-height:1.7;margin-top:8px">加载中…</div>
+        </div>
+    </div>
+</div>
+
+<!-- 回复反馈理由弹层（👎 时弹出；标签=归因预分类） -->
+<div id="feedback-reason-mask">
+    <div id="feedback-reason-panel">
+        <div class="fr-title">这条回复哪里不对？</div>
+        <div id="fr-chips"></div>
+        <textarea id="fr-text" maxlength="200" placeholder="（可选）一句话说说哪里不对，比如：她不该提自己的身体"></textarea>
+        <div id="fr-actions">
+            <button id="fr-cancel" type="button">取消</button>
+            <button id="fr-submit" type="button" class="primary">提交</button>
+        </div>
     </div>
 </div>
 

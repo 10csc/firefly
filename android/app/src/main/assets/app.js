@@ -330,7 +330,7 @@ window.closeSettings = closeSettings;
 
 // 反馈面板（首页 ✉ 打开）
 const feedbackPanel = document.getElementById("feedback-panel");
-function openFeedback() { feedbackPanel.classList.add("show"); }
+function openFeedback() { feedbackPanel.classList.add("show"); loadHarnessStatus(); }
 function closeFeedback() { feedbackPanel.classList.remove("show"); }
 window.openFeedback = openFeedback;
 window.closeFeedback = closeFeedback;
@@ -821,10 +821,14 @@ function renderMessages(messages, who, data) {
     // 逐条消息加载：先显示三圆点占位，再替换为真实内容（消息含文本与表情包）
     // 加载时长按字数 0.7~1.5s（表情包按最短 0.7s）；消息之间留 0.5s 空白模拟游戏节奏
     let seq = 0;
+    let lastRow = null;
     const showNext = () => {
         if (gen !== _modeGen) { _rendering = false; return; }   // 模式已切换：丢弃剩余动画
         if (seq >= messages.length) {
             _rendering = false;   // 渲染动画完成
+            if (who === "firefly" && lastRow && messages.some(m => m.type === "text" || !m.type)) {
+                addFeedbackBar(lastRow);   // 本轮回复的反馈条（挂在最后一条气泡后）
+            }
             return;
         }
         const msg = messages[seq++];
@@ -834,14 +838,209 @@ function renderMessages(messages, who, data) {
         setTimeout(() => {
             if (gen !== _modeGen) { typingRow.remove(); _rendering = false; return; }
             typingRow.remove();
-            if (msg.type === "sticker") addSticker(msg.path, who);
-            else if (msg.type === "narration") addNarration(msg.text, msg.style);
-            else addTextMessage(msg.content, who);
+            if (msg.type === "sticker") lastRow = addSticker(msg.path, who);
+            else if (msg.type === "narration") lastRow = addNarration(msg.text, msg.style);
+            else lastRow = addTextMessage(msg.content, who);
             setTimeout(showNext, 500);   // 消息间隔：0.5s 空白
         }, loadMs);
     };
     showNext();
 }
+
+// ═══════════════════════════════════════════
+// 回复反馈（harness P1）：👍 / 👎 / 换一条
+// 定位：失败案例采样器，不是投票计分器（反馈计数不作质量统计）
+// ═══════════════════════════════════════════
+const FEEDBACK_LABELS = ["人设崩了", "记错了", "重复", "太冷淡", "太黏", "不像她", "其他"];
+
+function addFeedbackBar(lastRow) {
+    const bar = document.createElement("div");
+    bar.className = "msg-feedback-bar";
+    const mk = (label, v, title) => {
+        const b = document.createElement("button");
+        b.type = "button";
+        b.textContent = label;
+        b.title = title;
+        b.addEventListener("click", () => {
+            if (bar.dataset.done) return;
+            if (v === "like") sendFeedback("like", bar);
+            else if (v === "dislike") openFeedbackReason(bar);
+            else rerollLast(bar);
+        });
+        return b;
+    };
+    bar.appendChild(mk("👍", "like", "这句像她"));
+    bar.appendChild(mk("👎", "dislike", "这条不对"));
+    bar.appendChild(mk("↻ 换一条", "reroll", "让流萤重新想一条"));
+    lastRow.after(bar);
+}
+
+function _markFeedbackDone(bar, toast) {
+    bar.dataset.done = "1";
+    [...bar.children].forEach(b => { b.disabled = true; });
+    if (toast) showToast(toast);
+}
+
+async function sendFeedback(verdict, bar, label = "", text = "") {
+    try {
+        const resp = await fetch("/feedback", {
+            method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({
+                session_id: SESSION_ID, mode: CURRENT_MODE,
+                verdict, reason_label: label, reason_text: text,
+            }),
+        });
+        const data = await resp.json();
+        if (data.ok) _markFeedbackDone(bar, verdict === "like" ? "收到！" : "已记录，流萤会慢慢改进");
+        else showToast(data.error || "反馈失败");
+    } catch (e) {
+        showToast("反馈发送失败，请稍后再试");
+    }
+}
+
+let _frBar = null;
+let _frLabel = "";
+function openFeedbackReason(bar) {
+    _frBar = bar;
+    _frLabel = "";
+    const chipsEl = document.getElementById("fr-chips");
+    chipsEl.innerHTML = "";
+    FEEDBACK_LABELS.forEach(lb => {
+        const c = document.createElement("button");
+        c.type = "button";
+        c.className = "fr-chip";
+        c.textContent = lb;
+        c.addEventListener("click", () => {
+            _frLabel = lb;
+            [...chipsEl.children].forEach(x => x.classList.toggle("sel", x === c));
+        });
+        chipsEl.appendChild(c);
+    });
+    document.getElementById("fr-text").value = "";
+    document.getElementById("feedback-reason-mask").classList.add("show");
+}
+function closeFeedbackReason() {
+    document.getElementById("feedback-reason-mask").classList.remove("show");
+    _frBar = null;
+    _frLabel = "";
+}
+function submitFeedbackReason() {
+    const bar = _frBar;
+    if (!bar) return;
+    const text = document.getElementById("fr-text").value.trim().slice(0, 200);
+    const label = _frLabel;
+    closeFeedbackReason();
+    sendFeedback("dislike", bar, label, text);
+}
+
+async function rerollLast(bar) {
+    if (bar) [...bar.children].forEach(b => { b.disabled = true; });
+    const statusEl = document.querySelector("#header .status");
+    const oldStatus = statusEl ? statusEl.textContent : "";
+    if (statusEl) statusEl.textContent = "流萤正在重新想…";
+    try {
+        const resp = await fetch("/chat/reroll", {
+            method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({ session_id: SESSION_ID, mode: CURRENT_MODE }),
+        });
+        const data = await resp.json();
+        if (data.need_key) { openSettings(); return; }
+        if (data.ok && data.messages) {
+            _modeGen++;   // 作废飞行中的渲染任务
+            messagesEl.innerHTML = "";
+            _hasMore = false;
+            await loadHistory();   // 历史重载：DOM 无轮次标记，逐条替换易错位
+            showToast("流萤重新想了一条");
+        } else {
+            showToast(data.error || "换一条失败");
+        }
+    } catch (e) {
+        showToast("换一条失败，请稍后再试");
+    } finally {
+        if (statusEl) statusEl.textContent = oldStatus;
+    }
+}
+document.getElementById("fr-cancel").addEventListener("click", closeFeedbackReason);
+document.getElementById("fr-submit").addEventListener("click", submitFeedbackReason);
+document.getElementById("feedback-reason-mask").addEventListener("click", (e) => {
+    if (e.target.id === "feedback-reason-mask") closeFeedbackReason();
+});
+
+// ═══════════════════════════════════════════
+// 行为改进（harness P2）：候选批准 / 忽略 / 回滚
+// 入口：首页 ✉ 反馈页底部（全模式可见，不占设置面板）
+// ═══════════════════════════════════════════
+async function loadHarnessStatus() {
+    const box = document.getElementById("harness-content");
+    if (!box) return;
+    box.innerHTML = "加载中…";
+    let data;
+    try {
+        const resp = await fetch("/prompt-candidates?mode=" + encodeURIComponent(CURRENT_MODE));
+        data = await resp.json();
+    } catch (e) {
+        box.innerHTML = "读取失败，请稍后再试";
+        return;
+    }
+    if (!data.ok) { box.innerHTML = "读取失败：" + (data.error || "未知错误"); return; }
+
+    let html = "";
+    if (data.active_version > 0) {
+        html += `<div class="hb-meta">当前生效：v${data.active_version}</div>`;
+    }
+    if (data.has_pending && data.report) {
+        const sum = data.report.summary || "有新的改进规则待你确认";
+        html += `<div class="hb-summary">✨ ${sum}</div>`;
+        html += `<div id="harness-diff">${escapeHtml(data.diff || "")}</div>`;
+        if (data.report.judge) {
+            const j = data.report.judge;
+            html += `<div class="hb-meta">回归评分：${j.score ?? "—"}（${j.note ?? ""}）</div>`;
+        }
+        html += `<div class="hb-row">
+            <button class="hb-btn" type="button" onclick="dismissCandidate()">忽略</button>
+            <button class="hb-btn primary" type="button" onclick="applyCandidate()">应用</button>
+        </div>`;
+    } else if (data.active_version === 0) {
+        html = "暂无可确认的改进。<br>聊天时对回复点 👍 / 👎，流萤会慢慢学会。";
+    } else {
+        html = "暂无新的改进候选。";
+    }
+    if (data.active_version > 0) {
+        html += `<div class="hb-row" style="margin-top:8px">
+            <button class="hb-btn" type="button" onclick="rollbackCandidate()">撤销上次改进</button>
+        </div>`;
+    }
+    box.innerHTML = html;
+}
+function escapeHtml(s) {
+    return String(s || "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+}
+async function _harnessPost(path) {
+    try {
+        const resp = await fetch(path, {
+            method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({ mode: CURRENT_MODE }),
+        });
+        const data = await resp.json();
+        if (data.ok) {
+            showToast(path.includes("apply") ? "已应用，流萤会按新规则说话" : "已处理");
+            await loadHarnessStatus();
+        } else {
+            showToast(data.error || "操作失败");
+        }
+    } catch (e) {
+        showToast("操作失败，请稍后再试");
+    }
+}
+function applyCandidate() { _harnessPost("/prompt-apply"); }
+function dismissCandidate() { _harnessPost("/prompt-dismiss"); }
+function rollbackCandidate() { _harnessPost("/prompt-rollback"); }
+window.applyCandidate = applyCandidate;
+window.dismissCandidate = dismissCandidate;
+window.rollbackCandidate = rollbackCandidate;
 
 // ═══════════════════════════════════════════
 // 界面大小调节（消息/头像/气泡缩放，设置面板滑条）
