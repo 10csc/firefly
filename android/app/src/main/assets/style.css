@@ -234,9 +234,7 @@ body {
     30%      { opacity: 1; transform: translateY(-2px); }
 }
 
-/* ═══ 聊天气泡主题（纯 CSS，替代旧 border-image 图片方案）═══
-   主题变量挂在 #messages 容器类（fb-*/ub-*）上，预览卡用 demo-* 共享。
-   尾巴 ::before 旋转方块，颜色取 --bub-tail（纯色，渐变主题取其主色）。 */
+/* ═══ 消息气泡尾巴（默认样式；0.7.2 起聊天气泡主题功能已移除）═══ */
 .msg-row .bubble::before {
     content: ""; position: absolute; bottom: 10px;
     width: 11px; height: 11px;
@@ -246,69 +244,6 @@ body {
 }
 .msg-row.firefly .bubble::before { left: -5px; }
 .msg-row.user .bubble::before { right: -5px; }
-
-/* 主题应用规则（双侧同主题色，圆角镜像） */
-#messages.fb-culture .msg-row .bubble,
-#messages.fb-rabbit .msg-row .bubble,
-#messages.fb-trotter .msg-row .bubble,
-#messages.fb-tavern .msg-row .bubble,
-#messages.fb-cinema .msg-row .bubble,
-#messages.fb-warmth .msg-row .bubble {
-    background: var(--bub-bg); color: var(--bub-fg);
-    border: var(--bub-border, 1px solid var(--ctrl-bg));
-    border-radius: var(--bub-rf);
-    box-shadow: var(--bub-shadow, none);
-}
-#messages.fb-culture .msg-row.user .bubble,
-#messages.fb-rabbit .msg-row.user .bubble,
-#messages.fb-trotter .msg-row.user .bubble,
-#messages.fb-tavern .msg-row.user .bubble,
-#messages.fb-cinema .msg-row.user .bubble,
-#messages.fb-warmth .msg-row.user .bubble {
-    border-radius: var(--bub-ru);
-}
-
-/* 1. 星体培养皿（科技/中性，默认） */
-.fb-culture, .demo-culture {
-    --bub-bg: #3a4155; --bub-fg: #d8d2c6; --bub-tail: #3a4155;
-    --bub-rf: 14px 16px 16px 16px; --bub-ru: 16px 14px 16px 16px;
-}
-/* 2. 兔子在哪里？（可爱暖粉） */
-.fb-rabbit, .demo-rabbit {
-    --bub-bg: #f2c6d0; --bub-fg: #7a4a55; --bub-tail: #f2c6d0;
-    --bub-rf: 18px 18px 18px 8px; --bub-ru: 18px 18px 8px 18px;
-}
-/* 3. 次元扑满（活泼橙黄） */
-.fb-trotter, .demo-trotter {
-    --bub-bg: #f0b860; --bub-fg: #5c3d17; --bub-tail: #f0b860;
-    --bub-rf: 16px 12px 16px 16px; --bub-ru: 12px 16px 16px 16px;
-}
-/* 4. 怪物酒馆（暗色酷紫） */
-.fb-tavern, .demo-tavern {
-    --bub-bg: #2a2340; --bub-fg: #cfc4e8; --bub-tail: #2a2340;
-    --bub-rf: 8px 8px 8px 8px; --bub-ru: 8px 8px 8px 8px;
-}
-/* 5. 影城逐梦记（文艺冷灰） */
-.fb-cinema, .demo-cinema {
-    --bub-bg: #e8e6e0; --bub-fg: #4a4a52; --bub-tail: #e8e6e0;
-    --bub-border: 1px solid rgba(90,90,100,0.25);
-    --bub-rf: 10px 18px 18px 18px; --bub-ru: 18px 10px 18px 18px;
-}
-/* 6. 光阴莫负（温柔暖棕渐变） */
-.fb-warmth, .demo-warmth {
-    --bub-bg: linear-gradient(150deg, #8a5a3b, #6e4630); --bub-fg: #f4e3d0; --bub-tail: #7d5038;
-    --bub-shadow: 0 2px 8px var(--carousel-bg);
-    --bub-rf: 18px 18px 18px 8px; --bub-ru: 18px 18px 8px 18px;
-}
-
-/* 气泡选择网格里的预览卡（demo 类共享主题变量） */
-.bubble-demo {
-    width: 100%; min-height: 50px; border-radius: 10px;
-    display: flex; align-items: center; justify-content: center;
-    font-size: 0.7em; letter-spacing: 1px;
-    background: var(--bub-bg); color: var(--bub-fg);
-    border: var(--bub-border, none);
-}
 
 .msg-row .time { font-size: 0.65em; color: var(--dot-bg); flex-shrink: 0; margin-bottom: 4px; }
 /* 时间分割线 */
@@ -489,37 +424,6 @@ body {
 #config-msg, #char-file-msg { color: var(--fg-muted); font-size: 0.75em; margin-top: 6px; }
 .btn-row { display: flex; gap: 8px; margin-top: 8px; }
 .btn-row button { flex: 1; }
-
-/* ═══════════════════════════════════════════ */
-/* 气泡网格 */
-/* ═══════════════════════════════════════════ */
-#bubble-grid {
-    display: flex; flex-direction: column; gap: 14px;
-}
-.bubble-section {
-    display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 10px;
-}
-.bubble-label {
-    grid-column: 1 / -1;
-    color: var(--fg-muted); font-size: 0.75em; margin-bottom: 2px;
-}
-.bubble-card {
-    text-align: center; padding: 8px; border-radius: 10px;
-    border: 2px solid var(--ctrl-bg); cursor: pointer;
-    background: var(--ctrl-bg-3);
-}
-.bubble-card:hover { border-color: rgba(200,180,160,0.4); }
-.bubble-card.selected { border-color: rgba(140,160,200,0.6); background: rgba(140,160,200,0.1); }
-.bubble-card img {
-    width: 100%; height: 50px; object-fit: contain; border-radius: 4px;
-}
-.bubble-card span {
-    display: block; color: var(--fg-bright); font-size: 0.7em; margin-top: 4px;
-}
-.bubble-none {
-    width: 100%; height: 50px; display: flex; align-items: center; justify-content: center;
-    color: var(--fg-muted); font-size: 0.9em;
-}
 
 /* ═══════════════════════════════════════════ */
 /* 状态 / 表情包 / 休息 保持不变 */

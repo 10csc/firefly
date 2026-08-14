@@ -480,86 +480,10 @@ document.querySelectorAll(".menu-tab").forEach(btn => {
         const target = document.getElementById("tab-" + btn.dataset.tab);
         if (target) target.classList.add("active");
         if (btn.dataset.tab === "char") { loadCharFiles(); loadJournal(); loadUserMemory(); }
-        if (btn.dataset.tab === "bubble") renderBubbleGrid();
         if (btn.dataset.tab === "state") loadStateTab();
         if (btn.dataset.tab === "log") loadRequestLog();
         if (btn.dataset.tab === "pipeline") loadPipeline();
     });
-});
-
-// ═══════════════════════════════════════════
-// 气泡选择（流萤 + 用户各自可选）— 纯 CSS 主题，class 挂在 #messages 容器上
-// ═══════════════════════════════════════════
-const BUBBLES = [
-    { key: "bubble_culture", name: "星体培养皿", cls: "fb-culture" },
-    { key: "bubble_rabbit",  name: "逐兔之夏",   cls: "fb-rabbit" },
-    { key: "bubble_trotter", name: "补天司命",   cls: "fb-trotter" },
-    { key: "bubble_tavern",  name: "孤独的疗愈", cls: "fb-tavern" },
-    { key: "bubble_cinema",  name: "大娱乐家",   cls: "fb-cinema" },
-    { key: "bubble_warmth",  name: "何枝可依",   cls: "fb-warmth" },
-];
-let _fireflyBubble = "none";
-let _userBubble = "none";
-
-function _applyBubbleCls(key, prefix) {
-    const b = BUBBLES.find(x => x.key === key);
-    BUBBLES.forEach(x => messagesEl.classList.remove(x.cls));
-    if (b) messagesEl.classList.add(b.cls);
-    return b ? key : "none";
-}
-
-function applyFireflyBubble(key) {
-    _fireflyBubble = _applyBubbleCls(key);
-    try { localStorage.setItem("firefly-bubble2", _fireflyBubble); } catch(e) {}
-}
-
-function applyUserBubble(key) {
-    // 用户侧与流萤侧共用主题色（镜像圆角由 CSS 处理），仅记录选择状态
-    _userBubble = BUBBLES.some(x => x.key === key) ? key : "none";
-    try { localStorage.setItem("user-bubble", _userBubble); } catch(e) {}
-}
-
-function renderBubbleGrid() {
-    const grid = document.getElementById("bubble-grid");
-    if (!grid) return;
-    grid.innerHTML = "";
-    // 流萤气泡
-    const ff = document.createElement("div");
-    ff.className = "bubble-section";
-    ff.innerHTML = '<div class="bubble-label">流萤的聊天气泡</div>' +
-        `<div class="bubble-card ${_fireflyBubble === 'none' ? 'selected' : ''}" onclick="pickFireflyBubble('none')">
-            <div class="bubble-none">默认</div><span>无气泡</span></div>` +
-        BUBBLES.map(b => `
-        <div class="bubble-card ${_fireflyBubble === b.key ? 'selected' : ''}" onclick="pickFireflyBubble('${b.key}')">
-            <div class="bubble-demo ${b.cls.replace('fb-', 'demo-')}">${b.name}</div>
-            <span>${b.name}</span>
-        </div>`).join("");
-    grid.appendChild(ff);
-    // 用户气泡
-    const us = document.createElement("div");
-    us.className = "bubble-section";
-    us.innerHTML = '<div class="bubble-label">我的聊天气泡</div>' +
-        `<div class="bubble-card ${_userBubble === 'none' ? 'selected' : ''}" onclick="pickUserBubble('none')">
-            <div class="bubble-none">默认</div><span>无气泡</span></div>` +
-        BUBBLES.map(b => `
-        <div class="bubble-card ${_userBubble === b.key ? 'selected' : ''}" onclick="pickUserBubble('${b.key}')">
-            <div class="bubble-demo ${b.cls.replace('fb-', 'demo-')}">${b.name}</div>
-            <span>${b.name}</span>
-        </div>`).join("");
-    grid.appendChild(us);
-}
-
-function pickFireflyBubble(key) { applyFireflyBubble(key); renderBubbleGrid(); }
-function pickUserBubble(key) { applyUserBubble(key); renderBubbleGrid(); }
-window.pickFireflyBubble = pickFireflyBubble;
-window.pickUserBubble = pickUserBubble;
-
-// 加载保存的气泡
-document.addEventListener("DOMContentLoaded", () => {
-    let fb = null, ub = null;
-    try { fb = localStorage.getItem("firefly-bubble2"); ub = localStorage.getItem("user-bubble"); } catch(e) {}
-    applyFireflyBubble(fb || "none");   // 默认无气泡（旧 key 弃用，避免历史残留）
-    applyUserBubble(ub || "none");
 });
 
 // ═══════════════════════════════════════════
