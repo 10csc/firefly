@@ -57,3 +57,10 @@ android_server/firefly-server.apk
 
 # 服务器后端（四部分之一，不提交 git/github，防泄露）
 /server/
+
+# 0.8.0 整合追加（2026-08-14）
+_harden/
+_trash/
+_research/
+verify/
+tests/*.db

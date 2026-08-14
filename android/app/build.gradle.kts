@@ -1,4 +1,4 @@
-﻿import org.gradle.api.tasks.Sync
+import org.gradle.api.tasks.Sync
 import java.util.Properties
 
 plugins {
@@ -28,6 +28,29 @@ val syncBackend = tasks.register<Sync>("syncBackend") {
 tasks.named("preBuild") { dependsOn(syncBackend) }
 tasks.matching { it.name.contains("PythonSources") }.configureEach { dependsOn(syncBackend) }
 
+// 前端打包 assets 同步（0.8.0 双模式）：服务器模式 file:// 加载统一前端。
+// 源 = app/static（唯一源）+ app/assets 子集（背景/字体/图标）+ server/frontend 的
+// config.js（服务器地址单点，壳按模式拦截注入 FIREFLY_MODE）+ login.html（注册登录页）。
+// 可用 tools/sync_frontends.py 手动同步（--check 校验漂移），本任务构建时自动同步。
+val syncFrontendAssets = tasks.register<Sync>("syncFrontendAssets") {
+    into(layout.projectDirectory.dir("src/main/assets"))
+    from("../../app/static") {
+        exclude("config.js")   // 安卓 assets 用服务器版 config.js（本地模式页面由引擎 HTTP 提供）
+    }
+    from("../../app/assets") {
+        into("assets")
+        include(
+            "background.jpg", "StarRailFont.ttf",
+            "icon_home.png", "icon_rest.png", "icon_trash.png", "icon_undo.png",
+            "notice_speaker.png", "theme_moon.png", "theme_sun.png",
+        )
+    }
+    from("../../server/frontend") {
+        include("config.js", "login.html")
+    }
+}
+tasks.named("preBuild") { dependsOn(syncFrontendAssets) }
+
 chaquopy {
     defaultConfig {
         version = "3.12"
@@ -55,8 +78,8 @@ android {
         applicationId = "com.firefly.android"
         minSdk = 26
         targetSdk = 35
-        versionCode = 701
-        versionName = "0.7.1"
+        versionCode = 800
+        versionName = "0.8.0"
         ndk {
             // 真机 arm64 + 模拟器 x86_64（Python 3.12 仅支持 64 位）
             abiFilters += listOf("arm64-v8a", "x86_64")

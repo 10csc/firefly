@@ -312,7 +312,7 @@ print("=== F. update_download ===")
 
 # F1 正常（apk）：下载成功 → ok=True + path 存在 + 内容正确
 gt_apk2 = [{"name": "firefly.apk", "browser_download_url": "https://gitee.com/dl/firefly.apk"}]
-apk_bytes = b"APK-BINARY-CONTENT-1234567890"
+apk_bytes = b"A" * 200_000   # 超过最小文件校验阈值（100KB），模拟真实 APK 大小
 class _FakeRespBytes(FakeResp):
     def __init__(self, data):
         super().__init__(data)
@@ -380,14 +380,13 @@ try:
 finally:
     urllib.request.urlopen = _orig_open
 
-# F4 边界：kind 非法值（非 exe/apk）→ 按 apk 匹配（实现行为：非 exe 均走 apk 分支）
+# F4 边界：kind 非法值（非 exe/apk）→ 直接拒绝（轻量加固：kind 白名单，不再静默按 apk 处理）
 urllib.request.urlopen = _open_update
 try:
     h = FakeH({"kind": "weird"})
     routes.update_download(h)
-    check("F4 非法 kind→按 apk 处理（有下载行为）", h.out.get("ok") is True)
-    if h.out.get("ok") and h.out.get("path"):
-        os.unlink(h.out["path"])
+    check("F4 非法 kind→拒绝（ok=False 明确错误）",
+          h.out == {"ok": False, "error": "不支持的资产类型"})
 finally:
     urllib.request.urlopen = _orig_open
 
@@ -400,7 +399,7 @@ def _open_exe_update(req, timeout=600.0):
     if "/releases/latest" in url and "github.com" in url:
         return FakeResp(json.dumps(build_release("v0.8.0", [])).encode("utf-8"))
     if "gitee.com/dl/setup.exe" in url:
-        return FakeResp(b"SETUP-EXE")
+        return FakeResp(b"B" * 200_000)   # 超过最小文件校验阈值
     raise FileNotFoundError(url)
 urllib.request.urlopen = _open_exe_update
 try:
@@ -409,6 +408,57 @@ try:
     check("F5 非 frozen→不 installing（无安装器启动）", h.out.get("installing") is None)
     if h.out.get("ok") and h.out.get("path"):
         os.unlink(h.out["path"])
+finally:
+    urllib.request.urlopen = _orig_open
+
+# F6 错误路径：资产 URL 为 http → 拒绝（必须 https）
+def _open_http_asset(req, timeout=600.0):
+    url = req.full_url
+    if "/releases/latest" in url:
+        return FakeResp(json.dumps(build_release("v0.8.0",
+            [{"name": "firefly.apk", "browser_download_url": "http://gitee.com/dl/firefly.apk"}])).encode("utf-8"))
+    raise FileNotFoundError(url)
+urllib.request.urlopen = _open_http_asset
+try:
+    h = FakeH({"kind": "apk"})
+    routes.update_download(h)
+    check("F6 http 资产 URL→拒绝", h.out.get("ok") is False and "https" in h.out.get("error", ""))
+finally:
+    urllib.request.urlopen = _orig_open
+
+# F7 错误路径：资产 URL 域名不在白名单 → 拒绝（防 release API 被投毒指向第三方）
+def _open_evil_asset(req, timeout=600.0):
+    url = req.full_url
+    if "/releases/latest" in url:
+        return FakeResp(json.dumps(build_release("v0.8.0",
+            [{"name": "firefly.apk", "browser_download_url": "https://evil.com/dl/firefly.apk"}])).encode("utf-8"))
+    raise FileNotFoundError(url)
+urllib.request.urlopen = _open_evil_asset
+try:
+    h = FakeH({"kind": "apk"})
+    routes.update_download(h)
+    check("F7 非白名单域名→拒绝", h.out.get("ok") is False and "白名单" in h.out.get("error", ""))
+finally:
+    urllib.request.urlopen = _orig_open
+
+# F8 错误路径：Content-Length 超过上限 → 拒绝（防无节制下载）
+class _FakeRespHuge(FakeResp):
+    def __init__(self, data, cl):
+        super().__init__(data)
+        self.headers = {"Content-Length": str(cl)}
+def _open_huge_asset(req, timeout=600.0):
+    url = req.full_url
+    if "/releases/latest" in url:
+        return FakeResp(json.dumps(build_release("v0.8.0",
+            [{"name": "firefly.apk", "browser_download_url": "https://gitee.com/dl/firefly.apk"}])).encode("utf-8"))
+    if "gitee.com/dl/firefly.apk" in url:
+        return _FakeRespHuge(b"x" * 100, cl=999_999_999)
+    raise FileNotFoundError(url)
+urllib.request.urlopen = _open_huge_asset
+try:
+    h = FakeH({"kind": "apk"})
+    routes.update_download(h)
+    check("F8 Content-Length 超限→拒绝", h.out.get("ok") is False and "下载失败" in h.out.get("error", ""))
 finally:
     urllib.request.urlopen = _orig_open
 

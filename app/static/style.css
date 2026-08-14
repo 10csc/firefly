@@ -70,7 +70,7 @@ body.theme-light #bg { filter: blur(4px) brightness(1.1); }
 
 @font-face {
     font-family: "StarRailFont";
-    src: url("/assets/StarRailFont.ttf") format("truetype");
+    src: url("assets/StarRailFont.ttf") format("truetype");
 }
 * { margin: 0; padding: 0; box-sizing: border-box; }
 /* 去除点击后的蓝色 focus 高亮框（移动端/桌面端统一），输入框用自定义聚焦样式 */
@@ -96,8 +96,16 @@ body {
 #bg {
     position: fixed; top: -2%; left: -2%;
     width: 104%; height: 104%;
-    background: url("/assets/background.jpg") center/cover no-repeat;
+    background: url("assets/background.jpg") center/cover no-repeat;
     filter: blur(4px) brightness(0.6); z-index: 0;
+}
+/* 萤火粒子场：固定定位出流 + 点击穿透（0.8.0 修复：无定位时 canvas 作为流内元素
+   被 JS 撑成全屏，把流内定位的 #app 推出视口——聊天页只见背景、内容"消失"） */
+#firefly-field {
+    position: fixed; inset: 0;
+    width: 100%; height: 100%;
+    z-index: 0;               /* 与 #bg 同级、DOM 在其后 → 背景之上、面板之下 */
+    pointer-events: none;     /* 不拦截任何点击 */
 }
 /* 主面板（手机全宽；桌面断点居中） */
 #app {

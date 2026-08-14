@@ -5,8 +5,11 @@ server 拆分产物：纯函数，零业务依赖。
 """
 
 
-def parse_multipart(handler):
+def parse_multipart(handler, max_bytes: int = 10 * 1024 * 1024):
     """从 POST 请求解析 multipart/form-data。
+
+    Args:
+        max_bytes: 上传体大小上限（默认 10MB 防贴纸滥用；数据导入/账号备份端点传更大值）。
 
     Returns:
         (fields, files) — fields: {name: str 值}，files: {name: {"filename": str, "data": bytes}}
@@ -25,8 +28,8 @@ def parse_multipart(handler):
         return {}, {}
 
     length = int(handler.headers.get("Content-Length", 0))
-    # 上传大小上限 10MB：防大文件撑爆内存/磁盘（本地单用户）
-    if length <= 0 or length > 10 * 1024 * 1024:
+    # 上传大小上限：防大文件撑爆内存/磁盘（默认 10MB；调用方可按端点放宽容许）
+    if length <= 0 or length > max_bytes:
         return {}, {}
     body = handler.rfile.read(length)
     boundary_bytes = ("--" + boundary).encode("utf-8")

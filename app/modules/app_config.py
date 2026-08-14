@@ -17,8 +17,9 @@ from pathlib import Path
 _user_ctx: contextvars.ContextVar = contextvars.ContextVar("firefly_user_ctx", default=None)
 
 
-def set_user_context(user_dir=None, api_key=None, api_base=None) -> contextvars.Token:
-    """设置当前请求的用户上下文，返回 Token（请求结束 reset_user_context 恢复）。"""
+def set_user_context(user_dir=None, api_key=None, api_base=None, proxy=False) -> contextvars.Token:
+    """设置当前请求的用户上下文，返回 Token（请求结束 reset_user_context 恢复）。
+    proxy=True：服务器托管 API 模式（用户不提供 Key，服务器用运营者 Key 直发）。"""
     data = dict(_user_ctx.get() or {})
     if user_dir is not None:
         data["user_dir"] = Path(user_dir)
@@ -26,6 +27,7 @@ def set_user_context(user_dir=None, api_key=None, api_base=None) -> contextvars.
         data["api_key"] = api_key
     if api_base is not None:
         data["api_base"] = api_base
+    data["proxy"] = bool(proxy)
     return _user_ctx.set(data)
 
 
@@ -47,6 +49,48 @@ def user_scope_key() -> str:
     """
     d = _user_ctx_dir()
     return str(d) if d else ""
+
+
+def user_dir_id() -> int:
+    """当前用户 id（= 数据目录名，服务器版；本地版无上下文返回 0）。配额记账用。"""
+    d = _user_ctx_dir()
+    if d is None:
+        return 0
+    try:
+        return int(d.name)
+    except ValueError:
+        return 0
+
+
+def user_has_key() -> bool:
+    """当前请求是否具备可用 Key：服务器版看用户请求头（env/全局配置不算用户的），
+    本地版看 config/env。"""
+    ctx = _user_ctx.get()
+    if ctx:
+        return bool(ctx.get("api_key"))
+    return bool(config.get("api_key", "") or os.environ.get("DEEPSEEK_API_KEY", "").strip())
+
+
+def relay_needs_key() -> bool:
+    """服务器版 relay 模式且用户未带 Key（非托管）→ True：chat 应立即返回 need_key，
+    避免流水线空跑 4×120s relay 超时（本地版无上下文恒 False）。"""
+    ctx = _user_ctx.get()
+    if not ctx:
+        return False
+    if ctx.get("proxy"):
+        return False
+    return not bool(ctx.get("api_key"))
+
+
+# ── 托管模式配额钩子（服务器注册；本地版不注册 = 不限制）──
+_proxy_quota_checker = None
+
+
+def set_proxy_quota_checker(fn) -> None:
+    """注册托管模式配额检查函数：fn() 返回错误文案（""=放行），
+    放行时负责记账（服务器端在 db 中累加调用次数）。"""
+    global _proxy_quota_checker
+    _proxy_quota_checker = fn
 
 # ── 路径 ────────────────────────────────────────
 BASE_DIR = Path(__file__).resolve().parent.parent          # app/（打包后 _internal/，安卓下=解压 backend/app/）
@@ -79,7 +123,7 @@ PORT = 8765
 #   4. package/firefly.iss 的 AppVersion
 # 用 tools/check_version.py 一键校验四者一致；格式 x.y.z 纯数字点分，
 # 禁止 -beta/-rc 后缀（Gitee 无 prerelease 概念，后缀会污染 releases/latest）。
-APP_VERSION = "0.7.1"
+APP_VERSION = "0.8.0"
 API_BASE = "https://api.deepseek.com/v1"
 # OpenCode Go 兼容端点（OpenAI 兼容 chat/completions，模型 ID 与 DeepSeek 一致）
 GO_BASE = "https://opencode.ai/zen/go/v1"
@@ -315,13 +359,25 @@ def get_api_key() -> str:
 
 def get_client():
     """获取当前 API 客户端。
-    服务器版默认 relay 模式（后端代理）：返回 RelayClient——请求体入队由 APP 代发
-    （用户 Key 在 APP 本地，资产占位符 APP 本地填充），服务器不持有用户 Key。
-    direct 模式（本地版）：原逻辑，Key 必须在服务器可用。"""
-    mode = config.get("api_mode", "relay" if _user_ctx.get() else "direct")
+    服务器版三种模式：
+    - relay（默认）：用户自带 Key → RelayClient（APP 代发，服务器不持有 Key）
+    - proxy（托管）：用户不提供 Key，服务器用运营者 Key 直发（OpenCode Go 端点）
+    direct（本地版）：原逻辑，Key 必须在服务器可用。"""
+    ctx = _user_ctx.get()
+    # 托管模式：服务器用运营者 Key 直发（用户无 Key，走 direct 全链路：服务器知识库注入真实资产）
+    if ctx and ctx.get("proxy"):
+        key = os.environ.get("FIREFLY_PROXY_KEY", "").strip() or os.environ.get("DEEPSEEK_API_KEY", "").strip()
+        if not key:
+            return None
+        from modules.api_client import _CompatClient, QuotaClient
+        # 有配额钩子（服务器注册）→ 每调用前检查+记账；无钩子（本地开发）→ 不限制
+        if _proxy_quota_checker is not None:
+            return QuotaClient(api_key=key, base_url=GO_BASE,
+                               quota_fn=_proxy_quota_checker, timeout=120.0)
+        return _CompatClient(api_key=key, base_url=GO_BASE, timeout=120.0)
+    mode = config.get("api_mode", "relay" if ctx else "direct")
     if mode == "relay":
         from modules.api_client import RelayClient
-        ctx = _user_ctx.get()
         base = (ctx.get("api_base") if ctx else None) or config.get("api_base", API_BASE)
         if base not in (API_BASE, GO_BASE):
             base = API_BASE
@@ -330,7 +386,6 @@ def get_client():
     if not key:
         return None
     from modules.api_client import _CompatClient
-    ctx = _user_ctx.get()
     base = (ctx.get("api_base") if ctx else None) or config.get("api_base", API_BASE)
     if base not in (API_BASE, GO_BASE):
         base = API_BASE

@@ -8,6 +8,13 @@ import re
 import sys
 from pathlib import Path
 
+# GBK 控制台（Windows 默认）打印 ✓ 会 UnicodeEncodeError → 强制 UTF-8（与 shared_http 同款兜底）
+try:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+except Exception:
+    pass
+
 ROOT = Path(__file__).resolve().parent.parent
 
 def extract(path: str, pattern: str, group: int = 1) -> str | None:
@@ -27,6 +34,9 @@ sources = {
     "android versionName":     ("android/app/build.gradle.kts", r'versionName\s*=\s*"([^"]+)"'),
     "android versionCode":     ("android/app/build.gradle.kts", r'versionCode\s*=\s*(\d+)'),
     "iss AppVersion":          ("package/firefly.iss",        r'AppVersion=(\d+\.\d+\.\d+)'),
+    # 服务器前端为 app/static 的同步副本（tools/sync_frontends.py）；version.json 为服务器版本源
+    "server app.js CURRENT_VERSION":     ("server/frontend/app.js",               r'CURRENT_VERSION\s*=\s*"([^"]+)"'),
+    "server version.json tag":           ("server/version.json",                  r'"tag"\s*:\s*"v?([^"]+)"'),
 }
 
 print("=== 版本一致性检查 ===")
@@ -40,7 +50,8 @@ for name, (path, pat) in sources.items():
         versions[name] = v
         print(f"  {name}: {v}")
 
-# 一致性比较：只比较 4 个版本号字符串；versionCode 是映射整数，单独走规则校验
+# 一致性比较：版本号字符串（versionCode 是映射整数，单独走规则校验；
+# version.json tag 提取时已去 v 前缀，直接参与比较）
 version_values = {v for k, v in versions.items() if k != "android versionCode"}
 if len(version_values) > 1:
     print("\n  X 版本不一致！")

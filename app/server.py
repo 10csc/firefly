@@ -17,6 +17,20 @@ from pathlib import Path
 from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
 from urllib.parse import urlparse, unquote
 
+# PyInstaller console=False（windowed）下 sys.stdout/stderr 为 None：
+# print/logging 会直接崩。此时把输出重定向到 user_data/logs/firefly.log（与 exe 同级）。
+# 开发者直接 python server.py 不受影响（终端正常输出）。
+if getattr(sys, "frozen", False) and (sys.stdout is None or sys.stderr is None):
+    try:
+        _log_root = Path(os.environ.get("FIREFLY_DATA_DIR", Path(sys.executable).parent))
+        _log_dir = _log_root / "logs"
+        _log_dir.mkdir(parents=True, exist_ok=True)
+        _log_fp = open(_log_dir / "firefly.log", "a", encoding="utf-8", buffering=1)
+        sys.stdout = _log_fp
+        sys.stderr = _log_fp
+    except OSError:
+        pass
+
 # 配置日志输出到终端
 logging.basicConfig(level=logging.INFO, format='%(name)s: %(message)s', stream=sys.stderr)
 

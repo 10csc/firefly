@@ -1,9 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<!-- 夜空深蓝背景 -->
-<shape xmlns:android="http://schemas.android.com/apk/res/android"
-    android:shape="rectangle">
-    <gradient
-        android:startColor="#0f0f23"
-        android:endColor="#1a1a3e"
-        android:angle="315" />
-</shape>

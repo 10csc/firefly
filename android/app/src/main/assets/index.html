@@ -22,10 +22,27 @@
   letter-spacing:1px;white-space:nowrap;
 }
 #auth-module .am-btn.ghost{background:transparent;border:1px solid var(--border-mid);color:var(--fg-muted)}
+/* 内联登录/注册表单（0.8.0：单页内嵌，不依赖 file:// 页面跳转） */
+#auth-forms{background:var(--ctrl-bg-2);border:1px solid var(--border-mid);border-radius:14px;padding:14px 16px;margin-top:10px}
+#auth-forms input{
+  width:100%;padding:10px 12px;margin-top:8px;box-sizing:border-box;
+  border-radius:10px;border:1px solid var(--border-mid);
+  background:var(--ctrl-bg);color:var(--fg-main);
+  font-family:inherit;font-size:0.85em;
+}
+#auth-forms .af-row{display:flex;gap:8px}
+#auth-forms .af-row input{flex:1}
+#auth-forms .am-btn{margin-top:10px;width:100%;padding:10px 16px;border-radius:10px}
+#auth-forms .af-row .am-btn{width:auto;margin-top:8px;flex-shrink:0}
+#auth-forms .err{display:none;color:var(--red,#ff7a6b);font-size:0.75em;margin-top:8px;line-height:1.6}
+#auth-forms .err.green{color:var(--green,#7fd9a8)}
+#auth-forms .af-linkbtn{background:none;border:none;padding:0;color:var(--fg-bright);font-size:0.8em;margin-top:10px;cursor:pointer;font-family:inherit}
 </style>
 </head>
 <body>
 <div id="bg"></div>
+<!-- 萤火粒子场：呼吸光点 · 鼠标惊扰散开 · 点击向落点轻聚（资源：单 canvas + rAF） -->
+<canvas id="firefly-field"></canvas>
 
 <!-- ═══ 首页（独立视图） ═══ -->
 <div id="home-view">
@@ -47,15 +64,51 @@
         <div class="carousel-dots" id="carousel-dots"></div>
     </div>
     <div class="home-blank">
-        <!-- 服务器版：登录/用户模块（点击跳转登录注册页） -->
+        <!-- 服务器版：登录/用户模块（0.8.0 内联表单，单页完成登录注册，不跳页） -->
         <div id="auth-module" style="display:none">
-            <!-- 未登录：登录入口 -->
+            <!-- 未登录：登录入口卡片 + 内联表单 -->
             <div class="am-card" id="auth-login-entry">
                 <div class="am-info">
                     <div class="am-title">登录后使用服务器版</div>
                     <div class="am-sub">数据存服务器你的账号目录 · 密钥不落服务器</div>
                 </div>
-                <button class="am-btn" onclick="location.href='login.html'">登录 / 注册 →</button>
+                <button class="am-btn" id="auth-toggle-btn" onclick="toggleAuthForms()">登录 / 注册 ▾</button>
+            </div>
+            <div id="auth-forms" style="display:none">
+                <!-- 登录表单 -->
+                <form id="loginForm">
+                    <input id="loginEmail" type="email" placeholder="QQ 邮箱" autocomplete="email">
+                    <input id="loginPass" type="password" placeholder="密码" autocomplete="current-password">
+                    <button class="am-btn" type="submit">登录</button>
+                </form>
+                <button class="af-linkbtn" id="toRegister" type="button">没有账号？注册</button>
+                <button class="af-linkbtn" id="toReset" type="button" style="margin-left:14px">忘记密码？</button>
+                <div class="err" id="loginErr"></div>
+                <!-- 注册表单（隐藏） -->
+                <form id="registerForm" style="display:none">
+                    <input id="regEmail" type="email" placeholder="QQ 邮箱（如 123456@qq.com）" autocomplete="email">
+                    <div class="af-row">
+                        <input id="regCode" type="text" maxlength="6" placeholder="6 位验证码">
+                        <button type="button" id="sendCodeBtn" class="am-btn">获取验证码</button>
+                    </div>
+                    <input id="regPass" type="password" placeholder="密码（至少 8 位）">
+                    <input id="regGroup" type="text" placeholder="QQ 群号">
+                    <button class="am-btn" type="submit">注册</button>
+                </form>
+                <button class="af-linkbtn" id="toLogin" type="button" style="display:none">已有账号？登录</button>
+                <div class="err" id="regErr"></div>
+                <!-- 重置密码表单（隐藏） -->
+                <form id="resetForm" style="display:none">
+                    <input id="rstEmail" type="email" placeholder="QQ 邮箱" autocomplete="email">
+                    <div class="af-row">
+                        <input id="rstCode" type="text" maxlength="6" placeholder="6 位验证码">
+                        <button type="button" id="rstSendBtn" class="am-btn">获取验证码</button>
+                    </div>
+                    <input id="rstPass" type="password" placeholder="新密码（至少 8 位）">
+                    <button class="am-btn" type="submit">重置密码</button>
+                </form>
+                <button class="af-linkbtn" id="toLogin2" type="button" style="display:none">返回登录</button>
+                <div class="err" id="rstErr"></div>
             </div>
             <!-- 已登录：用户信息 -->
             <div class="am-card" id="auth-user-entry" style="display:none">
@@ -92,11 +145,38 @@
         <button onclick="closeSettings()">✕</button>
     </div>
     <div class="settings-body">
-        <div class="field">
-            <label>API Key（存于本机浏览器，不会上传服务器）</label>
-            <input id="key-input" type="password" placeholder="已设置，留空则保留原 Key">
+        <!-- 运行模式（仅安卓壳注入 FireflyMode 桥时显示；切换后需重新打开应用） -->
+        <div class="field" id="mode-switch-row" style="display:none">
+            <label>运行模式</label>
+            <select id="mode-select">
+                <option value="local">完全本地（默认：数据与 Key 都在本机）</option>
+                <option value="server">服务器后端（登录账号 · 数据同步 · 可托管额度）</option>
+            </select>
+            <div style="color:var(--fg-muted);font-size:0.7em;margin-top:2px">切换后需重新打开应用生效；本地与服务器数据相互独立</div>
         </div>
-        <div class="field" style="margin-top:10px">
+        <div class="field" id="api-source-field">
+            <label>API 来源</label>
+            <select id="api-source-select">
+                <option value="own">用户自带 Key（默认）</option>
+                <option value="proxy">服务器托管 API</option>
+            </select>
+            <div id="api-proxy-tip" style="display:none;color:var(--fg-accent);font-size:0.7em;line-height:1.7;margin-top:6px;padding:8px 10px;border:1px solid var(--gold-line);border-radius:8px;background:var(--gold-glow)">
+                ⚠️ 使用服务器托管 API 时，开发者可能会收集对话数据，用于针对性优化 Agent 流程与提示词。
+            </div>
+        </div>
+        <div class="field" id="api-own-fields">
+            <label id="key-label">API Key（存于本机浏览器，不会上传服务器）</label>
+            <input id="key-input" type="password" placeholder="已设置，留空则保留原 Key">
+            <details style="font-size:0.8em;margin-top:8px;color:var(--fg-muted)">
+                <summary style="cursor:pointer">第一次用？三步获取 Key</summary>
+                <div style="line-height:1.8;padding:6px 2px 0">
+                    ① 浏览器打开 <b>platform.deepseek.com</b>，注册并登录<br>
+                    ② 左侧「API Keys」→ 创建，复制 <b>sk-</b> 开头的 Key<br>
+                    ③ 粘贴到上方输入框 → 保存（Key 只存本机浏览器，不会上传）
+                </div>
+            </details>
+        </div>
+        <div class="field" id="api-base-field" style="margin-top:10px">
             <label>接口地址（用哪个 Key 服务）</label>
             <select id="api-base-select">
                 <option value="https://api.deepseek.com/v1">DeepSeek 官方（需要 DeepSeek Key）</option>
@@ -107,6 +187,8 @@
         <div style="margin:14px 0;padding-top:12px;border-top:1px solid var(--border-mid);color:var(--fg-muted);font-size:0.75em;line-height:1.7">
             以下按对话流程顺序排列：<b style="color:var(--fg-main)">① 知识检索 → ② 意图分析 → ③ 生成回复 → ④ 表情包调度</b>
         </div>
+        <details style="font-size:0.9em;margin-top:4px">
+            <summary style="cursor:pointer;color:var(--fg-muted)">高级设置：模型与思考档位（默认即可，可跳过）</summary>
         <div class="field">
             <label>① 检索器模型（知识检索）</label>
             <select id="retriever-model-select">
@@ -168,6 +250,7 @@
             </select>
             <div style="color:var(--fg-muted);font-size:0.7em;margin-top:2px">组织器温度固定 0.3</div>
         </div>
+        </details>
         <div style="margin:16px 0 14px;padding-top:14px;border-top:1px solid var(--border-mid)">
             <label style="display:block;color:var(--fg-main);font-size:0.85em;margin-bottom:8px">主动性（插件）</label>
             <details id="proactive-panel" style="font-size:0.9em" open>
@@ -223,6 +306,27 @@
                 <div id="update-msg" style="color:var(--fg-muted);font-size:0.75em;margin-top:6px"></div>
             </div>
         </div>
+        <div style="margin:16px 0 14px;padding-top:14px;border-top:1px solid var(--border-mid)">
+            <label style="display:block;color:var(--fg-main);font-size:0.85em;margin-bottom:8px">数据备份</label>
+            <div class="field" style="margin-bottom:0">
+                <button id="export-btn" type="button" onclick="exportData()">导出当前模式数据（zip）</button>
+                <button id="import-btn" type="button" onclick="importData()">导入备份（zip）</button>
+                <input id="import-file" type="file" accept=".zip,application/zip" style="display:none">
+                <div style="color:var(--fg-muted);font-size:0.7em;margin-top:6px">备份对话 / 记忆 / 手账 / 设定（不含 API Key）；导入会覆盖当前模式数据（导入前自动备份）</div>
+            </div>
+            <div class="field" id="sync-fields" style="display:none;margin-top:10px">
+                <button id="sync-upload-btn" type="button" onclick="syncToAccount()">备份到账号（云端）</button>
+                <button id="sync-restore-btn" type="button" onclick="restoreFromAccount()">从账号恢复</button>
+                <div style="color:var(--fg-muted);font-size:0.7em;margin-top:6px">云端备份存服务器你的账号目录（每模式保留最近 3 份）；恢复会覆盖当前数据</div>
+            </div>
+        </div>
+        <div id="app-exit-row" style="margin:16px 0 14px;padding-top:14px;border-top:1px solid var(--border-mid);display:none">
+            <label style="display:block;color:var(--fg-main);font-size:0.85em;margin-bottom:8px">退出</label>
+            <div class="field" style="margin-bottom:0">
+                <button id="app-exit-btn" type="button" style="background:rgba(255,107,107,.12);color:var(--red,#ff7a6b);border:1px solid rgba(255,107,107,.35)">退出应用</button>
+                <div style="color:var(--fg-muted);font-size:0.7em;margin-top:6px">关闭后台服务并退出（聊天数据已实时保存）</div>
+            </div>
+        </div>
         <button id="key-save">保存</button>
         <div id="config-msg"></div>
     </div>
@@ -235,6 +339,7 @@
         <button onclick="closeNotice()">✕</button>
     </div>
     <div class="notice-body">
+        <p class="notice-tip">流萤是 AI 角色扮演应用（非真人），对话由大模型生成，请勿透露个人敏感信息。</p>
         <h3>一、基础配置（首次使用必看）</h3>
         <p>1. 在首页右上角点击 ⚙ 设置</p>
         <p>2. 填入你的 DeepSeek API Key</p>
@@ -421,6 +526,92 @@
         </div>
     </div>
     <div id="avatar-picker-mask" style="display:none;position:fixed;inset:0;z-index:99;background:rgba(0,0,0,0.5)" onclick="closeAvatarPicker()"></div>
+<script>
+/* ── 萤火粒子场（Ember Echo）：呼吸闪烁 + 漂移 + 鼠标惊扰 + 点击轻聚 ──
+   尊重 prefers-reduced-motion；移动端减半粒子数；页面隐藏时暂停时间基准。 */
+(function () {
+    var c = document.getElementById("firefly-field");
+    if (!c || !c.getContext) return;
+    var x = c.getContext("2d");
+    var W = 0, H = 0, DPR = 1;
+    var reduced = window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches;
+    var N = (navigator.maxTouchPoints > 0 || innerWidth < 720) ? 40 : 64;
+    var COLORS = ["255,196,107", "245,166,35", "143,230,201", "255,214,140"];
+    var dots = [], mouse = { x: -1e4, y: -1e4 };
+    for (var i = 0; i < N; i++) dots.push({
+        x: Math.random(), y: Math.random(),
+        r: 0.6 + Math.random() * 1.7,
+        ph: Math.random() * 6.28, sp: 0.5 + Math.random() * 0.9,
+        vx: (Math.random() - 0.5) * 0.1, vy: (Math.random() - 0.5) * 0.1,
+        col: COLORS[i % COLORS.length]
+    });
+    function resize() {
+        DPR = Math.min(window.devicePixelRatio || 1, 2);
+        W = innerWidth; H = innerHeight;
+        c.width = W * DPR; c.height = H * DPR;
+        c.style.width = W + "px"; c.style.height = H + "px";
+        x.setTransform(DPR, 0, 0, DPR, 0, 0);
+    }
+    var last = 0;
+    function frame(t) {
+        requestAnimationFrame(frame);
+        if (reduced) return;
+        var dt = Math.min((t - last) / 1000, 0.05) || 0.016;
+        last = t;
+        x.clearRect(0, 0, W, H);
+        for (var i = 0; i < dots.length; i++) {
+            var d = dots[i];
+            d.ph += d.sp * dt;
+            d.x += d.vx * dt; d.y += d.vy * dt;
+            if (d.x < -0.05) d.x = 1.05; else if (d.x > 1.05) d.x = -0.05;
+            if (d.y < -0.05) d.y = 1.05; else if (d.y > 1.05) d.y = -0.05;
+            var px = d.x * W, py = d.y * H;
+            var dx = px - mouse.x, dy = py - mouse.y, d2 = dx * dx + dy * dy;
+            if (d2 < 14400) {                       // 120px 内被惊扰：推散
+                var f = (1 - d2 / 14400) * 46 * dt;
+                var dist = Math.sqrt(d2) || 1;
+                px += dx / dist * f; py += dy / dist * f;
+                d.x = px / W; d.y = py / H;
+            }
+            var glow = 0.35 + 0.65 * Math.abs(Math.sin(d.ph));
+            x.beginPath();
+            x.fillStyle = "rgba(" + d.col + "," + glow.toFixed(2) + ")";
+            x.arc(px, py, d.r, 0, 6.283);
+            x.fill();
+            if (d.r > 1.4) {                        // 大光点带光晕
+                x.beginPath();
+                x.fillStyle = "rgba(" + d.col + "," + (glow * 0.16).toFixed(2) + ")";
+                x.arc(px, py, d.r * 3.2, 0, 6.283);
+                x.fill();
+            }
+        }
+    }
+    addEventListener("resize", resize);
+    addEventListener("mousemove", function (e) { mouse.x = e.clientX; mouse.y = e.clientY; });
+    addEventListener("touchmove", function (e) {
+        if (e.touches[0]) { mouse.x = e.touches[0].clientX; mouse.y = e.touches[0].clientY; }
+    }, { passive: true });
+    addEventListener("touchstart", function (e) {
+        if (e.touches[0]) { mouse.x = e.touches[0].clientX; mouse.y = e.touches[0].clientY; }
+    }, { passive: true });
+    addEventListener("click", function (e) {       // 点击：光点向落点轻聚（涟漪）
+        for (var i = 0; i < dots.length; i++) {
+            var d = dots[i];
+            var dx = e.clientX - d.x * W, dy = e.clientY - d.y * H;
+            var dist = Math.sqrt(dx * dx + dy * dy) || 1;
+            if (dist < 220) {
+                var pull = 0.02 * (1 - dist / 220);
+                d.x += dx / dist * pull; d.y += dy / dist * pull;
+            }
+        }
+    });
+    document.addEventListener("visibilitychange", function () { if (document.hidden) last = 0; });
+    resize();
+    requestAnimationFrame(frame);
+})();
+</script>
+<script src="config.js"></script>
+<script src="config.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

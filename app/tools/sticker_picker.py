@@ -39,9 +39,31 @@ _STICKERS_DEFAULT: dict[str, StickerEntry] = {
 }
 
 # 用户添加项持久化路径：user_data/（打包 exe 后 app/assets/ 不可写）
-from modules.app_config import USER_DIR as _USER_DIR
+from modules.app_config import USER_DIR as _USER_DIR, user_scope_key
 _REGISTRY_FILE = _USER_DIR / "stickers" / "registry.json"
 _REGISTRY_LEGACY = Path(__file__).resolve().parent.parent / "assets" / "stickers" / "registry.json"
+
+
+def _user_registry_file() -> Path:
+    """当前作用域的 registry 路径：
+    - 服务器版（有用户上下文）= 用户目录 user_data/{id}/stickers/registry.json（按账号隔离）
+    - 本地版（无上下文）= 全局 _REGISTRY_FILE（行为与之前一致）
+    旧全局文件保留为服务器版「公共贴纸池」（只读共享，历史数据不丢；新上传按用户隔离）。"""
+    d = user_scope_key()
+    return Path(d) / "stickers" / "registry.json" if d else _REGISTRY_FILE
+
+
+def _read_registry_items(path: Path) -> list[dict]:
+    """读 registry.json 的 stickers 列表（文件缺失/损坏返回空列表，不抛异常）。"""
+    if not path.exists():
+        return []
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        items = data.get("stickers", []) if isinstance(data, dict) else []
+        return [i for i in items if isinstance(i, dict)]
+    except Exception as e:
+        logger.warning("注册表读取失败（跳过）: %s", e)
+        return []
 
 
 def _migrate_legacy_registry():
@@ -72,37 +94,49 @@ def get_counters() -> dict:
 
 # ── 注册表加载（合并默认 + 用户添加）─────────────
 def _load_registry() -> dict[str, StickerEntry]:
-    """合并代码内默认项 + registry.json 用户添加项。"""
+    """合并注册表（优先级低→高）：代码内默认 → 旧全局公共池 → 当前用户条目。
+
+    服务器版：默认项 + 历史公共贴纸所有人可见；用户自己的条目只自己可见（隔离）。
+    本地版：用户文件与全局文件同路径，合并退化为原行为。"""
     base = deepcopy(_STICKERS_DEFAULT)
-    if _REGISTRY_FILE.exists():
-        try:
-            user_data = json.loads(_REGISTRY_FILE.read_text(encoding="utf-8"))
-            for item in user_data.get("stickers", []):
-                if not isinstance(item, dict):
-                    continue
-                sid = item.get("id", "")
-                category = item.get("category", "")
-                if category not in VALID_CATEGORIES:
-                    logger.warning("registry.json 条目分类非法，跳过: %s", item)
-                    continue
-                entry = StickerEntry(
-                    id=sid,
-                    file=item.get("file", ""),
-                    category=category,
-                    label=item.get("label", ""),
-                )
-                base[entry.id] = entry
-        except Exception as e:
-            logger.warning("注册表加载失败: %s", e)
+
+    def _merge(items: list[dict]):
+        for item in items:
+            sid = item.get("id", "")
+            category = item.get("category", "")
+            if category not in VALID_CATEGORIES:
+                logger.warning("registry.json 条目分类非法，跳过: %s", item)
+                continue
+            file = item.get("file", "")
+            # 路径校验：仅允许 stickers/ 相对前缀，防手改 registry.json 写 ../../ 越权读取
+            if not isinstance(file, str) or not file.startswith("stickers/") \
+                    or ".." in file or "\\" in file:
+                logger.warning("registry.json 条目路径非法，跳过: %s", item)
+                continue
+            base[sid] = StickerEntry(
+                id=sid, file=file, category=category,
+                label=item.get("label", ""),
+            )
+
+    _merge(_read_registry_items(_REGISTRY_FILE))
+    if _user_registry_file() != _REGISTRY_FILE:
+        _merge(_read_registry_items(_user_registry_file()))
     return base
 
 
+def editable_ids() -> set[str]:
+    """当前用户可改/删的条目 id（自己 registry 文件里的）。
+    本地版=用户文件即全局文件（含改名默认项）；服务器版=仅自己上传的。"""
+    return {str(i.get("id", "")) for i in _read_registry_items(_user_registry_file())}
+
+
 def _save_user_entry(sid: str, file: str, category: str, label: str) -> None:
-    """把用户添加项追加到 registry.json。"""
+    """把用户添加项追加到当前用户的 registry.json（服务器版按账号隔离）。"""
+    fp = _user_registry_file()
     existing = {"stickers": []}
-    if _REGISTRY_FILE.exists():
+    if fp.exists():
         try:
-            existing = json.loads(_REGISTRY_FILE.read_text(encoding="utf-8"))
+            existing = json.loads(fp.read_text(encoding="utf-8"))
             if not isinstance(existing, dict) or "stickers" not in existing:
                 existing = {"stickers": []}
         except Exception:
@@ -110,8 +144,8 @@ def _save_user_entry(sid: str, file: str, category: str, label: str) -> None:
     existing.setdefault("stickers", []).append({
         "id": sid, "file": file, "category": category, "label": label,
     })
-    _REGISTRY_FILE.parent.mkdir(parents=True, exist_ok=True)
-    _REGISTRY_FILE.write_text(
+    fp.parent.mkdir(parents=True, exist_ok=True)
+    fp.write_text(
         json.dumps(existing, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
@@ -165,20 +199,24 @@ def list_all_stickers() -> list[StickerEntry]:
 
 
 def _write_registry_all(stickers: dict[str, StickerEntry]) -> None:
-    """把 registry.json 重写为当前全量状态。
+    """把当前用户的 registry.json 重写为全量状态。
 
-    策略：默认项（_STICKERS_DEFAULT）若 label 未改则不入文件（保持代码内默认为准），
-    若 label 被改则写一条覆盖记录；用户添加项全部入文件。
-    """
+    只写「用户自己的条目」：① 用户文件已有条目（合并结果的最新状态）；
+    ② 被用户改过 label 的默认项（覆盖记录）。公共池（旧全局文件）条目不复制进
+    用户文件——否则公共项会变成"自己可删项"，且删除后因公共池仍合并而复活。
+    服务器版只写用户自己的文件（公共池不受影响）。"""
+    fp = _user_registry_file()
+    prev_ids = editable_ids()
     user_items = []
     for sid, s in stickers.items():
         if sid in _STICKERS_DEFAULT:
-            default = _STICKERS_DEFAULT[sid]
-            if s.label == default.label:
-                continue  # 默认项 label 未改，不写文件
+            if s.label == _STICKERS_DEFAULT[sid].label:
+                continue        # 默认项 label 未改，不写文件
+        elif sid not in prev_ids:
+            continue            # 公共池条目：不是用户的，不写入用户文件
         user_items.append({"id": s.id, "file": s.file, "category": s.category, "label": s.label})
-    _REGISTRY_FILE.parent.mkdir(parents=True, exist_ok=True)
-    _REGISTRY_FILE.write_text(
+    fp.parent.mkdir(parents=True, exist_ok=True)
+    fp.write_text(
         json.dumps({"stickers": user_items}, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
@@ -202,6 +240,9 @@ def update_sticker(sid: str, new_label: str = None, new_category: str = None) ->
         stickers = _load_registry()
         if sid not in stickers:
             raise StickerUpdateError(f"表情包不存在: {sid}")
+        # 服务器版：公共池条目（历史共享）不可修改，只允许改默认项（个人覆盖）与自己上传的
+        if user_scope_key() and sid not in editable_ids() and sid not in _STICKERS_DEFAULT:
+            raise StickerUpdateError("公共表情包不可修改（仅可修改自己上传的）")
 
         s = stickers[sid]
         if has_label:
@@ -230,6 +271,9 @@ def delete_sticker(sid: str) -> None:
             raise StickerDeleteError(f"表情包不存在: {sid}")
         if sid in _STICKERS_DEFAULT:
             raise StickerDeleteError("默认表情包不允许删除")
+        # 服务器版：公共池条目（历史共享）不可删除，仅可删自己上传的
+        if user_scope_key() and sid not in editable_ids():
+            raise StickerDeleteError("公共表情包不可删除（仅可删除自己上传的）")
 
         del stickers[sid]
         _write_registry_all(stickers)

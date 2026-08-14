@@ -55,7 +55,7 @@ class ResponseMixin:
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
         self.send_header("Access-Control-Allow-Headers",
-                         "Authorization, Content-Type, X-API-Key, X-API-Base")
+                         "Authorization, Content-Type, X-API-Key, X-API-Base, X-API-Mode")
         self.send_header("Access-Control-Max-Age", "86400")
 
     def do_OPTIONS(self):

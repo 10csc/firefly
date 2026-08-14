@@ -1,7 +1,9 @@
 package com.firefly.android
 
 import android.annotation.SuppressLint
+import android.app.Activity
 import android.app.AlertDialog
+import android.app.DownloadManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -10,15 +12,19 @@ import android.net.Uri
 import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.Bundle
+import android.os.Environment
 import android.os.Handler
 import android.os.Looper
 import android.os.PowerManager
+import android.os.Process
 import android.provider.Settings
 import android.util.Log
 import android.view.ViewGroup
 import android.webkit.JavascriptInterface
+import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.FrameLayout
@@ -30,6 +36,7 @@ import androidx.core.content.ContextCompat
 import androidx.core.view.WindowCompat
 import com.chaquo.python.Python
 import com.chaquo.python.android.AndroidPlatform
+import java.io.ByteArrayInputStream
 import java.net.HttpURLConnection
 import java.net.URL
 
@@ -40,12 +47,40 @@ class MainActivity : AppCompatActivity() {
     private var exitBackPressedAt = 0L   // 双击退出计时
     private var wakeLock: PowerManager.WakeLock? = null
     private var wifiLock: WifiManager.WifiLock? = null
+    private var pendingFileCallback: ValueCallback<Array<Uri>>? = null   // 导入文件选择回调
 
     companion object {
         private const val SERVER_URL = "http://127.0.0.1:8765"
+        private const val LOCAL_HOME = "file:///android_asset/index.html"
         private const val READY_TIMEOUT_MS = 60_000L
         private const val NOTIF_PERMISSION_REQUEST = 1001
+        private const val FILE_CHOOSER_REQUEST = 1002
         private const val TAG = "Firefly"
+        private const val PREFS = "firefly_prefs"
+        private const val KEY_MODE = "firefly_mode"   // local（默认）/ server
+
+        /** 当前运行模式：local=完全本地（内置引擎）/ server=服务器后端（file:// 页面 + 跨域 API） */
+        fun currentMode(ctx: Context): String {
+            val m = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                .getString(KEY_MODE, "local") ?: "local"
+            return if (m == "server") "server" else "local"
+        }
+
+        fun setMode(ctx: Context, mode: String) {
+            ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                .edit().putString(KEY_MODE, if (mode == "server") "server" else "local").apply()
+        }
+
+        /** 服务器地址单点：读 assets/config.js（Kotlin 启动时读取做 URL 白名单/拦截注入） */
+        fun loadServerBase(ctx: Context): String {
+            return try {
+                Regex("""https?://[^\s"']+""")
+                    .find(ctx.assets.open("config.js").bufferedReader().use { it.readText() })
+                    ?.value ?: "http://101.200.14.126:8787"
+            } catch (e: Exception) {
+                "http://101.200.14.126:8787"
+            }
+        }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -78,9 +113,14 @@ class MainActivity : AppCompatActivity() {
             }
         })
 
-        startEmbeddedServer()
-        waitForServerReady {
-            loadWebView(SERVER_URL)
+        // 双模式（0.8.0）：local 启动内置 Python 引擎；server 不启动引擎，直接 file:// 加载
+        if (currentMode(this) == "server") {
+            loadWebView(LOCAL_HOME)
+        } else {
+            startEmbeddedServer()
+            waitForServerReady {
+                loadWebView(SERVER_URL)
+            }
         }
     }
 
@@ -333,6 +373,7 @@ class MainActivity : AppCompatActivity() {
         // 清 WebView 缓存：升级后强制加载新前端（index.html 无版本参数，
         // 不清理会命中旧缓存页面 → 旧 app.js → 旧行为）
         try { WebView(this).clearCache(true) } catch (_: Exception) {}
+        val serverBase = loadServerBase(this)
         webView = WebView(this).apply {
             layoutParams = FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT,
@@ -353,13 +394,128 @@ class MainActivity : AppCompatActivity() {
             webViewClient = object : WebViewClient() {
                 override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {}
                 override fun onPageFinished(view: WebView?, url: String?) {}
-                override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean = false
+
+                // config.js 动态注入（双模式单点）：页面先加载 config.js 再加载 app.js，
+                // 由壳按当前运行模式返回字段——local：FIREFLY_MODE=local；
+                // server：FIREFLY_MODE=server + FIREFLY_SERVER_BASE（读 assets/config.js 的地址单点）
+                override fun shouldInterceptRequest(view: WebView?, request: WebResourceRequest?): WebResourceResponse? {
+                    val url = request?.url?.toString() ?: return null
+                    if (url.endsWith("/config.js") || url.endsWith("config.js")) {
+                        val mode = currentMode(this@MainActivity)
+                        val js = if (mode == "server") {
+                            "window.FIREFLY_MODE=\"server\";window.FIREFLY_SERVER_BASE=\"$serverBase\";"
+                        } else {
+                            "window.FIREFLY_MODE=\"local\";"
+                        }
+                        return WebResourceResponse(
+                            "application/javascript", "utf-8",
+                            ByteArrayInputStream(js.toByteArray(Charsets.UTF_8))
+                        )
+                    }
+                    return null
+                }
+
+                override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
+                    val url = request?.url?.toString() ?: return false
+                    // file:///android_asset 页面间跳转：allowFileAccess=false 会拦 JS 发起的 file://
+                    // 导航 → 由壳接管 loadUrl。post 到主循环避免在回调内同步 loadUrl（导航重入
+                    // 会与当前导航竞态，导致渲染帧空白——0.8.0 曾现「点登录后页面内容消失」）。
+                    if (url.startsWith("file:///android_asset/")) {
+                        view?.post { view?.loadUrl(url) }
+                        return true
+                    }
+                    // 仅放行内置引擎 / 服务器域；外部链接交系统浏览器
+                    if (url.startsWith(SERVER_URL) ||
+                        url.startsWith(serverBase)) {
+                        return false
+                    }
+                    try {
+                        startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+                    } catch (e: Exception) {
+                        Log.w(TAG, "[Nav] 外部链接打开失败: ${e.message}")
+                    }
+                    return true
+                }
             }
-            webChromeClient = WebChromeClient()
+            webChromeClient = object : WebChromeClient() {
+                // 文件选择（数据导入：<input type="file" accept=".zip">）
+                override fun onShowFileChooser(
+                    webView: WebView?,
+                    filePathCallback: ValueCallback<Array<Uri>>?,
+                    fileChooserParams: FileChooserParams?
+                ): Boolean {
+                    pendingFileCallback = filePathCallback
+                    val intent = Intent(Intent.ACTION_GET_CONTENT).apply {
+                        addCategory(Intent.CATEGORY_OPENABLE)
+                        type = "application/zip"
+                        putExtra(Intent.EXTRA_ALLOW_MULTIPLE, false)
+                    }
+                    try {
+                        startActivityForResult(Intent.createChooser(intent, "选择备份 zip 文件"), FILE_CHOOSER_REQUEST)
+                    } catch (e: Exception) {
+                        pendingFileCallback = null
+                        return false
+                    }
+                    return true
+                }
+            }
+            // 数据导出下载：/export-data 返回 attachment → 下载到系统"下载"目录
+            setDownloadListener { url, _, _, mimeType, _ ->
+                try {
+                    val req = DownloadManager.Request(Uri.parse(url)).apply {
+                        setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
+                        setDestinationInExternalPublicDir(
+                            Environment.DIRECTORY_DOWNLOADS, "firefly-backup.zip")
+                        setMimeType(mimeType ?: "application/zip")
+                        addRequestHeader("Authorization", "")   // 本地后端无鉴权，占位
+                    }
+                    val dm = getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
+                    dm.enqueue(req)
+                    Toast.makeText(this@MainActivity, "正在导出备份到下载目录…", Toast.LENGTH_SHORT).show()
+                } catch (e: Exception) {
+                    Toast.makeText(this@MainActivity, "导出失败，请检查存储权限", Toast.LENGTH_SHORT).show()
+                }
+            }
             addJavascriptInterface(WakeLockBridge(), "androidWakeLock")
+            addJavascriptInterface(ModeBridge(), "FireflyMode")
             loadUrl(baseUrl)
         }
         (findViewById<ViewGroup>(android.R.id.content)).addView(webView)
+        // 服务器模式后台主动：KeepAliveService 经 evaluateJavascript 触发页面 __serverProactive()
+        KeepAliveService.webView = webView
+    }
+
+    /** 运行模式桥：前端设置面板切换 local/server；壳保存后重启应用生效 */
+    inner class ModeBridge {
+        @JavascriptInterface
+        fun getMode(): String = currentMode(this@MainActivity)
+
+        @JavascriptInterface
+        fun setMode(mode: String) {
+            val m = if (mode == "server") "server" else "local"
+            setMode(this@MainActivity, m)
+            uiHandler.post {
+                Toast.makeText(this@MainActivity, "已切换运行模式，正在重启应用…", Toast.LENGTH_SHORT).show()
+            }
+            // 重启自身：finishAffinity 清任务栈 → 杀进程（下次点击图标冷启动按新模式加载）
+            uiHandler.postDelayed({
+                finishAffinity()
+                Process.killProcess(Process.myPid())
+            }, 800)
+        }
+    }
+
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode != FILE_CHOOSER_REQUEST) return
+        val cb = pendingFileCallback ?: return
+        pendingFileCallback = null
+        val results = if (resultCode == Activity.RESULT_OK && data?.data != null) {
+            arrayOf(data.data!!)
+        } else {
+            arrayOf()
+        }
+        cb.onReceiveValue(results)
     }
 
     override fun onDestroy() {

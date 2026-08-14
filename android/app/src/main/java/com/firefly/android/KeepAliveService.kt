@@ -11,6 +11,7 @@ import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.util.Log
+import android.webkit.WebView
 import com.chaquo.python.Python
 import java.util.Random
 
@@ -37,6 +38,9 @@ class KeepAliveService : Service() {
         private const val MIN_INTERVAL_MS = 10 * 60 * 1000L
         private const val MAX_INTERVAL_MS = 30 * 60 * 1000L
         @Volatile var isForeground = true   // App 前后台状态（MainActivity 通知）
+
+        /** MainActivity 注册的 WebView（服务器模式后台主动：evaluateJavascript 触发页面轮询） */
+        @Volatile var webView: WebView? = null
 
         // Python 侧（com.firefly.android.KeepAliveService）直调：后台回复完成通知
         private var appContext: Context? = null
@@ -116,8 +120,26 @@ class KeepAliveService : Service() {
         super.onDestroy()
     }
 
-    /** 隐藏式主动检查：Chaquopy 直调 Python（与前端共享 REPLY 锁） */
+    /** 隐藏式主动检查（双模式）：
+     * - local：Chaquopy 直调 Python（与前端共享 REPLY 锁）；
+     * - server：无内置引擎 → evaluateJavascript 触发页面 __serverProactive()（页面轮询服务器）。 */
     private fun triggerBackgroundProactive() {
+        val ctx = appContext ?: return
+        if (MainActivity.currentMode(ctx) == "server") {
+            val wv = webView ?: return
+            try {
+                wv.post {
+                    try {
+                        wv.evaluateJavascript("window.__serverProactive && window.__serverProactive()", null)
+                    } catch (e: Exception) {
+                        Log.e("FireflyBG", "触发页面主动失败: ${e.message}")
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e("FireflyBG", "后台主动调度失败: ${e.message}")
+            }
+            return
+        }
         Thread {
             try {
                 val py = Python.getInstance()
@@ -130,7 +152,7 @@ class KeepAliveService : Service() {
                 if (messages.isNotEmpty()) {
                     val text = if (messages.size == 1) messages[0]
                                else messages[0] + "\n" + messages.drop(1).joinToString("\n")
-                    sendAiNotification("流萤", text)
+                    sendAiNotification("流萤 · AI", text)
                 }
             } catch (e: Exception) {
                 Log.e("FireflyBG", "backdoor 失败: ${e.message}")
@@ -149,7 +171,7 @@ class KeepAliveService : Service() {
             NotificationChannel(CHANNEL_ID, "流萤后台服务", NotificationManager.IMPORTANCE_LOW)
         )
         return Notification.Builder(this, CHANNEL_ID)
-            .setContentTitle("流萤")
+            .setContentTitle("流萤 · AI")
             .setContentText("对话服务保持在线，回复不会中断")
             .setSmallIcon(R.mipmap.ic_launcher)
             .setOngoing(true)

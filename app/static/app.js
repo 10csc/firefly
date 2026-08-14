@@ -1,6 +1,4 @@
-// 流萤聊天 App — 前端逻辑
-// ⚠️ 双份维护：服务器版有差异副本 server/frontend/app.js（UUID/Key 头注入、version.json 检测、
-// Key 存 localStorage）。改动本文件的通用逻辑时需同步另一份，差异点见 server/frontend/app.js 头部注释。
+// 流萤聊天 App — 前端逻辑（统一前端 0.8.0：本地 / 服务器双模式一套代码）
 
 const messagesEl = document.getElementById("messages");
 const inputEl = document.getElementById("msg-input");
@@ -8,8 +6,269 @@ const sendBtn = document.getElementById("send-btn");
 const SESSION_ID = "firefly-" + Date.now();
 let waiting = false;
 
+// ═══════════════════════════════════════════
+// 双模式（0.8.0）
+// ═══════════════════════════════════════════
+// FIREFLY_MODE：'local'（默认完全本地）/ 'server'（服务器后端处理）
+// 来源：config.js（先于本文件加载）——
+//   - 本地（PC 浏览器 / 安卓内置引擎）：app/static/config.js → local
+//   - 服务器网页：server/frontend/config.js 定义 FIREFLY_SERVER_BASE → server
+//   - 安卓服务器模式（file:// 加载）：壳拦截 config.js 请求动态注入
+// 差异点：
+// 1. server：登录态 Bearer token（30 天）+ 数据按 user_id 隔离；local：无账号概念
+// 2. server：API Key 存本机浏览器（localStorage），每请求带 X-API-Key（服务器不落盘）；
+//    local：Key 存本地后端 config.json（POST /set-config）
+// 3. server：API 跨域到 FIREFLY_SERVER_BASE（file:// 页面）；local：同源相对请求
+// 4. server：relay 引擎代发 LLM + 资产本地化；local：后端 direct 直发
+// 5. 检查更新：server 读服务器 version.json；local 走 GitHub/Gitee（后端优先）
+const FIREFLY_MODE = window.FIREFLY_MODE || (window.FIREFLY_SERVER_BASE ? "server" : "local");
+const IS_SERVER = FIREFLY_MODE === "server";
+const API_BASE = IS_SERVER ? (window.FIREFLY_SERVER_BASE || "") : "";
+const _serverFetch = window.fetch;
+
+// 服务器模式：账号 + Key 请求头注入（本地模式原样直通，同源无跨域）
+window.fetch = function (url, opts) {
+    if (!IS_SERVER) return _serverFetch(url, opts);
+    opts = opts || {};
+    const headers = new Headers(opts.headers || {});
+    let k = ""; try { k = localStorage.getItem("firefly_api_key") || ""; } catch (e) {}
+    let b = ""; try { b = localStorage.getItem("firefly_api_base") || ""; } catch (e) {}
+    let src = ""; try { src = localStorage.getItem("firefly_api_source") || ""; } catch (e) {}
+    if (src === "proxy") {
+        // 托管模式：不传用户 Key，标记服务器用运营者 Key 直发（OpenCode Go）
+        headers.set("X-API-Mode", "proxy");
+    } else {
+        if (k) headers.set("X-API-Key", k);
+        if (b) headers.set("X-API-Base", b);
+    }
+    // 服务器版账号：登录态带 Bearer token（Key 仍只存本机，token 是账号会话）
+    let t = ""; try { t = localStorage.getItem("firefly_token") || ""; } catch (e) {}
+    if (t) headers.set("Authorization", "Bearer " + t);
+    // 相对路径 → 服务器绝对 URL（本地 file:// 页面无同源相对路径）
+    let fullUrl = String(url);
+    if (fullUrl.startsWith("/")) fullUrl = API_BASE + fullUrl;
+    opts = Object.assign({}, opts, { headers: headers });
+    return _serverFetch(fullUrl, opts).then(resp => {
+        // 401：登录失效/未登录。仅对用户主动操作（/chat）提示并亮出登录模块；
+        // 后台轮询端点（proactive-status/config/history/relay 等）静默——否则
+        // 未登录时「请先登录后使用」toast 每 10s 弹一次刷屏。
+        if (resp.status === 401 && String(url).indexOf("/chat") >= 0 && !String(url).includes("/auth/")) {
+            try { showToast("请先登录后使用"); } catch (e) {}
+            try { showAuthModule(); } catch (e) {}
+        }
+        return resp;
+    });
+};
+
+// API 来源切换：托管模式隐藏 Key/接口地址输入，显示隐私提示
+function applyApiSource(isProxy) {
+    const ownFields = document.getElementById("api-own-fields");
+    const baseField = document.getElementById("api-base-field");
+    const tip = document.getElementById("api-proxy-tip");
+    if (ownFields) ownFields.style.display = isProxy ? "none" : "";
+    if (baseField) baseField.style.display = isProxy ? "none" : "";
+    if (tip) tip.style.display = isProxy ? "block" : "none";
+}
+
+// ═══ 服务器版：登录状态模块（轮播图下） ═══
+function showAuthModule() {
+    const mod = document.getElementById("auth-module");
+    if (mod && IS_SERVER) mod.style.display = "block";
+}
+function initAuth() {
+    if (!IS_SERVER) return;   // 本地模式无账号概念：登录模块不显示
+    initAuthForms();          // 内联登录/注册/重置表单接线（幂等）
+    const token = (() => { try { return localStorage.getItem("firefly_token") || ""; } catch (e) { return ""; } })();
+    const loginEntry = document.getElementById("auth-login-entry");
+    const userEntry = document.getElementById("auth-user-entry");
+    if (!token) {
+        showAuthModule();
+        if (loginEntry) loginEntry.style.display = "flex";
+        if (userEntry) userEntry.style.display = "none";
+        return;
+    }
+    fetch("/auth/me").then(r => r.json()).then(d => {
+        if (d.error) {
+            try { localStorage.removeItem("firefly_token"); } catch (e) {}
+            if (loginEntry) loginEntry.style.display = "flex";
+            if (userEntry) userEntry.style.display = "none";
+        } else {
+            const emailEl = document.getElementById("auth-email");
+            const meta = document.getElementById("auth-meta");
+            if (emailEl) emailEl.textContent = "邮箱 " + (d.email || "");
+            if (meta) meta.textContent = "注册于 " + (d.created_at || "-").slice(0, 10);
+            if (loginEntry) loginEntry.style.display = "none";
+            if (userEntry) userEntry.style.display = "flex";
+            initAssets();   // 登录态确认：资产本地化（relay 代发前占位符填充用）
+        }
+        showAuthModule();
+    }).catch(() => {});
+}
+function logout() {
+    const t = (() => { try { return localStorage.getItem("firefly_token") || ""; } catch (e) { return ""; } })();
+    if (t) fetch("/auth/logout", {method: "POST"}).catch(() => {});
+    try { localStorage.removeItem("firefly_token"); } catch (e) {}
+    location.reload();
+}
+
+// ═══ 内联登录/注册/重置表单（0.8.0：单页完成，不跳转 login.html）═══
+function toggleAuthForms() {
+    const forms = document.getElementById("auth-forms");
+    const btn = document.getElementById("auth-toggle-btn");
+    if (!forms) return;
+    const show = forms.style.display === "none";
+    forms.style.display = show ? "block" : "none";
+    if (btn) btn.textContent = show ? "收起 ▴" : "登录 / 注册 ▾";
+}
+window.toggleAuthForms = toggleAuthForms;
+
+function initAuthForms() {
+    if (!IS_SERVER) return;
+    const $ = id => document.getElementById(id);
+    const LOGIN = $("loginForm"), REG = $("registerForm"), RESET = $("resetForm");
+    if (!LOGIN || !REG || !RESET || LOGIN.dataset.wired) return;
+    LOGIN.dataset.wired = "1";
+
+    const showErr = (el, msg) => { el.textContent = msg; el.style.display = "block"; el.classList.remove("green"); };
+    const showOk = (el, msg) => { el.textContent = msg; el.style.display = "block"; el.classList.add("green"); };
+    const hideErr = el => { el.style.display = "none"; };
+    const qqRe = /^[^@\s]+@(qq\.com|foxmail\.com)$/;
+
+    // 安装隐藏代码：首次访问生成，一个安装一个（注册门槛；crypto 随机防预测）
+    const getInstallId = () => {
+        try {
+            let id = localStorage.getItem("firefly_install_id");
+            if (!id) {
+                const rand = () => {
+                    const buf = new Uint32Array(1);
+                    crypto.getRandomValues(buf);
+                    return buf[0].toString(16).padStart(8, "0");
+                };
+                id = "inst-" + (rand() + rand() + rand() + rand());
+                localStorage.setItem("firefly_install_id", id);
+            }
+            return id;
+        } catch (e) { return ""; }
+    };
+    const startCountdown = btn => {
+        let sec = 60;
+        btn.textContent = sec + "s";
+        btn.disabled = true;
+        const t = setInterval(() => {
+            sec--;
+            if (sec <= 0) { clearInterval(t); btn.textContent = "获取验证码"; btn.disabled = false; }
+            else btn.textContent = sec + "s";
+        }, 1000);
+    };
+
+    // 表单切换（表单外的链接按钮独立显隐，与 login.html 同语义）
+    $("toRegister").onclick = () => { LOGIN.style.display = "none"; REG.style.display = "block"; $("toLogin").style.display = "block"; };
+    $("toLogin").onclick = () => { REG.style.display = "none"; LOGIN.style.display = "block"; $("toLogin").style.display = "none"; };
+    $("toReset").onclick = () => {
+        LOGIN.style.display = "none"; RESET.style.display = "block";
+        $("toRegister").style.display = "none"; $("toReset").style.display = "none"; $("toLogin2").style.display = "block";
+    };
+    $("toLogin2").onclick = () => {
+        RESET.style.display = "none"; LOGIN.style.display = "block";
+        $("toLogin2").style.display = "none"; $("toRegister").style.display = "block"; $("toReset").style.display = "block";
+    };
+
+    // 登录
+    LOGIN.onsubmit = e => {
+        e.preventDefault(); hideErr($("loginErr"));
+        fetch("/auth/login", {method: "POST", headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({email: $("loginEmail").value.trim(), password: $("loginPass").value, device: "app"})
+        }).then(r => r.json()).then(d => {
+            if (d.ok) {
+                localStorage.setItem("firefly_token", d.token);
+                location.reload();
+            } else showErr($("loginErr"), d.error || "登录失败");
+        }).catch(() => showErr($("loginErr"), "网络错误"));
+    };
+
+    // 注册：获取邮箱验证码（60s 倒计时）
+    $("sendCodeBtn").onclick = () => {
+        const email = $("regEmail").value.trim();
+        const btn = $("sendCodeBtn");
+        hideErr($("regErr"));
+        if (!qqRe.test(email)) { showErr($("regErr"), "请使用 QQ 邮箱"); return; }
+        if (btn.disabled) return;
+        btn.disabled = true;
+        fetch("/auth/mail-send", {method: "POST", headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({email: email})
+        }).then(r => r.json()).then(d => {
+            if (d.ok) {
+                showOk($("regErr"), "验证码已发送，请查收邮箱");
+                startCountdown(btn);
+            } else {
+                btn.disabled = false;
+                showErr($("regErr"), d.error || "发送失败");
+            }
+        }).catch(() => { btn.disabled = false; showErr($("regErr"), "网络错误"); });
+    };
+
+    // 注册提交
+    REG.onsubmit = e => {
+        e.preventDefault(); hideErr($("regErr"));
+        fetch("/auth/register", {method: "POST", headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({email: $("regEmail").value.trim(), password: $("regPass").value,
+                qq_group: $("regGroup").value.trim(), mail_code: $("regCode").value.trim(),
+                install_id: getInstallId()})
+        }).then(r => r.json()).then(d => {
+            if (d.ok) {
+                // 注册成功 → 自动切回登录表单并预填邮箱
+                REG.style.display = "none"; LOGIN.style.display = "block";
+                $("toLogin").style.display = "none";
+                $("loginEmail").value = $("regEmail").value.trim();
+                $("loginPass").value = "";
+                showOk($("loginErr"), "注册成功，请登录");
+                $("loginPass").focus();
+            } else showErr($("regErr"), d.error || "注册失败");
+        }).catch(() => showErr($("regErr"), "网络错误"));
+    };
+
+    // 忘记密码：发送重置验证码
+    $("rstSendBtn").onclick = () => {
+        const email = $("rstEmail").value.trim();
+        const btn = $("rstSendBtn");
+        hideErr($("rstErr"));
+        if (!qqRe.test(email)) { showErr($("rstErr"), "请使用 QQ 邮箱"); return; }
+        if (btn.disabled) return;
+        btn.disabled = true;
+        fetch("/auth/reset-send", {method: "POST", headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({email: email})
+        }).then(r => r.json()).then(d => {
+            if (d.ok) {
+                showOk($("rstErr"), "验证码已发送（若该邮箱已注册），请查收");
+                startCountdown(btn);
+            } else {
+                btn.disabled = false;
+                showErr($("rstErr"), d.error || "发送失败");
+            }
+        }).catch(() => { btn.disabled = false; showErr($("rstErr"), "网络错误"); });
+    };
+
+    // 重置密码提交
+    RESET.onsubmit = e => {
+        e.preventDefault(); hideErr($("rstErr"));
+        fetch("/auth/reset-password", {method: "POST", headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({email: $("rstEmail").value.trim(), code: $("rstCode").value.trim(),
+                password: $("rstPass").value})
+        }).then(r => r.json()).then(d => {
+            if (d.ok) {
+                RESET.style.display = "none"; LOGIN.style.display = "block";
+                $("toLogin2").style.display = "none"; $("toRegister").style.display = "block"; $("toReset").style.display = "block";
+                $("loginEmail").value = $("rstEmail").value.trim();
+                $("loginPass").value = "";
+                showOk($("loginErr"), "密码已重置，请用新密码登录");
+                $("loginPass").focus();
+            } else showErr($("rstErr"), d.error || "重置失败");
+        }).catch(() => showErr($("rstErr"), "网络错误"));
+    };
+}
+
 // 开拓者头像
-const TB_AVATARS = { 穹: "/开拓者_穹.png", 星: "/开拓者_星.png" };
+const TB_AVATARS = { 穹: "开拓者_穹.png", 星: "开拓者_星.png" };
 let tbChoice = localStorage.getItem("tb_avatar") || "穹";
 
 function openAvatarPicker() {
@@ -79,7 +338,7 @@ window.closeFeedback = closeFeedback;
 // ═══════════════════════════════════════════
 // 检查更新（GitHub 优先，失败自动降级 Gitee——国内网络 Gitee 更稳）
 // ═══════════════════════════════════════════
-const CURRENT_VERSION = "0.7.1";   // 与 android versionName / 安装器 AppVersion 保持一致
+const CURRENT_VERSION = "0.8.0";   // 与 android versionName / 安装器 AppVersion 保持一致
 // 设置面板版本号动态显示（单一版本源：CURRENT_VERSION；替代 index.html 硬编码文案）
 const curVersionEl = document.getElementById("current-version");
 if (curVersionEl) curVersionEl.textContent = "v" + CURRENT_VERSION;
@@ -109,7 +368,25 @@ async function checkUpdate() {
     const msg = document.getElementById("update-msg");
     if (!msg) return;
     msg.textContent = "检查中…";
-    // 优先走本地后端（权威版本源 + 自动下载能力），失败退回纯前端双源检测
+    if (IS_SERVER) {
+        // 服务器模式：检查更新读服务器 version.json（由服务器管理员维护），不走 GitHub/Gitee
+        try {
+            const resp = await fetch("/version.json", {cache: "no-store"});
+            const d = await resp.json();
+            const latest = String(d.tag || "").replace(/^v/i, "");
+            const cur = String(CURRENT_VERSION);
+            if (!latest) throw new Error("no tag");
+            if (compareVersions(latest, cur) > 0) {
+                msg.innerHTML = `发现新版本 <b style="color:var(--fg-accent)">${latest}</b>（当前 ${cur}）<br>新版本由服务器管理员发布`;
+            } else {
+                msg.textContent = `已是最新版本 ${cur} ✓`;
+            }
+        } catch (e) {
+            msg.textContent = "检查失败（服务器 version.json 不可达）";
+        }
+        return;
+    }
+    // 本地模式：优先走本地后端（权威版本源 + 自动下载能力），失败退回纯前端双源检测
     try {
         const lr = await fetch("/check-update", {cache: "no-store"});
         if (lr.ok) {
@@ -333,21 +610,68 @@ async function loadConfig() {
             if (el.prv) el.prv.textContent = Math.round(el.pr.value * 10) + "%";
         }
         if (el.hr_) el.hr_.checked = data.hidden_reply_enabled !== false;
+        _hiddenEnabled = data.hidden_reply_enabled !== false;   // 后台主动触发开关缓存
         const abSel = document.getElementById("api-base-select");
-        if (abSel && data.api_base) {
+        // 接口地址：server=随 Key 存本机（localStorage）；local=后端配置（data.api_base）
+        const localBase = (function () { try { return localStorage.getItem("firefly_api_base") || ""; } catch (e) { return ""; } })();
+        if (abSel) {
+            const want = IS_SERVER ? localBase : data.api_base;
             // 只认后端允许的已知端点；未知值保持当前
-            if ((data.api_bases || []).includes(data.api_base)) abSel.value = data.api_base;
+            if ((data.api_bases || []).includes(want)) abSel.value = want;
         }
+        // API 来源（用户自带 Key / 服务器托管）：仅服务器模式可用；本地模式固定 own
+        const srcSel = document.getElementById("api-source-select");
+        const srcField = document.getElementById("api-source-field");
+        const localSrc = (function () { try { return localStorage.getItem("firefly_api_source") || "own"; } catch (e) { return "own"; } })();
+        if (srcSel) {
+            srcSel.value = localSrc === "proxy" ? "proxy" : "own";
+            applyApiSource(IS_SERVER && localSrc === "proxy");
+        }
+        if (srcField) srcField.style.display = IS_SERVER ? "" : "none";
+        // 服务器模式：账号同步按钮显示（本地模式无账号概念）
+        const syncFields = document.getElementById("sync-fields");
+        if (syncFields) syncFields.style.display = IS_SERVER ? "" : "none";
         if (data.retriever_temperature != null && el.rt) {
             el.rt.value = data.retriever_temperature;
             if (el.rtv) el.rtv.textContent = Number(data.retriever_temperature).toFixed(1);
         }
         if (el.m) {
-            el.m.textContent = data.has_key
-                ? "当前 Key：" + (data.key_prefix || "已设置")
-                : "尚未设置 API Key";
+            const keyLabel = document.getElementById("key-label");
+            if (IS_SERVER) {
+                // 服务器版差异：Key 状态看本机浏览器 localStorage（服务器不存用户 Key）
+                const localKey = (function () { try { return localStorage.getItem("firefly_api_key") || ""; } catch (e) { return ""; } })();
+                el.m.textContent = localKey
+                    ? "当前 Key：已设置（存于本机浏览器）"
+                    : "尚未设置 API Key（存于本机浏览器，不会上传服务器）";
+                if (keyLabel) keyLabel.textContent = "API Key（存于本机浏览器，不会上传服务器）";
+            } else {
+                el.m.textContent = data.has_key
+                    ? "当前 Key：" + (data.key_prefix || "已设置")
+                    : "尚未设置 API Key";
+                if (keyLabel) keyLabel.textContent = "API Key（存本机配置文件，仅本机使用）";
+            }
         }
-        if (el.k) { el.k.placeholder = data.has_key ? "已设置，留空则保留原 Key" : "sk-..."; el.k.value = ""; }
+        if (el.k) {
+            if (IS_SERVER) {
+                const localKey = (function () { try { return localStorage.getItem("firefly_api_key") || ""; } catch (e) { return ""; } })();
+                el.k.placeholder = localKey ? "已设置，留空则保留" : "sk-...";
+            } else {
+                el.k.placeholder = data.has_key ? "已设置，留空则保留原 Key" : "sk-...";
+            }
+            el.k.value = "";
+        }
+        // PC 本地版显示「退出应用」（服务器版/安卓不显示；后端 /shutdown 仅本机可达）
+        const exitRow = document.getElementById("app-exit-row");
+        if (exitRow && data.platform === "pc") {
+            exitRow.style.display = "block";
+            const exitBtn = document.getElementById("app-exit-btn");
+            if (exitBtn) exitBtn.onclick = () => {
+                if (!confirm("确定退出流萤吗？聊天数据已实时保存，下次启动继续。")) return;
+                exitBtn.disabled = true;
+                exitBtn.textContent = "正在退出…";
+                fetch("/shutdown", {method: "GET"}).catch(() => {});
+            };
+        }
         return data;
     } catch (e) { return {has_key: false}; }
 }
@@ -389,8 +713,28 @@ async function checkKey() {
     } catch (e) { /* 服务未就绪，静默 */ }
 }
 
+const apiSourceSel = document.getElementById("api-source-select");
+if (apiSourceSel) {
+    apiSourceSel.addEventListener("change", () => {
+        applyApiSource(apiSourceSel.value === "proxy");
+    });
+}
+
 document.getElementById("key-save").addEventListener("click", async () => {
+    // Key 与接口地址：server=只存本机浏览器（localStorage，每请求 X-API-Key 头，
+    // 服务器用后即弃不落盘）；local=随 set-config 存本地后端 config.json
+    const srcSel = document.getElementById("api-source-select");
+    const src = srcSel ? srcSel.value : "own";
     const k = document.getElementById("key-input").value.trim();
+    const baseSel = document.getElementById("api-base-select");
+    const base = baseSel ? baseSel.value : "https://api.deepseek.com/v1";
+    if (IS_SERVER) {
+        try { localStorage.setItem("firefly_api_source", src); } catch (e) {}
+        if (src !== "proxy") {
+            if (k) { try { localStorage.setItem("firefly_api_key", k); } catch (e) {} }
+            try { localStorage.setItem("firefly_api_base", base); } catch (e) {}
+        }
+    }
     const am = document.getElementById("analyzer-model-select").value;
     const rm = document.getElementById("retriever-model-select").value;
     const om = document.getElementById("organizer-model-select").value;
@@ -411,15 +755,20 @@ document.getElementById("key-save").addEventListener("click", async () => {
         prob_reply_enabled: document.getElementById("prob-reply-enabled").checked,
         prob_reply_value: (parseInt(probSlider.value) || 0) / 10,
         hidden_reply_enabled: document.getElementById("hidden-reply-enabled").checked,
-        api_base: document.getElementById("api-base-select").value,
     };
-    if (k) payload.api_key = k;
+    // 本地模式：Key/接口随配置一起提交（server 端 set-config 会剥离 api_key 字段，双保险）
+    if (!IS_SERVER) {
+        if (k) payload.api_key = k;
+        payload.api_base = base;
+    }
     msg.textContent = "保存中…";
     try {
         const resp = await fetch("/set-config", { method: "POST",
             headers: {"Content-Type": "application/json"}, body: JSON.stringify(payload) });
-        const data = await resp.json();
-        msg.textContent = data.ok ? "已保存" : "保存失败";
+        const data = await resp.json().catch(() => ({}));
+        // server：200 = 配置已提交生效；data.ok 反映全局 Key 状态与服务器版无关，不据此报错
+        // local：data.ok = Key 是否已设置
+        msg.textContent = resp.ok ? "已保存" : ("保存失败：" + (data.error || ""));
     } catch (e) { msg.textContent = "网络错误"; }
 });
 
@@ -452,7 +801,7 @@ function _addAvatar(row, who) {    const img = document.createElement("img");
         img.addEventListener("click", openAvatarPicker);
         img.classList.add("tb-avatar");
     } else {
-        img.src = "/流萤_头像.png";
+        img.src = "流萤_头像.png";
     }
     row.insertBefore(img, row.firstChild);
 }
@@ -479,7 +828,7 @@ function addSticker(stickerPath, who, prepend = false, seq = null) {
     if (!prepend) row.classList.add("float-in");
     const img = document.createElement("img");
     img.className = "sticker-img";
-    img.src = "/assets/" + stickerPath;
+    img.src = (IS_SERVER ? API_BASE : "") + "/assets/" + stickerPath;
     // 容错：表情包文件缺失（历史遗留/用户删除）时降级为文字占位，不显示裂图
     img.onerror = () => {
         if (img.dataset.fallback) return;
@@ -598,7 +947,7 @@ function toggleTheme() {
     const light = document.body.classList.toggle("theme-light");
     try { localStorage.setItem("theme", light ? "light" : "dark"); } catch (e) {}
     const icon = document.getElementById("theme-icon");
-    if (icon) icon.src = light ? "/assets/theme_moon.png" : "/assets/theme_sun.png";
+    if (icon) icon.src = light ? "assets/theme_moon.png" : "assets/theme_sun.png";
 }
 window.toggleTheme = toggleTheme;
 (function applyTheme() {
@@ -607,7 +956,7 @@ window.toggleTheme = toggleTheme;
     if (t === "light") {
         document.body.classList.add("theme-light");
         const icon = document.getElementById("theme-icon");
-        if (icon) icon.src = "/assets/theme_moon.png";
+        if (icon) icon.src = "assets/theme_moon.png";
     }
 })();
 
@@ -639,10 +988,11 @@ async function showChat() {
     // 顶部显示当前模式名
     const modeTag = document.getElementById("chat-mode-tag");
     if (modeTag) modeTag.textContent = MODE_NAMES[CURRENT_MODE] || CURRENT_MODE;
-        // 模式可能已切换：清空并重载当前模式历史（story/haruno 数据隔离）
+    // 模式可能已切换：清空并重载当前模式历史（story/haruno 数据隔离）
     if (_lastMode !== CURRENT_MODE) {
         _lastMode = CURRENT_MODE;
         _modeGen++;   // 模式代际递增：作废所有飞行中的异步渲染任务（防止串模式显示）
+        initAssets(); // 模式切换：同步该模式资产（story/haruno 设定不同；未登录时静默失败）
         // 未提交的提交窗口作废：旧模式的 flush/hint 计时器不跨模式触发（防串写历史）
         clearTimeout(_flushTimer);
         _flushTimer = null;
@@ -801,6 +1151,7 @@ document.addEventListener("DOMContentLoaded", () => {
     });
     if (location.hash === "#chat") showChat();
     else showHome();
+    initAuth();   // 服务器版：轮播图下登录/用户模块
 });
 
 // ═══════════════════════════════════════════
@@ -871,13 +1222,173 @@ async function checkProactive() {
             waiting = false;
             inputEl.disabled = false; sendBtn.disabled = false;
             renderMessages(data.messages, "firefly", data);
+            _notifyFirefly(data.messages);   // 后台触发的主动消息 → 状态栏通知（桥判断前台与否）
         }
         // 无消息：前端状态完全不动
     } catch (e) {
         // 网络异常：无状态变更，无需恢复（静默等下一轮）
     }
 }
+// ═══════════════════════════════════════════
+// 服务器版后台主动（KeepAliveService 定时触发）
+// ═══════════════════════════════════════════
+let _hiddenEnabled = true;   // 后端 hidden_reply_enabled 缓存（/config 下发后更新）
+
+function _notifyFirefly(messages) {
+    // 消息渲染后提醒：FireflyJs 桥仅 App 不在前台时发状态栏通知（前台不打扰，
+    // 复刻本地版 _notify_reply_if_background 语义）
+    try {
+        if (window.FireflyJs && window.FireflyJs.notify && Array.isArray(messages)) {
+            const texts = messages.filter(m => m && m.type === "text" && m.content)
+                                  .map(m => m.content);
+            if (texts.length) window.FireflyJs.notify("流萤 · AI", texts.join("\n").slice(0, 200));
+        }
+    } catch (e) {}
+}
+
+window.__serverProactive = async function () {
+    // KeepAliveService 后台触发：hidden 开关判断 + 主动式/概率式门控在服务端，
+    // relay 代发由页面 relay 引擎完成（本函数跑在页面，Key 可直达）
+    if (!_hiddenEnabled) return;
+    await checkProactive();
+};
+
 setInterval(checkProactive, _PROACTIVE_INTERVAL);
+
+// ═══════════════════════════════════════
+// 后端代理（relay）— 服务器不持有用户 Key 的完整链路
+// ═══════════════════════════════════════
+// 服务器流水线的 LLM 请求在服务器入队（资产用 __CORE__ 等占位符表示），
+// 本页 1s 轮询取件 → 占位符填充（本地资产）→ 用户 Key 直连 api_base 代发 → 回传。
+// 资产（知识库/核心设定/身份/短信样本，~500KB）下载后缓存 localStorage（5MB 上限绰绰有余）。
+let _assets = { knowledge: "", core: "", identity: "", sms_samples: "" };
+let _relayBusy = false;
+
+function _assetStoreKey(name) { return "firefly_asset_" + name + "_" + CURRENT_MODE; }
+
+async function initAssets() {
+    // 资产本地化：清单指纹对比 → 差异下载 → 缓存。登录后/模式切换时调用。
+    if (!IS_SERVER) return;   // 本地模式：知识库/设定由本地后端直接注入，无需本地化
+    const mode = CURRENT_MODE;
+    try {
+        const idxResp = await fetch("/assets/index?mode=" + mode);
+        const idx = await idxResp.json();
+        const local = (() => { try { return JSON.parse(localStorage.getItem("firefly_assets_idx") || "{}"); } catch (e) { return {}; } })();
+        const assetGroups = {
+            knowledge: idx.knowledge, core: idx.character.core,
+            identity: idx.character.identity, sms_samples: idx.character.sms_samples,
+        };
+        for (const [name, info] of Object.entries(assetGroups || {})) {
+            const cacheKey = name + ":" + mode;
+            const ver = (info && info.version) || "0";
+            if ((local[cacheKey] || "") !== ver && ver !== "0") {
+                try {
+                    const rawResp = await fetch("/assets/raw?name=" + name + "&mode=" + mode);
+                    const raw = await rawResp.json();
+                    if (raw.content) {
+                        localStorage.setItem(_assetStoreKey(name), raw.content);
+                        local[cacheKey] = ver;
+                    }
+                } catch (e) { /* 单项失败不阻塞其余资产 */ }
+            }
+        }
+        try { localStorage.setItem("firefly_assets_idx", JSON.stringify(local)); } catch (e) {}
+    } catch (e) {
+        // 同步失败（未登录/网络）：用已有缓存兜底（首次无缓存时占位符以空串填充，模型仍可聊天）
+    }
+    // 无论同步成败，从缓存装配当前模式资产
+    for (const name of ["knowledge", "core", "identity", "sms_samples"]) {
+        try { _assets[name] = localStorage.getItem(_assetStoreKey(name)) || ""; } catch (e) { _assets[name] = ""; }
+    }
+}
+
+function fillPlaceholders(payload) {
+    const msgs = payload && payload.messages;
+    if (!Array.isArray(msgs)) return;
+    for (const m of msgs) {
+        if (typeof m.content === "string" && m.content.indexOf("__") >= 0) {
+            m.content = m.content
+                .replaceAll("__CORE__", _assets.core || "")
+                .replaceAll("__IDENTITY__", _assets.identity || "")
+                .replaceAll("__SMS_SAMPLES__", _assets.sms_samples || "")
+                .replaceAll("__KNOWLEDGE__", _assets.knowledge || "");
+        }
+    }
+}
+
+async function relayTick() {
+    // 1s 轮询取件。用原始 fetch 手动带头：避开包装器的 401 toast（未登录/过期时静默）。
+    if (_relayBusy) return;
+    const token = (() => { try { return localStorage.getItem("firefly_token") || ""; } catch (e) { return ""; } })();
+    if (!token) return;   // 未登录：服务器不会入队
+    let pending = null;
+    try {
+        const resp = await _serverFetch(API_BASE + "/relay/pending", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "Authorization": "Bearer " + token },
+            body: "{}",
+        });
+        if (resp.status !== 200) return;
+        pending = await resp.json();
+    } catch (e) { return; }
+    if (!pending || !pending.pending) return;
+    _relayBusy = true;
+    try {
+        const apiBase = pending.api_base || "https://api.deepseek.com/v1";
+        const key = (() => { try { return localStorage.getItem("firefly_api_key") || ""; } catch (e) { return ""; } })();
+        if (!key) throw new Error("no key");
+        fillPlaceholders(pending.payload);
+        // 中转降级：服务器用本请求 X-API-Key 头代发（Key 内存即弃不落盘），
+        // call_id 必须匹配服务器队列中真实 pending 项（非开放代理），
+        // 服务器回传时已唤醒流水线（带状态码做错误分类），前端无需再调 /relay/result
+        const proxyFallback = async () => {
+            const p = await fetch("/relay/proxy", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ call_id: pending.call_id, payload: pending.payload }),
+            });
+            const pd = await p.json();
+            if (!pd.ok || !pd.response) throw new Error(pd.error || "proxy failed");
+        };
+        let ds;
+        try {
+            // 用户 Key 直连代发（DeepSeek 官方端点支持浏览器 CORS）
+            ds = await _serverFetch(apiBase + "/chat/completions", {
+                method: "POST",
+                headers: { "Content-Type": "application/json", "Authorization": "Bearer " + key },
+                body: JSON.stringify(pending.payload),
+            });
+        } catch (e1) {
+            // 直连失败（如 OpenCode Go 端点不支持 CORS）→ 中转降级
+            await proxyFallback();
+            _relayBusy = false;
+            return;
+        }
+        let respData = null;
+        if (ds.ok) {
+            try { respData = await ds.json(); }
+            catch (e2) {
+                // 200 但响应体异常 → 降级重试
+                await proxyFallback();
+                _relayBusy = false;
+                return;
+            }
+        } else {
+            // API 错误响应（401 Key 无效 / 402 余额不足 / 429 限流…）：
+            // 照常回传（带状态码），服务器转成分类错误唤醒流水线 → 前端人话提示
+            try { respData = await ds.json(); } catch (e3) { respData = {}; }
+        }
+        await _serverFetch(API_BASE + "/relay/result", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "Authorization": "Bearer " + token },
+            body: JSON.stringify({ call_id: pending.call_id, response: respData, status: ds.status }),
+        });
+    } catch (e) {
+        // 直连与中转都失败：不回传 → 服务器侧 120s 超时，流水线自动降级话术
+    }
+    _relayBusy = false;
+}
+if (IS_SERVER) setInterval(relayTick, 1000);   // relay 引擎仅服务器模式（本地为 direct 直发）
 
 // 消息渲染后记录时间（renderMessages 内调用）
 const _origRenderMessages = renderMessages;
@@ -897,6 +1408,149 @@ renderMessages = function (messages, who, data) {
 let _flushTimer = null;   // 提交窗口计时：输入框清空后 5 秒 → /chat/flush（提前结束后端窗口）
 let _hintTimer = null;    // 打字中 hint 防抖：输入停顿 2 秒 → /chat/hint（重置后端窗口）
 let _inflight = 0;        // 在飞请求数（WakeLock 引用计数：全部完成才释放）
+let _stageTimer = null;   // 阶段进度轮询句柄（等待回复期间轮询 /chat-stage）
+
+// LLM 错误分类 → 人话提示（后端 /chat 返回 error_code 时展示）
+const ERROR_TIPS = {
+    key_invalid: "API Key 无效或已过期，请到设置中检查",
+    no_balance: "API 余额不足，请到 DeepSeek 平台充值后再试",
+    rate_limit: "请求太频繁，稍等一会儿再试试",
+    network: "网络不通，请检查网络后重试",
+    server_error: "服务端暂时出错，请稍后再试",
+    bad_response: "服务返回异常，请稍后再试",
+    relay_timeout: "代发超时，请检查网络后重试",
+    quota_exhausted: "今日服务器托管额度已用完，可在设置中切换为自带 Key 模式",
+    unknown: "出了点问题，请稍后再试",
+};
+
+/** 轻量 toast（页面顶部浮层，3 秒消失；不打断输入） */
+function _toast(msg) {
+    let t = document.getElementById("app-toast");
+    if (!t) {
+        t = document.createElement("div");
+        t.id = "app-toast";
+        t.style.cssText = "position:fixed;top:14px;left:50%;transform:translateX(-50%);z-index:999;background:rgba(28,30,46,.96);color:#e8e0d0;border:1px solid rgba(255,196,107,.45);border-radius:10px;padding:9px 16px;font-size:0.8em;max-width:86vw;text-align:center;box-shadow:0 6px 22px rgba(0,0,0,.45);display:none;pointer-events:none";
+        document.body.appendChild(t);
+    }
+    t.textContent = msg;
+    t.style.display = "block";
+    clearTimeout(t._timer);
+    t._timer = setTimeout(() => { t.style.display = "none"; }, 3200);
+}
+
+/** 导出当前模式数据备份（zip）。
+ *  local：window.location.href（PC 浏览器直接下载 / 安卓壳 DownloadListener 接管下载目录）；
+ *  server：fetch → blob → a.click()（file:// 页面跨域，不能直接 window.location）。 */
+async function exportData() {
+    if (!IS_SERVER) {
+        window.location.href = `/export-data?mode=${encodeURIComponent(CURRENT_MODE)}`;
+        _toast("正在导出备份…");
+        return;
+    }
+    try {
+        const resp = await fetch(`/export-data?mode=${encodeURIComponent(CURRENT_MODE)}`);
+        if (!resp.ok) { _toast("导出失败，请稍后再试"); return; }
+        const blob = await resp.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `firefly-backup-${CURRENT_MODE}.zip`;
+        document.body.appendChild(a);
+        a.click();
+        setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 1500);
+        _toast("已开始导出备份");
+    } catch (e) { _toast("导出失败，请检查网络"); }
+}
+window.exportData = exportData;
+
+/** 导入 zip 备份（覆盖当前模式数据；导入前后端自动备份现有数据）。 */
+function importData() {
+    const input = document.getElementById("import-file");
+    if (!input) return;
+    input.onchange = async () => {
+        const f = input.files && input.files[0];
+        input.value = "";   // 允许重复选同一文件
+        if (!f) return;
+        if (!confirm(`导入将覆盖当前「${MODE_NAMES[CURRENT_MODE] || CURRENT_MODE}」的全部数据（导入前会自动备份现有数据）。\n\n确定导入 ${f.name} 吗？`)) return;
+        _toast("正在导入…");
+        try {
+            const fd = new FormData();
+            fd.append("file", f);
+            fd.append("mode", CURRENT_MODE);
+            const resp = await fetch("/import-data", { method: "POST", body: fd });
+            const data = await resp.json().catch(() => ({}));
+            if (resp.ok && data.ok) {
+                _toast("导入成功，正在重新加载…");
+                setTimeout(() => location.reload(), 800);
+            } else {
+                _toast("导入失败：" + (data.error || "请检查文件"));
+            }
+        } catch (e) { _toast("导入失败，请检查网络"); }
+    };
+    input.click();
+}
+window.importData = importData;
+
+/** 备份到账号（服务器模式专属）：导出 zip → 上传 /sync/upload。 */
+async function syncToAccount() {
+    if (!IS_SERVER) return;
+    _toast("正在备份到账号…");
+    try {
+        const resp = await fetch(`/export-data?mode=${encodeURIComponent(CURRENT_MODE)}`);
+        if (!resp.ok) { _toast("导出失败，无法备份"); return; }
+        const blob = await resp.blob();
+        const fd = new FormData();
+        fd.append("file", blob, `firefly-backup-${CURRENT_MODE}.zip`);
+        fd.append("mode", CURRENT_MODE);
+        const up = await fetch("/sync/upload", { method: "POST", body: fd });
+        const data = await up.json().catch(() => ({}));
+        if (up.ok && data.ok) _toast("已备份到账号（云端保留最近 3 份）");
+        else _toast("备份失败：" + (data.error || ""));
+    } catch (e) { _toast("备份失败，请检查网络"); }
+}
+window.syncToAccount = syncToAccount;
+
+/** 从账号恢复（服务器模式专属）：下载最新云端备份 → 导入。 */
+async function restoreFromAccount() {
+    if (!IS_SERVER) return;
+    if (!confirm(`从账号恢复将覆盖当前「${MODE_NAMES[CURRENT_MODE] || CURRENT_MODE}」的全部数据（导入前会自动备份现有数据）。\n\n确定恢复吗？`)) return;
+    _toast("正在从账号恢复…");
+    try {
+        const resp = await fetch(`/sync/download?mode=${encodeURIComponent(CURRENT_MODE)}`);
+        if (!resp.ok) {
+            const d = await resp.json().catch(() => ({}));
+            _toast(d.error || "账号还没有备份");
+            return;
+        }
+        const blob = await resp.blob();
+        const fd = new FormData();
+        fd.append("file", blob, `firefly-restore-${CURRENT_MODE}.zip`);
+        fd.append("mode", CURRENT_MODE);
+        const up = await fetch("/import-data", { method: "POST", body: fd });
+        const data = await up.json().catch(() => ({}));
+        if (up.ok && data.ok) {
+            _toast("恢复成功，正在重新加载…");
+            setTimeout(() => location.reload(), 800);
+        } else {
+            _toast("恢复失败：" + (data.error || ""));
+        }
+    } catch (e) { _toast("恢复失败，请检查网络"); }
+}
+window.restoreFromAccount = restoreFromAccount;
+
+/** 等待回复期间轮询流水线阶段（检索→分析→回复→表情包），把"对方正在输入…"换成具体阶段。
+ *  仅在拿到 stage 时替换文本；请求结束由 _chatSend 的 finally 清除。 */
+function _pollStage(statusEl) {
+    clearInterval(_stageTimer);
+    _stageTimer = setInterval(async () => {
+        if (_inflight <= 0) { clearInterval(_stageTimer); _stageTimer = null; return; }
+        try {
+            const r = await fetch(`/chat-stage?sid=${encodeURIComponent(SESSION_ID)}&mode=${encodeURIComponent(CURRENT_MODE)}`);
+            const d = await r.json();
+            if (d.stage && d.label && _inflight > 0 && statusEl) statusEl.textContent = d.label;
+        } catch (e) { /* 网络抖动静默，状态保持"对方正在输入" */ }
+    }, 2000);
+}
 
 /** 打字中：重置后端合并窗口（流萤继续等开拓者说完）。
  * 输入框仍有内容 → 持续定时重置（前端在且输入框有残留 = 用户在打字 → 永不提交）；
@@ -936,8 +1590,10 @@ async function _chatSend(msgs) {
     const defaultStatus = statusEl ? statusEl.textContent : "";
     const gen = _modeGen;   // 捕获发起时的模式代际
     // 后台保活（安卓 WebView JS Bridge）：回复流程（检索→分析→回复→调度）期间
-    // 持 CPU/WiFi 锁，用户切后台/锁屏也能完成回复；引用计数归零才释放
+    // 持 CPU/WiFi 锁，用户切后台/锁屏也能完成回复；引用计数归零才释放。
+    // 浏览器端（PC/服务器版）无 androidWakeLock，此段安全跳过
     if (window.androidWakeLock && _inflight === 1) { window.androidWakeLock.acquire(); }
+    _pollStage(statusEl);   // 启动阶段进度轮询（回复到达后 finally 清除）
     try {
         const resp = await fetch("/chat", {
             method: "POST",
@@ -947,8 +1603,12 @@ async function _chatSend(msgs) {
         const data = await resp.json();
         if (gen !== _modeGen) return;   // 模式已切换：丢弃回复（消息已写盘到原模式，不渲染）
         if (data.need_key) openSettings();
-        else if (data.messages) renderMessages(data.messages, "firefly", data);
+        else if (data.messages) {
+            renderMessages(data.messages, "firefly", data);
+            _notifyFirefly(data.messages);   // 切后台时回复完成通知（桥判断前台与否）
+        }
         else if (data.reply) addTextMessage(data.reply, "firefly");
+        if (data.error_code) _toast(ERROR_TIPS[data.error_code] || ERROR_TIPS.unknown);
         // data.queued：副请求，回复由主请求带回，无 UI 操作
     } catch (e) {
         if (gen === _modeGen && _inflight === 1) {
@@ -959,6 +1619,7 @@ async function _chatSend(msgs) {
         _inflight--;
         if (_inflight === 0) {
             clearTimeout(_flushTimer); _flushTimer = null;   // 请求完成：提交计时器作废
+            clearInterval(_stageTimer); _stageTimer = null;  // 阶段轮询结束
             if (statusEl) statusEl.textContent = defaultStatus;
             inputEl.focus();
             // 响应式回复完成后 ≥1s 防抖，触发主动式判断（主动式未触发则服务端串联概率式）
@@ -999,7 +1660,7 @@ stickerBtn.addEventListener("click", async () => {
             const data = await resp.json();
             const list = data.stickers || [];
             stickerGrid.innerHTML = list.map(s =>
-                `<img src="/assets/${s.file}" alt="${s.label}" data-label="${s.label}" data-file="${s.file}">`).join("");
+                `<img src="${IS_SERVER ? API_BASE : ""}/assets/${s.file}" alt="${s.label}" data-label="${s.label}" data-file="${s.file}">`).join("");
             stickerGrid.dataset.loaded = "1";
             stickerGrid.querySelectorAll("img").forEach(img => {
                 img.addEventListener("click", () => {
@@ -1133,7 +1794,12 @@ async function loadRequestLog() {
     try {
         const resp = await fetch("/requests");
         const data = await resp.json();
-        if (countEl) countEl.textContent = `共 ${data.count} 次请求`;
+        if (countEl) {
+            const totalCost = (data.requests || []).reduce((s, r) => s + (Number(r.cost_cny) || 0), 0);
+            countEl.textContent = totalCost > 0
+                ? `共 ${data.count} 次请求 · 累计约 ¥${totalCost.toFixed(3)}`
+                : `共 ${data.count} 次请求`;
+        }
         const rows = (data.requests || []).slice().reverse();
         if (rows.length === 0) {
             list.innerHTML = '<div style="color:#8a8a8a;padding:10px">暂无记录</div>';
@@ -1362,15 +2028,15 @@ async function loadStickerList() {
         list.innerHTML = stickers.map(s => `
         <div class="sticker-row" data-id="${s.id}">
             <div class="stk-top">
-                <img class="stk-thumb" src="/assets/${s.file}" loading="lazy" onerror="this.style.opacity=0.2">
-                <select class="stk-cat-sel">
+                <img class="stk-thumb" src="${IS_SERVER ? API_BASE : ""}/assets/${s.file}" loading="lazy" onerror="this.style.opacity=0.2">
+                <select class="stk-cat-sel" ${(s.editable || s.is_default) ? "" : "disabled"}>
                     <option value="可爱" ${s.category==="可爱"?"selected":""}>可爱</option>
                     <option value="帅气" ${s.category==="帅气"?"selected":""}>帅气</option>
                 </select>
                 <button class="stk-save" disabled>保存</button>
-                <button class="stk-del" ${s.is_default ? "disabled" : ""}>删</button>
+                <button class="stk-del" ${(s.is_default || !s.editable) ? "disabled" : ""}>删</button>
             </div>
-            <input class="stk-label-input" type="text" value="${s.label}" maxlength="20">
+            <input class="stk-label-input" type="text" value="${s.label}" maxlength="20" ${(s.editable || s.is_default) ? "" : "readonly"}>
         </div>`).join("");
         list.querySelectorAll(".sticker-row").forEach(row => {
             const id = row.dataset.id;
@@ -1470,7 +2136,36 @@ async function checkWake() {
 }
 
 // ═══════════════════════════════════════════
+// 运行模式切换（0.8.0）：仅安卓壳注入 FireflyMode 桥时显示。
+// 切换 = 壳保存 SharedPreferences → 重启应用 → 按新模式加载数据源。
+// PC 浏览器（本地）/ 服务器网页：无桥 → 该行隐藏。
+// ═══════════════════════════════════════════
+(function initModeSwitch() {
+    const row = document.getElementById("mode-switch-row");
+    if (!row || !window.FireflyMode) return;
+    row.style.display = "";
+    const sel = document.getElementById("mode-select");
+    let cur = "local";
+    try { cur = window.FireflyMode.getMode() || "local"; } catch (e) {}
+    if (cur !== "local" && cur !== "server") cur = "local";
+    sel.value = cur;
+    sel.addEventListener("change", () => {
+        const next = sel.value;
+        if (next === cur) return;
+        const desc = next === "server"
+            ? "服务器模式：登录账号后使用，数据存服务器你的账号目录（可同步 / 可托管额度）。"
+            : "本地模式：数据与 Key 全部在本机，无需登录、无网络要求（调 API 除外）。";
+        if (!confirm("切换运行模式需要重新打开应用。\n\n" + desc + "\n\n确定切换吗？")) {
+            sel.value = cur;
+            return;
+        }
+        try { window.FireflyMode.setMode(next); } catch (e) { /* 壳负责重启 */ }
+    });
+})();
+
+// ═══════════════════════════════════════════
 // 启动
 // ═══════════════════════════════════════════
 checkWake();
 checkKey().then(() => { loadHistory(); });
+initAssets();   // 服务器模式：已有 token 时立即资产本地化（未登录静默失败，登录后 initAuth 会再触发）

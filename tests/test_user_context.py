@@ -35,10 +35,13 @@ check("B3 上下文下 mode_journal_dir 隔离",
       cfg.mode_journal_dir() == cfg.USER_DIR / "u-test-1" / "story" / "journal")
 check("B4 上下文下 mode_character_dir 隔离",
       cfg.mode_character_dir() == cfg.USER_DIR / "u-test-1" / "story" / "character")
-# get_client 用用户 Key
+# get_client：有用户上下文 = 服务器版 → 默认 relay 模式（RelayClient，用户 Key 在 APP 端，
+# 服务器不持有）；无上下文 = 本地版 → direct 模式
+from modules.api_client import RelayClient, _CompatClient
 c = cfg.get_client()
-check("B5 get_client 使用用户 Key", c is not None and c._api_key == "user-key-1")
-check("B6 get_client 使用上下文 api_base", c._base_url == cfg.API_BASE)
+check("B5 上下文下 get_client 返回 RelayClient（relay 模式，Key 不落服务器）",
+      isinstance(c, RelayClient) and c._user_key == str(cfg.USER_DIR / "u-test-1"))
+check("B6 RelayClient 使用上下文 api_base", c._api_base == cfg.API_BASE)
 
 cfg.reset_user_context(tok)
 check("B7 reset 后恢复默认", cfg.mode_data_dir() == cfg.USER_DIR / "story" / "data")
@@ -48,7 +51,7 @@ check("B8 reset 后 get_api_key 恢复", cfg.get_api_key() == cfg.config.get("ap
 tok2 = cfg.set_user_context(user_dir=cfg.USER_DIR / "u-test-2", api_key="k2",
                             api_base="http://evil.com/v1")
 c2 = cfg.get_client()
-check("B9 非法 api_base 回退官方", c2._base_url == cfg.API_BASE)
+check("B9 非法 api_base 回退官方", c2._api_base == cfg.API_BASE)
 cfg.reset_user_context(tok2)
 
 # ══════════════════════════════════════════════════

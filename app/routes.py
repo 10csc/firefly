@@ -8,6 +8,7 @@ server 拆分产物：server.py 只留 HTTP 骨架（分发/响应工具/启动�
 
 import json
 import logging
+import os
 import sys
 import threading
 import time
@@ -70,6 +71,8 @@ def get_session(sid: str, mode: str = DEFAULT_MODE) -> dict:
 
 # JSON 请求体上限：防异常大 body 吃内存（本地单用户，1MB 足够）
 _MAX_BODY = 1_048_576
+# 写盘内容上限（手账/用户记忆）：防超大文本占满磁盘（服务器版多用户放大面）
+_CONTENT_MAX = 200_000
 
 
 def _read_json(h) -> dict:
@@ -100,7 +103,17 @@ def _query_mode(h) -> str:
 
 # ══ POST 路由 ═══════════════════════════════════
 
+def _is_server() -> bool:
+    """服务器平台标记（FIREFLY_SERVER=1，server_app.py 启动时设置）。
+    服务器版禁用本地版专属端点（Key 落盘/安装包下载）用。"""
+    return bool(os.environ.get("FIREFLY_SERVER"))
+
+
 def set_key(h):
+    # 服务器版：Key 只存用户浏览器（X-API-Key 头），禁写服务器全局配置（防落盘 + 全局串 Key）
+    if _is_server():
+        h._json({"ok": False, "error": "服务器版请在设置面板填写 Key（仅存本机浏览器）"}, 403)
+        return
     body = _read_json(h)
     cfg.config["api_key"] = (body.get("api_key") or "").strip()
     cfg.save_config()
@@ -109,7 +122,8 @@ def set_key(h):
 
 def set_config(h):
     body = _read_json(h)
-    new_key = (body.get("api_key") or "").strip()
+    # 服务器版：剥离 api_key 字段（Key 不落服务器全局配置；模型/主动性等全局参数照常）
+    new_key = "" if _is_server() else (body.get("api_key") or "").strip()
     for key in ("analyzer_model", "organizer_model", "polisher_model", "retriever_model"):
         val = body.get(key, cfg.config[key])
         if val in cfg.VALID_MODELS:
@@ -192,6 +206,11 @@ def save_journal(h):
     body = _read_json(h)
     mode = _body_mode(body)
     content = body.get("content", "")
+    # 审查约束：类型 + 大小上限（防磁盘滥用/非 str 写盘崩 500）
+    if not isinstance(content, str):
+        h._json({"ok": False, "error": "内容必须为文本"}); return
+    if len(content) > _CONTENT_MAX:
+        h._json({"ok": False, "error": f"内容过长（上限 {_CONTENT_MAX} 字符）"}); return
     # 路径与 load_journal 同源（llm_base 内按模式公式），避免两处各写一遍公式再次分裂
     from modules.llm_base import reload_journal
     from modules.app_config import mode_journal_dir
@@ -203,7 +222,9 @@ def save_journal(h):
 
 
 def check_key(h):
-    h._json({"has_key": bool(cfg.get_client())})
+    # 服务器版：has_key 反映当前用户请求头的 Key（relay 模式 get_client 恒非 None，
+    # 不能用它判断）；本地版：等价于原 bool(get_client())
+    h._json({"has_key": cfg.user_has_key()})
 
 
 # ── 聊天合并窗口（发送即达后端 + 后端 5 秒滑动窗口合并）────────
@@ -215,6 +236,7 @@ def check_key(h):
 # key 含用户作用域：服务器版多用户各自独立窗口。
 _CHAT_WINDOW_SEC = 5.0
 _CHAT_WINDOW_IDLE = 600.0   # 窗口无活动超时（秒）：防止 session 废弃后窗口残留撑内存
+_CHAT_WINDOW_MAX = 100      # 窗口字典硬上限：异常 session_id 可在无后续请求时残留，超限删最空闲的
 _CHAT_WINDOW_LOCK = threading.Lock()
 _CHAT_WINDOWS: dict[tuple, dict] = {}   # key -> {"msgs": [...], "deadline": float, "cond": Condition}
 
@@ -225,10 +247,16 @@ def _chat_window_key(session_id: str, mode: str) -> tuple:
 
 
 def _chat_window_cleanup(now: float):
-    """清理长时间无活动的窗口（session 刷新/用户离开后防内存泄漏）。"""
+    """清理长时间无活动的窗口（session 刷新/用户离开后防内存泄漏）。
+    ponytail: 超限时 sorted O(n log n)（n≤100+，可接受）；正常路径只依赖 deadline 过期。"""
     stale = [k for k, w in _CHAT_WINDOWS.items() if now - w["deadline"] > _CHAT_WINDOW_IDLE]
     for k in stale:
         _CHAT_WINDOWS.pop(k, None)
+    if len(_CHAT_WINDOWS) > _CHAT_WINDOW_MAX:
+        oldest = sorted(_CHAT_WINDOWS,
+                        key=lambda k: _CHAT_WINDOWS[k]["deadline"])[:len(_CHAT_WINDOWS) - _CHAT_WINDOW_MAX]
+        for k in oldest:
+            _CHAT_WINDOWS.pop(k, None)
 
 
 def _write_replies(result, mode: str) -> list:
@@ -265,7 +293,8 @@ def _notify_reply_if_background(enriched: list):
         if not KeepAliveService.isAppForeground():
             texts = [r.get("content", "") for r in enriched if r.get("type") == "text"]
             if texts:
-                KeepAliveService.notify("流萤", "\n".join(texts)[:200])
+                # 通知标题带 AI 标识（防"半夜收到真人消息"误解；角色扮演合规）
+                KeepAliveService.notify("流萤 · AI", "\n".join(texts)[:200])
     except Exception:
         pass
 
@@ -273,6 +302,11 @@ def _notify_reply_if_background(enriched: list):
 def chat(h):
     client = cfg.get_client()
     if not client:
+        h._json({"reply": None, "error": "请先设置 API Key", "need_key": True})
+        return
+    # 服务器版 relay 模式：用户未带 Key → 立即返回 need_key（前端弹设置引导），
+    # 否则流水线每个 LLM 阶段 relay 等待 120s 超时（story 模式约 4 分钟）才报错
+    if cfg.relay_needs_key():
         h._json({"reply": None, "error": "请先设置 API Key", "need_key": True})
         return
 
@@ -326,7 +360,14 @@ def chat(h):
 
     # 合并窗口入队：消息实时到达后端即安全；窗口按 (session, mode, 用户) 隔离
     if not user_input:
-        # 空消息（无内容可处理）：不进窗口，直接降级快速返回
+        # 空消息且无 hint：直接降级话术返回，不走 LLM 流水线（防无输入刷完整推理链）；
+        # 有 hint（打字中提示）继续走下方流程——typing 场景的产品功能
+        if not hint:
+            from orchestrator import _handle_direct
+            h._json({"messages": [{"type": "text", "content": m}
+                                  for m in _handle_direct("input:empty")]})
+            return
+        # 有 hint 的空消息：不进窗口，直接降级快速返回
         from modules.proactive import reply_lock, reply_unlock
         reply_lock(mode)
         try:
@@ -348,7 +389,10 @@ def chat(h):
                                      mode=mode,
                                      )
             enriched = _write_replies(result, mode)
-            h._json({"messages": enriched})
+            resp = {"messages": enriched}
+            if result.error_code:
+                resp["error_code"] = result.error_code
+            h._json(resp)
         finally:
             reply_unlock(mode)
         return
@@ -416,7 +460,10 @@ def chat(h):
         enriched = _write_replies(result, mode)
         # 后台回复完成 → 状态栏通知（安卓；PC/服务器版静默跳过）
         _notify_reply_if_background(enriched)
-        h._json({"messages": enriched})
+        resp = {"messages": enriched}
+        if result.error_code:
+            resp["error_code"] = result.error_code   # 错误分类（前端人话提示）
+        h._json(resp)
     finally:
         reply_unlock(mode)
 
@@ -492,10 +539,14 @@ def add_sticker_route(h):
         if not label:
             h._json({"ok": False, "error": "缺少含义描述"}); return
 
-        # 保存图片：用时间戳前缀避免重名
+        # 保存图片：扩展名白名单（防 .html/.svg 落盘后被静态服务按 MIME 回吐成存储型 XSS），
+        # 随机后缀防同秒同名碰撞覆盖
+        import secrets
         original = file_info["filename"]
-        ext = Path(original).suffix or ".png"
-        safe_name = f"user_{int(time.time())}_{Path(original).stem}{ext}"
+        ext = Path(original).suffix.lower()
+        if ext not in (".png", ".jpg", ".jpeg", ".webp", ".gif"):
+            h._json({"ok": False, "error": "仅支持 png/jpg/jpeg/webp/gif 图片格式"}); return
+        safe_name = f"user_{int(time.time())}_{secrets.token_hex(4)}{ext}"
         save_dir = cfg.USER_DIR / "stickers"
         save_dir.mkdir(parents=True, exist_ok=True)
         (save_dir / safe_name).write_bytes(file_info["data"])
@@ -627,9 +678,223 @@ def clear_history(h):
 
 # ══ GET 路由 ════════════════════════════════════
 
+def _platform_tag() -> str:
+    """当前运行平台：pc（本地版 Windows，可退出）/ android（本地版安卓）/ server（服务器版）。"""
+    if os.environ.get("FIREFLY_ANDROID"):
+        return "android"
+    if os.environ.get("FIREFLY_SERVER"):
+        return "server"
+    return "pc"
+
+
+def get_chat_stage(h):
+    """流水线阶段进度（前端等待回复时轮询）：?sid=&mode= → {"stage": "retriever"|...|null}。
+    只读不创建会话；查不到会话返回 null（前端回退默认"对方正在输入…"）。"""
+    q = parse_qs(urlparse(h.path).query)
+    sid = (q.get("sid") or [""])[0] or "default"
+    mode = (q.get("mode") or [DEFAULT_MODE])[0]
+    if mode not in cfg.MODES:
+        mode = DEFAULT_MODE
+    key = _session_key(sid, mode)
+    with _SESSIONS_LOCK:
+        session = sessions.get(key)
+    if not session:
+        h._json({"stage": None})
+        return
+    from orchestrator import get_chat_stage as _get_stage, stage_label
+    stage = _get_stage(session)
+    h._json({"stage": stage, "label": stage_label(stage) if stage else None})
+
+
+def export_data(h):
+    """导出当前模式数据为 zip 备份（对话/记忆/手账/设定/表情包，不含 API Key）。
+    Content-Disposition: attachment 触发浏览器/WebView 下载。只读打包，不修改数据。"""
+    q = parse_qs(urlparse(h.path).query)
+    mode = (q.get("mode") or [DEFAULT_MODE])[0]
+    if mode not in cfg.MODES:
+        mode = DEFAULT_MODE
+    root = cfg.mode_root(mode)
+    import io
+    import zipfile
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for fp in sorted(root.rglob("*")):
+            if fp.is_file():
+                zf.write(fp, fp.relative_to(root).as_posix())
+    data = buf.getvalue()
+    fname = f"firefly-backup-{mode}-{time.strftime('%Y%m%d-%H%M%S')}.zip"
+    h.send_response(200)
+    h.send_header("Content-Type", "application/zip")
+    h.send_header("Content-Disposition", f'attachment; filename="{fname}"')
+    h.send_header("Content-Length", str(len(data)))
+    h.end_headers()
+    h.wfile.write(data)
+
+
+# ══ 数据导入 / 账号备份（数据同步：本地导入 + 服务器云端备份）════
+# 导出复用 GET /export-data（zip 下载）；导入=multipart zip 覆盖；服务器版另有
+# /sync/upload（把导出的 zip 存账号）+ /sync/download（取回）——两端组合即"换机恢复"，
+# 不新写解压逻辑（服务器恢复 = /sync/download 拿 zip → 前端再 POST /import-data）。
+_IMPORT_MAX_BYTES = 60 * 1024 * 1024          # zip 上传上限（含 multipart 开销）
+_IMPORT_MAX_FILE_BYTES = 20 * 1024 * 1024     # 包内单文件解压上限
+_IMPORT_MAX_TOTAL_BYTES = 100 * 1024 * 1024   # 包内解压总量上限
+_SYNC_KEEP = 3                                # 每模式保留最近备份份数
+
+
+def _zip_safe_entries(zf) -> list[tuple[str, object]]:
+    """zip slip 防御：拒绝绝对路径与 .. 穿越，只收普通文件；返回 [(name, info)]。
+    超限抛 ValueError（调用方转人话文案）。"""
+    out = []
+    total = 0
+    for info in zf.infolist():
+        if info.is_dir():
+            continue
+        name = info.filename.replace("\\", "/")
+        if name.startswith("/") or ".." in name.split("/"):
+            raise ValueError("压缩包内含非法路径，已拒绝")
+        if info.file_size > _IMPORT_MAX_FILE_BYTES:
+            raise ValueError("压缩包内单个文件过大，已拒绝")
+        total += info.file_size
+        if total > _IMPORT_MAX_TOTAL_BYTES:
+            raise ValueError("压缩包解压总量过大，已拒绝")
+        out.append((name, info))
+    return out
+
+
+def _backup_dir(mode: str) -> Path:
+    """账号/本机备份目录：{数据根}/backups/（与模式目录平级，不进导出循环）。"""
+    return cfg.mode_root(mode).parent / "backups"
+
+
+def _backup_current_mode(mode: str, prefix: str) -> None:
+    """把当前模式数据打成 zip 存到 backups/（导入前自动备份，防误操作）。空目录跳过。"""
+    root = cfg.mode_root(mode)
+    if not any(root.rglob("*")):
+        return
+    import io as _io
+    import zipfile as _zipfile
+    _backup_dir(mode).mkdir(parents=True, exist_ok=True)
+    fp = _backup_dir(mode) / f"{prefix}-{mode}-{time.strftime('%Y%m%d-%H%M%S')}.zip"
+    with _zipfile.ZipFile(fp, "w", _zipfile.ZIP_DEFLATED) as zf:
+        for f in sorted(root.rglob("*")):
+            if f.is_file():
+                zf.write(f, f.relative_to(root).as_posix())
+
+
+def _import_zip_to_mode(data: bytes, mode: str) -> tuple[bool, str, int]:
+    """zip 数据覆盖导入到指定模式。返回 (ok, error, 文件数)。"""
+    import io as _io
+    import zipfile as _zipfile
+    import shutil as _sh
+    if not data.startswith(b"PK"):
+        return False, "不是有效的 zip 备份文件", 0
+    try:
+        zf = _zipfile.ZipFile(_io.BytesIO(data))
+    except Exception:
+        return False, "zip 解析失败（文件损坏？）", 0
+    try:
+        entries = _zip_safe_entries(zf)
+    except ValueError as e:
+        return False, str(e), 0
+
+    # 覆盖式导入：先自动备份现有数据，再清空目标目录解压
+    try:
+        _backup_current_mode(mode, "auto")
+    except Exception:
+        pass    # 备份失败不阻塞导入（导入包本身是用户拿来的数据源）
+    root = cfg.mode_root(mode)
+    try:
+        if root.exists():
+            _sh.rmtree(root)
+        root.mkdir(parents=True, exist_ok=True)
+        for name, info in entries:
+            dst = root / name
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            with zf.open(info) as src, open(dst, "wb") as out:
+                _sh.copyfileobj(src, out)
+    except Exception as e:
+        return False, f"写入失败: {e}", 0
+    # 清缓存：设定/手账/短信样本的内存缓存必须重载（旧内容会串进新数据）
+    try:
+        from modules.llm_base import clear_cache, reload_journal
+        from modules.polisher import clear_samples_cache
+        clear_cache()
+        clear_samples_cache()
+        reload_journal(mode)
+    except Exception:
+        pass
+    return True, "", len(entries)
+
+
+def import_data(h):
+    """导入 zip 备份（覆盖当前模式数据）。multipart：mode + file。
+    服务器版 = 「从账号恢复」的第二跳；本地版 = 文件导入（换机/恢复）。"""
+    fields, files = parse_multipart(h, max_bytes=_IMPORT_MAX_BYTES)
+    file_info = files.get("file")
+    if not file_info:
+        h._json({"ok": False, "error": "缺少 zip 文件"}); return
+    mode = fields.get("mode", DEFAULT_MODE)
+    if mode not in cfg.MODES:
+        h._json({"ok": False, "error": "非法模式"}); return
+    ok, err, n = _import_zip_to_mode(file_info["data"], mode)
+    if not ok:
+        h._json({"ok": False, "error": err}); return
+    h._json({"ok": True, "files": n, "mode": mode})
+
+
+def sync_upload(h):
+    """账号云端备份：上传导出的 zip（服务器版专属；本地版无账号概念）。"""
+    if not _is_server():
+        h._json({"ok": False, "error": "仅服务器版支持账号备份"}, 403); return
+    fields, files = parse_multipart(h, max_bytes=_IMPORT_MAX_BYTES)
+    file_info = files.get("file")
+    if not file_info:
+        h._json({"ok": False, "error": "缺少 zip 文件"}); return
+    mode = fields.get("mode", DEFAULT_MODE)
+    if mode not in cfg.MODES:
+        h._json({"ok": False, "error": "非法模式"}); return
+    data = file_info["data"]
+    if not data.startswith(b"PK"):
+        h._json({"ok": False, "error": "不是有效的 zip 备份文件"}); return
+    bdir = _backup_dir(mode)
+    bdir.mkdir(parents=True, exist_ok=True)
+    fp = bdir / f"sync-{mode}-{time.strftime('%Y%m%d-%H%M%S')}.zip"
+    fp.write_bytes(data)
+    # 每模式只留最近 _SYNC_KEEP 份
+    olds = sorted(bdir.glob(f"sync-{mode}-*.zip"), key=lambda p: p.stat().st_mtime, reverse=True)
+    for old in olds[_SYNC_KEEP:]:
+        try:
+            old.unlink()
+        except OSError:
+            pass
+    h._json({"ok": True, "mode": mode, "saved": fp.name})
+
+
+def sync_download(h):
+    """账号云端备份下载：最新一份 zip（服务器版专属）。"""
+    if not _is_server():
+        h._json({"ok": False, "error": "仅服务器版支持账号备份"}, 403); return
+    mode = _query_mode(h)
+    bdir = _backup_dir(mode)
+    if not bdir.exists():
+        h._json({"error": "账号还没有备份"}, 404); return
+    zips = sorted(bdir.glob(f"sync-{mode}-*.zip"), key=lambda p: p.stat().st_mtime, reverse=True)
+    if not zips:
+        h._json({"error": "账号还没有备份"}, 404); return
+    data = zips[0].read_bytes()
+    fname = zips[0].name
+    h.send_response(200)
+    h.send_header("Content-Type", "application/zip")
+    h.send_header("Content-Disposition", f'attachment; filename="{fname}"')
+    h.send_header("Content-Length", str(len(data)))
+    h.end_headers()
+    h.wfile.write(data)
+
+
 def get_config(h):
     key = cfg.config.get("api_key", "")
     h._json({
+        "platform": _platform_tag(),
         "has_key": bool(cfg.get_api_key()),
         "key_prefix": key[:12] + "..." if key else "",
         "api_base": cfg.config.get("api_base", cfg.API_BASE),
@@ -696,6 +961,8 @@ def get_history(h):
         limit = int(qs.get("limit", ["150"])[0])
     except Exception:
         limit = 150
+    # 审查约束：钳制到 [1, 500]（防 limit=10**9 全量读 jsonl 进内存放大）
+    limit = max(1, min(limit, 500))
     before_seq_raw = qs.get("before_seq", [None])[0]
     # 审查约束：非法 before_seq 回退 None（防 /history?before_seq=abc 崩 500；同函数 limit 已有 try）
     try:
@@ -718,12 +985,16 @@ def get_wake_status(h):
 
 
 def get_stickers(h):
-    # 返回全量表情包列表（供前端管理表展示）
-    from tools.sticker_picker import list_all_stickers, _STICKERS_DEFAULT
+    # 返回全量表情包列表（供前端管理表展示）。editable：当前用户可改/删的条目
+    # （服务器版=自己上传的；本地版=全部；默认项与公共项不可删改）
+    from tools.sticker_picker import list_all_stickers, _STICKERS_DEFAULT, editable_ids
+    ids = editable_ids()
+    editable_all = not cfg.user_scope_key()   # 本地版（无用户上下文）全部可编辑
     h._json({
         "stickers": [
             {"id": s.id, "file": s.file, "category": s.category,
-             "label": s.label, "is_default": s.id in _STICKERS_DEFAULT}
+             "label": s.label, "is_default": s.id in _STICKERS_DEFAULT,
+             "editable": editable_all or s.id in ids}
             for s in list_all_stickers()
         ],
     })
@@ -755,6 +1026,11 @@ def save_user_memory(h):
     body = _read_json(h)
     mode = _body_mode(body)
     content = (body.get("content") or "")
+    # 审查约束：类型 + 大小上限（与 save_journal 同规则）
+    if not isinstance(content, str):
+        h._json({"ok": False, "error": "内容必须为文本"}); return
+    if len(content) > _CONTENT_MAX:
+        h._json({"ok": False, "error": f"内容过长（上限 {_CONTENT_MAX} 字符）"}); return
     try:
         fp = _memory_file(mode)
         fp.parent.mkdir(parents=True, exist_ok=True)
@@ -797,7 +1073,8 @@ def proactive_status(h):
     管理（主动式/概率式互斥 + 用户回应复位 + 超时恢复）。
     """
     client = cfg.get_client()
-    if not client:
+    if not client or cfg.relay_needs_key():
+        # 服务器版 relay 模式用户未带 Key：零成本返回，避免轮询线程空等 120s relay 超时
         h._json({"messages": []}); return
     body = _read_json(h)
     mode = _body_mode(body)
@@ -848,6 +1125,28 @@ _DOWNLOAD_SOURCES = (
     "https://gitee.com/api/v5/repos/cpt-asymmetry/firefly/releases/latest",
     "https://api.github.com/repos/10csc/firefly/releases/latest",
 )
+
+# ── 下载加固（轻量：无 sha256 链路，防 URL 投毒与无节制下载）──
+_DOWNLOAD_KINDS = ("exe", "apk")
+_DOWNLOAD_MAX_BYTES = {"exe": 200 * 1024 * 1024, "apk": 100 * 1024 * 1024}
+_DOWNLOAD_MIN_BYTES = 100 * 1024          # 防错误页 HTML 冒充资产
+# 域名白名单：Gitee/GitHub 资产域。校验初始 URL 的 host；
+# urllib 自动跟随 GitHub 官方重定向（objects.githubusercontent.com），重定向链信任官方域。
+_DOWNLOAD_HOSTS = ("gitee.com", "github.com")
+
+
+def _validate_download_url(url: str, kind: str) -> str:
+    """下载 URL 审查：https + 域名白名单 + 扩展名与 kind 一致。返回错误文案（""=通过）。"""
+    p = urlparse(url)
+    host = (p.hostname or "").lower()
+    if p.scheme != "https":
+        return "下载地址必须为 https"
+    if not any(host == h or host.endswith("." + h) for h in _DOWNLOAD_HOSTS):
+        return "下载地址域名不在白名单"
+    suffix = ".apk" if kind == "apk" else ".exe"
+    if not p.path.lower().endswith(suffix):
+        return "下载地址与资产类型不符"
+    return ""
 
 
 def _fetch_json(url: str, timeout: float = 15.0) -> dict:
@@ -910,26 +1209,63 @@ def check_update(h):
 
 
 def update_download(h):
-    """下载发行版资产到临时目录。
+    """下载发行版资产到临时目录（轻量加固：kind 白名单 + https/域名校验 + 大小上限）。
     PC(exe)：下载后由后端静默启动安装器（/VERYSILENT 覆盖安装，保留 user_data），
-             服务器随之关闭（安装器接管）；安卓(apk)：仅下载，前端引导系统安装器。"""
+             服务器随之关闭（安装器接管）；安卓(apk)：仅下载，前端引导系统安装器。
+    服务器版禁用：检查更新走 version.json；此端点会把资产下载到服务器磁盘/带宽，
+    任何登录用户可反复触发（防磁盘填满与 3Mbps 带宽耗尽）。"""
+    if _is_server():
+        h._json({"ok": False, "error": "服务器版请从下载页获取安装包"}, 403)
+        return
     body = _read_json(h)
     kind = body.get("kind", "exe")
+    if kind not in _DOWNLOAD_KINDS:
+        h._json({"ok": False, "error": "不支持的资产类型"})
+        return
     url = _get_asset_url(kind)
     if not url:
         h._json({"ok": False, "error": "发行版未附安装包资产或仓库不可达"})
         return
+    err = _validate_download_url(url, kind)
+    if err:
+        h._json({"ok": False, "error": err})
+        return
     try:
         import tempfile
-        req = urllib.request.Request(url, headers={"User-Agent": "Firefly/" + cfg.APP_VERSION})
-        with urllib.request.urlopen(req, timeout=600) as resp, tempfile.NamedTemporaryFile(
-                suffix=".apk" if kind == "apk" else ".exe", delete=False, dir=tempfile.gettempdir()) as out:
-            while True:
-                chunk = resp.read(65536)
-                if not chunk:
-                    break
-                out.write(chunk)
-            local = out.name
+        local = ""
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": "Firefly/" + cfg.APP_VERSION})
+            max_size = _DOWNLOAD_MAX_BYTES[kind]
+            with urllib.request.urlopen(req, timeout=600) as resp, tempfile.NamedTemporaryFile(
+                    suffix=".apk" if kind == "apk" else ".exe", delete=False, dir=tempfile.gettempdir()) as out:
+                local = out.name
+                # Content-Length 预检 + 流式累计兜底（防无/伪造 Content-Length）
+                cl = (getattr(resp, "headers", None) or {}).get("Content-Length")
+                if cl:
+                    try:
+                        if int(cl) > max_size:
+                            raise ValueError("文件过大")
+                    except (TypeError, ValueError):
+                        raise
+                total = 0
+                while True:
+                    chunk = resp.read(65536)
+                    if not chunk:
+                        break
+                    total += len(chunk)
+                    if total > max_size:
+                        raise ValueError("文件过大")
+                    out.write(chunk)
+            if total < _DOWNLOAD_MIN_BYTES:
+                raise ValueError("文件异常过小，疑似错误页面")
+        except Exception:
+            # 下载中途失败：清理残留临时文件（防垃圾堆积）
+            if local:
+                try:
+                    Path(local).unlink(missing_ok=True)
+                except OSError:
+                    pass
+            raise
         if kind == "exe" and getattr(sys, "frozen", False):
             # PC 发行版：静默启动安装器（覆盖安装保留 user_data），本服务随之退出
             import subprocess
@@ -967,12 +1303,60 @@ def relay_pending(h):
 
 
 def relay_result(h):
-    """APP 回传 DeepSeek 响应，唤醒等待中的流水线线程。"""
+    """APP 回传 DeepSeek 响应，唤醒等待中的流水线线程（带 HTTP 状态码做错误分类）。"""
     body = _read_json(h)
     from modules.api_client import relay_result as _result
+    try:
+        status = int(body.get("status", 0) or 0)
+    except (TypeError, ValueError):
+        status = 0
     ok = _result(cfg.user_scope_key() or "local",
-                 body.get("call_id", ""), body.get("response") or {})
+                 body.get("call_id", ""), body.get("response") or {}, status=status)
     h._json({"ok": ok})
+
+
+def relay_proxy(h):
+    """中转降级：APP 直连 api_base 被 CORS 拦截（如 OpenCode Go 端点不支持浏览器
+    跨域）时，服务器用本请求的 X-API-Key 代发并回传结果。Key 仅内存即弃不落盘。
+
+    防滥用：call_id 必须匹配该用户队列中真实 pending 项（服务器自己入队的请求），
+    否则 404——中转不是开放代理。payload 用前端已填充占位符的版本（资产在 APP 本地，
+    服务器只有占位符版本）；payload 只影响用户自己的 Key 调用，无越权面。"""
+    body = _read_json(h)
+    call_id = str(body.get("call_id") or "")
+    user_key = cfg.user_scope_key() or "local"
+    from modules.api_client import relay_has, relay_result as _result
+    if not relay_has(user_key, call_id):
+        h._json({"ok": False, "error": "无此待发请求"}, 404)
+        return
+    payload = body.get("payload")
+    if not isinstance(payload, dict):
+        h._json({"ok": False, "error": "payload 缺失"}, 400)
+        return
+    key = (h.headers.get("X-API-Key", "") or "").strip()
+    if not key:
+        h._json({"ok": False, "error": "缺少 API Key（请先设置）"}, 400)
+        return
+    # api_base 从队列项取（服务器入队时校验过白名单），不信任前端传值
+    from modules.api_client import _relay_queues, _relay_lock
+    with _relay_lock:
+        q = _relay_queues.get(user_key) or []
+        item = next((i for i in q if i["call_id"] == call_id), None)
+        api_base = (item or {}).get("api_base", cfg.API_BASE)
+    try:
+        import requests as _requests
+        resp = _requests.post(api_base.rstrip("/") + "/chat/completions",
+                              headers={"Authorization": f"Bearer {key}"},
+                              json=payload, timeout=120)
+        try:
+            data = resp.json()
+        except ValueError:
+            data = {"error": {"message": f"中转响应解析失败（HTTP {resp.status_code}）"}}
+        # 带真实状态码回传：错误响应（401/402/429/5xx）由服务器转成分类错误唤醒流水线
+        _result(user_key, call_id, data, status=resp.status_code)
+        h._json({"ok": True, "response": data})
+    except Exception as e:
+        h._json({"ok": False, "error": f"中转失败: {e}"}, 502)
 
 
 # ══ 资产清单（服务器告诉 APP 用哪些资产）═══════════
@@ -994,22 +1378,24 @@ def _asset_md5(text: str) -> str:
 
 def assets_index(h):
     """资产清单：服务器"告诉 APP 要用哪些资产"（版本指纹+大小）。
-    APP 比对本地版本，缺失/过期则从 /assets/raw 下载。"""
+    APP 比对本地版本，缺失/过期则从 /assets/raw 下载。?mode=story|haruno（默认 story）。"""
     from modules.llm_retriever import _load_knowledge, get_knowledge_stats
     from modules.llm_base import resolve_character_file
 
-    kb = _load_knowledge("story")
-    stats = get_knowledge_stats("story")
+    mode = _query_mode(h)
+    kb = _load_knowledge(mode)
+    stats = get_knowledge_stats(mode)
 
     def _char_asset(name):
         # resolve_character_file 不拼后缀（load_slot 才拼），这里显式拼 .md
-        fp = resolve_character_file(name + ".md", "story")
+        fp = resolve_character_file(name + ".md", mode)
         if fp.exists():
             content = fp.read_text(encoding="utf-8")
             return {"version": _asset_md5(content), "size": len(content)}
         return {"version": "0", "size": 0}
 
     h._json({
+        "mode": mode,
         "knowledge": {"version": _asset_md5(kb), "size": len(kb),
                       "chars": stats.get("chars", 0)},
         "character": {
@@ -1022,16 +1408,18 @@ def assets_index(h):
 
 def assets_raw(h):
     """资产下载（认证后可用）：APP 首次本地化 / 更新时拉取。
-    ?name=knowledge|core|identity|sms_samples"""
+    ?name=knowledge|core|identity|sms_samples&mode=story|haruno"""
     from modules.llm_retriever import _load_knowledge
     from modules.llm_base import resolve_character_file
     qs = parse_qs(urlparse(h.path).query)
     name = qs.get("name", [""])[0]
+    mode = (qs.get("mode", [DEFAULT_MODE])[0] or DEFAULT_MODE)
+    mode = mode if mode in cfg.MODES else DEFAULT_MODE
     if name == "knowledge":
-        h._json({"name": name, "content": _load_knowledge("story")})
+        h._json({"name": name, "content": _load_knowledge(mode)})
         return
     if name in ("core", "identity", "sms_samples"):
-        fp = resolve_character_file(name + ".md", "story")
+        fp = resolve_character_file(name + ".md", mode)
         if fp.exists():
             h._json({"name": name, "content": fp.read_text(encoding="utf-8")})
             return
@@ -1061,6 +1449,9 @@ POST_ROUTES = {
     "/update-download": update_download,
     "/relay/pending": relay_pending,
     "/relay/result": relay_result,
+    "/relay/proxy": relay_proxy,
+    "/import-data": import_data,
+    "/sync/upload": sync_upload,
     "/undo": undo,
     "/clear-history": clear_history,
 }
@@ -1068,6 +1459,7 @@ POST_ROUTES = {
 GET_ROUTES = {
     "/check-key": check_key,
     "/config": get_config,
+    "/chat-stage": get_chat_stage,
     "/metrics": get_metrics,
     "/balance": get_balance,
     "/requests": get_requests,
@@ -1078,6 +1470,8 @@ GET_ROUTES = {
     "/character-files": get_character_files,
     "/user-memory": get_user_memory,
     "/journal": get_journal,
+    "/export-data": export_data,
+    "/sync/download": sync_download,
     "/assets/index": assets_index,
     "/assets/raw": assets_raw,
 }

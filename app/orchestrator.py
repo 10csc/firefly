@@ -24,6 +24,7 @@ logger = logging.getLogger(__name__)
 class ChatResult:
     messages: list[dict] = field(default_factory=list)
     bubble: str | None = None
+    error_code: str | None = None   # LLM 调用失败分类（前端人话提示；None=正常）
 
 
 # ── 降级话术 ─────────────────────────────────────
@@ -36,6 +37,12 @@ _DIRECT_REPLIES = {
 
 def _handle_direct(reason: str) -> list[str]:
     return _DIRECT_REPLIES.get(reason, ["嗯？我走神了…你刚才说了什么？"])
+
+
+def _err_code(e: Exception) -> str:
+    """从异常提取错误分类码（ApiError 自带；其他异常归 unknown）。"""
+    from modules.api_client import ApiError
+    return e.code if isinstance(e, ApiError) else "unknown"
 
 
 def _merge_narrations(messages: list, narrations: list) -> list:
@@ -106,6 +113,35 @@ _lock = threading.Lock()
 _CHAT_COUNT = 0
 _DIRECT_COUNT = 0
 _ORCH_ERRORS = 0
+
+# ── 阶段进度（前端等待回复时轮询 /chat-stage 显示"正在做什么"）──
+# 键 = id(session)（进程内唯一，服务器版多用户天然隔离，不泄露 session_id）
+_STAGES: dict[str, str] = {}
+_STAGE_LABELS = {
+    "retriever": "正在翻阅记忆与资料…",
+    "analyzer": "正在理解你的话…",
+    "polisher": "正在酝酿回复…",
+    "organizer": "正在准备表情包…",
+}
+
+
+def _set_stage(session, stage: str | None) -> None:
+    with _lock:
+        key = str(id(session))
+        if stage is None:
+            _STAGES.pop(key, None)
+        else:
+            _STAGES[key] = stage
+
+
+def get_chat_stage(session) -> str | None:
+    """返回当前流水线阶段（None=空闲）。前端轮询用。"""
+    with _lock:
+        return _STAGES.get(str(id(session)))
+
+
+def stage_label(stage: str) -> str:
+    return _STAGE_LABELS.get(stage, "正在思考…")
 
 # ── 流水线观测：每轮各阶段的输入/输出/思考过程 ──────
 # 落盘持久化：pipeline.jsonl（{mode}/data/），重启后仍可查（诊断不依赖复现）
@@ -189,6 +225,7 @@ def handle_chat(
                 (user_input[:80] if user_input else "(empty)"), hint)
 
     ctx: ContextManager = session["context"]
+    _set_stage(session, None)   # 清除旧阶段（异常/完成路径也会清）
 
     # ── 前置规则 ──────────────────────────────
     if not user_input or not user_input.strip():
@@ -218,6 +255,7 @@ def handle_chat(
             retrieved_memory = ""
             _rt0 = _rt1 = time.perf_counter()
         else:
+            _set_stage(session, "retriever")
             anchor = [m for m in ctx.get_recent(10) if m.get("role") == "user"][-1:]
             _rt0 = time.perf_counter()
             logger.info("[PIPELINE #%d] ⓪ Retriever 开始...", turn)
@@ -247,6 +285,7 @@ def handle_chat(
 
         _t0 = time.perf_counter()
         logger.info("[PIPELINE #%d] ① Analyzer 开始...", turn)
+        _set_stage(session, "analyzer")
         analyzer = Analyzer(client, model=analyzer_model, effort=analyzer_effort, mode=mode)
         analysis = analyzer.analyze(AnalyzerInput(
             user_input=input_text,
@@ -261,6 +300,7 @@ def handle_chat(
 
         # ── 2. 回复器（全权生成回复文本）────────
         logger.info("[PIPELINE #%d] ② Polisher 开始...", turn)
+        _set_stage(session, "polisher")
         polisher = Polisher(client, model=polisher_model,
                             effort=polisher_effort, temperature=polisher_temperature, mode=mode)
         polish_output = polisher.polish(PolisherInput(
@@ -280,6 +320,7 @@ def handle_chat(
         # ── 3. 组织器（story=表情包调度；haruno=旁白演出）──
         # 失败只损失表情包/旁白，不影响文本回复
         logger.info("[PIPELINE #%d] ③ Organizer 开始...", turn)
+        _set_stage(session, "organizer")
         org_output = None
         try:
             organizer = Organizer(client, model=organizer_model, effort=organizer_effort, mode=mode)
@@ -303,6 +344,7 @@ def handle_chat(
         logger.info("[PIPELINE #%d] ③ Organizer 完成 (%.1fs), sticker=%s",
                     turn, _t3 - _t2, org_output.sticker_label if org_output else "无")
 
+        _set_stage(session, None)
         _record_pipeline({
             "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             "mode": mode,
@@ -344,6 +386,7 @@ def handle_chat(
 
     except Exception as e:
         import traceback
+        _set_stage(session, None)
         logger.error("[PIPELINE #%d] 编排器异常 %s: %s\n%s",
                      turn, type(e).__name__, e, traceback.format_exc())
         with _lock:
@@ -357,9 +400,10 @@ def handle_chat(
             "error": f"{type(e).__name__}: {e}",
         }, mode=mode)
         messages = [{"type":"text","content":m} for m in _handle_direct("api:error")]
-        return ChatResult(messages=messages, bubble=None)
+        return ChatResult(messages=messages, bubble=None, error_code=_err_code(e))
 
     # ── 4. 记录历史 ────────────────────────────
+    _set_stage(session, None)
     total_elapsed = _t3 - _rt0 if _t3 > 0 else 0
     logger.info("[PIPELINE #%d] ====== 完成 (总耗时 %.1fs), 回复 %d 条 =====",
                 turn, total_elapsed, len(messages))

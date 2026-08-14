@@ -1,0 +1,459 @@
+﻿<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>娴佽悿AI 路 鐧诲綍</title>
+<style>
+/* 鈺愨晲鈺?銆岃悿鐏畫鍝嶃€嶇櫥褰曢〉锛氭繁绌?脳 钀ょ伀閲?脳 澶辩喌闈?鈺愨晲鈺?*/
+@font-face {
+    font-family: "StarRailFont";
+    src: url("assets/StarRailFont.ttf") format("truetype");
+}
+:root{
+    --bg1:#05070f; --bg2:#0a1122;
+    --line:rgba(255,196,107,.24);
+    --glass:rgba(13,18,38,.66);
+    --txt:#e9e3d3; --dim:#8a94b0; --faint:#5d6b85;
+    --amber:#ffc46b; --amber2:#f59e3b;
+    --mint:#8fe6c9;
+    --red:#ff7a6b; --green:#7fd9a8;
+    --gold-glow:rgba(245,166,35,.14);
+}
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+body{
+    font-family:"StarRailFont","Microsoft YaHei",sans-serif;
+    background:
+        radial-gradient(900px 500px at 85% -8%, #14203c 0%, var(--bg1) 55%),
+        radial-gradient(700px 500px at -10% 105%, #0d1c2e 0%, var(--bg2) 60%),
+        var(--bg2);
+    color:var(--txt); min-height:100vh; min-height:100dvh;
+    display:flex; align-items:center; justify-content:center;
+    padding:20px; overflow:hidden;
+}
+/* 鏄熺偣绾圭悊锛圕SS 鐢熸垚锛?*/
+body::before{
+    content:""; position:fixed; inset:-15%;
+    background-image:
+        radial-gradient(1.2px 1.2px at 14% 24%, rgba(255,255,255,.5) 50%, transparent 51%),
+        radial-gradient(1px 1px at 38% 66%, rgba(255,255,255,.32) 50%, transparent 51%),
+        radial-gradient(1.4px 1.4px at 62% 14%, rgba(255,214,140,.5) 50%, transparent 51%),
+        radial-gradient(1px 1px at 80% 52%, rgba(255,255,255,.28) 50%, transparent 51%),
+        radial-gradient(1.2px 1.2px at 90% 84%, rgba(143,230,201,.42) 50%, transparent 51%);
+    background-size:260px 260px,310px 310px,380px 380px,290px 290px,420px 420px;
+    animation:drift 220s linear infinite;
+    pointer-events:none; z-index:0;
+}
+@keyframes drift{from{transform:translate(0,0)}to{transform:translate(-50px,-34px)}}
+#firefly-field{position:fixed;inset:0;width:100%;height:100%;z-index:0;pointer-events:none}
+
+/* 鐜荤拑鍗＄墖 */
+.card{
+    position:relative; z-index:1;
+    width:400px; max-width:100%;
+    background:var(--glass);
+    backdrop-filter:blur(16px) saturate(1.2);
+    -webkit-backdrop-filter:blur(16px) saturate(1.2);
+    border:1px solid var(--line);
+    border-radius:20px;
+    padding:38px 32px 30px;
+    box-shadow:0 24px 70px rgba(0,0,0,.55), 0 0 40px var(--gold-glow), inset 0 0 30px rgba(255,196,107,.03);
+    animation:cardIn .7s cubic-bezier(.22,.9,.34,1) both;
+}
+@keyframes cardIn{from{opacity:0;transform:translateY(26px) scale(.97)}to{opacity:1;transform:translateY(0) scale(1)}}
+/* 椤堕儴閲戝厜绾?+ 鏂滃垏瑙掕楗?*/
+.card::before{
+    content:""; position:absolute; top:-1px; left:14%; right:14%; height:1px;
+    background:linear-gradient(90deg,transparent,var(--amber),transparent);
+}
+.card::after{
+    content:""; position:absolute; top:-7px; right:-7px;
+    width:18px; height:18px;
+    border-top:2px solid var(--amber); border-right:2px solid var(--amber);
+    filter:drop-shadow(0 0 6px var(--amber2));
+    opacity:.85;
+}
+h1{
+    font-size:26px; text-align:center; letter-spacing:4px; margin-bottom:4px;
+    background:linear-gradient(120deg,#ffd98a 20%, #f59e3b 55%, #ffc46b 85%);
+    -webkit-background-clip:text; background-clip:text;
+    -webkit-text-fill-color:transparent; color:transparent;
+    text-shadow:0 0 30px var(--gold-glow);
+    animation:breath 3.2s ease-in-out infinite;
+}
+h1 span{font-size:15px; letter-spacing:3px; opacity:.85}
+@keyframes breath{0%,100%{filter:brightness(1)}50%{filter:brightness(1.25)}}
+/* 娴佽悿鐙櫧鍓爣棰橈細钀ょ伀鍙戝厜锛堥噾鑹叉枃瀛?+ 澶氬眰鍏夋檿鍛煎惛锛?*/
+.sub{
+    text-align:center; font-size:12.5px; margin:10px 0 26px;
+    letter-spacing:1px; line-height:1.8;
+}
+.sub-glow{
+    color:var(--amber);
+    text-shadow:0 0 8px rgba(255,196,107,.8), 0 0 20px rgba(245,166,35,.5), 0 0 42px rgba(245,166,35,.3);
+    animation:glowPulse 3s ease-in-out infinite;
+}
+@keyframes glowPulse{
+    0%,100%{text-shadow:0 0 6px rgba(255,196,107,.6), 0 0 16px rgba(245,166,35,.35)}
+    50%{text-shadow:0 0 12px rgba(255,196,107,1), 0 0 30px rgba(245,166,35,.65), 0 0 56px rgba(245,166,35,.4)}
+}
+label{display:block;font-size:12.5px;color:var(--dim);margin:14px 0 6px;letter-spacing:1px}
+input{
+    width:100%;padding:11px 13px;border-radius:10px;
+    border:1px solid rgba(255,255,255,.13);
+    background:rgba(255,255,255,.055); color:var(--txt);
+    font-family:inherit;font-size:14px;outline:none;
+    transition:border-color .25s, box-shadow .25s;
+}
+input:focus{
+    border-color:var(--amber2);
+    box-shadow:0 0 0 3px var(--gold-glow), 0 0 20px rgba(245,166,35,.16);
+}
+input::placeholder{color:var(--faint)}
+.btn{
+    display:block;width:100%;margin-top:22px;padding:12px 0;
+    border:none;border-radius:10px;
+    font-family:inherit;font-size:14px;font-weight:600;letter-spacing:3px;
+    color:#241505;background:linear-gradient(135deg,#ffd07e,#f08c2b);
+    cursor:pointer;
+    box-shadow:0 3px 16px rgba(245,158,59,.3);
+    transition:box-shadow .2s, filter .2s, transform .12s;
+}
+.btn:hover{box-shadow:0 4px 24px rgba(245,158,59,.5);filter:brightness(1.07)}
+.btn:active{transform:scale(.97)}
+.btn.ghost{
+    margin-top:12px;letter-spacing:2px;
+    background:rgba(255,255,255,.06);color:var(--dim);
+    border:1px solid rgba(255,255,255,.1);
+    box-shadow:none;
+}
+.btn.ghost:hover{color:var(--amber);border-color:var(--line);box-shadow:0 0 14px var(--gold-glow)}
+.err{display:none;margin-top:14px;font-size:12.5px;color:var(--red);text-align:center}
+.err.green{color:var(--green)}
+.reset-link{
+    display:block;text-align:center;margin-top:10px;
+    font-size:12px;color:var(--dim);cursor:pointer;letter-spacing:1px;
+}
+.reset-link:hover{color:var(--amber)}
+.tip{
+    margin-top:18px;font-size:11.5px;color:var(--faint);text-align:center;
+    line-height:1.9;letter-spacing:.5px;
+}
+/* 琛ㄥ崟鍒囨崲杩囨浮 */
+.form-swap{animation:swapIn .35s ease-out}
+@keyframes swapIn{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
+@media (prefers-reduced-motion: reduce){
+    .card, body::before, .sub-glow{animation:none !important}
+    #firefly-field{display:none}
+}
+</style>
+</head>
+<body>
+<canvas id="firefly-field"></canvas>
+<div class="card">
+  <h1>娴佽悿AI <span>FIREFLY</span></h1>
+  <p class="sub sub-glow">銆屾垜鎯宠娲讳笅鍘伙紝鎯宠浠ャ€屾祦钀ゃ€嶇殑韬唤娲讳笅鍘伙紝瑕佹壘瀵绘垜鐢熷懡鐨勬剰涔夈€傘€?/p>
+
+  <!-- 鐧诲綍琛ㄥ崟 -->
+  <form id="loginForm" class="form-swap">
+    <label>閭</label>
+    <input id="loginEmail" type="email" placeholder="QQ 閭" autocomplete="email">
+    <label>瀵嗙爜</label>
+    <input id="loginPass" type="password" placeholder="瀵嗙爜" autocomplete="current-password">
+    <button class="btn" type="submit">鐧?褰?/button>
+  </form>
+  <button class="btn ghost" id="toRegister">娌℃湁璐﹀彿锛熸敞鍐?/button>
+  <a class="reset-link" id="toReset">蹇樿瀵嗙爜锛?/a>
+  <div class="err" id="loginErr"></div>
+
+  <!-- 娉ㄥ唽琛ㄥ崟锛堥殣钘忥級 -->
+  <form id="registerForm" style="display:none">
+    <label>閭</label>
+    <input id="regEmail" type="email" placeholder="QQ 閭锛堝 123456@qq.com锛? autocomplete="email">
+    <label>閭楠岃瘉鐮?/label>
+    <div style="display:flex;gap:8px">
+      <input id="regCode" type="text" maxlength="6" placeholder="6 浣嶉獙璇佺爜" style="flex:1">
+      <button type="button" id="sendCodeBtn" class="btn" style="width:auto;margin-top:0;padding:0 16px;flex-shrink:0">鑾峰彇楠岃瘉鐮?/button>
+    </div>
+    <label>瀵嗙爜锛堣嚦灏?8 浣嶏級</label>
+    <input id="regPass" type="password" placeholder="瀵嗙爜">
+    <label>QQ 缇ゅ彿锛堜笅杞?APP 鍙锛屾棤闇€杩涚兢锛?/label>
+    <input id="regGroup" type="text" placeholder="QQ 缇ゅ彿">
+    <button class="btn" type="submit">娉?鍐?/button>
+  </form>
+  <button class="btn ghost" id="toLogin" style="display:none">宸叉湁璐﹀彿锛熺櫥褰?/button>
+  <div class="err" id="regErr"></div>
+
+  <!-- 閲嶇疆瀵嗙爜琛ㄥ崟锛堝繕璁板瘑鐮侊紝闅愯棌锛?-->
+  <form id="resetForm" style="display:none">
+    <label>閭</label>
+    <input id="rstEmail" type="email" placeholder="QQ 閭" autocomplete="email">
+    <label>閭楠岃瘉鐮?/label>
+    <div style="display:flex;gap:8px">
+      <input id="rstCode" type="text" maxlength="6" placeholder="6 浣嶉獙璇佺爜" style="flex:1">
+      <button type="button" id="rstSendBtn" class="btn" style="width:auto;margin-top:0;padding:0 16px;flex-shrink:0">鑾峰彇楠岃瘉鐮?/button>
+    </div>
+    <label>鏂板瘑鐮侊紙鑷冲皯 8 浣嶏級</label>
+    <input id="rstPass" type="password" placeholder="鏂板瘑鐮? autocomplete="new-password">
+    <button class="btn" type="submit">閲嶇疆瀵嗙爜</button>
+  </form>
+  <button class="btn ghost" id="toLogin2" style="display:none">杩斿洖鐧诲綍</button>
+  <div class="err" id="rstErr"></div>
+
+  <p class="tip">鏁版嵁浠呭瓨鏈嶅姟鍣ㄤ綘鐨勮处鍙风洰褰?路 瀵嗛挜涓嶈惤鏈嶅姟鍣?/p>
+</div>
+
+<script src="config.js"></script>
+<script>
+const $ = id => document.getElementById(id);
+const LOGIN = $("loginForm"), REG = $("registerForm"), RESET = $("resetForm");
+// 鏈嶅姟鍣?API 鍦板潃锛氬崟鐐规潵婧?config.js锛坒ile:// 椤甸潰璺ㄥ煙璋冪敤锛?
+const API_BASE = window.FIREFLY_SERVER_BASE;
+const _api = p => API_BASE + p;
+
+/* 鈹€鈹€ 钀ょ伀绮掑瓙鍦猴紙鍚?index 椤碉細鍛煎惛/婕傜Щ/榧犳爣鎯婃壈/鐐瑰嚮杞昏仛锛?鈹€鈹€ */
+(function () {
+    var c = document.getElementById("firefly-field");
+    if (!c || !c.getContext) return;
+    var x = c.getContext("2d");
+    var W = 0, H = 0, DPR = 1;
+    var reduced = window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches;
+    if (reduced) return;
+    var N = (navigator.maxTouchPoints > 0 || innerWidth < 720) ? 40 : 64;
+    var COLORS = ["255,196,107", "245,166,35", "143,230,201", "255,214,140"];
+    var dots = [], mouse = { x: -1e4, y: -1e4 };
+    for (var i = 0; i < N; i++) dots.push({
+        x: Math.random(), y: Math.random(),
+        r: 0.6 + Math.random() * 1.7,
+        ph: Math.random() * 6.28, sp: 0.5 + Math.random() * 0.9,
+        vx: (Math.random() - 0.5) * 0.1, vy: (Math.random() - 0.5) * 0.1,
+        col: COLORS[i % COLORS.length]
+    });
+    function resize() {
+        DPR = Math.min(window.devicePixelRatio || 1, 2);
+        W = innerWidth; H = innerHeight;
+        c.width = W * DPR; c.height = H * DPR;
+        c.style.width = W + "px"; c.style.height = H + "px";
+        x.setTransform(DPR, 0, 0, DPR, 0, 0);
+    }
+    var last = 0;
+    function frame(t) {
+        requestAnimationFrame(frame);
+        var dt = Math.min((t - last) / 1000, 0.05) || 0.016;
+        last = t;
+        x.clearRect(0, 0, W, H);
+        for (var i = 0; i < dots.length; i++) {
+            var d = dots[i];
+            d.ph += d.sp * dt;
+            d.x += d.vx * dt; d.y += d.vy * dt;
+            if (d.x < -0.05) d.x = 1.05; else if (d.x > 1.05) d.x = -0.05;
+            if (d.y < -0.05) d.y = 1.05; else if (d.y > 1.05) d.y = -0.05;
+            var px = d.x * W, py = d.y * H;
+            var dx = px - mouse.x, dy = py - mouse.y, d2 = dx * dx + dy * dy;
+            if (d2 < 14400) {
+                var f = (1 - d2 / 14400) * 46 * dt;
+                var dist = Math.sqrt(d2) || 1;
+                px += dx / dist * f; py += dy / dist * f;
+                d.x = px / W; d.y = py / H;
+            }
+            var glow = 0.35 + 0.65 * Math.abs(Math.sin(d.ph));
+            x.beginPath();
+            x.fillStyle = "rgba(" + d.col + "," + glow.toFixed(2) + ")";
+            x.arc(px, py, d.r, 0, 6.283);
+            x.fill();
+            if (d.r > 1.4) {
+                x.beginPath();
+                x.fillStyle = "rgba(" + d.col + "," + (glow * 0.16).toFixed(2) + ")";
+                x.arc(px, py, d.r * 3.2, 0, 6.283);
+                x.fill();
+            }
+        }
+    }
+    addEventListener("resize", resize);
+    addEventListener("mousemove", function (e) { mouse.x = e.clientX; mouse.y = e.clientY; });
+    addEventListener("touchmove", function (e) {
+        if (e.touches[0]) { mouse.x = e.touches[0].clientX; mouse.y = e.touches[0].clientY; }
+    }, { passive: true });
+    addEventListener("touchstart", function (e) {
+        if (e.touches[0]) { mouse.x = e.touches[0].clientX; mouse.y = e.touches[0].clientY; }
+    }, { passive: true });
+    addEventListener("click", function (e) {
+        for (var i = 0; i < dots.length; i++) {
+            var d = dots[i];
+            var dx = e.clientX - d.x * W, dy = e.clientY - d.y * H;
+            var dist = Math.sqrt(dx * dx + dy * dy) || 1;
+            if (dist < 220) {
+                var pull = 0.02 * (1 - dist / 220);
+                d.x += dx / dist * pull; d.y += dy / dist * pull;
+            }
+        }
+    });
+    document.addEventListener("visibilitychange", function () { if (document.hidden) last = 0; });
+    resize();
+    requestAnimationFrame(frame);
+})();
+
+/* 鈹€鈹€ 瀹夎闅愯棌浠ｇ爜锛氶娆¤闂敓鎴愶紝涓€涓畨瑁呬竴涓紙娉ㄥ唽闂ㄦ锛岄噸澶嶆敞鍐岄渶閲嶈锛?鈹€鈹€ */
+function getInstallId() {
+  try {
+    let id = localStorage.getItem("firefly_install_id");
+    if (!id) {
+      // crypto.getRandomValues锛氬瘑鐮佸闅忔満锛圡ath.random 鍙娴?鍙鎾烇紝涓嶈兘鍋氭敞鍐岄棬妲涳級
+      const rand = () => {
+        const buf = new Uint32Array(1);
+        crypto.getRandomValues(buf);
+        return buf[0].toString(16).padStart(8, "0");
+      };
+      id = "inst-" + (rand() + rand() + rand() + rand());
+      localStorage.setItem("firefly_install_id", id);
+    }
+    return id;
+  } catch (e) { return ""; }
+}
+/* 鈹€鈹€ 琛ㄥ崟鍒囨崲涓庢彁浜?鈹€鈹€ */
+function showErr(el, msg) { el.textContent = msg; el.style.display = "block"; }
+function hideErr(el) { el.style.display = "none"; }
+
+$("toRegister").onclick = () => {
+  LOGIN.style.display = "none"; REG.style.display = "block";
+  REG.classList.add("form-swap");
+  $("toLogin").style.display = "block"; $("toRegister").style.display = "none";
+};
+$("toLogin").onclick = () => {
+  REG.style.display = "none"; LOGIN.style.display = "block";
+  LOGIN.classList.add("form-swap");
+  $("toLogin").style.display = "none"; $("toRegister").style.display = "block";
+};
+/* 蹇樿瀵嗙爜锛氱櫥褰曡〃鍗?鈫?閲嶇疆琛ㄥ崟 */
+$("toReset").onclick = () => {
+  LOGIN.style.display = "none"; RESET.style.display = "block";
+  RESET.classList.add("form-swap");
+  $("toRegister").style.display = "none"; $("toReset").style.display = "none";
+  $("toLogin2").style.display = "block";
+};
+$("toLogin2").onclick = () => {
+  RESET.style.display = "none"; LOGIN.style.display = "block";
+  LOGIN.classList.add("form-swap");
+  $("toLogin2").style.display = "none"; $("toRegister").style.display = "block"; $("toReset").style.display = "block";
+};
+
+LOGIN.onsubmit = e => {
+  e.preventDefault(); hideErr($("loginErr"));
+  fetch(_api("/auth/login"), {method: "POST", headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({email: $("loginEmail").value.trim(), password: $("loginPass").value, device: "web"})
+  }).then(r => r.json()).then(d => {
+    if (d.ok) {
+      localStorage.setItem("firefly_token", d.token);
+      location.href = "index.html";
+    } else showErr($("loginErr"), d.error || "鐧诲綍澶辫触");
+  }).catch(() => showErr($("loginErr"), "缃戠粶閿欒"));
+};
+
+/* 鑾峰彇閭楠岃瘉鐮侊紙60s 鍊掕鏃讹級 */
+let codeTimer = null;
+$("sendCodeBtn").onclick = () => {
+  const email = $("regEmail").value.trim();
+  const btn = $("sendCodeBtn");
+  hideErr($("regErr"));
+  if (!/^[^@\s]+@(qq\.com|foxmail\.com)$/.test(email)) { showErr($("regErr"), "璇蜂娇鐢?QQ 閭"); return; }
+  if (codeTimer) return;
+  btn.disabled = true;
+  fetch(_api("/auth/mail-send"), {method: "POST", headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({email: email})
+  }).then(r => r.json()).then(d => {
+    if (d.ok) {
+      showErr($("regErr"), "楠岃瘉鐮佸凡鍙戦€侊紝璇锋煡鏀堕偖绠?);
+      $("regErr").classList.add("green");
+      let sec = 60;
+      btn.textContent = sec + "s";
+      codeTimer = setInterval(() => {
+        sec--;
+        if (sec <= 0) {
+          clearInterval(codeTimer); codeTimer = null;
+          btn.textContent = "鑾峰彇楠岃瘉鐮?; btn.disabled = false;
+        } else btn.textContent = sec + "s";
+      }, 1000);
+    } else {
+      btn.disabled = false;
+      showErr($("regErr"), d.error || "鍙戦€佸け璐?);
+    }
+  }).catch(() => { btn.disabled = false; showErr($("regErr"), "缃戠粶閿欒"); });
+};
+
+REG.onsubmit = e => {
+  e.preventDefault(); hideErr($("regErr"));
+  fetch(_api("/auth/register"), {method: "POST", headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({email: $("regEmail").value.trim(), password: $("regPass").value,
+      qq_group: $("regGroup").value.trim(), mail_code: $("regCode").value.trim(),
+      install_id: getInstallId()})
+  }).then(r => r.json()).then(d => {
+    if (d.ok) {
+      // 娉ㄥ唽鎴愬姛 鈫?鑷姩鍒囧洖鐧诲綍琛ㄥ崟骞堕濉偖绠?
+      REG.style.display = "none"; LOGIN.style.display = "block";
+      LOGIN.classList.add("form-swap");
+      $("toLogin").style.display = "none"; $("toRegister").style.display = "block";
+      $("loginEmail").value = $("regEmail").value.trim();
+      $("loginPass").value = "";
+      showErr($("loginErr"), "娉ㄥ唽鎴愬姛锛岃鐧诲綍");
+      $("loginErr").classList.add("green");
+      $("loginPass").focus();
+    }
+    else { showErr($("regErr"), d.error || "娉ㄥ唽澶辫触"); }
+  }).catch(() => showErr($("regErr"), "缃戠粶閿欒"));
+};
+
+/* 鈹€鈹€ 蹇樿瀵嗙爜锛氬彂閫侀噸缃獙璇佺爜 + 閲嶇疆鎻愪氦 鈹€鈹€ */
+const qqRe = /^[^@\s]+@(qq\.com|foxmail\.com)$/;
+function startCountdown(btn) {
+  let sec = 60;
+  btn.textContent = sec + "s";
+  const t = setInterval(() => {
+    sec--;
+    if (sec <= 0) {
+      clearInterval(t);
+      btn.textContent = "鑾峰彇楠岃瘉鐮?; btn.disabled = false;
+    } else btn.textContent = sec + "s";
+  }, 1000);
+}
+$("rstSendBtn").onclick = () => {
+  const email = $("rstEmail").value.trim();
+  const btn = $("rstSendBtn");
+  hideErr($("rstErr"));
+  if (!qqRe.test(email)) { showErr($("rstErr"), "璇蜂娇鐢?QQ 閭"); return; }
+  if (btn.disabled) return;
+  btn.disabled = true;
+  fetch(_api("/auth/reset-send"), {method: "POST", headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({email: email})
+  }).then(r => r.json()).then(d => {
+    if (d.ok) {
+      showErr($("rstErr"), "楠岃瘉鐮佸凡鍙戦€侊紙鑻ヨ閭宸叉敞鍐岋級锛岃鏌ユ敹閭");
+      $("rstErr").classList.add("green");
+      startCountdown(btn);
+    } else {
+      btn.disabled = false;
+      showErr($("rstErr"), d.error || "鍙戦€佸け璐?);
+    }
+  }).catch(() => { btn.disabled = false; showErr($("rstErr"), "缃戠粶閿欒"); });
+};
+RESET.onsubmit = e => {
+  e.preventDefault(); hideErr($("rstErr"));
+  fetch(_api("/auth/reset-password"), {method: "POST", headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({email: $("rstEmail").value.trim(), code: $("rstCode").value.trim(),
+      password: $("rstPass").value})
+  }).then(r => r.json()).then(d => {
+    if (d.ok) {
+      RESET.style.display = "none"; LOGIN.style.display = "block";
+      LOGIN.classList.add("form-swap");
+      $("toLogin2").style.display = "none"; $("toRegister").style.display = "block"; $("toReset").style.display = "block";
+      $("loginEmail").value = $("rstEmail").value.trim();
+      $("loginPass").value = "";
+      showErr($("loginErr"), "瀵嗙爜宸查噸缃紝璇风敤鏂板瘑鐮佺櫥褰?);
+      $("loginErr").classList.add("green");
+      $("loginPass").focus();
+    }
+    else { showErr($("rstErr"), d.error || "閲嶇疆澶辫触"); }
+  }).catch(() => showErr($("rstErr"), "缃戠粶閿欒"));
+};
+</script>
+</body>
+</html>
