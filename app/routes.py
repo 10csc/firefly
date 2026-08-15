@@ -681,6 +681,7 @@ def undo(h):
 _FEEDBACK_LABELS = ("人设崩了", "记错了", "重复", "太冷淡", "太黏", "不像她", "其他")
 _FEEDBACK_REASON_MAX = 200       # 理由长度上限（字符）
 _FEEDBACK_SNAPSHOT_TURNS = 8     # 上下文快照轮数
+_FEEDBACK_MAX_ENTRIES = 500      # 反馈记录队列上限：只保留最近 N 条（丢最旧）
 
 
 def feedback(h):
@@ -693,6 +694,14 @@ def feedback(h):
     if label and label not in _FEEDBACK_LABELS:
         h._json({"ok": False, "error": "未知的反馈标签"}); return
     text = (body.get("reason_text") or "").strip()[:_FEEDBACK_REASON_MAX]
+    # seq：反馈模块按消息定位（可选；聊天页旧入口不传时为空）
+    seq = None
+    raw_seq = body.get("seq")
+    if raw_seq is not None:
+        try:
+            seq = int(raw_seq)
+        except (TypeError, ValueError):
+            h._json({"ok": False, "error": "seq 必须是整数"}); return
 
     session = get_session(body.get("session_id", "default"), mode)
     with session["lock"]:
@@ -706,6 +715,7 @@ def feedback(h):
         "time": time.strftime("%Y-%m-%d %H:%M:%S"),
         "mode": mode,
         "turn": turn,
+        "seq": seq,
         "verdict": verdict,
         "reason_label": label,
         "reason_text": text,
@@ -714,8 +724,30 @@ def feedback(h):
     try:
         fp = cfg.mode_data_dir(mode) / "feedback.jsonl"
         fp.parent.mkdir(parents=True, exist_ok=True)
+        # 去重（幂等）：同一消息同一评价只记一次，防反馈模块重复点击污染数据。
+        # 只扫文件尾部 64KB（反馈稀疏，足够覆盖最近几百条）。
+        if seq is not None and fp.exists():
+            tail = fp.read_bytes()[-65536:].decode("utf-8", errors="ignore")
+            for line in tail.splitlines():
+                try:
+                    old = json.loads(line)
+                except Exception:
+                    continue
+                if (old.get("seq") == seq and old.get("verdict") == verdict
+                        and old.get("mode") == mode):
+                    h._json({"ok": True, "duplicate": True})
+                    return
         with open(fp, "a", encoding="utf-8") as f:
             f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+        # 队列上限：只保留最近 _FEEDBACK_MAX_ENTRIES 条（丢最旧，防无限增长）
+        try:
+            lines = fp.read_text(encoding="utf-8").splitlines()
+            if len(lines) > _FEEDBACK_MAX_ENTRIES:
+                tmp = fp.with_name(fp.name + ".tmp")
+                tmp.write_text("\n".join(lines[-_FEEDBACK_MAX_ENTRIES:]) + "\n", encoding="utf-8")
+                tmp.replace(fp)
+        except Exception as e:
+            logger.warning("反馈队列裁剪失败: %s", e)
         h._json({"ok": True})
     except Exception as e:
         h._json({"ok": False, "error": f"反馈保存失败: {e}"})

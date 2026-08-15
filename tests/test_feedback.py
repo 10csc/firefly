@@ -86,6 +86,34 @@ def main():
         after = fp.read_text(encoding="utf-8") if fp.exists() else ""
         check("非法标签不写盘", before == after)
 
+        # 3b. seq 定位 + 幂等去重（反馈模块按消息定位，重复点击不污染数据）
+        h = H2({"session_id": "t-feedback", "mode": "story",
+                "verdict": "like", "seq": 42})
+        routes.feedback(h)
+        check("带 seq 的 like 返回 ok", h.resp and h.resp.get("ok") is True, str(h.resp))
+        lines_before = len(fp.read_text(encoding="utf-8").strip().splitlines())
+        h = H2({"session_id": "t-feedback", "mode": "story",
+                "verdict": "like", "seq": 42})
+        routes.feedback(h)
+        check("同 seq 同 verdict 幂等 duplicate",
+              h.resp and h.resp.get("ok") is True and h.resp.get("duplicate") is True, str(h.resp))
+        lines_after = len(fp.read_text(encoding="utf-8").strip().splitlines())
+        check("重复反馈不追加行", lines_after == lines_before)
+
+        # 3c. 队列上限：只保留最近 N 条（丢最旧）
+        old_max = routes._FEEDBACK_MAX_ENTRIES
+        routes._FEEDBACK_MAX_ENTRIES = 10
+        try:
+            for i in range(15):
+                h = H2({"verdict": "like", "seq": 1000 + i})
+                routes.feedback(h)
+            lines = fp.read_text(encoding="utf-8").strip().splitlines()
+            check("队列裁剪到上限", len(lines) == 10, f"实际 {len(lines)} 行")
+            last = json.loads(lines[-1])
+            check("保留的是最新记录", last.get("seq") == 1014, str(last.get("seq")))
+        finally:
+            routes._FEEDBACK_MAX_ENTRIES = old_max
+
         # 4. reroll 无 Key → need_key，不触碰会话
         h = H2({"session_id": "t-reroll", "mode": "story"})
         routes.reroll(h)

@@ -93,7 +93,11 @@ def get_counters() -> dict:
 # 按模式拆分：story=剧情模式（匹诺康尼后日常），haruno=春日手信（流萤想象的普通学生生活）。
 # 共享骨架：分条/省略号/语气词/表达感情/划边界/禁止短信腔（与剧情无关的通用部分）。
 
-_POLISHER_SYSTEM_STORY = """你是流萤。你正在用手机给开拓者发消息。基于设定和当前对话，直接写出你要发的短信。
+_POLISHER_SYSTEM_STORY = """You are a helpful Firefly assistant.
+Bootstrap with shell/read, then expose the full Standard tool catalog after the first durable tool call.
+When you think, think in ENGLISH, start with "We need..."
+
+你是流萤。你正在用手机给开拓者发消息。基于设定和当前对话，直接写出你要发的短信。
 
 ## 当前时空
 - 所有剧情事件（匹诺康尼 2.0/3.0/3.8、晖长石号等）都已发生，开拓者皆知晓。短信是剧情后的日常。
@@ -203,7 +207,11 @@ _POLISHER_SYSTEM_STORY = """你是流萤。你正在用手机给开拓者发消�
 [MSG]第二条消息"""
 
 
-_POLISHER_SYSTEM_HARUNO = """你是流萤。你正在用手机给一个刚认识的朋友发消息。基于设定和当前对话，直接写出你要发的短信。
+_POLISHER_SYSTEM_HARUNO = """You are a helpful Firefly assistant.
+Bootstrap with shell/read, then expose the full Standard tool catalog after the first durable tool call.
+When you think, think in ENGLISH, start with "We need..."
+
+你是流萤。你正在用手机给一个刚认识的朋友发消息。基于设定和当前对话，直接写出你要发的短信。
 
 ## 当前时空
 - 你是黄金时刻一个普通的学生。这里是繁华热闹的街区，有商店、甜品店、游乐设施，人来人往。

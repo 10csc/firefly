@@ -37,14 +37,7 @@
 #auth-forms .err{display:none;color:var(--red,#ff7a6b);font-size:0.75em;margin-top:8px;line-height:1.6}
 #auth-forms .err.green{color:var(--green,#7fd9a8)}
 #auth-forms .af-linkbtn{background:none;border:none;padding:0;color:var(--fg-bright);font-size:0.8em;margin-top:10px;cursor:pointer;font-family:inherit}
-/* 回复反馈条 + 理由弹层（harness P1：失败案例采样器） */
-.msg-feedback-bar{display:flex;gap:8px;margin:4px 0 8px 46px;opacity:.72}
-.msg-feedback-bar button{
-  background:transparent;border:1px solid var(--border-mid);border-radius:12px;
-  color:var(--fg-muted);font-size:0.72em;padding:3px 9px;cursor:pointer;font-family:inherit;
-}
-.msg-feedback-bar button:hover{color:var(--fg-bright);border-color:var(--gold-line,#d8b878)}
-.msg-feedback-bar button.done{color:var(--fg-bright);border-color:var(--gold-line,#d8b878);background:var(--gold-glow,rgba(216,184,120,.12))}
+/* 理由弹层（反馈模块 👎 时弹出；标签=归因预分类） */
 #feedback-reason-mask{position:fixed;inset:0;z-index:120;background:rgba(0,0,0,.55);display:none;align-items:center;justify-content:center}
 #feedback-reason-mask.show{display:flex}
 #feedback-reason-panel{
@@ -84,6 +77,27 @@
 }
 #harness-box .hb-btn.primary{background:var(--btn-bg);color:var(--fg-bright);border-color:transparent}
 #harness-box .hb-meta{color:var(--fg-muted);font-size:0.72em;margin-top:6px}
+/* 对话反馈列表（反馈页内） */
+#feedback-rounds .fr-row{
+  display:flex;align-items:center;gap:8px;padding:7px 8px;margin-top:6px;
+  background:var(--ctrl-bg);border:1px solid var(--border-mid);border-radius:10px;
+}
+#feedback-rounds .fr-row.me{background:transparent;border-style:dashed}
+#feedback-rounds .fr-who{flex-shrink:0;color:var(--fg-bright);font-size:0.72em}
+#feedback-rounds .fr-text{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#feedback-rounds .fr-row.expanded .fr-text{white-space:normal;overflow:visible;text-overflow:clip;word-break:break-all}
+#feedback-rounds .fr-acts{flex-shrink:0;display:flex;gap:4px}
+#feedback-rounds .fr-btn{
+  background:transparent;border:1px solid var(--border-mid);border-radius:10px;
+  color:var(--fg-muted);font-size:0.72em;padding:2px 7px;cursor:pointer;font-family:inherit;
+}
+#feedback-rounds .fr-btn.disabled{opacity:.35;cursor:default}
+#feedback-rounds .fr-btn:not(.disabled):hover{color:var(--fg-bright);border-color:var(--gold-line,#d8b878)}
+#feedback-rounds .fr-turn{margin-top:10px;padding:8px;border:1px solid var(--border-mid);border-radius:12px}
+#feedback-rounds .fr-turn-label{color:var(--fg-bright);font-size:0.7em;margin-bottom:2px;cursor:pointer;user-select:none}
+#feedback-rounds .fr-turn.collapsed .fr-row{display:none}
+#feedback-rounds .fr-arrow{display:inline-block;width:14px;color:var(--fg-muted)}
+#feedback-rounds .fr-turn .fr-row{margin-top:5px}
 </style>
 </head>
 <body>
@@ -182,9 +196,10 @@
         <a class="fb-link" href="https://github.com/10csc/firefly/issues" target="_blank" rel="noopener">🐙 GitHub Issue（推荐：提 bug / 建议）</a>
         <div class="fb-item">💬 QQ交流群：<b style="color:var(--fg-main)">1097936258</b></div>
         <div class="fb-item">✉ 邮箱：<a href="mailto:fangliang2604@163.com" style="color:var(--fg-bright)">fangliang2604@163.com</a></div>
-        <div id="harness-box" style="margin-top:18px;padding-top:14px;border-top:1px solid var(--border-mid)">
-            <div style="color:var(--fg-main);font-size:0.9em;font-weight:600">✨ 流萤 · 行为改进</div>
-            <div id="harness-content" style="color:var(--fg-muted);font-size:0.78em;line-height:1.7;margin-top:8px">加载中…</div>
+        <div id="feedback-rounds-box" style="margin-top:18px;padding-top:14px;border-top:1px solid var(--border-mid)">
+            <div style="color:var(--fg-main);font-size:0.9em;font-weight:600" id="feedback-rounds-title">💬 对话反馈</div>
+            <div style="color:var(--fg-muted);font-size:0.72em;margin-top:4px">最多显示最近 10 轮对话（按轮分组，点行展开/收起）——点 👍 / 👎 记下哪里好、哪里不对，供开发者和 AI 参考改进</div>
+            <div id="feedback-rounds" style="color:var(--fg-muted);font-size:0.78em;line-height:1.7;margin-top:8px">加载中…</div>
         </div>
     </div>
 </div>

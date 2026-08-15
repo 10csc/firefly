@@ -330,7 +330,7 @@ window.closeSettings = closeSettings;
 
 // 反馈面板（首页 ✉ 打开）
 const feedbackPanel = document.getElementById("feedback-panel");
-function openFeedback() { feedbackPanel.classList.add("show"); loadHarnessStatus(); }
+function openFeedback() { feedbackPanel.classList.add("show"); loadFeedbackRounds(); }
 function closeFeedback() { feedbackPanel.classList.remove("show"); }
 window.openFeedback = openFeedback;
 window.closeFeedback = closeFeedback;
@@ -821,14 +821,10 @@ function renderMessages(messages, who, data) {
     // 逐条消息加载：先显示三圆点占位，再替换为真实内容（消息含文本与表情包）
     // 加载时长按字数 0.7~1.5s（表情包按最短 0.7s）；消息之间留 0.5s 空白模拟游戏节奏
     let seq = 0;
-    let lastRow = null;
     const showNext = () => {
         if (gen !== _modeGen) { _rendering = false; return; }   // 模式已切换：丢弃剩余动画
         if (seq >= messages.length) {
             _rendering = false;   // 渲染动画完成
-            if (who === "firefly" && lastRow && messages.some(m => m.type === "text" || !m.type)) {
-                addFeedbackBar(lastRow);   // 本轮回复的反馈条（挂在最后一条气泡后）
-            }
             return;
         }
         const msg = messages[seq++];
@@ -838,9 +834,9 @@ function renderMessages(messages, who, data) {
         setTimeout(() => {
             if (gen !== _modeGen) { typingRow.remove(); _rendering = false; return; }
             typingRow.remove();
-            if (msg.type === "sticker") lastRow = addSticker(msg.path, who);
-            else if (msg.type === "narration") lastRow = addNarration(msg.text, msg.style);
-            else lastRow = addTextMessage(msg.content, who);
+            if (msg.type === "sticker") addSticker(msg.path, who);
+            else if (msg.type === "narration") addNarration(msg.text, msg.style);
+            else addTextMessage(msg.content, who);
             setTimeout(showNext, 500);   // 消息间隔：0.5s 空白
         }, loadMs);
     };
@@ -848,61 +844,151 @@ function renderMessages(messages, who, data) {
 }
 
 // ═══════════════════════════════════════════
-// 回复反馈（harness P1）：👍 / 👎 / 换一条
-// 定位：失败案例采样器，不是投票计分器（反馈计数不作质量统计）
+// 反馈模块（harness P1.1）：首页 ✉ 反馈页内
+// 列出最近与流萤的对话，逐条 👍/👎；👎 带标签理由；最后一条可换一条。
+// 定位：失败案例采样器，不是投票计分器（反馈计数不作质量统计）。
 // ═══════════════════════════════════════════
 const FEEDBACK_LABELS = ["人设崩了", "记错了", "重复", "太冷淡", "太黏", "不像她", "其他"];
 
-function addFeedbackBar(lastRow) {
-    const bar = document.createElement("div");
-    bar.className = "msg-feedback-bar";
-    const mk = (label, v, title) => {
-        const b = document.createElement("button");
-        b.type = "button";
-        b.textContent = label;
-        b.title = title;
-        b.addEventListener("click", () => {
-            if (bar.dataset.done) return;
-            if (v === "like") sendFeedback("like", bar);
-            else if (v === "dislike") openFeedbackReason(bar);
-            else rerollLast(bar);
-        });
-        return b;
+function _fbDoneSet() {
+    try { return new Set(JSON.parse(localStorage.getItem("fb_done_" + CURRENT_MODE) || "[]")); }
+    catch (e) { return new Set(); }
+}
+function _fbMarkDone(seq) {
+    if (!seq) return;
+    const s = _fbDoneSet();
+    s.add(seq);
+    try { localStorage.setItem("fb_done_" + CURRENT_MODE, JSON.stringify([...s])); } catch (e) {}
+}
+function _fbIsDone(seq) { return !!seq && _fbDoneSet().has(seq); }
+
+async function loadFeedbackRounds() {
+    const box = document.getElementById("feedback-rounds");
+    if (!box) return;
+    const titleEl = document.getElementById("feedback-rounds-title");
+    if (titleEl) titleEl.textContent = "💬 对话反馈（" + (MODE_NAMES[CURRENT_MODE] || CURRENT_MODE) + "）";
+    box.innerHTML = "加载中…";
+    let data;
+    try {
+        // 取 120 条消息 → 分组后只显示最近 10 轮（每轮含分条/表情包/旁白）
+        const resp = await fetch("/history?limit=120&mode=" + encodeURIComponent(CURRENT_MODE));
+        data = await resp.json();
+    } catch (e) {
+        box.innerHTML = "读取失败，请稍后再试";
+        return;
+    }
+    const raw = data.messages || [];
+    // 按轮分组：user 开新轮（连续 user 分条归同轮）；无 user 的 firefly 段=主动轮
+    const rounds = [];
+    let cur = null;
+    raw.forEach(m => {
+        const kind = m.type || "text";
+        const text = kind === "text" ? String(m.content || "")
+                   : kind === "sticker" ? "（表情包）"
+                   : kind === "narration" ? "（旁白：" + String(m.text || "").slice(0, 30) + "）"
+                   : "";
+        if (!text) return;
+        if (m.who === "user") {
+            if (!cur || cur.firefly.length > 0) { cur = { user: [], firefly: [] }; rounds.push(cur); }
+            cur.user.push({ text, seq: m.seq });
+        } else if (m.who === "firefly") {
+            if (!cur) { cur = { user: [], firefly: [] }; rounds.push(cur); }
+            cur.firefly.push({ text, seq: m.seq, kind });
+        }
+    });
+    const show = rounds.slice(-10);
+    if (!show.length) {
+        box.innerHTML = "还没有和流萤的对话，先去聊两句吧。";
+        return;
+    }
+    const modeName = MODE_NAMES[CURRENT_MODE] || CURRENT_MODE;
+    const rowHtml = (who, full, seq, acts) => {
+        const short = full.slice(0, 40);
+        return `<div class="fr-row${who === "我" ? " me" : ""}" data-full="${escapeHtml(full)}" title="点按展开/收起"><span class="fr-who">${who}</span><span class="fr-text">${escapeHtml(short)}</span><span class="fr-acts">${acts}</span></div>`;
     };
-    bar.appendChild(mk("👍", "like", "这句像她"));
-    bar.appendChild(mk("👎", "dislike", "这条不对"));
-    bar.appendChild(mk("↻ 换一条", "reroll", "让流萤重新想一条"));
-    lastRow.after(bar);
+    const btnHtml = (seq) => {
+        const done = _fbIsDone(seq);
+        return `<button class="fr-btn${done ? " disabled" : ""}" data-v="like" data-seq="${seq}"${done ? " disabled" : ""} title="这句像她">👍</button>`
+             + `<button class="fr-btn${done ? " disabled" : ""}" data-v="dislike" data-seq="${seq}"${done ? " disabled" : ""} title="这条不对">👎</button>`;
+    };
+    let html = "";
+    const startIdx = rounds.length - show.length + 1;
+    // 最新一轮排最上面；默认全部收起，点轮标签展开/收起（手风琴式）
+    for (let i = show.length - 1; i >= 0; i--) {
+        const r = show[i];
+        const no = startIdx + i;
+        const label = r.user.length ? ("第 " + no + " 轮") : "流萤主动";
+        html += `<div class="fr-turn collapsed"><div class="fr-turn-label"><span class="fr-arrow">▸</span>${label} · ${modeName}</div>`;
+        r.user.forEach(u => { html += rowHtml("我", u.text, u.seq, ""); });
+        r.firefly.forEach(f => {
+            html += rowHtml("流萤", f.text, f.seq, f.kind === "text" ? btnHtml(f.seq) : "");
+        });
+        html += "</div>";
+    }
+    box.innerHTML = html;
+    // 轮级展开/收起：点轮标签，展开该轮并收起其他
+    box.querySelectorAll(".fr-turn-label").forEach(lbl => {
+        lbl.addEventListener("click", () => {
+            const turn = lbl.parentElement;
+            const willOpen = turn.classList.contains("collapsed");
+            box.querySelectorAll(".fr-turn").forEach(t => {
+                t.classList.add("collapsed");
+                const arrow = t.querySelector(".fr-arrow");
+                if (arrow) arrow.textContent = "▸";
+            });
+            if (willOpen) {
+                turn.classList.remove("collapsed");
+                const arrow = turn.querySelector(".fr-arrow");
+                if (arrow) arrow.textContent = "▾";
+            }
+        });
+    });
+    // 行点击：展开/收起全文；按钮点击不触发展开
+    box.querySelectorAll(".fr-row").forEach(row => {
+        row.addEventListener("click", (e) => {
+            if (e.target.classList && e.target.classList.contains("fr-btn")) return;
+            const expanded = row.classList.toggle("expanded");
+            const textEl = row.querySelector(".fr-text");
+            textEl.textContent = expanded ? row.dataset.full : row.dataset.full.slice(0, 40);
+        });
+    });
+    box.querySelectorAll(".fr-btn").forEach(btn => {
+        btn.addEventListener("click", () => {
+            const v = btn.dataset.v;
+            const seq = parseInt(btn.dataset.seq || "0", 10);
+            if (v === "like") sendFeedback("like", seq);
+            else openFeedbackReason(seq);
+        });
+    });
 }
 
-function _markFeedbackDone(bar, toast) {
-    bar.dataset.done = "1";
-    [...bar.children].forEach(b => { b.disabled = true; });
-    if (toast) showToast(toast);
-}
-
-async function sendFeedback(verdict, bar, label = "", text = "") {
+async function sendFeedback(verdict, seq, label = "", text = "") {
     try {
         const resp = await fetch("/feedback", {
             method: "POST",
             headers: {"Content-Type": "application/json"},
             body: JSON.stringify({
                 session_id: SESSION_ID, mode: CURRENT_MODE,
-                verdict, reason_label: label, reason_text: text,
+                verdict, seq, reason_label: label, reason_text: text,
             }),
         });
         const data = await resp.json();
-        if (data.ok) _markFeedbackDone(bar, verdict === "like" ? "收到！" : "已记录，流萤会慢慢改进");
-        else showToast(data.error || "反馈失败");
+        if (data.ok) {
+            _fbMarkDone(seq);
+            showToast(data.duplicate ? "这条已经反馈过啦" : "已记录，感谢反馈");
+            loadFeedbackRounds();
+        } else {
+            showToast(data.error || "反馈失败");
+        }
     } catch (e) {
         showToast("反馈发送失败，请稍后再试");
     }
 }
 
-let _frBar = null;
+let _frSeq = null;
 let _frLabel = "";
-function openFeedbackReason(bar) {
-    _frBar = bar;
+function openFeedbackReason(seq) {
+    _frSeq = seq;
     _frLabel = "";
     const chipsEl = document.getElementById("fr-chips");
     chipsEl.innerHTML = "";
@@ -922,46 +1008,17 @@ function openFeedbackReason(bar) {
 }
 function closeFeedbackReason() {
     document.getElementById("feedback-reason-mask").classList.remove("show");
-    _frBar = null;
+    _frSeq = null;
     _frLabel = "";
 }
 function submitFeedbackReason() {
-    const bar = _frBar;
-    if (!bar) return;
+    const seq = _frSeq;
     const text = document.getElementById("fr-text").value.trim().slice(0, 200);
     const label = _frLabel;
     closeFeedbackReason();
-    sendFeedback("dislike", bar, label, text);
+    sendFeedback("dislike", seq, label, text);
 }
 
-async function rerollLast(bar) {
-    if (bar) [...bar.children].forEach(b => { b.disabled = true; });
-    const statusEl = document.querySelector("#header .status");
-    const oldStatus = statusEl ? statusEl.textContent : "";
-    if (statusEl) statusEl.textContent = "流萤正在重新想…";
-    try {
-        const resp = await fetch("/chat/reroll", {
-            method: "POST",
-            headers: {"Content-Type": "application/json"},
-            body: JSON.stringify({ session_id: SESSION_ID, mode: CURRENT_MODE }),
-        });
-        const data = await resp.json();
-        if (data.need_key) { openSettings(); return; }
-        if (data.ok && data.messages) {
-            _modeGen++;   // 作废飞行中的渲染任务
-            messagesEl.innerHTML = "";
-            _hasMore = false;
-            await loadHistory();   // 历史重载：DOM 无轮次标记，逐条替换易错位
-            showToast("流萤重新想了一条");
-        } else {
-            showToast(data.error || "换一条失败");
-        }
-    } catch (e) {
-        showToast("换一条失败，请稍后再试");
-    } finally {
-        if (statusEl) statusEl.textContent = oldStatus;
-    }
-}
 document.getElementById("fr-cancel").addEventListener("click", closeFeedbackReason);
 document.getElementById("fr-submit").addEventListener("click", submitFeedbackReason);
 document.getElementById("feedback-reason-mask").addEventListener("click", (e) => {
@@ -970,7 +1027,8 @@ document.getElementById("feedback-reason-mask").addEventListener("click", (e) =>
 
 // ═══════════════════════════════════════════
 // 行为改进（harness P2）：候选批准 / 忽略 / 回滚
-// 入口：首页 ✉ 反馈页底部（全模式可见，不占设置面板）
+// 注意：已按用户要求从反馈页移除入口（反馈页只做反馈收集）。
+// 后端端点与以下函数保留，入口位置待定（候选：菜单抽屉独立页签）。
 // ═══════════════════════════════════════════
 async function loadHarnessStatus() {
     const box = document.getElementById("harness-content");
