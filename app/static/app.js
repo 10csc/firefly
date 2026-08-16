@@ -346,6 +346,8 @@ const UPDATE_SOURCES = [
     { api: "https://api.github.com/repos/10csc/firefly/releases/latest", html: "https://github.com/10csc/firefly/releases" },
     { api: "https://gitee.com/api/v5/repos/cpt-asymmetry/firefly/releases/latest", html: "https://gitee.com/cpt-asymmetry/firefly/releases" },
 ];
+// 公共下载页：APK 主通道走 Gitee，微信/QQ 等不支持 blob 下载的内置浏览器会自动走服务器直连（正确 MIME）
+const DOWNLOAD_PAGE_URL = "http://101.200.14.126:8787/download/";
 function compareVersions(a, b) {
     const pa = String(a).split(".").map(n => parseInt(n) || 0);
     const pb = String(b).split(".").map(n => parseInt(n) || 0);
@@ -451,8 +453,9 @@ async function autoUpdate(isAndroid) {
         const data = await resp.json();
         if (!data.ok) { msg.textContent = "下载失败：" + (data.error || ""); return; }
         if (isAndroid) {
-            // WebView 无法直接用 file:// 装 APK：跳系统浏览器打开下载页
-            msg.innerHTML = `下载完成 → 请从 <a href="https://gitee.com/cpt-asymmetry/firefly/releases" target="_blank" rel="noopener" style="color:var(--fg-bright)">发行版页面</a> 下载 APK 安装（系统限制需手动确认）`;
+            // WebView 无法直接用 file:// 装 APK：跳系统浏览器打开公共下载页
+            // （下载页自动分流：标准浏览器走 Gitee，微信/QQ 等走服务器直连正确 MIME）
+            msg.innerHTML = `下载完成 → 请从 <a href="${DOWNLOAD_PAGE_URL}" target="_blank" rel="noopener" style="color:var(--fg-bright)">下载页</a> 下载 APK 安装（系统限制需手动确认；如从 Gitee 页下载变成 .zip，把文件名改回 firefly.apk 即可）`;
             return;
         }
         if (data.installing) {
