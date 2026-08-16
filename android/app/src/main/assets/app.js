@@ -330,7 +330,7 @@ window.closeSettings = closeSettings;
 
 // 反馈面板（首页 ✉ 打开）
 const feedbackPanel = document.getElementById("feedback-panel");
-function openFeedback() { feedbackPanel.classList.add("show"); loadFeedbackRounds(); }
+function openFeedback() { feedbackPanel.classList.add("show"); }
 function closeFeedback() { feedbackPanel.classList.remove("show"); }
 window.openFeedback = openFeedback;
 window.closeFeedback = closeFeedback;
@@ -338,7 +338,7 @@ window.closeFeedback = closeFeedback;
 // ═══════════════════════════════════════════
 // 检查更新（GitHub 优先，失败自动降级 Gitee——国内网络 Gitee 更稳）
 // ═══════════════════════════════════════════
-const CURRENT_VERSION = "0.7.2";   // 与 android versionName / 安装器 AppVersion 保持一致
+const CURRENT_VERSION = "0.8.0";   // 与 android versionName / 安装器 AppVersion 保持一致
 // 设置面板版本号动态显示（单一版本源：CURRENT_VERSION；替代 index.html 硬编码文案）
 const curVersionEl = document.getElementById("current-version");
 if (curVersionEl) curVersionEl.textContent = "v" + CURRENT_VERSION;
@@ -377,7 +377,7 @@ async function checkUpdate() {
             const cur = String(CURRENT_VERSION);
             if (!latest) throw new Error("no tag");
             if (compareVersions(latest, cur) > 0) {
-                msg.innerHTML = `发现新版本 <b style="color:var(--fg-accent)">${latest}</b>（当前 ${cur}）<br>新版本由服务器管理员发布`;
+                msg.innerHTML = `发现新版本 <b style="color:var(--fg-accent)">${escapeHtml(latest)}</b>（当前 ${escapeHtml(cur)}）<br>新版本由服务器管理员发布`;
             } else {
                 msg.textContent = `已是最新版本 ${cur} ✓`;
             }
@@ -397,9 +397,9 @@ async function checkUpdate() {
             if (!latest) throw new Error("no tag");
             const isAndroid = /Android/i.test(navigator.userAgent) && !/Windows|Mac|Linux/i.test(navigator.userAgent);
             if (compareVersions(latest, cur) > 0) {
-                msg.innerHTML = `发现新版本 <b style="color:var(--fg-accent)">${latest}</b>（当前 ${cur}）<br>` +
+                msg.innerHTML = `发现新版本 <b style="color:var(--fg-accent)">${escapeHtml(latest)}</b>（当前 ${escapeHtml(cur)}）<br>` +
                     `<button id="auto-update-btn" style="margin-top:6px;padding:4px 12px;border-radius:6px;border:none;background:var(--fg-accent);color:#fff;cursor:pointer">自动更新</button>` +
-                    ` ｜ <a href="${d.html_url}" target="_blank" rel="noopener" style="color:var(--fg-muted)">发行说明</a>`;
+                    ` ｜ <a href="${escapeHtml(d.html_url || "#")}" target="_blank" rel="noopener" style="color:var(--fg-muted)">发行说明</a>`;
                 const btn = document.getElementById("auto-update-btn");
                 if (btn) btn.addEventListener("click", () => autoUpdate(isAndroid));
             } else {
@@ -421,9 +421,9 @@ async function checkUpdate() {
             const apkUrl = _matchAsset(data.assets, /\.apk$/i);
             const dlUrl = isAndroid ? (apkUrl || src.html) : (exeUrl || src.html);
             if (compareVersions(latest, CURRENT_VERSION) > 0) {
-                msg.innerHTML = `发现新版本 <b style="color:var(--fg-accent)">${latest}</b>（当前 ${CURRENT_VERSION}）<br>` +
-                    `<a href="${dlUrl}" target="_blank" rel="noopener" style="color:var(--fg-bright)">下载安装包</a>` +
-                    ` ｜ <a href="${src.html}" target="_blank" rel="noopener" style="color:var(--fg-muted)">发行说明</a>`;
+                msg.innerHTML = `发现新版本 <b style="color:var(--fg-accent)">${escapeHtml(latest)}</b>（当前 ${escapeHtml(CURRENT_VERSION)}）<br>` +
+                    `<a href="${escapeHtml(dlUrl || "#")}" target="_blank" rel="noopener" style="color:var(--fg-bright)">下载安装包</a>` +
+                    ` ｜ <a href="${escapeHtml(src.html || "#")}" target="_blank" rel="noopener" style="color:var(--fg-muted)">发行说明</a>`;
             } else {
                 msg.textContent = `已是最新版本 ${CURRENT_VERSION} ✓`;
             }
@@ -489,11 +489,162 @@ document.querySelectorAll(".menu-tab").forEach(btn => {
 // ═══════════════════════════════════════════
 // 配置管理
 // ═══════════════════════════════════════════
+// 配置管理（设置页分组：账号与连接 / 主动消息 / 模型与速度 / 外观 / 数据与系统）
+const _CFG_DEFAULTS = {
+    fast: {
+        analyzer_model: "deepseek-v4-flash", retriever_model: "deepseek-v4-flash",
+        organizer_model: "deepseek-v4-flash", polisher_model: "deepseek-v4-flash",
+        retriever_effort: "none", analyzer_effort: "high",
+        polisher_effort: "high", organizer_effort: "none",
+    },
+    strong: {
+        analyzer_model: "deepseek-v4-pro", retriever_model: "deepseek-v4-pro",
+        organizer_model: "deepseek-v4-pro", polisher_model: "deepseek-v4-pro",
+        retriever_effort: "none", analyzer_effort: "high",
+        polisher_effort: "high", organizer_effort: "none",
+    },
+};
+const _PROACTIVE_PRESETS = {
+    less:   { hard: 8, soft: 0.25 },
+    medium: { hard: 6, soft: 0.35 },
+    often:  { hard: 4, soft: 0.50 },
+};
+let _configLoaded = false;
+let _saveTimer = null;
+
+function _$(id) { return document.getElementById(id); }
+
+function _proactivePresetName(hard, soft) {
+    if (hard <= 4 && soft >= 0.45) return "often";
+    if (hard >= 8) return "less";
+    return "medium";
+}
+
+function _modelPresetName(models) {
+    return models.analyzer === "deepseek-v4-pro" && models.polisher === "deepseek-v4-pro"
+        && models.retriever === "deepseek-v4-pro" && models.organizer === "deepseek-v4-pro"
+        ? "strong" : "fast";
+}
+
+function _applyModelPreset(name) {
+    const p = _CFG_DEFAULTS[name] || _CFG_DEFAULTS.fast;
+    _$("analyzer-model-select").value = p.analyzer_model;
+    _$("retriever-model-select").value = p.retriever_model;
+    _$("organizer-model-select").value = p.organizer_model;
+    _$("polisher-model-select").value = p.polisher_model;
+    _$("retriever-effort-select").value = p.retriever_effort;
+    _$("analyzer-effort-select").value = p.analyzer_effort;
+    _$("polisher-effort-select").value = p.polisher_effort;
+    _$("organizer-effort-select").value = p.organizer_effort;
+    updateSettingsSummaries();
+}
+
+function _applyProactivePreset(name) {
+    const p = _PROACTIVE_PRESETS[name] || _PROACTIVE_PRESETS.medium;
+    _$("proactive-hard-slider").value = p.hard;
+    _$("proactive-soft-slider").value = Math.round(p.soft * 100);
+    _$("proactive-hard-value").textContent = p.hard;
+    _$("proactive-soft-value").textContent = Math.round(p.soft * 100) + "%";
+    updateSettingsSummaries();
+}
+
+function updateSettingsSummaries() {
+    const ps = _$("proactive-summary");
+    if (ps) {
+        const on = _$("proactive-enabled").checked;
+        const preset = _$("proactive-preset");
+        ps.textContent = on ? ("开启 · " + (preset && preset.selectedOptions[0] ? preset.selectedOptions[0].textContent : "偶尔")) : "已关闭";
+    }
+    const ms = _$("model-summary");
+    if (ms) {
+        const strong = _modelPresetName({
+            analyzer: _$("analyzer-model-select").value,
+            polisher: _$("polisher-model-select").value,
+            retriever: _$("retriever-model-select").value,
+            organizer: _$("organizer-model-select").value,
+        }) === "strong";
+        ms.textContent = strong ? "更强 · Pro" : "快速 · Flash";
+    }
+}
+
+function _buildSettingsPayload() {
+    return {
+        analyzer_model: _$("analyzer-model-select").value,
+        retriever_model: _$("retriever-model-select").value,
+        organizer_model: _$("organizer-model-select").value,
+        polisher_model: _$("polisher-model-select").value,
+        retriever_effort: _$("retriever-effort-select").value,
+        analyzer_effort: _$("analyzer-effort-select").value,
+        polisher_effort: _$("polisher-effort-select").value,
+        organizer_effort: _$("organizer-effort-select").value,
+        retriever_temperature: parseFloat(_$("retriever-temp-slider").value) || 0,
+        proactive_enabled: _$("proactive-enabled").checked,
+        proactive_hard: parseInt(_$("proactive-hard-slider").value) || 6,
+        proactive_soft: (parseInt(_$("proactive-soft-slider").value) || 35) / 100,
+        prob_reply_enabled: _$("prob-reply-enabled").checked,
+        prob_reply_value: (parseInt(_$("prob-reply-slider").value) || 10) / 100,
+        hidden_reply_enabled: _$("hidden-reply-enabled").checked,
+    };
+}
+
+async function _postSettings(payload, msg) {
+    const resp = await fetch("/set-config", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+    });
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok) {
+        msg.textContent = "保存失败：" + (data.error || "请稍后再试");
+        return false;
+    }
+    _hiddenEnabled = payload.hidden_reply_enabled !== false;
+    msg.textContent = "已保存 ✓";
+    clearTimeout(msg._timer);
+    msg._timer = setTimeout(() => { msg.textContent = ""; }, 2500);
+    return true;
+}
+
+async function saveConfigNow(explicit) {
+    const msg = _$("config-msg");
+    const srcSel = _$("api-source-select");
+    const src = srcSel ? srcSel.value : "own";
+    const keyInput = _$("key-input");
+    const k = keyInput ? keyInput.value.trim() : "";
+    const baseSel = _$("api-base-select");
+    const base = baseSel ? baseSel.value : "https://api.deepseek.com/v1";
+    if (IS_SERVER && explicit) {
+        try { localStorage.setItem("firefly_api_source", src); } catch (e) {}
+        if (src !== "proxy") {
+            if (k) { try { localStorage.setItem("firefly_api_key", k); } catch (e) {} }
+            try { localStorage.setItem("firefly_api_base", base); } catch (e) {}
+        }
+        if (keyInput) keyInput.value = "";
+    }
+    const payload = _buildSettingsPayload();
+    if (!IS_SERVER && explicit) {
+        if (k) payload.api_key = k;
+        payload.api_base = base;
+    }
+    if (explicit) msg.textContent = "保存中…";
+    const ok = await _postSettings(payload, msg);
+    if (ok && keyInput) keyInput.value = "";
+}
+
+function _scheduleAutoSave() {
+    if (!_configLoaded) return;
+    clearTimeout(_saveTimer);
+    _saveTimer = setTimeout(() => {
+        const msg = _$("config-msg");
+        if (msg) msg.textContent = "自动保存中…";
+        saveConfigNow(false);
+    }, 400);
+}
+
 async function loadConfig() {
     const ids = {
         a: "analyzer-model-select", r: "retriever-model-select",
-        o: "organizer-model-select",
-        p: "polisher-model-select",
+        o: "organizer-model-select", p: "polisher-model-select",
         re: "retriever-effort-select", ae: "analyzer-effort-select",
         pe: "polisher-effort-select", oe: "organizer-effort-select",
         rt: "retriever-temp-slider", rtv: "retriever-temp-value",
@@ -511,84 +662,95 @@ async function loadConfig() {
         const el = {};
         for (const [k, id] of Object.entries(ids)) el[k] = document.getElementById(id);
 
+        const normEffort = v => (v === "low" ? "high" : v);
         if (el.a) el.a.value = data.analyzer_model || "deepseek-v4-flash";
         if (el.r) el.r.value = data.retriever_model || "deepseek-v4-flash";
         if (el.o) el.o.value = data.organizer_model || "deepseek-v4-flash";
         if (el.p) el.p.value = data.polisher_model || "deepseek-v4-flash";
-        if (el.re) el.re.value = data.retriever_effort || "none";
-        if (el.ae) el.ae.value = data.analyzer_effort || "high";
-        if (el.pe) el.pe.value = data.polisher_effort || "high";
-        if (el.oe) el.oe.value = data.organizer_effort || "none";
+        if (el.re) el.re.value = normEffort(data.retriever_effort || "none");
+        if (el.ae) el.ae.value = normEffort(data.analyzer_effort || "high");
+        if (el.pe) el.pe.value = normEffort(data.polisher_effort || "high");
+        if (el.oe) el.oe.value = normEffort(data.organizer_effort || "none");
+
+        const hard = data.proactive_hard != null ? data.proactive_hard : 6;
+        const soft = data.proactive_soft != null ? data.proactive_soft : 0.35;
+        const prob = data.prob_reply_value != null ? data.prob_reply_value : 0.10;
         if (el.pe_) el.pe_.checked = data.proactive_enabled !== false;
         if (el.ph) {
-            el.ph.value = data.proactive_hard != null ? data.proactive_hard : 4;
-            if (el.phv) el.phv.textContent = el.ph.value;
+            el.ph.value = hard;
+            if (el.phv) el.phv.textContent = hard;
         }
         if (el.ps) {
-            el.ps.value = data.proactive_soft != null ? Math.round(data.proactive_soft * 10) : 5;
-            if (el.psv) el.psv.textContent = Math.round(el.ps.value * 10) + "%";
+            el.ps.value = Math.round(soft * 100);
+            if (el.psv) el.psv.textContent = Math.round(soft * 100) + "%";
         }
         if (el.pr_) el.pr_.checked = data.prob_reply_enabled !== false;
         if (el.pr) {
-            el.pr.value = data.prob_reply_value != null ? Math.round(data.prob_reply_value * 10) : 3;
-            if (el.prv) el.prv.textContent = Math.round(el.pr.value * 10) + "%";
+            el.pr.value = Math.round(prob * 100);
+            if (el.prv) el.prv.textContent = Math.round(prob * 100) + "%";
         }
         if (el.hr_) el.hr_.checked = data.hidden_reply_enabled !== false;
-        _hiddenEnabled = data.hidden_reply_enabled !== false;   // 后台主动触发开关缓存
-        const abSel = document.getElementById("api-base-select");
-        // 接口地址：server=随 Key 存本机（localStorage）；local=后端配置（data.api_base）
-        const localBase = (function () { try { return localStorage.getItem("firefly_api_base") || ""; } catch (e) { return ""; } })();
+        _hiddenEnabled = data.hidden_reply_enabled !== false;
+        const pp = _$("proactive-preset");
+        if (pp) pp.value = _proactivePresetName(hard, soft);
+        const mp = _$("model-preset");
+        if (mp) mp.value = _modelPresetName({
+            analyzer: el.a ? el.a.value : "deepseek-v4-flash",
+            polisher: el.p ? el.p.value : "deepseek-v4-flash",
+            retriever: el.r ? el.r.value : "deepseek-v4-flash",
+            organizer: el.o ? el.o.value : "deepseek-v4-flash",
+        });
+
+        const abSel = _$("api-base-select");
+        const localBase = (() => { try { return localStorage.getItem("firefly_api_base") || ""; } catch (e) { return ""; } })();
         if (abSel) {
             const want = IS_SERVER ? localBase : data.api_base;
-            // 只认后端允许的已知端点；未知值保持当前
             if ((data.api_bases || []).includes(want)) abSel.value = want;
         }
-        // API 来源（用户自带 Key / 服务器托管）：仅服务器模式可用；本地模式固定 own
-        const srcSel = document.getElementById("api-source-select");
-        const srcField = document.getElementById("api-source-field");
-        const localSrc = (function () { try { return localStorage.getItem("firefly_api_source") || "own"; } catch (e) { return "own"; } })();
+        const srcSel = _$("api-source-select");
+        const srcField = _$("api-source-field");
+        const localSrc = (() => { try { return localStorage.getItem("firefly_api_source") || "own"; } catch (e) { return "own"; } })();
         if (srcSel) {
             srcSel.value = localSrc === "proxy" ? "proxy" : "own";
             applyApiSource(IS_SERVER && localSrc === "proxy");
         }
         if (srcField) srcField.style.display = IS_SERVER ? "" : "none";
-        // 服务器模式：账号同步按钮显示（本地模式无账号概念）
-        const syncFields = document.getElementById("sync-fields");
+        const syncFields = _$("sync-fields");
         if (syncFields) syncFields.style.display = IS_SERVER ? "" : "none";
+
         if (data.retriever_temperature != null && el.rt) {
             el.rt.value = data.retriever_temperature;
             if (el.rtv) el.rtv.textContent = Number(data.retriever_temperature).toFixed(1);
         }
+
         if (el.m) {
-            const keyLabel = document.getElementById("key-label");
+            const keyLabel = _$("key-label");
             if (IS_SERVER) {
-                // 服务器版差异：Key 状态看本机浏览器 localStorage（服务器不存用户 Key）
-                const localKey = (function () { try { return localStorage.getItem("firefly_api_key") || ""; } catch (e) { return ""; } })();
-                el.m.textContent = localKey
-                    ? "当前 Key：已设置（存于本机浏览器）"
-                    : "尚未设置 API Key（存于本机浏览器，不会上传服务器）";
+                const localKey = (() => { try { return localStorage.getItem("firefly_api_key") || ""; } catch (e) { return ""; } })();
+                el.m.textContent = localKey ? "Key 已设置（仅存本机浏览器）" : "尚未设置 API Key（不会上传服务器）";
                 if (keyLabel) keyLabel.textContent = "API Key（存于本机浏览器，不会上传服务器）";
             } else {
-                el.m.textContent = data.has_key
-                    ? "当前 Key：" + (data.key_prefix || "已设置")
-                    : "尚未设置 API Key";
+                el.m.textContent = data.has_key ? "Key 已设置（" + (data.key_prefix || "仅本机") + "）" : "尚未设置 API Key";
                 if (keyLabel) keyLabel.textContent = "API Key（存本机配置文件，仅本机使用）";
             }
         }
         if (el.k) {
             if (IS_SERVER) {
-                const localKey = (function () { try { return localStorage.getItem("firefly_api_key") || ""; } catch (e) { return ""; } })();
+                const localKey = (() => { try { return localStorage.getItem("firefly_api_key") || ""; } catch (e) { return ""; } })();
                 el.k.placeholder = localKey ? "已设置，留空则保留" : "sk-...";
             } else {
                 el.k.placeholder = data.has_key ? "已设置，留空则保留原 Key" : "sk-...";
             }
             el.k.value = "";
         }
-        // PC 本地版显示「退出应用」（服务器版/安卓不显示；后端 /shutdown 仅本机可达）
-        const exitRow = document.getElementById("app-exit-row");
+
+        const hiddenField = _$("hidden-reply-field");
+        if (hiddenField) hiddenField.style.display = window.FireflyMode ? "" : "none";
+
+        const exitRow = _$("app-exit-row");
         if (exitRow && data.platform === "pc") {
-            exitRow.style.display = "block";
-            const exitBtn = document.getElementById("app-exit-btn");
+            exitRow.style.display = "";
+            const exitBtn = _$("app-exit-btn");
             if (exitBtn) exitBtn.onclick = () => {
                 if (!confirm("确定退出流萤吗？聊天数据已实时保存，下次启动继续。")) return;
                 exitBtn.disabled = true;
@@ -596,107 +758,65 @@ async function loadConfig() {
                 fetch("/shutdown", {method: "GET"}).catch(() => {});
             };
         }
+
+        _configLoaded = true;
+        updateSettingsSummaries();
         return data;
     } catch (e) { return {has_key: false}; }
 }
 
-const retrieverTempSlider = document.getElementById("retriever-temp-slider");
-const retrieverTempVal = document.getElementById("retriever-temp-value");
-if (retrieverTempSlider) {
-    retrieverTempSlider.addEventListener("input", () => {
-        if (retrieverTempVal) retrieverTempVal.textContent = Number(retrieverTempSlider.value).toFixed(1);
-    });
-}
-
-const proHardSlider = document.getElementById("proactive-hard-slider");
-const proHardVal = document.getElementById("proactive-hard-value");
-if (proHardSlider) {
-    proHardSlider.addEventListener("input", () => {
-        if (proHardVal) proHardVal.textContent = proHardSlider.value;
-    });
-}
-const proSoftSlider = document.getElementById("proactive-soft-slider");
-const proSoftVal = document.getElementById("proactive-soft-value");
-if (proSoftSlider) {
-    proSoftSlider.addEventListener("input", () => {
-        if (proSoftVal) proSoftVal.textContent = Math.round(proSoftSlider.value * 10) + "%";
-    });
-}
-const probSlider = document.getElementById("prob-reply-slider");
-const probVal = document.getElementById("prob-reply-value");
-if (probSlider) {
-    probSlider.addEventListener("input", () => {
-        if (probVal) probVal.textContent = Math.round(probSlider.value * 10) + "%";
-    });
-}
-
 async function checkKey() {
-    // 不自动弹出配置页：默认进入聊天页，无 key 时发消息会引导（_doSend 内处理）
-    try {
-        await loadConfig();
-    } catch (e) { /* 服务未就绪，静默 */ }
+    try { await loadConfig(); } catch (e) { /* 服务未就绪，静默 */ }
 }
 
-const apiSourceSel = document.getElementById("api-source-select");
-if (apiSourceSel) {
-    apiSourceSel.addEventListener("change", () => {
-        applyApiSource(apiSourceSel.value === "proxy");
+(function initSetGroups() {
+    document.querySelectorAll("#settings-panel .set-head").forEach(head => {
+        head.addEventListener("click", () => {
+            const group = head.closest(".set-group");
+            const willOpen = !group.classList.contains("open");
+            document.querySelectorAll("#settings-panel .set-group").forEach(g => g.classList.remove("open"));
+            if (willOpen) group.classList.add("open");
+        });
     });
-}
+})();
 
-document.getElementById("key-save").addEventListener("click", async () => {
-    // Key 与接口地址：server=只存本机浏览器（localStorage，每请求 X-API-Key 头，
-    // 服务器用后即弃不落盘）；local=随 set-config 存本地后端 config.json
-    const srcSel = document.getElementById("api-source-select");
-    const src = srcSel ? srcSel.value : "own";
-    const k = document.getElementById("key-input").value.trim();
-    const baseSel = document.getElementById("api-base-select");
-    const base = baseSel ? baseSel.value : "https://api.deepseek.com/v1";
-    if (IS_SERVER) {
-        try { localStorage.setItem("firefly_api_source", src); } catch (e) {}
-        if (src !== "proxy") {
-            if (k) { try { localStorage.setItem("firefly_api_key", k); } catch (e) {} }
-            try { localStorage.setItem("firefly_api_base", base); } catch (e) {}
-        }
-    }
-    const am = document.getElementById("analyzer-model-select").value;
-    const rm = document.getElementById("retriever-model-select").value;
-    const om = document.getElementById("organizer-model-select").value;
-    const pm = document.getElementById("polisher-model-select").value;
-    const re = document.getElementById("retriever-effort-select").value;
-    const ae = document.getElementById("analyzer-effort-select").value;
-    const pe = document.getElementById("polisher-effort-select").value;
-    const oe = document.getElementById("organizer-effort-select").value;
-    const rtemp = parseFloat(retrieverTempSlider.value) || 0.0;
-    const msg = document.getElementById("config-msg");
-    const payload = {
-        analyzer_model: am, retriever_model: rm, organizer_model: om, polisher_model: pm,
-        retriever_effort: re, analyzer_effort: ae, polisher_effort: pe, organizer_effort: oe,
-        retriever_temperature: rtemp,
-        proactive_enabled: document.getElementById("proactive-enabled").checked,
-        proactive_hard: parseInt(proHardSlider.value) || 4,
-        proactive_soft: (parseInt(proSoftSlider.value) || 0) / 10,
-        prob_reply_enabled: document.getElementById("prob-reply-enabled").checked,
-        prob_reply_value: (parseInt(probSlider.value) || 0) / 10,
-        hidden_reply_enabled: document.getElementById("hidden-reply-enabled").checked,
-    };
-    // 本地模式：Key/接口随配置一起提交（server 端 set-config 会剥离 api_key 字段，双保险）
-    if (!IS_SERVER) {
-        if (k) payload.api_key = k;
-        payload.api_base = base;
-    }
-    msg.textContent = "保存中…";
-    try {
-        const resp = await fetch("/set-config", { method: "POST",
-            headers: {"Content-Type": "application/json"}, body: JSON.stringify(payload) });
-        const data = await resp.json().catch(() => ({}));
-        // server：200 = 配置已提交生效；data.ok 反映全局 Key 状态与服务器版无关，不据此报错
-        // local：data.ok = Key 是否已设置
-        msg.textContent = resp.ok ? "已保存" : ("保存失败：" + (data.error || ""));
-    } catch (e) { msg.textContent = "网络错误"; }
+_$("retriever-temp-slider")?.addEventListener("input", () => {
+    _$("retriever-temp-value").textContent = Number(_$("retriever-temp-slider").value).toFixed(1);
+});
+_$("proactive-hard-slider")?.addEventListener("input", () => {
+    _$("proactive-hard-value").textContent = _$("proactive-hard-slider").value;
+});
+_$("proactive-soft-slider")?.addEventListener("input", () => {
+    _$("proactive-soft-value").textContent = _$("proactive-soft-slider").value + "%";
+});
+_$("prob-reply-slider")?.addEventListener("input", () => {
+    _$("prob-reply-value").textContent = _$("prob-reply-slider").value + "%";
 });
 
-// ═══════════════════════════════════════════
+_$("model-preset")?.addEventListener("change", () => {
+    _applyModelPreset(_$("model-preset").value);
+    _scheduleAutoSave();
+});
+_$("proactive-preset")?.addEventListener("change", () => {
+    _applyProactivePreset(_$("proactive-preset").value);
+    _scheduleAutoSave();
+});
+
+["analyzer-model-select", "retriever-model-select", "organizer-model-select", "polisher-model-select",
+ "retriever-effort-select", "analyzer-effort-select", "polisher-effort-select", "organizer-effort-select",
+ "retriever-temp-slider", "proactive-enabled", "proactive-hard-slider", "proactive-soft-slider",
+ "prob-reply-enabled", "prob-reply-slider", "hidden-reply-enabled"].forEach(id => {
+    const el = _$(id);
+    if (el) el.addEventListener("change", () => { updateSettingsSummaries(); _scheduleAutoSave(); });
+});
+
+const apiSourceSel = _$("api-source-select");
+if (apiSourceSel) {
+    apiSourceSel.addEventListener("change", () => applyApiSource(apiSourceSel.value === "proxy"));
+}
+
+_$("key-save")?.addEventListener("click", () => saveConfigNow(true));
+
 // 消息渲染
 // ═══════════════════════════════════════════
 // ═══════════════════════════════════════════
@@ -844,261 +964,396 @@ function renderMessages(messages, who, data) {
 }
 
 // ═══════════════════════════════════════════
-// 反馈模块（harness P1.1）：首页 ✉ 反馈页内
-// 列出最近与流萤的对话，逐条 👍/👎；👎 带标签理由；最后一条可换一条。
-// 定位：失败案例采样器，不是投票计分器（反馈计数不作质量统计）。
+// 设定纠错助手（对齐 → 开始修改 → diff 审批 → 应用/回滚）
 // ═══════════════════════════════════════════
-const FEEDBACK_LABELS = ["人设崩了", "记错了", "重复", "太冷淡", "太黏", "不像她", "其他"];
+const FIX_FILE_LABELS = {
+    "core.md": "核心设定", "identity.md": "关系与习惯", "sms_samples.md": "短信风格",
+    "用户设定.md": "用户补充设定", "memory.md": "跨会话记忆", "手账.md": "流萤手账",
+};
+let FIX_MODE = "story";   // 首页卡片选择的模式；进入聊天后跟随最近使用模式
+let _fixBusy = false;
 
-function _fbDoneSet() {
-    try { return new Set(JSON.parse(localStorage.getItem("fb_done_" + CURRENT_MODE) || "[]")); }
-    catch (e) { return new Set(); }
-}
-function _fbMarkDone(seq) {
-    if (!seq) return;
-    const s = _fbDoneSet();
-    s.add(seq);
-    try { localStorage.setItem("fb_done_" + CURRENT_MODE, JSON.stringify([...s])); } catch (e) {}
-}
-function _fbIsDone(seq) { return !!seq && _fbDoneSet().has(seq); }
-
-async function loadFeedbackRounds() {
-    const box = document.getElementById("feedback-rounds");
-    if (!box) return;
-    const titleEl = document.getElementById("feedback-rounds-title");
-    if (titleEl) titleEl.textContent = "💬 对话反馈（" + (MODE_NAMES[CURRENT_MODE] || CURRENT_MODE) + "）";
-    box.innerHTML = "加载中…";
-    let data;
-    try {
-        // 取 120 条消息 → 分组后只显示最近 10 轮（每轮含分条/表情包/旁白）
-        const resp = await fetch("/history?limit=120&mode=" + encodeURIComponent(CURRENT_MODE));
-        data = await resp.json();
-    } catch (e) {
-        box.innerHTML = "读取失败，请稍后再试";
-        return;
-    }
-    const raw = data.messages || [];
-    // 按轮分组：user 开新轮（连续 user 分条归同轮）；无 user 的 firefly 段=主动轮
-    const rounds = [];
-    let cur = null;
-    raw.forEach(m => {
-        const kind = m.type || "text";
-        const text = kind === "text" ? String(m.content || "")
-                   : kind === "sticker" ? "（表情包）"
-                   : kind === "narration" ? "（旁白：" + String(m.text || "").slice(0, 30) + "）"
-                   : "";
-        if (!text) return;
-        if (m.who === "user") {
-            if (!cur || cur.firefly.length > 0) { cur = { user: [], firefly: [] }; rounds.push(cur); }
-            cur.user.push({ text, seq: m.seq });
-        } else if (m.who === "firefly") {
-            if (!cur) { cur = { user: [], firefly: [] }; rounds.push(cur); }
-            cur.firefly.push({ text, seq: m.seq, kind });
-        }
-    });
-    const show = rounds.slice(-10);
-    if (!show.length) {
-        box.innerHTML = "还没有和流萤的对话，先去聊两句吧。";
-        return;
-    }
-    const modeName = MODE_NAMES[CURRENT_MODE] || CURRENT_MODE;
-    const rowHtml = (who, full, seq, acts) => {
-        const short = full.slice(0, 40);
-        return `<div class="fr-row${who === "我" ? " me" : ""}" data-full="${escapeHtml(full)}" title="点按展开/收起"><span class="fr-who">${who}</span><span class="fr-text">${escapeHtml(short)}</span><span class="fr-acts">${acts}</span></div>`;
-    };
-    const btnHtml = (seq) => {
-        const done = _fbIsDone(seq);
-        return `<button class="fr-btn${done ? " disabled" : ""}" data-v="like" data-seq="${seq}"${done ? " disabled" : ""} title="这句像她">👍</button>`
-             + `<button class="fr-btn${done ? " disabled" : ""}" data-v="dislike" data-seq="${seq}"${done ? " disabled" : ""} title="这条不对">👎</button>`;
-    };
-    let html = "";
-    const startIdx = rounds.length - show.length + 1;
-    // 最新一轮排最上面；默认全部收起，点轮标签展开/收起（手风琴式）
-    for (let i = show.length - 1; i >= 0; i--) {
-        const r = show[i];
-        const no = startIdx + i;
-        const label = r.user.length ? ("第 " + no + " 轮") : "流萤主动";
-        html += `<div class="fr-turn collapsed"><div class="fr-turn-label"><span class="fr-arrow">▸</span>${label} · ${modeName}</div>`;
-        r.user.forEach(u => { html += rowHtml("我", u.text, u.seq, ""); });
-        r.firefly.forEach(f => {
-            html += rowHtml("流萤", f.text, f.seq, f.kind === "text" ? btnHtml(f.seq) : "");
-        });
-        html += "</div>";
-    }
-    box.innerHTML = html;
-    // 轮级展开/收起：点轮标签，展开该轮并收起其他
-    box.querySelectorAll(".fr-turn-label").forEach(lbl => {
-        lbl.addEventListener("click", () => {
-            const turn = lbl.parentElement;
-            const willOpen = turn.classList.contains("collapsed");
-            box.querySelectorAll(".fr-turn").forEach(t => {
-                t.classList.add("collapsed");
-                const arrow = t.querySelector(".fr-arrow");
-                if (arrow) arrow.textContent = "▸";
-            });
-            if (willOpen) {
-                turn.classList.remove("collapsed");
-                const arrow = turn.querySelector(".fr-arrow");
-                if (arrow) arrow.textContent = "▾";
-            }
-        });
-    });
-    // 行点击：展开/收起全文；按钮点击不触发展开
-    box.querySelectorAll(".fr-row").forEach(row => {
-        row.addEventListener("click", (e) => {
-            if (e.target.classList && e.target.classList.contains("fr-btn")) return;
-            const expanded = row.classList.toggle("expanded");
-            const textEl = row.querySelector(".fr-text");
-            textEl.textContent = expanded ? row.dataset.full : row.dataset.full.slice(0, 40);
-        });
-    });
-    box.querySelectorAll(".fr-btn").forEach(btn => {
-        btn.addEventListener("click", () => {
-            const v = btn.dataset.v;
-            const seq = parseInt(btn.dataset.seq || "0", 10);
-            if (v === "like") sendFeedback("like", seq);
-            else openFeedbackReason(seq);
-        });
-    });
-}
-
-async function sendFeedback(verdict, seq, label = "", text = "") {
-    try {
-        const resp = await fetch("/feedback", {
-            method: "POST",
-            headers: {"Content-Type": "application/json"},
-            body: JSON.stringify({
-                session_id: SESSION_ID, mode: CURRENT_MODE,
-                verdict, seq, reason_label: label, reason_text: text,
-            }),
-        });
-        const data = await resp.json();
-        if (data.ok) {
-            _fbMarkDone(seq);
-            showToast(data.duplicate ? "这条已经反馈过啦" : "已记录，感谢反馈");
-            loadFeedbackRounds();
-        } else {
-            showToast(data.error || "反馈失败");
-        }
-    } catch (e) {
-        showToast("反馈发送失败，请稍后再试");
-    }
-}
-
-let _frSeq = null;
-let _frLabel = "";
-function openFeedbackReason(seq) {
-    _frSeq = seq;
-    _frLabel = "";
-    const chipsEl = document.getElementById("fr-chips");
-    chipsEl.innerHTML = "";
-    FEEDBACK_LABELS.forEach(lb => {
-        const c = document.createElement("button");
-        c.type = "button";
-        c.className = "fr-chip";
-        c.textContent = lb;
-        c.addEventListener("click", () => {
-            _frLabel = lb;
-            [...chipsEl.children].forEach(x => x.classList.toggle("sel", x === c));
-        });
-        chipsEl.appendChild(c);
-    });
-    document.getElementById("fr-text").value = "";
-    document.getElementById("feedback-reason-mask").classList.add("show");
-}
-function closeFeedbackReason() {
-    document.getElementById("feedback-reason-mask").classList.remove("show");
-    _frSeq = null;
-    _frLabel = "";
-}
-function submitFeedbackReason() {
-    const seq = _frSeq;
-    const text = document.getElementById("fr-text").value.trim().slice(0, 200);
-    const label = _frLabel;
-    closeFeedbackReason();
-    sendFeedback("dislike", seq, label, text);
-}
-
-document.getElementById("fr-cancel").addEventListener("click", closeFeedbackReason);
-document.getElementById("fr-submit").addEventListener("click", submitFeedbackReason);
-document.getElementById("feedback-reason-mask").addEventListener("click", (e) => {
-    if (e.target.id === "feedback-reason-mask") closeFeedbackReason();
-});
-
-// ═══════════════════════════════════════════
-// 行为改进（harness P2）：候选批准 / 忽略 / 回滚
-// 注意：已按用户要求从反馈页移除入口（反馈页只做反馈收集）。
-// 后端端点与以下函数保留，入口位置待定（候选：菜单抽屉独立页签）。
-// ═══════════════════════════════════════════
-async function loadHarnessStatus() {
-    const box = document.getElementById("harness-content");
-    if (!box) return;
-    box.innerHTML = "加载中…";
-    let data;
-    try {
-        const resp = await fetch("/prompt-candidates?mode=" + encodeURIComponent(CURRENT_MODE));
-        data = await resp.json();
-    } catch (e) {
-        box.innerHTML = "读取失败，请稍后再试";
-        return;
-    }
-    if (!data.ok) { box.innerHTML = "读取失败：" + (data.error || "未知错误"); return; }
-
-    let html = "";
-    if (data.active_version > 0) {
-        html += `<div class="hb-meta">当前生效：v${data.active_version}</div>`;
-    }
-    if (data.has_pending && data.report) {
-        const sum = data.report.summary || "有新的改进规则待你确认";
-        html += `<div class="hb-summary">✨ ${sum}</div>`;
-        html += `<div id="harness-diff">${escapeHtml(data.diff || "")}</div>`;
-        if (data.report.judge) {
-            const j = data.report.judge;
-            html += `<div class="hb-meta">回归评分：${j.score ?? "—"}（${j.note ?? ""}）</div>`;
-        }
-        html += `<div class="hb-row">
-            <button class="hb-btn" type="button" onclick="dismissCandidate()">忽略</button>
-            <button class="hb-btn primary" type="button" onclick="applyCandidate()">应用</button>
-        </div>`;
-    } else if (data.active_version === 0) {
-        html = "暂无可确认的改进。<br>聊天时对回复点 👍 / 👎，流萤会慢慢学会。";
-    } else {
-        html = "暂无新的改进候选。";
-    }
-    if (data.active_version > 0) {
-        html += `<div class="hb-row" style="margin-top:8px">
-            <button class="hb-btn" type="button" onclick="rollbackCandidate()">撤销上次改进</button>
-        </div>`;
-    }
-    box.innerHTML = html;
-}
 function escapeHtml(s) {
     return String(s || "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 }
-async function _harnessPost(path) {
+
+function fixModeLabel(mode) { return MODE_NAMES[mode] || mode; }
+
+function openFixView() {
+    homeView.classList.remove("show");
+    appView.style.display = "none";
+    const view = document.getElementById("fix-view");
+    if (view) view.classList.add("show");
+    try { if (location.hash !== "#fix") history.pushState({fix: true}, "", "#fix"); } catch (e) {}
+    loadFixStatus();
+    loadFixChatHistory();
+    const input = document.getElementById("fix-input");
+    // 引导教程演示纠错页时不要弹键盘（会遮住底部讲解气泡）
+    if (input && !document.getElementById("guide-mask")) setTimeout(() => input.focus(), 300);
+}
+window.openFixView = openFixView;
+
+function closeFixView() {
+    const view = document.getElementById("fix-view");
+    if (view) view.classList.remove("show");
+    showHome();
+    try { if (location.hash === "#fix") history.replaceState({}, "", location.pathname + location.search); } catch (e) {}
+}
+window.closeFixView = closeFixView;
+
+function toggleFixForms() {
+    // 兼容旧入口：现在一律打开独立全屏页
+    openFixView();
+}
+window.toggleFixForms = toggleFixForms;
+
+function setFixMode(mode) {
+    if (mode !== "story" && mode !== "haruno") mode = "story";
+    FIX_MODE = mode;
+    document.querySelectorAll("#fix-view .fix-mode").forEach(b => {
+        b.classList.toggle("active", b.dataset.mode === FIX_MODE);
+    });
+    loadFixStatus();
+    loadFixChatHistory();
+}
+window.setFixMode = setFixMode;
+
+function _fixChatScroll() {
+    const el = document.getElementById("fix-chat");
+    if (el) el.scrollTop = el.scrollHeight;
+}
+
+function _setFixStatus(stage) {
+    const dot = document.getElementById("fix-status-dot");
+    const text = document.getElementById("fix-view-status");
+    if (!dot || !text) return;
+    const map = {
+        idle:     ["ok", "状态正常 · 等待你描述问题"],
+        aligning: ["busy", "AI 正在和你对齐问题…"],
+        ready:    ["ready", "已对齐 · 点「开始修改」生成清单"],
+        proposal: ["warn", "方案待确认 · 点「应用修改」才生效"],
+        busy:     ["busy", "AI 正在处理，请稍候…"],
+        error:    ["error", "处理出错 · 请重试"],
+    };
+    const v = map[stage] || map.idle;
+    dot.className = "fix-dot " + v[0];
+    text.textContent = v[1];
+}
+
+function _fixHistText(m) {
+    if (!m) return "";
+    if (m.type === "sticker") return "[表情包：" + (m.label || m.path || m.file || "") + "]";
+    if (m.type === "narration") return (m.text || m.content || "");
+    return m.content || m.text || "";
+}
+
+function _fixHistMsgHtml(m) {
+    const me = m.who === "user";
+    return `<div class="fix-hist-msg ${me ? "me" : ""}">
+        <div class="fix-hist-line">
+            <span class="fix-hist-who">${me ? "我" : "流萤"}</span>
+            <span class="fix-hist-time">${escapeHtml((m.time || "").slice(5, 16))}</span>
+        </div>
+        <div class="fix-hist-text">${escapeHtml(_fixHistText(m))}</div>
+    </div>`;
+}
+
+async function loadFixChatHistory() {
+    const meta = document.getElementById("fix-chathist-meta");
+    const count = document.getElementById("fix-chathist-count");
+    const list = document.getElementById("fix-chathist-list");
+    if (!list) return;
     try {
-        const resp = await fetch(path, {
+        const resp = await fetch(`/history?limit=20&mode=${encodeURIComponent(FIX_MODE)}`);
+        const data = await resp.json();
+        const msgs = Array.isArray(data.messages) ? data.messages : [];
+        const total = data.total != null ? data.total : msgs.length;
+        const label = fixModeLabel(FIX_MODE);
+        if (meta) meta.textContent = msgs.length ? `${label} · 最近 ${msgs.length} 条` : `${label} · 暂无聊天记录`;
+        if (count) count.textContent = msgs.length ? `显示最近 ${msgs.length} 条 / 共 ${total} 条` : "这个模式还没有聊天记录";
+        list.innerHTML = msgs.length
+            ? msgs.map(_fixHistMsgHtml).join("")
+            : `<div class="fix-hist">这个模式还没有聊天记录；先去聊几句，再来描述问题会更方便。</div>`;
+    } catch (e) {
+        if (count) count.textContent = "聊天记录读取失败";
+        list.innerHTML = `<div class="fix-hist">聊天记录读取失败（本地后端未就绪时会这样，不影响对齐功能）</div>`;
+    }
+}
+window.loadFixChatHistory = loadFixChatHistory;
+
+function _fixMsgHtml(m) {
+    const who = m.who === "user" ? "我" : "设定助手";
+    const cls = m.who === "user" ? "me" : "ai";
+    const opts = (m.options || []).map((o, i) =>
+        `<button class="fix-opt" data-opt="${escapeHtml(o)}">${escapeHtml(o)}</button>`).join("");
+    return `<div class="fix-msg ${cls}"><div class="fix-who">${who}</div>`
+         + `<div class="fix-text">${escapeHtml(m.text)}</div>`
+         + (opts ? `<div class="fix-options">${opts}</div>` : "") + `</div>`;
+}
+
+function _fixChangeHtml(ch) {
+    const tag = ch.op === "append" ? "补充" : "纠正";
+    const oldHtml = ch.op === "replace"
+        ? `<div class="fix-diff-old">− ${escapeHtml(ch.old)}</div>` : "";
+    return `<div class="fix-change">
+        <div class="fix-change-head">
+            <span class="fix-file-tag">${escapeHtml(FIX_FILE_LABELS[ch.file] || ch.file)}</span>
+            <span class="fix-op-tag ${ch.op === "append" ? "add" : "fix"}">${tag}</span>
+        </div>
+        ${oldHtml}
+        <div class="fix-diff-new">+ ${escapeHtml(ch.new)}</div>
+        <div class="fix-reason">${escapeHtml(ch.reason || "")}</div>
+    </div>`;
+}
+
+function _renderFix(status) {
+    const chat = document.getElementById("fix-chat");
+    const proposal = document.getElementById("fix-proposal");
+    const startBtn = document.getElementById("fix-start-btn");
+    const historyBox = document.getElementById("fix-history-box");
+    if (!chat || !proposal || !startBtn) return;
+
+    _setFixStatus(status.stage || "idle");
+
+    if (Array.isArray(status.messages) && status.messages.length) {
+        chat.innerHTML = status.messages.map(_fixMsgHtml).join("");
+        _fixChatScroll();
+    } else {
+        chat.innerHTML = `<div class="fix-empty">先说说她哪里说得不对，我会和你确认后再生成修改方案。</div>`
+                       + `<div class="fix-hint">例如：她还说自己在医疗舱，但设定里已经恢复得不错、能开机甲了。</div>`;
+    }
+
+    // 选项 chips：只在没有 pending 时启用（有 pending 时是改方案，选项已过期）
+    chat.querySelectorAll(".fix-opt").forEach(btn => {
+        btn.addEventListener("click", () => {
+            if (_fixBusy || status.stage === "proposal") return;
+            sendFixMessage(btn.dataset.opt);
+        });
+    });
+
+    startBtn.style.display = (status.stage === "ready") ? "" : "none";
+    startBtn.disabled = !!_fixBusy;
+
+    // 提案面板
+    if (status.stage === "proposal" && status.proposal) {
+        const p = status.proposal;
+        const changes = Array.isArray(p.changes) ? p.changes : [];
+        proposal.style.display = "block";
+        proposal.innerHTML = `<div class="fix-proposal-title"><span>修改清单（尚未生效）</span><span class="fix-op-tag">待确认</span></div>`
+            + `<div class="fix-diag">${escapeHtml(p.diagnosis || "已生成修改方案，请确认后应用。")}</div>`
+            + (changes.length ? changes.map(_fixChangeHtml).join("") : `<div class="fix-nochange">这次不需要修改设定文件。</div>`)
+            + `<div class="fix-proposal-actions">
+                 <button class="hb-btn" type="button" onclick="dismissFix()">放弃</button>
+                 ${changes.length ? `<button class="hb-btn primary" type="button" onclick="applyFix()">应用修改</button>` : ""}
+               </div>
+               <div class="fix-refine-hint">想调整某一条？直接在下方说，例如：第二条先别改，橡木蛋糕卷那段保留。</div>`;
+    } else {
+        proposal.style.display = "none";
+    }
+
+    // 修正记录：列表 + 静态撤销按钮（全屏页固定位置，便于拇指操作）
+    const hist = Array.isArray(status.history) ? status.history : [];
+    const historyList = document.getElementById("fix-history-list") || historyBox;
+    let histHtml = "";
+    if (hist.length) {
+        histHtml = hist.map(h => `<div class="fix-hist">v${h.v} · ${escapeHtml(h.action === "apply" ? "应用" : "回滚")} · ${escapeHtml((h.time || "").slice(5, 16))}${h.files ? " · " + escapeHtml(h.files.join("、")) : ""}</div>`).join("");
+    } else {
+        histHtml = `<div class="fix-hist">还没有修改记录</div>`;
+    }
+    historyList.innerHTML = histHtml;
+    const rb = document.getElementById("fix-rollback-btn");
+    if (rb) {
+        rb.style.display = status.active_version > 0 ? "" : "none";
+        rb.textContent = `撤销上次修改（回到 v${Math.max(0, status.active_version - 1)}）`;
+    }
+}
+
+async function loadFixStatus(force) {
+    if (_fixBusy && !force) return;
+    try {
+        const resp = await fetch(`/setting-fix/status?mode=${encodeURIComponent(FIX_MODE)}`);
+        const data = await resp.json();
+        if (data.ok) _renderFix(data);
+        else if (data.error) _setFixStatus("error");
+    } catch (e) { _setFixStatus("error"); }
+}
+window.loadFixStatus = loadFixStatus;
+
+async function sendFixMessage(text) {
+    text = (text || "").trim();
+    if (!text || _fixBusy) return;
+    const input = document.getElementById("fix-input");
+    if (input) input.value = "";
+    _fixBusy = true;
+    _setFixStatus("busy");
+    const sendBtn = document.getElementById("fix-send-btn");
+    if (sendBtn) sendBtn.disabled = true;
+    const chat = document.getElementById("fix-chat");
+    if (chat) {
+        chat.insertAdjacentHTML("beforeend", _fixMsgHtml({who: "user", text: text}));
+        _fixChatScroll();
+    }
+    try {
+        const resp = await fetch("/setting-fix/message", {
             method: "POST",
-            headers: {"Content-Type": "application/json"},
-            body: JSON.stringify({ mode: CURRENT_MODE }),
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ mode: FIX_MODE, text: text }),
         });
         const data = await resp.json();
         if (data.ok) {
-            showToast(path.includes("apply") ? "已应用，流萤会按新规则说话" : "已处理");
-            await loadHarnessStatus();
+            await loadFixStatus(true);
+        } else if (data.need_key) {
+            showToast("请先到 ⚙ 设置里填写 API Key");
+            openSettings();
         } else {
-            showToast(data.error || "操作失败");
+            showToast(data.error || "分析失败，请稍后再试");
         }
     } catch (e) {
-        showToast("操作失败，请稍后再试");
+        showToast("网络错误，请稍后再试");
+    } finally {
+        _fixBusy = false;
+        if (sendBtn) sendBtn.disabled = false;
     }
 }
-function applyCandidate() { _harnessPost("/prompt-apply"); }
-function dismissCandidate() { _harnessPost("/prompt-dismiss"); }
-function rollbackCandidate() { _harnessPost("/prompt-rollback"); }
-window.applyCandidate = applyCandidate;
-window.dismissCandidate = dismissCandidate;
-window.rollbackCandidate = rollbackCandidate;
+window.sendFixMessage = sendFixMessage;
+
+async function startFix() {
+    if (_fixBusy) return;
+    _fixBusy = true;
+    _setFixStatus("busy");
+    const btn = document.getElementById("fix-start-btn");
+    if (btn) { btn.disabled = true; btn.textContent = "正在生成修改清单…"; }
+    try {
+        const resp = await fetch("/setting-fix/start", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ mode: FIX_MODE }),
+        });
+        const data = await resp.json();
+        if (data.ok) {
+            showToast("修改清单已生成，确认后再点应用");
+            await loadFixStatus(true);
+        } else if (data.need_key) {
+            showToast("请先到 ⚙ 设置里填写 API Key");
+            openSettings();
+        } else {
+            showToast(data.error || "生成失败，请稍后再试");
+        }
+    } catch (e) {
+        showToast("网络错误，请稍后再试");
+    } finally {
+        _fixBusy = false;
+        if (btn) { btn.disabled = false; btn.textContent = "开始修改"; }
+    }
+}
+window.startFix = startFix;
+
+async function applyFix() {
+    if (_fixBusy) return;
+    _fixBusy = true;
+    try {
+        const resp = await fetch("/setting-fix/apply", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ mode: FIX_MODE, session_id: SESSION_ID }),
+        });
+        const data = await resp.json();
+        if (data.ok) {
+            showToast(data.message || "修改已生效");
+            await loadFixStatus(true);
+            loadFixChatHistory();
+        } else {
+            showToast(data.error || "应用失败");
+        }
+    } catch (e) {
+        showToast("网络错误，请稍后再试");
+    } finally {
+        _fixBusy = false;
+    }
+}
+window.applyFix = applyFix;
+
+async function dismissFix() {
+    if (_fixBusy) return;
+    _fixBusy = true;
+    try {
+        const resp = await fetch("/setting-fix/dismiss", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ mode: FIX_MODE }),
+        });
+        const data = await resp.json();
+        showToast(data.ok ? "已放弃本次修改方案" : (data.error || "操作失败"));
+        await loadFixStatus(true);
+    } catch (e) {
+        showToast("网络错误，请稍后再试");
+    } finally {
+        _fixBusy = false;
+    }
+}
+window.dismissFix = dismissFix;
+
+async function rollbackFix() {
+    if (!confirm("撤销上次设定修改？将恢复到上一个版本，对话数据不受影响。")) return;
+    if (_fixBusy) return;
+    _fixBusy = true;
+    try {
+        const resp = await fetch("/setting-fix/rollback", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ mode: FIX_MODE }),
+        });
+        const data = await resp.json();
+        if (data.ok) showToast("已撤销，设定恢复到上一版本");
+        else showToast(data.error || "撤销失败");
+        await loadFixStatus(true);
+    } catch (e) {
+        showToast("网络错误，请稍后再试");
+    } finally {
+        _fixBusy = false;
+    }
+}
+window.rollbackFix = rollbackFix;
+
+async function resetFix() {
+    if (!confirm("清空当前的问题描述和待确认方案？已应用的修改记录会保留。")) return;
+    _fixBusy = true;
+    try {
+        const resp = await fetch("/setting-fix/reset", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ mode: FIX_MODE }),
+        });
+        const data = await resp.json();
+        showToast(data.ok ? "已清空当前问题" : (data.error || "操作失败"));
+        await loadFixStatus(true);
+    } catch (e) {
+        showToast("网络错误，请稍后再试");
+    } finally {
+        _fixBusy = false;
+    }
+}
+window.resetFix = resetFix;
+
+(function initFixModule() {
+    const input = document.getElementById("fix-input");
+    const sendBtn = document.getElementById("fix-send-btn");
+    if (input && sendBtn) {
+        sendBtn.addEventListener("click", () => sendFixMessage(input.value));
+        input.addEventListener("keydown", e => {
+            if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendFixMessage(input.value); }
+        });
+    }
+    document.querySelectorAll("#fix-view .fix-mode").forEach(b => {
+        b.addEventListener("click", () => setFixMode(b.dataset.mode));
+    });
+    const histRefresh = document.getElementById("fix-chathist-refresh");
+    if (histRefresh) histRefresh.addEventListener("click", loadFixChatHistory);
+    if (FIX_MODE === "story") {
+        const b = document.querySelector('#fix-view .fix-mode[data-mode="story"]');
+        if (b) b.classList.add("active");
+    }
+})();
 
 // ═══════════════════════════════════════════
 // 界面大小调节（消息/头像/气泡缩放，设置面板滑条）
@@ -1154,6 +1409,8 @@ let _modeGen = 0;       // 模式代际：切换时递增，飞行中的异步�
 const MODE_NAMES = { story: "剧情模式", haruno: "春日手信" };
 
 function showHome() {
+    const fixView = document.getElementById("fix-view");
+    if (fixView) fixView.classList.remove("show");
     homeView.classList.add("show");
     appView.style.display = "none";     // 首页独立视图：真正隐藏聊天页（避免半透明透视）
     closeMenu();
@@ -1162,6 +1419,8 @@ function showHome() {
     startCarousel();   // 重新开始自动轮播
 }
 async function showChat() {
+    const fixView = document.getElementById("fix-view");
+    if (fixView) fixView.classList.remove("show");
     homeView.classList.remove("show");
     appView.style.display = "flex";     // 恢复聊天页
     stopCarousel();   // 聊天页轮播不可见，停止自动轮播（避免返回首页时位置已乱）
@@ -1331,6 +1590,7 @@ document.addEventListener("DOMContentLoaded", () => {
         img.style.zIndex = di === 0 ? "1" : "0";
     });
     if (location.hash === "#chat") showChat();
+    else if (location.hash === "#fix") openFixView();
     else showHome();
     initAuth();   // 服务器版：轮播图下登录/用户模块
 });
@@ -1837,11 +2097,11 @@ stickerBtn.addEventListener("click", async () => {
     stickerPanel.classList.add("show");
     if (!stickerGrid.dataset.loaded) {
         try {
-            const resp = await fetch("/stickers");
+            const resp = await fetch("/stickers?enabled=1");
             const data = await resp.json();
             const list = data.stickers || [];
             stickerGrid.innerHTML = list.map(s =>
-                `<img src="${IS_SERVER ? API_BASE : ""}/assets/${s.file}" alt="${s.label}" data-label="${s.label}" data-file="${s.file}">`).join("");
+                `<img src="${IS_SERVER ? API_BASE : ""}/assets/${escapeHtml(s.file)}" alt="${escapeHtml(s.label)}" data-label="${escapeHtml(s.label)}" data-file="${escapeHtml(s.file)}">`).join("");
             stickerGrid.dataset.loaded = "1";
             stickerGrid.querySelectorAll("img").forEach(img => {
                 img.addEventListener("click", () => {
@@ -2207,17 +2467,22 @@ async function loadStickerList() {
         const stickers = data.stickers || [];
         msg.textContent = `共 ${stickers.length} 个`;
         list.innerHTML = stickers.map(s => `
-        <div class="sticker-row" data-id="${s.id}">
-            <div class="stk-top">
-                <img class="stk-thumb" src="${IS_SERVER ? API_BASE : ""}/assets/${s.file}" loading="lazy" onerror="this.style.opacity=0.2">
+        <div class="sticker-row" data-id="${escapeHtml(s.id)}">
+            <div class="stk-head">
+                <img class="stk-thumb" src="${IS_SERVER ? API_BASE : ""}/assets/${escapeHtml(s.file)}" loading="lazy" onerror="this.style.opacity=0.2">
+                <button class="stk-toggle ${s.enabled ? "on" : ""}" data-on="${s.enabled ? "1" : ""}" ${(s.editable || s.is_default) ? "" : "disabled"}>${s.enabled ? "启用中" : "已停用"}</button>
+            </div>
+            <div class="stk-main">
                 <select class="stk-cat-sel" ${(s.editable || s.is_default) ? "" : "disabled"}>
                     <option value="可爱" ${s.category==="可爱"?"selected":""}>可爱</option>
                     <option value="帅气" ${s.category==="帅气"?"selected":""}>帅气</option>
                 </select>
-                <button class="stk-save" disabled>保存</button>
-                <button class="stk-del" ${(s.is_default || !s.editable) ? "disabled" : ""}>删</button>
+                <input class="stk-label-input" type="text" value="${escapeHtml(s.label)}" maxlength="120" ${(s.editable || s.is_default) ? "" : "readonly"}>
+                <div class="stk-actions">
+                    <button class="stk-save" disabled>保存</button>
+                    <button class="stk-del" ${(s.is_default || !s.editable) ? "disabled" : ""}>删</button>
+                </div>
             </div>
-            <input class="stk-label-input" type="text" value="${s.label}" maxlength="20" ${(s.editable || s.is_default) ? "" : "readonly"}>
         </div>`).join("");
         list.querySelectorAll(".sticker-row").forEach(row => {
             const id = row.dataset.id;
@@ -2225,6 +2490,7 @@ async function loadStickerList() {
             const cat = row.querySelector(".stk-cat-sel");
             const save = row.querySelector(".stk-save");
             const del = row.querySelector(".stk-del");
+            const toggle = row.querySelector(".stk-toggle");
             const origLabel = inp.value;
             const origCat = cat.value;
 
@@ -2233,6 +2499,26 @@ async function loadStickerList() {
             }
             inp.addEventListener("input", checkChanged);
             cat.addEventListener("change", checkChanged);
+
+            toggle.addEventListener("click", async () => {
+                const next = toggle.dataset.on !== "1";
+                toggle.disabled = true;
+                try {
+                    const r = await fetch("/sticker-update", {
+                        method:"POST",
+                        headers:{"Content-Type":"application/json"},
+                        body:JSON.stringify({id, enabled: next}),
+                    });
+                    const d = await r.json();
+                    if (d.ok) {
+                        toggle.dataset.on = next ? "1" : "";
+                        toggle.classList.toggle("on", next);
+                        toggle.textContent = next ? "启用中" : "已停用";
+                        msg.textContent = next ? "已启用：" + d.label : "已停用：" + d.label;
+                    }
+                } catch(e) {}
+                toggle.disabled = false;
+            });
 
             save.addEventListener("click", async () => {
                 const label = inp.value.trim();
@@ -2345,8 +2631,256 @@ async function checkWake() {
 })();
 
 // ═══════════════════════════════════════════
+// 使用引导（纯代码：高亮框 + 文字气泡 + CSS 呼吸边，不用任何图片）
+// 基础引导 4 步；结束后可点「深入了解」进入详细引导（设置/菜单/纠错助手）。
+// ═══════════════════════════════════════════
+const GUIDE_KEY = "firefly_guide_v1_done";
+const DEEP_GUIDE_KEY = "firefly_deep_guide_v1_done";
+const GUIDE_STEPS = [
+    { el: "#home-carousel", title: "从这里进入对话",
+      text: "请实际操作：点「剧情模式」或「春日手信」卡片，进入和流萤的聊天页。\n操作成功会自动进入下一步；如果没反应，点「下一步」。",
+      setup: () => { showHome(); },
+      done: () => !document.getElementById("home-view").classList.contains("show") },
+    { el: "#home-settings-btn", title: "先填 API Key",
+      text: "请点右上角 ⚙ 打开设置，把 sk- 开头的 Key 粘进 API Key 输入框。\n没有 Key 之前，聊天只会提示你去设置。",
+      setup: () => { showHome(); },
+      done: () => document.getElementById("settings-panel").classList.contains("show") },
+    { el: "#fix-module", title: "设定不对？直接告诉她",
+      text: "请点这张卡上的「指出问题 →」进入设定纠错助手。\nAI 会先和你确认问题，再列出修改清单；你点「应用」才生效，随时可撤销。",
+      setup: () => { closeSettings(); showHome(); },
+      done: () => document.getElementById("fix-view").classList.contains("show") },
+    { el: "#home-feedback-btn", title: "其他问题",
+      text: "请点左上角「✉ 反馈」看看。功能建议、安装问题、联系开发者（GitHub / QQ 群 / 邮箱）都在这页。",
+      setup: () => { showHome(); },
+      done: () => document.getElementById("feedback-panel").classList.contains("show") },
+];
+
+function _guideOpenGroup(name) {
+    try {
+        const head = document.querySelector(`#settings-panel .set-head[data-group="${name}"]`);
+        const group = head && head.closest(".set-group");
+        if (group && !group.classList.contains("open")) head.click();
+    } catch (e) {}
+}
+
+function _guideGroupOpen(name) {
+    try {
+        const head = document.querySelector(`#settings-panel .set-head[data-group="${name}"]`);
+        const group = head && head.closest(".set-group");
+        return !!(group && group.classList.contains("open"));
+    } catch (e) { return false; }
+}
+
+function _guideStickerTabOpen() {
+    const content = document.getElementById("tab-sticker");
+    return !!(content && content.classList.contains("active"));
+}
+
+// 详细引导 = 实际操作教程：每一步让用户真的点对应功能，操作成功自动进下一步。
+const DEEP_GUIDE_STEPS = [
+    { el: "#home-settings-btn", title: "① 实际点开设置",
+      text: "请点右上角 ⚙ 打开设置页（不要点“下一步”）。\n\n设置页有 5 组卡片：账号与连接 / 主动消息 / 模型与速度 / 外观 / 数据与系统；除 API Key 外，改动会自动保存。",
+      setup: () => { showHome(); },
+      done: () => document.getElementById("settings-panel").classList.contains("show") },
+    { el: "#key-input", title: "② 试填 API Key",
+      text: "请点 API Key 输入框，粘贴 sk- 开头的 Key；留空=保留原来的 Key。\n\n填完点「保存 Key 与连接设置」。服务器版还可以在「高级：接口地址」里切换 DeepSeek 官方 / OpenCode Go。",
+      setup: () => { showHome(); openSettings(); },
+      done: () => document.activeElement && document.activeElement.id === "key-input" },
+    { el: '#settings-panel .set-head[data-group="proactive"]', title: "③ 点开「主动消息」",
+      text: "请点「💬 主动消息」标题展开它。\n\n里面有三种主动行为：聊天里按轮次主动找你、你空闲时想起你（10 分钟一次）、后台通知（仅安卓）。用 较少/偶尔/经常 调频率，关掉开关就安静。",
+      setup: () => { openSettings(); },
+      done: () => _guideGroupOpen("proactive") },
+    { el: '#settings-panel .set-head[data-group="model"]', title: "④ 点开「模型与速度」",
+      text: "请点「🧠 模型与速度」展开。\n\n日常用「快速」，要更聪明选「更强」；展开「自定义」还能分别调检索/分析/回复/组织四个阶段和思考档位。",
+      setup: () => { openSettings(); },
+      done: () => _guideGroupOpen("model") },
+    { el: '#settings-panel .set-head[data-group="system"]', title: "⑤ 点开「数据与系统」",
+      text: "请点「🛠 数据与系统」展开。\n\n更新、导出/导入 zip 备份都在这里；服务器版还能备份到账号。导入会覆盖当前模式数据，但导入前会自动备份。",
+      setup: () => { openSettings(); },
+      done: () => _guideGroupOpen("system") },
+    { el: "#menu-btn", title: "⑥ 到聊天页打开菜单",
+      text: "已经帮你切到聊天页：请点右上角 ☰ 打开菜单。\n\n菜单里是五个页签：设定文件 / 表情包 / 流萤状态 / 请求记录 / 流程日志。",
+      setup: () => { closeSettings(); showChat(); },
+      done: () => document.getElementById("menu-drawer").classList.contains("open") },
+    { el: '.menu-tab[data-tab="sticker"]', title: "⑦ 点「表情包」页签",
+      text: "请在菜单顶部点「表情包」。\n\n这一页能添加新表情、打开映射表逐个启用/停用；停用的表情不会出现在聊天面板，也不会被 AI 使用。",
+      setup: () => { openMenu(); },
+      done: () => _guideStickerTabOpen() },
+    { el: "#sticker-manage-btn", title: "⑧ 展开映射表试开关",
+      text: "请点「表情包映射表」。\n\n展开后可以试试点某张表情的「启用中 / 已停用」按钮，状态会立刻切换；改分类和描述后要点该卡片「保存」。内置默认表情的「删」是灰色保护。",
+      setup: () => { openMenu(); try { document.querySelector('.menu-tab[data-tab="sticker"]')?.click(); } catch (e) {} },
+      done: () => { const p = document.getElementById("sticker-manage-panel"); return !!(p && p.style.display !== "none" && p.style.display !== ""); } },
+    { el: "#sticker-add-btn", title: "⑨ 看看添加表情包表单",
+      text: "请点「+ 添加表情包」展开表单（不用真的上传）。\n\n流程是：选图 → 选分类（可爱/帅气）→ 写一句含义描述 → 保存。描述写得越清楚，AI 选图越准。",
+      setup: () => { openMenu(); try { document.querySelector('.menu-tab[data-tab="sticker"]')?.click(); } catch (e) {} },
+      done: () => { const f = document.getElementById("sticker-add-form"); return !!(f && f.style.display !== "none" && f.style.display !== ""); } },
+    { el: "#fix-module .am-btn", title: "⑩ 进入设定纠错",
+      text: "已经回到首页：请点「指出问题 →」进入设定纠错助手。\n\n进去后先选模式：剧情模式 或 春日手信，两个模式的设定和历史完全独立。",
+      setup: () => { closeMenu(); showHome(); },
+      done: () => document.getElementById("fix-view").classList.contains("show") },
+    { el: "#fix-chathist", title: "⑪ 展开最近聊天记录",
+      text: "请点「📜 最近聊天记录」展开它。\n\n这里显示当前模式的最近 20 条聊天，描述问题时可以直接对照她具体说错了哪句，不用切页面。",
+      setup: () => { closeMenu(); if (!document.getElementById("fix-view").classList.contains("show")) openFixView(); },
+      done: () => { const d = document.getElementById("fix-chathist"); return !!(d && d.open); } },
+    { el: "#fix-input", title: "⑫ 点输入框，试着描述问题",
+      text: "请点底部输入框，试着输入一句“她哪里说得不对”（先不用发送，或只发一句真实问题）。\n\n流程是：AI 多轮确认 → 点「开始修改」→ 看修改清单 → 点「应用修改」才生效；顶部状态点会显示：状态正常/对齐中/已对齐/方案待确认。",
+      setup: () => { closeMenu(); if (!document.getElementById("fix-view").classList.contains("show")) openFixView(); },
+      done: () => document.activeElement && document.activeElement.id === "fix-input" },
+    { el: "#home-feedback-btn", title: "⑬ 反馈页可随时重看",
+      text: "最后请点左上角「✉ 反馈」。\n\n以后想复习：反馈页点「查看详细使用教程」即可重新开始这套实际操作教程；有问题可在 GitHub / QQ 群 / 邮箱反馈。",
+      setup: () => { showHome(); },
+      done: () => document.getElementById("feedback-panel").classList.contains("show") },
+];
+
+let _guideIndex = 0;
+let _guideSteps = GUIDE_STEPS;
+let _guideKey = GUIDE_KEY;
+let _guideMask = null, _guideSpot = null, _guideTip = null;
+let _guideBlocks = null;
+let _guideAdvanceTimer = null;
+
+function _guideEnsureHome() {
+    try { if (typeof closeFeedback === "function") closeFeedback(); } catch (e) {}
+    if (typeof showHome === "function") showHome();
+}
+
+function _guideMarkDone(key) {
+    try { localStorage.setItem(key, "1"); } catch (e) {}
+}
+
+function _guideOnUserClick(e) {
+    if (!_guideMask || _guideIndex >= _guideSteps.length) return;
+    // 教程气泡上的按钮（跳过/上一步/下一步）不走自动判定
+    if (e.target && e.target.closest && e.target.closest("#guide-tip")) return;
+    const idx = _guideIndex;
+    const step = _guideSteps[idx];
+    if (!step || typeof step.done !== "function") return;
+    clearTimeout(_guideAdvanceTimer);
+    _guideAdvanceTimer = setTimeout(() => {
+        if (!_guideMask || _guideIndex !== idx) return;
+        try {
+            if (step.done()) {
+                if (idx >= _guideSteps.length - 1) _guideClose();
+                else _guideTo(idx + 1);
+            }
+        } catch (err) {}
+    }, 350);
+}
+
+function _guideClose() {
+    clearTimeout(_guideAdvanceTimer);
+    document.removeEventListener("click", _guideOnUserClick, true);
+    if (_guideMask) _guideMask.remove();
+    _guideMask = _guideSpot = _guideTip = null;
+    _guideBlocks = null;
+    _guideMarkDone(_guideKey);
+    try { closeSettings(); closeMenu(); showHome(); } catch (e) {}
+}
+
+function _guideCreateMask() {
+    if (_guideMask) _guideMask.remove();
+    _guideMask = document.createElement("div");
+    _guideMask.id = "guide-mask";
+    _guideSpot = document.createElement("div");
+    _guideSpot.id = "guide-spot";
+    _guideTip = document.createElement("div");
+    _guideTip.id = "guide-tip";
+    _guideBlocks = {};
+    ["top", "bottom", "left", "right"].forEach(name => {
+        const d = document.createElement("div");
+        d.className = "guide-block";
+        d.id = "guide-block-" + name;
+        _guideBlocks[name] = d;
+        _guideMask.appendChild(d);
+    });
+    _guideMask.appendChild(_guideSpot);
+    _guideMask.appendChild(_guideTip);
+    document.body.appendChild(_guideMask);
+    document.addEventListener("click", _guideOnUserClick, true);
+}
+
+function _guideTo(i) {
+    _guideIndex = Math.max(0, Math.min(i, _guideSteps.length - 1));
+    const step = _guideSteps[_guideIndex];
+    if (step.setup) { try { step.setup(); } catch (e) {} }
+    const target = document.querySelector(step.el);
+    if (!target) { _guideIndex++; if (_guideIndex >= _guideSteps.length) { _guideClose(); return; } _guideTo(_guideIndex); return; }
+
+    const r = target.getBoundingClientRect();
+    const pad = 6;
+    Object.assign(_guideSpot.style, {
+        left: (r.left - pad) + "px", top: (r.top - pad) + "px",
+        width: (r.width + pad * 2) + "px", height: (r.height + pad * 2) + "px",
+    });
+    // 透明拦截片：盖住高亮目标以外的全部区域，其他按钮真的不可点；目标区域保持可点
+    if (_guideBlocks) {
+        const vw = document.documentElement.clientWidth || window.innerWidth;
+        const vh = document.documentElement.clientHeight || window.innerHeight;
+        const x0 = Math.max(0, r.left - pad), x1 = Math.min(vw, r.right + pad);
+        const y0 = Math.max(0, r.top - pad), y1 = Math.min(vh, r.bottom + pad);
+        Object.assign(_guideBlocks.top.style, { left: "0px", top: "0px", width: vw + "px", height: Math.max(0, y0) + "px" });
+        Object.assign(_guideBlocks.bottom.style, { left: "0px", top: y1 + "px", width: vw + "px", height: Math.max(0, vh - y1) + "px" });
+        Object.assign(_guideBlocks.left.style, { left: "0px", top: y0 + "px", width: Math.max(0, x0) + "px", height: Math.max(0, y1 - y0) + "px" });
+        Object.assign(_guideBlocks.right.style, { left: x1 + "px", top: y0 + "px", width: Math.max(0, vw - x1) + "px", height: Math.max(0, y1 - y0) + "px" });
+    }
+    // 目标在屏幕下半部时，把讲解气泡放到顶部，避免气泡盖住要点击的目标
+    const vh = window.innerHeight || document.documentElement.clientHeight || 800;
+    _guideTip.classList.toggle("top", (r.top + r.height / 2) > vh * 0.55);
+    const isBasic = _guideSteps === GUIDE_STEPS;
+    const isLast = _guideIndex === _guideSteps.length - 1;
+    _guideTip.innerHTML =
+        `<div class="guide-step">${isBasic ? "基础引导" : "实际操作教程"} · ${_guideIndex + 1} / ${_guideSteps.length}</div>` +
+        `<div class="guide-title">${escapeHtml(step.title)}</div>` +
+        `<div class="guide-text">${escapeHtml(step.text)}</div>` +
+        `<div class="guide-actions">` +
+        `<button type="button" class="guide-btn skip" id="guide-skip">跳过教程</button>` +
+        (_guideIndex > 0 ? `<button type="button" class="guide-btn prev" id="guide-prev">上一步</button>` : "") +
+        (isBasic && isLast ? `<button type="button" class="guide-btn deep" id="guide-deep">深入了解</button>` : "") +
+        `<button type="button" class="guide-btn next" id="guide-next">${isLast ? "完成" : "没反应？下一步"}</button>` +
+        `</div>`;
+    document.getElementById("guide-skip").onclick = _guideClose;
+    const prev = document.getElementById("guide-prev");
+    if (prev) prev.onclick = () => _guideTo(_guideIndex - 1);
+    document.getElementById("guide-next").onclick = () => {
+        if (isLast) _guideClose();
+        else _guideTo(_guideIndex + 1);
+    };
+    const deep = document.getElementById("guide-deep");
+    if (deep) deep.onclick = _startDeepGuide;
+    try { target.scrollIntoView({ block: "center", behavior: "smooth" }); } catch (e) {}
+}
+
+function _guideStart(steps, key, showHomeFirst, force) {
+    if (!force) { try { if (localStorage.getItem(key)) return; } catch (e) { return; } }
+    if (_guideMask) return;
+    if (showHomeFirst) _guideEnsureHome();
+    _guideSteps = steps;
+    _guideKey = key;
+    _guideCreateMask();
+    setTimeout(() => _guideTo(0), 150);
+}
+
+function _startBasicGuide() {
+    _guideStart(GUIDE_STEPS, GUIDE_KEY, true, false);
+}
+
+function _startDeepGuide() {
+    _guideMarkDone(GUIDE_KEY);   // 从「深入了解」进入时，基础引导视为已完成
+    _guideClose();               // 移除旧气泡与点击监听（并回到首页）
+    _guideStart(DEEP_GUIDE_STEPS, DEEP_GUIDE_KEY, true, true);
+}
+window.startDeepGuide = _startDeepGuide;
+
+if (document.readyState === "loading") {
+    window.addEventListener("DOMContentLoaded", () => setTimeout(_startBasicGuide, 900));
+} else {
+    setTimeout(_startBasicGuide, 900);
+}
+
+// ═══════════════════════════════════════════
 // 启动
 // ═══════════════════════════════════════════
 checkWake();
 checkKey().then(() => { loadHistory(); });
 initAssets();   // 服务器模式：已有 token 时立即资产本地化（未登录静默失败，登录后 initAuth 会再触发）
+loadFixStatus();   // 设定纠错助手：恢复多轮对齐/待确认方案（本地与服务器模式都可用）

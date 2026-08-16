@@ -175,7 +175,10 @@ class _CompatClient:
 
 
 class _QuotaCompletions(_Completions):
-    """配额版 completions：每次调用前执行配额检查+记账（服务器托管模式）。"""
+    """配额版 completions：每次调用前执行配额检查+记账（服务器托管模式）。
+
+    托管模型锁：服务器托管 API 只允许 OpenCode Go 的 flash 模型（运营者套餐约束），
+    调用方传入的任何 model（含全局配置被改成 pro 的情况）一律强制为 flash。"""
 
     def __init__(self, client: "_CompatClient", quota_fn):
         super().__init__(client)
@@ -186,6 +189,7 @@ class _QuotaCompletions(_Completions):
             err = self._quota_fn()
             if err:
                 raise ApiError(err, code="quota_exhausted")
+        kwargs["model"] = "deepseek-v4-flash"   # 托管模式模型锁：只允许 flash
         return super().create(**kwargs)
 
 

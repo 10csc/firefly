@@ -3,6 +3,11 @@
 
 import sys, json, tempfile, os
 from pathlib import Path
+try:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+except Exception:
+    pass
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "app"))
 
 from unittest.mock import Mock

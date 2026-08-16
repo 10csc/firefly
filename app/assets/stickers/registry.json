@@ -4,271 +4,351 @@
       "id": "佩佩_递茶",
       "file": "stickers/佩佩_递茶.webp",
       "category": "可爱",
-      "label": "递茶"
+      "label": "可爱的佩佩（狗狗）给你递茶，辛苦啦",
+      "enabled": true
     },
     {
       "id": "刃_啧",
       "file": "stickers/刃_啧.webp",
       "category": "帅气",
-      "label": "啧"
+      "label": "啧，",
+      "enabled": false
     },
     {
       "id": "刃_我没事",
       "file": "stickers/刃_我没事.webp",
       "category": "帅气",
-      "label": "我没事"
+      "label": "我没事",
+      "enabled": false
     },
     {
       "id": "刃_来了",
       "file": "stickers/刃_来了.webp",
       "category": "帅气",
-      "label": "来了"
+      "label": "耍帅，有我在",
+      "enabled": true
     },
     {
       "id": "刃_看不见我",
       "file": "stickers/刃_看不见我.webp",
       "category": "帅气",
-      "label": "看不见我"
+      "label": "看不见我",
+      "enabled": false
     },
     {
       "id": "卡芙卡_优雅",
       "file": "stickers/卡芙卡_优雅.webp",
       "category": "帅气",
-      "label": "优雅"
+      "label": "优雅",
+      "enabled": true
     },
     {
       "id": "卡芙卡_嘘",
       "file": "stickers/卡芙卡_嘘.webp",
       "category": "帅气",
-      "label": "嘘"
+      "label": "嘘，不要告诉其他人哦（坏笑）",
+      "enabled": true
     },
     {
       "id": "卡芙卡_爆炸",
       "file": "stickers/卡芙卡_爆炸.webp",
       "category": "帅气",
-      "label": "爆炸"
+      "label": "爆炸",
+      "enabled": false
     },
     {
       "id": "卡芙卡_生气",
       "file": "stickers/卡芙卡_生气.webp",
       "category": "帅气",
-      "label": "生气"
+      "label": "生气",
+      "enabled": false
     },
     {
       "id": "呜呜伯_坏笑",
       "file": "stickers/呜呜伯_坏笑.webp",
       "category": "可爱",
-      "label": "坏笑"
+      "label": "坏笑，嘿嘿",
+      "enabled": true
     },
     {
       "id": "呜呜伯_委屈",
       "file": "stickers/呜呜伯_委屈.webp",
       "category": "可爱",
-      "label": "委屈"
+      "label": "委屈",
+      "enabled": true
     },
     {
       "id": "呜呜伯_开心",
       "file": "stickers/呜呜伯_开心.webp",
       "category": "可爱",
-      "label": "开心"
+      "label": "开心，好耶",
+      "enabled": true
     },
     {
       "id": "呜呜伯_恶作剧",
       "file": "stickers/呜呜伯_恶作剧.webp",
       "category": "可爱",
-      "label": "恶作剧"
+      "label": "恶作剧",
+      "enabled": false
     },
     {
       "id": "呜呜伯_收到惊吓",
       "file": "stickers/呜呜伯_收到惊吓.webp",
       "category": "可爱",
-      "label": "收到惊吓"
+      "label": "受到惊吓，吓哭了",
+      "enabled": true
     },
     {
       "id": "呜呜伯_敲黑板",
       "file": "stickers/呜呜伯_敲黑板.webp",
       "category": "可爱",
-      "label": "敲黑板"
+      "label": "敲黑板（重点），认真听，我要讲重点了，流萤老师开课了",
+      "enabled": true
     },
     {
       "id": "呜呜伯_无奈",
       "file": "stickers/呜呜伯_无奈.webp",
       "category": "可爱",
-      "label": "无奈"
+      "label": "无奈，情绪低落",
+      "enabled": true
     },
     {
       "id": "呜呜伯_无语",
       "file": "stickers/呜呜伯_无语.webp",
       "category": "可爱",
-      "label": "无语"
+      "label": "无语，看不懂哎，我没办法了",
+      "enabled": true
     },
     {
       "id": "呜呜伯_晕",
       "file": "stickers/呜呜伯_晕.webp",
       "category": "可爱",
-      "label": "晕"
+      "label": "晕，听不懂，大脑过载了",
+      "enabled": true
     },
     {
       "id": "呜呜伯_期待",
       "file": "stickers/呜呜伯_期待.webp",
       "category": "可爱",
-      "label": "期待"
+      "label": "好期待，",
+      "enabled": false
     },
     {
       "id": "呜呜伯_比心",
       "file": "stickers/呜呜伯_比心.webp",
       "category": "可爱",
-      "label": "比心"
+      "label": "比心",
+      "enabled": true
     },
     {
       "id": "呜呜伯_气气",
       "file": "stickers/呜呜伯_气气.webp",
       "category": "可爱",
-      "label": "气气"
+      "label": "哼，我生气了",
+      "enabled": true
     },
     {
       "id": "呜呜伯_点赞",
       "file": "stickers/呜呜伯_点赞.webp",
       "category": "可爱",
-      "label": "点赞"
+      "label": "点赞，干的漂亮！",
+      "enabled": true
     },
     {
       "id": "呜呜伯_疑惑",
       "file": "stickers/呜呜伯_疑惑.webp",
       "category": "可爱",
-      "label": "疑惑"
+      "label": "疑惑，真的是这样吗？，好像有点不对",
+      "enabled": true
     },
     {
       "id": "呜呜伯_睡觉",
       "file": "stickers/呜呜伯_睡觉.webp",
       "category": "可爱",
-      "label": "睡觉"
+      "label": "困了困了",
+      "enabled": true
     },
     {
       "id": "呜呜伯_认真",
       "file": "stickers/呜呜伯_认真.webp",
       "category": "可爱",
-      "label": "认真"
+      "label": "认真，我是认真的",
+      "enabled": true
     },
     {
       "id": "哈努兄弟_暗中观察",
       "file": "stickers/哈努兄弟_暗中观察.webp",
       "category": "帅气",
-      "label": "暗中观察"
+      "label": "暗中观察",
+      "enabled": false
     },
     {
       "id": "垃圾桶_注意",
       "file": "stickers/垃圾桶_注意.webp",
       "category": "帅气",
-      "label": "注意"
+      "label": "摆pose耍帅",
+      "enabled": true
     },
     {
       "id": "小浣熊_开心",
       "file": "stickers/小浣熊_开心.webp",
       "category": "可爱",
-      "label": "开心"
+      "label": "开心",
+      "enabled": true
     },
     {
       "id": "小浣熊_来了",
       "file": "stickers/小浣熊_来了.webp",
       "category": "可爱",
-      "label": "来了"
+      "label": "来了来了",
+      "enabled": true
     },
     {
       "id": "小浣熊_翻垃圾桶",
       "file": "stickers/小浣熊_翻垃圾桶.webp",
-      "category": "帅气",
-      "label": "翻垃圾桶"
+      "category": "可爱",
+      "label": "让我找找看",
+      "enabled": true
     },
     {
       "id": "小浣熊_诶嘿",
       "file": "stickers/小浣熊_诶嘿.webp",
-      "category": "帅气",
-      "label": "诶嘿"
+      "category": "可爱",
+      "label": "诶嘿",
+      "enabled": true
     },
     {
       "id": "帕姆_大厨",
       "file": "stickers/帕姆_大厨.webp",
       "category": "可爱",
-      "label": "大厨"
+      "label": "做饭",
+      "enabled": true
     },
     {
       "id": "帕姆_害羞",
       "file": "stickers/帕姆_害羞.jpg",
       "category": "可爱",
-      "label": "害羞"
+      "label": "害羞",
+      "enabled": true
     },
     {
       "id": "广告牌_疑问",
       "file": "stickers/广告牌_疑问.webp",
-      "category": "帅气",
-      "label": "疑问"
+      "category": "可爱",
+      "label": "疑问",
+      "enabled": true
     },
     {
       "id": "折纸小鸟_汗颜",
       "file": "stickers/折纸小鸟_汗颜.webp",
       "category": "可爱",
-      "label": "汗颜"
+      "label": "汗颜",
+      "enabled": false
     },
     {
       "id": "猫猫糕_贴贴",
       "file": "stickers/猫猫糕_贴贴.webp",
       "category": "可爱",
-      "label": "贴贴"
+      "label": "贴贴",
+      "enabled": false
     },
     {
       "id": "苏乐达_干杯",
       "file": "stickers/苏乐达_干杯.webp",
-      "category": "可爱",
-      "label": "干杯"
+      "category": "帅气",
+      "label": "干杯",
+      "enabled": true
     },
     {
       "id": "钟表小子_庆祝",
       "file": "stickers/钟表小子_庆祝.webp",
       "category": "可爱",
-      "label": "庆祝"
+      "label": "庆祝",
+      "enabled": true
     },
     {
       "id": "钟表小子_开始",
       "file": "stickers/钟表小子_开始.webp",
       "category": "可爱",
-      "label": "开始"
+      "label": "开始",
+      "enabled": false
     },
     {
       "id": "银狼_吹泡泡",
       "file": "stickers/银狼_吹泡泡.webp",
       "category": "帅气",
-      "label": "吹泡泡"
+      "label": "吹泡泡（嚼口香糖）",
+      "enabled": true
     },
     {
       "id": "银狼_嘴炮",
       "file": "stickers/银狼_嘴炮.webp",
       "category": "帅气",
-      "label": "嘴炮"
+      "label": "嘴炮",
+      "enabled": false
     },
     {
       "id": "银狼_弱",
       "file": "stickers/银狼_弱.webp",
       "category": "帅气",
-      "label": "弱"
+      "label": "弱",
+      "enabled": false
     },
     {
       "id": "银狼_想赢",
       "file": "stickers/银狼_想赢.webp",
       "category": "帅气",
-      "label": "想赢"
+      "label": "我想赢，我要认真打游戏",
+      "enabled": true
     },
     {
       "id": "银狼_车票",
       "file": "stickers/银狼_车票.webp",
       "category": "帅气",
-      "label": "车票"
+      "label": "车票",
+      "enabled": false
     },
     {
       "id": "银狼_酷",
       "file": "stickers/银狼_酷.webp",
       "category": "帅气",
-      "label": "酷"
+      "label": "酷",
+      "enabled": true
+    },
+    {
+      "id": "strong_01",
+      "file": "stickers/流萤_出击.webp",
+      "category": "帅气",
+      "label": "萨姆出击，我来",
+      "enabled": true
+    },
+    {
+      "id": "neutral_02",
+      "file": "stickers/流萤_也挺好(表示无奈).webp",
+      "category": "可爱",
+      "label": "无奈接受，也挺好",
+      "enabled": true
+    },
+    {
+      "id": "weak_02",
+      "file": "stickers/流萤_没钱了.webp",
+      "category": "可爱",
+      "label": "没钱了，理解不了",
+      "enabled": true
+    },
+    {
+      "id": "neutral_01",
+      "file": "stickers/流萤_比心.webp",
+      "category": "可爱",
+      "label": "比心",
+      "enabled": true
+    },
+    {
+      "id": "like_01",
+      "file": "stickers/呜呜伯_期待.webp",
+      "category": "可爱",
+      "label": "呜呜伯期待",
+      "enabled": false
     }
   ]
 }

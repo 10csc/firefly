@@ -67,15 +67,18 @@ def _merge_narrations(messages: list, narrations: list) -> list:
 
 
 # ── 开场演出（haruno 模式首条自动消息）────────────
-# 流萤在黄金时刻第一次见到开拓者的固定场景。纯文本演出，不调 LLM。
-# 旁白（scene/action）+ 流萤首条消息，写盘后供前端渲染。
+# 按 3.8 结尾流萤的想象：两人都是学生，开拓者从很远星球来、不熟悉环境，
+# 被流氓围住，流萤挺身而出救他。场景平实交代黄金时刻永夜与黄金中央车站。
 _HARUNO_OPENING = {
     "narrations": [
-        {"text": "黄金时刻，霓虹初上，人流如织。你初来乍到，正茫然四顾时，几个流氓围了上来。", "style": "scene"},
-        {"text": "就在这时，一位少女快步冲上前，三下两下把流氓赶跑了。", "style": "scene"},
-        {"text": "她喘着气转过身，仔细打量你。", "style": "action"},
+        {"text": "黄金时刻永远像午夜前，黄金中央车站外灯光很亮，人很多。你从很远的星球来旅行，刚出站就被几个小混混围住。", "style": "scene"},
+        {"text": "一个银发女生快步挡到你前面，三下两下把人赶跑了。", "style": "scene"},
+        {"text": "她转过身，先把你看了一圈，确认你有没有受伤。", "style": "action"},
     ],
-    "first_message": "你还好吗？有没有哪里受伤？",
+    "first_messages": [
+        "你还好吗？有没有哪里受伤？",
+        "我是流萤，来黄金时刻旅行的学生。这里我熟，先带你离开这。",
+    ],
 }
 
 
@@ -87,25 +90,35 @@ def haruno_opening() -> dict:
         m = {"type": "narration", "text": n["text"], "style": n["style"]}
         _app("firefly", m, mode="haruno")
         msgs.append(dict(m))
-    m = {"type": "text", "content": _HARUNO_OPENING["first_message"]}
-    seq, t = _app("firefly", m, mode="haruno")
-    m["time"] = t
-    msgs.append(m)
+    first_messages = _HARUNO_OPENING.get("first_messages")
+    if not first_messages:
+        first_messages = [_HARUNO_OPENING.get("first_message", "")]
+    for text in first_messages:
+        if not text:
+            continue
+        m = {"type": "text", "content": text}
+        seq, t = _app("firefly", m, mode="haruno")
+        m["time"] = t
+        msgs.append(m)
     return msgs
 
 
-def _get_environment() -> str:
+def _get_environment(mode: str = DEFAULT_MODE) -> str:
     now = datetime.now()
     h = now.hour
     wd = ["周一","周二","周三","周四","周五","周六","周日"][now.weekday()]
     d = f"{now.month}月{now.day}日 {wd} "
-    if 5 <= h < 8:       return f"{d}清晨，天刚亮。"
-    elif 8 <= h < 12:    return f"{d}上午。"
-    elif 12 <= h < 14:   return f"{d}中午。"
-    elif 14 <= h < 18:   return f"{d}下午。"
-    elif 18 <= h < 21:   return f"{d}傍晚。"
-    elif 21 <= h < 24:   return f"{d}夜晚。"
-    else:                return f"{d}深夜，万籁俱寂。"
+    if 5 <= h < 8:       desc = "清晨，天刚亮。"
+    elif 8 <= h < 12:    desc = "上午。"
+    elif 12 <= h < 14:   desc = "中午。"
+    elif 14 <= h < 18:   desc = "下午。"
+    elif 18 <= h < 21:   desc = "傍晚。"
+    elif 21 <= h < 24:   desc = "夜晚。"
+    else:                desc = "深夜，万籁俱寂。"
+    if mode == "haruno":
+        # 黄金时刻永远是午夜前的商业区：现实作息按时间走，街景不按昼夜变。
+        return f"{d}{desc}黄金时刻仍亮如午夜前，街上的灯光和人流没有散。"
+    return f"{d}{desc}"
 
 
 # ── 监控 ─────────────────────────────────────────
@@ -243,7 +256,7 @@ def handle_chat(
             bubble=None)
 
     # ── 0. 环境 + 知识获取 ──────────────────────
-    environment = _get_environment()
+    environment = _get_environment(mode)
     # LLM 子代理检索：知识库整体注入（system 稳定前缀，缓存高命中），
     # 输出压缩知识摘要。无本地模型依赖（安卓端可行），全局性覆盖。
     # 话题锚点只取上一条用户消息：指代消解；话题理解归 analyzer（20 轮历史），

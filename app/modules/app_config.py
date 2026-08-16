@@ -123,7 +123,7 @@ PORT = 8765
 #   4. package/firefly.iss 的 AppVersion
 # 用 tools/check_version.py 一键校验四者一致；格式 x.y.z 纯数字点分，
 # 禁止 -beta/-rc 后缀（Gitee 无 prerelease 概念，后缀会污染 releases/latest）。
-APP_VERSION = "0.7.2"
+APP_VERSION = "0.8.0"
 API_BASE = "https://api.deepseek.com/v1"
 # OpenCode Go 兼容端点（OpenAI 兼容 chat/completions，模型 ID 与 DeepSeek 一致）
 GO_BASE = "https://opencode.ai/zen/go/v1"
@@ -136,7 +136,7 @@ CONFIG_FILE = USER_DIR / "config.json"
 
 # ── 模式（多模式隔离）─────────────────────────────
 # 每个模式独立数据根：USER_DIR/{mode}/，其下 character/ data/ journal/ 各一份。
-# story = 剧情模式（现有闭环，数据迁移自旧平铺目录）；haruno = 春日手信（待设计）。
+# story = 剧情模式（现有闭环，数据迁移自旧平铺目录）；haruno = 春日手信（匹诺康尼黄金时刻·普通学生旅行AU）。
 MODES = ("story", "haruno")
 DEFAULT_MODE = "story"
 
@@ -226,15 +226,15 @@ for _dst, _src in _DEFAULTS.items():
 
 
 def resolve_asset(path: str) -> Path:
-    """静态资源解析：user_data/ 优先，退回 bundled；表情包再查 user_data/stickers/。"""
-    u = USER_DIR / path
+    """静态资源解析：当前用户目录优先（服务器版账号隔离），退回 bundled；表情包再查 stickers/。"""
+    u = (_user_ctx_dir() or USER_DIR) / path
     if u.exists():
         return u
     b = BASE_DIR / path
     if b.exists():
         return b
     if path.startswith("assets/"):
-        alt = USER_DIR / "stickers" / Path(path).name
+        alt = (_user_ctx_dir() or USER_DIR) / "stickers" / Path(path).name
         if alt.exists():
             return alt
     return b
@@ -254,10 +254,11 @@ def _load_config() -> dict:
         "retriever_effort": "none", "analyzer_effort": "high",
         "polisher_effort": "high", "organizer_effort": "none",
         "retriever_temperature": 0.0, "polisher_temperature": 0.5,
-        "proactive_enabled": True, "proactive_hard": 4, "proactive_soft": 0.5,
-        "prob_reply_enabled": True, "prob_reply_value": 0.3,
+        "proactive_enabled": True, "proactive_hard": 6, "proactive_soft": 0.35,
+        "prob_reply_enabled": True, "prob_reply_value": 0.10,
         "hidden_reply_enabled": True,
     }
+    data = None
     try:
         data = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
         if isinstance(data, dict):
@@ -271,6 +272,10 @@ def _load_config() -> dict:
             for key in ("analyzer_model", "organizer_model", "polisher_model", "retriever_model"):
                 val = data.get(key, "deepseek-v4-flash")
                 cfg[key] = val if val in VALID_MODELS else "deepseek-v4-flash"
+            # 服务器版模型锁：核心流水线只允许 flash（无论配置文件/用户 /set-config 写进什么）
+            if os.environ.get("FIREFLY_SERVER"):
+                for key in ("analyzer_model", "organizer_model", "polisher_model", "retriever_model"):
+                    cfg[key] = "deepseek-v4-flash"
             _effort_defaults = {"retriever_effort": "none", "analyzer_effort": "high",
                                 "polisher_effort": "high", "organizer_effort": "none"}
             for key in _effort_defaults:
@@ -291,30 +296,45 @@ def _load_config() -> dict:
                 cfg["retriever_temperature"] = max(0.0, min(2.0, rt))
             except (TypeError, ValueError):
                 cfg["retriever_temperature"] = 0.0
-            # 主动性配置（缺省：开启 + 每 4 轮 1 次判断机会 + 50% 触发概率）
+            # 主动性配置（缺省：开启 + 每 6 轮 1 次判断机会 + 35% 触发概率）
             cfg["proactive_enabled"] = bool(data.get("proactive_enabled", True))
             try:
-                ph = int(data.get("proactive_hard", 4))
+                ph = int(data.get("proactive_hard", 6))
                 cfg["proactive_hard"] = max(1, min(10, ph))
             except (TypeError, ValueError):
-                cfg["proactive_hard"] = 4
+                cfg["proactive_hard"] = 6
             try:
-                ps = float(data.get("proactive_soft", 0.5))
+                ps = float(data.get("proactive_soft", 0.35))
                 cfg["proactive_soft"] = max(0.0, min(1.0, ps))
             except (TypeError, ValueError):
-                cfg["proactive_soft"] = 0.5
-            # 概率式回复配置（缺省：开启 + 30% 概率）
+                cfg["proactive_soft"] = 0.35
+            # 概率式回复配置（缺省：开启 + 10% 概率；配合 10 分钟静默窗≈每 1-2 小时一次机会）
             cfg["prob_reply_enabled"] = bool(data.get("prob_reply_enabled", True))
             try:
-                pv = float(data.get("prob_reply_value", 0.3))
+                pv = float(data.get("prob_reply_value", 0.10))
                 cfg["prob_reply_value"] = max(0.0, min(1.0, pv))
             except (TypeError, ValueError):
-                cfg["prob_reply_value"] = 0.3
+                cfg["prob_reply_value"] = 0.10
             # 隐藏式回复配置（缺省：跟随概率式开启；独立开关，关前台概率式不影响隐藏式）
             cfg["hidden_reply_enabled"] = bool(data.get("hidden_reply_enabled", True))
     except Exception:
         pass
-    if not cfg["api_key"]:
+    # 旧默认值迁移：把“从未改过的旧默认”平滑迁到新推荐值（改过任意一项则尊重用户）。
+    # 仅改内存，下一次保存配置时落盘；每次启动判定一致、幂等。
+    if isinstance(data, dict):
+        try:
+            old = (int(data.get("proactive_hard", -1)) == 4
+                   and abs(float(data.get("proactive_soft", -1)) - 0.5) < 1e-9
+                   and abs(float(data.get("prob_reply_value", -1)) - 0.3) < 1e-9)
+        except (TypeError, ValueError):
+            old = False
+        if old:
+            cfg["proactive_hard"] = 6
+            cfg["proactive_soft"] = 0.35
+            cfg["prob_reply_value"] = 0.10
+    # 环境变量兜底只用于本地版：服务器版运营者 Key 走 FIREFLY_PROXY_KEY（QuotaClient），
+    # 绝不能把 env 兜底 Key 写进全局 config 并通过 /config 暴露前缀
+    if not cfg["api_key"] and not os.environ.get("FIREFLY_SERVER"):
         cfg["api_key"] = os.environ.get("DEEPSEEK_API_KEY", "").strip()
     return cfg
 
@@ -324,6 +344,10 @@ config = _load_config()
 
 
 def save_config() -> None:
+    # 服务器版模型锁：落盘前再次强制 flash，防止任何路径把 pro 写进全局配置
+    if os.environ.get("FIREFLY_SERVER"):
+        for key in ("analyzer_model", "organizer_model", "polisher_model", "retriever_model"):
+            config[key] = "deepseek-v4-flash"
     CONFIG_FILE.write_text(
         json.dumps({
             "api_key": config.get("api_key", ""),
@@ -340,10 +364,10 @@ def save_config() -> None:
             "retriever_temperature": config.get("retriever_temperature", 0.0),
             "polisher_temperature": config.get("polisher_temperature", 0.5),
             "proactive_enabled": bool(config.get("proactive_enabled", True)),
-            "proactive_hard": max(1, min(10, int(config.get("proactive_hard", 4)))),
-            "proactive_soft": max(0.0, min(1.0, float(config.get("proactive_soft", 0.5)))),
+            "proactive_hard": max(1, min(10, int(config.get("proactive_hard", 6)))),
+            "proactive_soft": max(0.0, min(1.0, float(config.get("proactive_soft", 0.35)))),
             "prob_reply_enabled": bool(config.get("prob_reply_enabled", True)),
-            "prob_reply_value": max(0.0, min(1.0, float(config.get("prob_reply_value", 0.3)))),
+            "prob_reply_value": max(0.0, min(1.0, float(config.get("prob_reply_value", 0.10)))),
             "hidden_reply_enabled": bool(config.get("hidden_reply_enabled", True)),
         }, ensure_ascii=False),
         encoding="utf-8")
@@ -369,12 +393,11 @@ def get_client():
         key = os.environ.get("FIREFLY_PROXY_KEY", "").strip() or os.environ.get("DEEPSEEK_API_KEY", "").strip()
         if not key:
             return None
-        from modules.api_client import _CompatClient, QuotaClient
-        # 有配额钩子（服务器注册）→ 每调用前检查+记账；无钩子（本地开发）→ 不限制
-        if _proxy_quota_checker is not None:
-            return QuotaClient(api_key=key, base_url=GO_BASE,
-                               quota_fn=_proxy_quota_checker, timeout=120.0)
-        return _CompatClient(api_key=key, base_url=GO_BASE, timeout=120.0)
+        from modules.api_client import QuotaClient
+        # 无论是否注册了配额钩子，托管模式一律走 QuotaClient：它会在每次 create 时
+        # 强制 model=deepseek-v4-flash，用户/全局配置不可能把运营者 Key 切到 pro。
+        return QuotaClient(api_key=key, base_url=GO_BASE,
+                           quota_fn=_proxy_quota_checker, timeout=120.0)
     mode = config.get("api_mode", "relay" if ctx else "direct")
     if mode == "relay":
         from modules.api_client import RelayClient

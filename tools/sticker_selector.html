@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>流萤表情包默认启用选择器</title>
+<style>
+:root{--bg:#0f0f1f;--card:#1a1a2e;--line:#30304d;--txt:#e8e0d0;--muted:#8b8ba7;--gold:#d8b878;--green:#8fe3b2;--red:#ff9a9a}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--txt);font-family:system-ui,-apple-system,"Microsoft YaHei",sans-serif;padding:16px;max-width:1100px;margin:0 auto}
+h1{font-size:20px;letter-spacing:2px;margin:0 0 6px}
+.sub{color:var(--muted);font-size:13px;line-height:1.7;margin-bottom:16px}
+.toolbar{position:sticky;top:0;background:var(--bg);padding:10px 0;display:flex;gap:10px;align-items:center;flex-wrap:wrap;border-bottom:1px solid var(--line);margin-bottom:16px}
+.toolbar button{padding:9px 16px;border-radius:10px;border:1px solid var(--gold);background:transparent;color:var(--gold);cursor:pointer;font-size:14px}
+.toolbar button.primary{background:var(--gold);color:#1b1b2f;font-weight:600}
+.toolbar .count{color:var(--muted);font-size:13px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:10px;display:flex;flex-direction:column;gap:8px}
+.card.off{opacity:.55}
+.card img{width:100%;height:120px;object-fit:contain;background:rgba(255,255,255,.04);border-radius:10px;image-rendering:auto}
+.card .id{color:var(--muted);font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.card .en-row{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.switch{position:relative;display:inline-block;width:46px;height:26px;flex-shrink:0}
+.switch input{opacity:0;width:0;height:0}
+.slider{position:absolute;inset:0;background:#3a3a55;border-radius:26px;transition:.2s}
+.slider:before{content:"";position:absolute;height:20px;width:20px;left:3px;top:3px;background:#c9c9d9;border-radius:50%;transition:.2s}
+.switch input:checked+.slider{background:var(--gold)}
+.switch input:checked+.slider:before{transform:translateX(20px)}
+.card select,.card textarea{width:100%;border-radius:8px;border:1px solid var(--line);background:#12122a;color:var(--txt);font-family:inherit;font-size:13px;padding:7px}
+.card textarea{min-height:56px;resize:vertical;line-height:1.5}
+.card .builtin{color:var(--gold);font-size:11px}
+.toast{position:fixed;left:50%;bottom:22px;transform:translateX(-50%);background:var(--card);border:1px solid var(--gold);color:var(--txt);padding:10px 18px;border-radius:12px;font-size:14px;display:none;z-index:9}
+</style>
+</head>
+<body>
+<h1>流萤表情包 · 默认启用选择器</h1>
+<div class="sub">
+勾选 = 默认启用（AI 可选用）；不勾选 = 默认停用（仍可在 App 的「表情包管理」里手动开启）。<br>
+「描述词」会直接写进表情包注册表，可以写得更详细一些（例如“开心地挥手打招呼”），AI 选图会按这些词匹配。<br>
+点击底部「保存到项目」会直接修改 <b>app/assets/stickers/registry.json</b>（保存前自动备份）。
+</div>
+<div class="toolbar">
+  <button id="select-all">全选</button>
+  <button id="select-none">全不选</button>
+  <button id="only-flyfire" title="只勾选 id 含流萤/萨姆/呜呜伯_比心等建议项">只选流萤常用</button>
+  <span class="count" id="count">加载中…</span>
+  <button class="primary" id="save">💾 保存到项目</button>
+</div>
+<div class="grid" id="grid"></div>
+<div class="toast" id="toast"></div>
+
+<script>
+let data = [];
+const $ = id => document.getElementById(id);
+function toast(msg){const t=$("toast");t.textContent=msg;t.style.display="block";clearTimeout(t._t);t._t=setTimeout(()=>t.style.display="none",3000);}
+function render(){
+  const grid=$("grid"); grid.innerHTML="";
+  data.forEach((s,i)=>{
+    const off = !s.enabled;
+    const card=document.createElement("div"); card.className="card"+(off?" off":"");
+    card.innerHTML=`<img src="/assets/${s.file}" loading="lazy" onerror="this.style.opacity=.25">
+      <div class="id">${s.id}${s.builtin?' · <span class="builtin">内置默认</span>':''}</div>
+      <div class="en-row"><label style="font-size:13px">默认启用</label><label class="switch"><input type="checkbox" data-i="${i}" ${s.enabled?"checked":""}><span class="slider"></span></label></div>
+      <select data-i="${i}" class="cat"><option value="可爱" ${s.category==="可爱"?"selected":""}>可爱</option><option value="帅气" ${s.category==="帅气"?"selected":""}>帅气</option></select>
+      <textarea data-i="${i}" class="label" maxlength="120" placeholder="描述词">${s.label.replace(/</g,'&lt;').replace(/>/g,'&gt;')}</textarea>`;
+    grid.appendChild(card);
+  });
+  cardEvents();
+}
+function cardEvents(){
+  document.querySelectorAll(".switch input").forEach(cb=>cb.addEventListener("change",e=>{
+    const i=+e.target.dataset.i; data[i].enabled=e.target.checked; updateCount();
+    e.target.closest(".card").classList.toggle("off",!data[i].enabled);
+  }));
+  document.querySelectorAll(".cat").forEach(sel=>sel.addEventListener("change",e=>{data[+e.target.dataset.i].category=e.target.value;}));
+  document.querySelectorAll(".label").forEach(ta=>ta.addEventListener("input",e=>{data[+e.target.dataset.i].label=e.target.value;}));
+}
+function updateCount(){const n=data.filter(s=>s.enabled).length;$("count").textContent=`默认启用 ${n} / ${data.length}`;}
+$("select-all").onclick=()=>{data.forEach(s=>s.enabled=true);render();};
+$("select-none").onclick=()=>{data.forEach(s=>s.enabled=false);render();};
+$("only-flyfire").onclick=()=>{data.forEach(s=>s.enabled = /流萤|萨姆|比心|出击|没钱了|无奈|期待/.test(s.id+s.label));render();};
+$("save").onclick=async()=>{
+  const payload=data.map(s=>({id:s.id,file:s.file,category:s.category,label:s.label.trim()||s.id,enabled:!!s.enabled,builtin:!!s.builtin}));
+  try{
+    const r=await fetch("/api/save",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({stickers:payload})});
+    const d=await r.json();
+    if(d.ok) toast("已保存并备份旧 registry.json ✓（"+(d.backup||"")+"）");
+    else toast("保存失败："+(d.error||"未知"));
+  }catch(e){toast("保存失败：网络错误");}
+};
+(async()=>{
+  try{
+    const r=await fetch("/api/registry"); const d=await r.json();
+    data=d.stickers; render(); updateCount();
+  }catch(e){$("count").textContent="加载失败，请确认是通过 python tools/sticker_selector.py 打开的";}
+})();
+</script>
+</body>
+</html>

@@ -14,6 +14,13 @@ import shutil
 import sys
 from pathlib import Path
 
+# Windows GBK 控制台打印 ✓ 会 UnicodeEncodeError → 强制 UTF-8（与 check_version 同款兜底）
+try:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+except Exception:
+    pass
+
 ROOT = Path(__file__).resolve().parent.parent
 STATIC = ROOT / "app" / "static"
 SERVER_FRONT = ROOT / "server" / "frontend"

@@ -28,6 +28,7 @@ class StickerEntry:
     file: str        # 相对于 assets/ 的路径
     category: str    # 可爱 | 帅气
     label: str       # 含义描述
+    enabled: bool = True   # 是否参与选图（管理页可启停）
 
 # 代码内默认项（流萤常用可爱系 + 萨姆帅气系）
 _STICKERS_DEFAULT: dict[str, StickerEntry] = {
@@ -78,9 +79,49 @@ def _migrate_legacy_registry():
             logger.warning("registry.json 迁移失败: %s", e)
 
 
+def _migrate_enabled_defaults():
+    """把新版 bundled 的 enabled/描述词合并进已有 user_data registry（幂等）。
+
+    规则：用户文件中“没有 enabled 字段”的条目 = 启用开关上线后尚未手动改过，
+    用 bundled 同 id 的 enabled 与 label 覆盖；用户自己上传的条目补 enabled=true；
+    bundled 新增条目（含内置默认项的启用状态）补齐进用户文件，保证老安装与新装一致。
+    """
+    if not _REGISTRY_FILE.exists() or not _REGISTRY_LEGACY.exists():
+        return
+    try:
+        data = json.loads(_REGISTRY_FILE.read_text(encoding="utf-8"))
+        if not isinstance(data, dict) or not isinstance(data.get("stickers"), list):
+            return
+    except Exception:
+        return
+    bundled = {i.get("id"): i for i in _read_registry_items(_REGISTRY_LEGACY) if i.get("id")}
+    known = set()
+    changed = False
+    for item in data["stickers"]:
+        if not isinstance(item, dict):
+            continue
+        sid = item.get("id", "")
+        known.add(sid)
+        if "enabled" not in item:
+            default = bundled.get(sid, {})
+            item["enabled"] = bool(default.get("enabled", True))
+            if sid in bundled and default.get("label"):
+                item["label"] = default.get("label")
+            changed = True
+    # 补齐 bundled 中新增的条目（例如首次加入的内置默认项/新增贴纸）
+    for sid, item in bundled.items():
+        if sid not in known:
+            data["stickers"].append(dict(item))
+            changed = True
+    if changed:
+        _REGISTRY_FILE.write_text(
+            json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
 # 模块加载时迁移一次；不放在 _load_registry 里——测试替换 _REGISTRY_FILE 后
 # 每次加载都迁移会把真实数据拷进测试目录
 _migrate_legacy_registry()
+_migrate_enabled_defaults()
 
 import threading
 _lock = threading.Lock()
@@ -116,6 +157,7 @@ def _load_registry() -> dict[str, StickerEntry]:
             base[sid] = StickerEntry(
                 id=sid, file=file, category=category,
                 label=item.get("label", ""),
+                enabled=bool(item.get("enabled", True)),
             )
 
     _merge(_read_registry_items(_REGISTRY_FILE))
@@ -143,6 +185,7 @@ def _save_user_entry(sid: str, file: str, category: str, label: str) -> None:
             existing = {"stickers": []}
     existing.setdefault("stickers", []).append({
         "id": sid, "file": file, "category": category, "label": label,
+        "enabled": True,
     })
     fp.parent.mkdir(parents=True, exist_ok=True)
     fp.write_text(
@@ -198,30 +241,38 @@ def list_all_stickers() -> list[StickerEntry]:
     return sorted(stickers.values(), key=lambda s: s.id)
 
 
+def get_enabled_stickers() -> dict[str, StickerEntry]:
+    """只返回启用中的表情包（组织器选图与管理页“可用”视图用）。"""
+    return {sid: s for sid, s in _load_registry().items() if s.enabled}
+
+
 def _write_registry_all(stickers: dict[str, StickerEntry]) -> None:
     """把当前用户的 registry.json 重写为全量状态。
 
     只写「用户自己的条目」：① 用户文件已有条目（合并结果的最新状态）；
-    ② 被用户改过 label 的默认项（覆盖记录）。公共池（旧全局文件）条目不复制进
-    用户文件——否则公共项会变成"自己可删项"，且删除后因公共池仍合并而复活。
-    服务器版只写用户自己的文件（公共池不受影响）。"""
+    ② 被用户改过 label/category/enabled 的默认项（覆盖记录）。
+    公共池（旧全局文件）条目不复制进用户文件——否则公共项会变成"自己可删项"，
+    且删除后因公共池仍合并而复活。服务器版只写用户自己的文件（公共池不受影响）。"""
     fp = _user_registry_file()
     prev_ids = editable_ids()
     user_items = []
     for sid, s in stickers.items():
         if sid in _STICKERS_DEFAULT:
-            if s.label == _STICKERS_DEFAULT[sid].label:
-                continue        # 默认项 label 未改，不写文件
+            d = _STICKERS_DEFAULT[sid]
+            if s.label == d.label and s.category == d.category and s.enabled == d.enabled:
+                continue        # 默认项未改动，不写文件
         elif sid not in prev_ids:
             continue            # 公共池条目：不是用户的，不写入用户文件
-        user_items.append({"id": s.id, "file": s.file, "category": s.category, "label": s.label})
+        user_items.append({"id": s.id, "file": s.file, "category": s.category,
+                           "label": s.label, "enabled": bool(s.enabled)})
     fp.parent.mkdir(parents=True, exist_ok=True)
     fp.write_text(
         json.dumps({"stickers": user_items}, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
-def update_sticker(sid: str, new_label: str = None, new_category: str = None) -> StickerEntry:
-    """修改表情包的 label / category。传 None 的字段不修改。
+def update_sticker(sid: str, new_label: str = None, new_category: str = None,
+                   new_enabled: bool = None) -> StickerEntry:
+    """修改表情包的 label / category / enabled。传 None 的字段不修改。
 
     Returns:
         更新后的 StickerEntry
@@ -232,7 +283,8 @@ def update_sticker(sid: str, new_label: str = None, new_category: str = None) ->
         raise StickerUpdateError("sid 不能为空")
     has_label = new_label and isinstance(new_label, str) and new_label.strip()
     has_category = new_category in ("可爱", "帅气")
-    if not has_label and not has_category:
+    has_enabled = isinstance(new_enabled, bool)
+    if not has_label and not has_category and not has_enabled:
         raise StickerUpdateError("没有可更新的内容")
 
     # 读→改→写整体加锁，防并发丢更新
@@ -249,8 +301,11 @@ def update_sticker(sid: str, new_label: str = None, new_category: str = None) ->
             s.label = new_label.strip()
         if has_category:
             s.category = new_category
+        if has_enabled:
+            s.enabled = new_enabled
         _write_registry_all(stickers)
-    logger.info("用户修改表情包: id=%s label=%s category=%s", sid, s.label, s.category)
+    logger.info("用户修改表情包: id=%s label=%s category=%s enabled=%s",
+                sid, s.label, s.category, s.enabled)
     return s
 
 
@@ -287,7 +342,7 @@ def pick_sticker(category: str = "可爱") -> StickerEntry | None:
     if category not in VALID_CATEGORIES:
         category = "可爱"
 
-    stickers = _load_registry()
+    stickers = get_enabled_stickers()
     matches = [s for s in stickers.values() if s.category == category]
     if not matches and category != "可爱":
         matches = [s for s in stickers.values() if s.category == "可爱"]
@@ -316,7 +371,7 @@ def pick_sticker_by_meaning(meaning: str) -> StickerEntry | None:
     if not isinstance(meaning, str) or not meaning.strip():
         return None
 
-    stickers = _load_registry()
+    stickers = get_all_stickers()
     if not stickers:
         return None
 
@@ -341,7 +396,7 @@ def pick_sticker_by_label(label: str) -> StickerEntry | None:
     if not isinstance(label, str) or not label.strip():
         return None
     label = label.strip()
-    stickers = _load_registry()
+    stickers = get_all_stickers()
     exact = [s for s in stickers.values() if s.label == label]
     if exact:
         with _lock: _PICK_COUNT += 1
@@ -350,4 +405,5 @@ def pick_sticker_by_label(label: str) -> StickerEntry | None:
 
 
 def get_all_stickers() -> dict[str, StickerEntry]:
-    return _load_registry()
+    """选图用：只返回启用中的表情包。管理页全量列表用 list_all_stickers()。"""
+    return get_enabled_stickers()

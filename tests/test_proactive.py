@@ -291,24 +291,31 @@ from modules.conversation_store import conv_file
 # ACTIVE 默认 1（空闲）
 P._active_set("story", 1)
 # 无信号量问题 → 概率 1.0 必过
-ok, reason = P.prob_gate_open(True, 1.0, mode="story")
+ok, reason = P.prob_gate_open(True, 1.0, mode="story", quiet_seconds=0)
 check("prob: 开启+概率1.0→放行", ok and reason is None)
-ok, reason = P.prob_gate_open(False, 1.0, mode="story")
+ok, reason = P.prob_gate_open(False, 1.0, mode="story", quiet_seconds=0)
 check("prob: 关闭→拒绝", not ok and "已关闭" in reason)
 
+# 静默窗：同一次空闲机会只掷一次骰（修复 30%×10s 轮询≈1分钟内必触发）
+P._PROB_LAST_CHECK.clear()
+ok, _ = P.prob_gate_open(True, 1.0, mode="story", quiet_seconds=600)
+ok2, reason2 = P.prob_gate_open(True, 1.0, mode="story", quiet_seconds=600)
+check("prob: 10分钟静默窗生效", ok and not ok2 and "静默" in reason2)
+
 # 概率 0 → 必拒
-ok, reason = P.prob_gate_open(True, 0.0, mode="story")
+ok, reason = P.prob_gate_open(True, 0.0, mode="story", quiet_seconds=0)
 check("prob: 概率0→拒绝", not ok and "概率" in reason)
 
 # ACTIVE=0（主动性互斥中）→ 拒绝（即使概率 1.0）
 P._append_log({"_ts": time.time() - 60, "sent": True, "time": "2026-08-09 00:00:00"}, mode="story")
 P._active_set("story", 0)
-ok, reason = P.prob_gate_open(True, 1.0, mode="story")
+ok, reason = P.prob_gate_open(True, 1.0, mode="story", quiet_seconds=0)
 check("prob: ACTIVE=0→拒绝", not ok and "信号量" in reason)
 P._active_set("story", 1)
 
 # 完整链路：概率式走 check_and_generate（主动式未触发 → 串联概率式）
 reset_log()
+P._PROB_LAST_CHECK.pop(P._state_key("story"), None)   # 清掉前面直连门控的静默窗时间戳
 P._active_set("story", 1)
 P._IGNORED.pop("story", None)
 append_message("user", {"type": "text", "content": "在吗"}, mode="story")

@@ -32,3 +32,13 @@
 | relay 后端代理 | 服务器构建 LLM 请求入队（资产占位符化），APP 轮询取件→本地填充→用户 Key 直连代发→回传 | api_client.py、routes.py、前端 relayTick | 2026-08-13 补前端引擎 |
 | 中转降级 | 直连被 CORS 拦截（GO 端点不支持浏览器跨域）时服务器用 X-API-Key 头代发：Key 内存即弃；call_id 须匹配队列中真实 pending 项（非开放代理） | routes.py relay_proxy、api_client.py relay_has | |
 | 后台主动（服务器版） | KeepAliveService 前台服务定时触发页面 __serverProactive()，hidden_reply_enabled 门控 + FireflyJs 桥通知（仅后台） | android_server KeepAliveService/MainActivity、app.js | 复刻本地版隐藏式语义 |
+| 设定纠错助手 | 替代旧 👍/👎 反馈：用户在首页描述问题 → AI 多轮对齐（聊天+选择题）→ 生成六文件修改清单 → 用户点「应用」才原子写入，可回滚 | app/modules/setting_fix.py、setting_fix_store.py、routes `/setting-fix/*`、独立全屏页 `#fix-view`（首页 `#fix-module` 入口） | 六文件=core/identity/sms_samples/用户设定/memory/手账；不新建文件 |
+| 对齐 Agent / 提案 Agent | 设定纠错助手的两阶段：对齐只提问不复述修改；提案生成 pending 修改清单 | setting_fix.run_alignment / run_proposal | 默认 Flash + Think High |
+| .setting_fix/ | 每模式设定修正持久化目录：conversation.jsonl、pending.json、manifest/audit、backups/vN | setting_fix_store.py | 随 /export-data 导出，不影响数据同步 |
+| 首次使用引导 | 纯代码引导（spotlight 高亮 + CSS 气泡，无图片），localStorage firefly_guide_v1_done 一次展示 | app.js GUIDE_STEPS、index.html #guide-mask | |
+| 深入了解引导 | 基础引导结束后可选 8 步详细教程：设置五分组/主动消息/模型/数据/菜单页签/纠错助手/反馈；反馈页可随时重开 | app.js DEEP_GUIDE_STEPS / startDeepGuide / firefly_deep_guide_v1_done | 无图片，纯 DOM 高亮 |
+| 表情包启用开关 | 每个贴纸可在管理页启停；组织器只从启用项选图，聊天面板只显示启用项；默认集合由 tools/sticker_selector 选择后写进 bundled registry | sticker_picker.enabled、`GET /stickers?enabled=1`、管理页卡片网格 stk-toggle | 旧 registry 缺 enabled 视为 true |
+| 表情包选择器 | 本地 HTML 工具：预览全部贴纸、勾选默认启用、编辑详细描述词，保存回 app/assets/stickers/registry.json（自动备份） | tools/sticker_selector.py / .html（127.0.0.1:8767） | 零依赖 |
+| 概率式静默窗 | 概率式主动的同一次空闲机会只掷一次骰，10 分钟内不再检查——修复 30%×10s 轮询≈1 分钟内必触发 | proactive.prob_gate_open `_PROB_LAST_CHECK`/`_PROB_QUIET_SEC` | 默认概率同步降至 0.10 |
+| 设置页分组 | 设置页重构为五组卡片（账号与连接/主动消息/模型与速度/外观/数据与系统），默认只展开第一组 | index.html .set-group、app.js initSetGroups | 非 Key 设置改动自动保存 |
+| 模型预设 | 设置页「快速/更强」两档映射四节点模型；自定义各阶段模型/思考档位折叠保留 | app.js _CFG_DEFAULTS/_applyModelPreset | 快速=全 Flash，更强=全 Pro |

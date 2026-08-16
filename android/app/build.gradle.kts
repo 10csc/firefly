@@ -1,4 +1,4 @@
-﻿import org.gradle.api.tasks.Sync
+import org.gradle.api.tasks.Sync
 import java.util.Properties
 
 plugins {
@@ -78,8 +78,8 @@ android {
         applicationId = "com.firefly.android"
         minSdk = 26
         targetSdk = 35
-        versionCode = 804
-        versionName = "0.7.2"
+        versionCode = 805
+        versionName = "0.8.0"
         ndk {
             // 鐪熸満 arm64 + 妯℃嫙鍣?x86_64锛圥ython 3.12 浠呮敮鎸?64 浣嶏級
             abiFilters += listOf("arm64-v8a", "x86_64")

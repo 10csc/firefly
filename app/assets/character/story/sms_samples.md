@@ -75,4 +75,4 @@
 - 沉浸式诉苦、过度伤感
 - 热烈直白的表白（"我爱你""最喜欢了"等）
 
-> 完整原文及分支见 `knowledge/firefly-dialogue-samples.md`，不作为 prompt 注入。
+> 完整原文及分支见 `knowledge/firefly-dialogue-samples.md`。该文件不直接注入回复器模板；它会随知识库进入检索器（retriever）语料，供检索摘要参考。

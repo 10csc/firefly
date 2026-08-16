@@ -420,8 +420,10 @@ user 消息里列出的"已说过话题"——禁止原样重复，但允许开�
         "story": "剧情模式：匹诺康尼的一切已经结束，流萤恢复得不错，能重新开机甲活动了"
                  "（依然以机甲为主，不能长时间脱离装甲）。她能出门、能赴约，见面正常安排即可；"
                  "话题围绕生活与想念，不汇报身体状态",
-        "haruno": "春日手信模式：普通学生流萤正在黄金时刻旅行，刚认识开拓者，"
-                  "日常聊天轻松明亮（她是健康普通的学生，正在旅行）",
+        "haruno": "春日手信模式：普通学生流萤正在匹诺康尼黄金时刻（梦境商业区）旅行，"
+                  "刚认识开拓者。可用素材：钟表小子广场、沉梦商街、奥帝购物中心、艾迪恩公园、"
+                  "苏乐达、橡木蛋糕卷、球笼、美梦剧团。关系尚浅：主动消息保持朋友分寸，"
+                  "不越级亲密、不虚构事件、不碰主线阴谋",
     }
 
     user_prompt = f"""## 当前环境
@@ -495,7 +497,7 @@ def generate_proactive(session: dict, client, mode: str = DEFAULT_MODE,
     """
     from modules.llm_base import load_journal
     from orchestrator import _get_environment
-    environment = _get_environment()
+    environment = _get_environment(mode)
     recent = session["context"].get_recent(8)
     recent_topics = "\n".join(
         f"[{'开拓者' if m.get('role') == 'user' else '流萤'}]: {m.get('content', '')}"
@@ -617,12 +619,20 @@ def _last_user_msg_ts(mode: str = DEFAULT_MODE) -> float:
     return 0.0
 
 
-# ── 概率式回复门控（信号量 + 概率）──────────────────
+# ── 概率式回复门控（信号量 + 静默窗 + 概率）──────────────────
+# 静默窗：同一次“空闲机会”只掷一次骰。否则前端 10s 轮询 × 10% 概率会在
+# 1-2 分钟内几乎必然触发，与“偶尔想起你”的产品语义不符。
+# 每次概率式检查后记录时间戳；10 分钟内不再给第二次机会。
+_PROB_QUIET_SEC = 600.0
+_PROB_LAST_CHECK: dict[str, float] = {}
 
-def prob_gate_open(enabled: bool, prob_value: float, mode: str = DEFAULT_MODE) -> tuple:
+
+def prob_gate_open(enabled: bool, prob_value: float, mode: str = DEFAULT_MODE,
+                   quiet_seconds: float = _PROB_QUIET_SEC) -> tuple:
     """概率式回复门控。返回 (通过, 拒绝原因或 None)。
 
-    服务端掷概率（读配置值），前置条件只有：开关 + ACTIVE 信号量。
+    前置条件：开关 + ACTIVE 信号量 + 静默窗 + 概率。
+    quiet_seconds=0 供测试跳过静默窗。
     """
     if not enabled:
         return False, "概率式已关闭"
@@ -630,6 +640,13 @@ def prob_gate_open(enabled: bool, prob_value: float, mode: str = DEFAULT_MODE) -
     _active_try_recover(mode)
     if _active_get(mode) <= 0:
         return False, "主动性信号量未恢复（等用户回应或超时）"
+    now = time.time()
+    key = _state_key(mode)
+    last = _PROB_LAST_CHECK.get(key, 0.0)
+    if quiet_seconds > 0 and last and now - last < quiet_seconds:
+        mins = int((quiet_seconds - (now - last)) / 60) + 1
+        return False, f"概率式静默中（约 {mins} 分钟后再检查）"
+    _PROB_LAST_CHECK[key] = now
     pv = max(0.0, min(1.0, float(prob_value)))
     if random.random() >= pv:
         with _lock:

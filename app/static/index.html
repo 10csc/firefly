@@ -37,67 +37,162 @@
 #auth-forms .err{display:none;color:var(--red,#ff7a6b);font-size:0.75em;margin-top:8px;line-height:1.6}
 #auth-forms .err.green{color:var(--green,#7fd9a8)}
 #auth-forms .af-linkbtn{background:none;border:none;padding:0;color:var(--fg-bright);font-size:0.8em;margin-top:10px;cursor:pointer;font-family:inherit}
-/* 理由弹层（反馈模块 👎 时弹出；标签=归因预分类） */
-#feedback-reason-mask{position:fixed;inset:0;z-index:120;background:rgba(0,0,0,.55);display:none;align-items:center;justify-content:center}
-#feedback-reason-mask.show{display:flex}
-#feedback-reason-panel{
-  width:min(88vw,420px);max-height:80vh;overflow-y:auto;box-sizing:border-box;
-  background:var(--panel-bg,#14121a);border:1px solid var(--gold-line,#d8b878);border-radius:16px;
-  padding:16px 18px;
+/* 设置页分组卡片（默认只展开「账号与连接」） */
+.set-group{background:var(--ctrl-bg-2);border:1px solid var(--border-mid);border-radius:14px;margin-top:10px;overflow:hidden}
+.set-group:first-child{margin-top:0}
+.set-head{
+  width:100%;display:flex;align-items:center;gap:8px;padding:13px 15px;
+  background:transparent;border:none;color:var(--fg-main);font-family:inherit;
+  font-size:0.9em;font-weight:600;text-align:left;cursor:pointer;
 }
-#feedback-reason-panel .fr-title{color:var(--fg-main);font-size:0.95em;font-weight:600;margin-bottom:12px}
-#fr-chips{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px}
-.fr-chip{
-  background:var(--ctrl-bg);border:1px solid var(--border-mid);border-radius:14px;
-  color:var(--fg-muted);font-size:0.78em;padding:5px 12px;cursor:pointer;font-family:inherit;
+.set-head .set-summary{flex:1;text-align:right;color:var(--fg-muted);font-size:0.72em;font-weight:400}
+.set-head .set-arrow{color:var(--fg-muted);font-size:0.8em;transition:transform .18s}
+.set-group.open .set-arrow{transform:rotate(180deg)}
+.set-body{display:none;padding:2px 15px 14px}
+.set-group.open .set-body{display:block}
+.set-advanced{margin-top:12px;border-top:1px dashed var(--border-mid);padding-top:10px;font-size:0.9em;color:var(--fg-muted)}
+.set-advanced summary{cursor:pointer;color:var(--fg-bright);font-size:0.82em;margin-bottom:6px}
+.set-save-row{display:flex;align-items:center;gap:10px;margin-top:14px}
+.set-save-row #key-save{width:auto;flex:0 0 auto;margin-top:0}
+.set-save-msg{flex:1;min-width:0;color:var(--fg-muted);font-size:0.75em;line-height:1.5;word-break:break-all;overflow-wrap:anywhere}
+/* 设定纠错助手：首页 auth-module 下方卡片（样式与账号模块一致） */
+#fix-module{margin:14px 10px 0}
+#fix-module .am-card{
+  display:flex;align-items:center;justify-content:space-between;gap:12px;
+  background:var(--ctrl-bg-2);border:1px solid var(--border-mid);border-radius:14px;
+  padding:14px 16px;
 }
-.fr-chip.sel{color:var(--fg-bright);border-color:var(--gold-line,#d8b878);background:var(--gold-glow,rgba(216,184,120,.12))}
-#fr-text{
-  width:100%;min-height:64px;box-sizing:border-box;resize:vertical;
-  background:var(--ctrl-bg);border:1px solid var(--border-mid);border-radius:10px;
-  color:var(--fg-main);font-family:inherit;font-size:0.82em;padding:10px 12px;
+#fix-module .am-info{flex:1;min-width:0}
+#fix-module .am-title{color:var(--fg-main);font-size:0.95em;font-weight:600}
+#fix-module .am-sub{color:var(--fg-muted);font-size:0.75em;margin-top:3px;line-height:1.5}
+#fix-module .am-btn{
+  flex-shrink:0;padding:9px 18px;border-radius:20px;border:none;cursor:pointer;
+  background:var(--btn-bg);color:var(--fg-bright);font-family:inherit;font-size:0.85em;
+  letter-spacing:1px;white-space:nowrap;
 }
-#fr-actions{display:flex;justify-content:flex-end;gap:10px;margin-top:14px}
-#fr-actions button{
-  padding:8px 18px;border-radius:16px;border:1px solid var(--border-mid);cursor:pointer;font-family:inherit;
-  background:transparent;color:var(--fg-muted);font-size:0.82em;
+#fix-forms{background:var(--ctrl-bg-2);border:1px solid var(--border-mid);border-radius:14px;padding:12px 14px;margin-top:10px}
+.fix-modes{display:flex;gap:8px;margin-bottom:10px}
+.fix-mode{
+  flex:1;padding:7px 10px;border-radius:12px;border:1px solid var(--border-mid);
+  background:transparent;color:var(--fg-muted);font-family:inherit;font-size:0.8em;cursor:pointer;
 }
-#fr-actions button.primary{background:var(--btn-bg);color:var(--fg-bright);border-color:transparent}
-/* 行为改进（反馈页内）：候选摘要/diff/批准按钮 */
-#harness-box .hb-summary{color:var(--fg-main);font-size:0.82em;margin:6px 0}
-#harness-diff{
-  white-space:pre-wrap;word-break:break-all;background:var(--ctrl-bg);
-  border:1px solid var(--border-mid);border-radius:8px;padding:8px 10px;
-  max-height:180px;overflow-y:auto;font-size:0.76em;margin:8px 0;
+.fix-mode.active{color:var(--fg-bright);border-color:var(--gold-line,#d8b878);background:var(--gold-glow,rgba(216,184,120,.12))}
+#fix-chat{max-height:38vh;overflow-y:auto;background:var(--ctrl-bg);border:1px solid var(--border-mid);border-radius:12px;padding:10px}
+.fix-empty,.fix-hint{color:var(--fg-muted);font-size:0.78em;line-height:1.7}
+.fix-hint{margin-top:6px;color:var(--gold-line,#d8b878)}
+.fix-msg{margin-top:8px}
+.fix-msg:first-child{margin-top:0}
+.fix-who{color:var(--fg-bright);font-size:0.68em;margin-bottom:2px}
+.fix-msg.me .fix-who{text-align:right}
+.fix-text{color:var(--fg-main);font-size:0.82em;line-height:1.6;white-space:pre-wrap;word-break:break-all}
+.fix-options{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
+.fix-opt{
+  background:var(--ctrl-bg-2);border:1px solid var(--gold-line,#d8b878);border-radius:14px;
+  color:var(--fg-main);font-size:0.76em;padding:5px 12px;cursor:pointer;font-family:inherit;
 }
-#harness-box .hb-row{display:flex;gap:8px;flex-wrap:wrap}
-#harness-box .hb-btn{
-  padding:6px 14px;border-radius:14px;border:1px solid var(--border-mid);cursor:pointer;
+.fix-input-row{display:flex;gap:8px;margin-top:10px}
+#fix-input{
+  flex:1;min-width:0;padding:10px 12px;box-sizing:border-box;border-radius:12px;
+  border:1px solid var(--border-mid);background:var(--ctrl-bg);color:var(--fg-main);
+  font-family:inherit;font-size:0.82em;
+}
+#fix-send-btn,#fix-start-btn{
+  flex-shrink:0;padding:9px 16px;border-radius:12px;border:1px solid var(--gold-line,#d8b878);
+  background:var(--btn-bg);color:var(--fg-bright);font-family:inherit;font-size:0.82em;cursor:pointer;
+}
+#fix-start-btn{display:none;width:100%;margin-top:10px}
+#fix-proposal{margin-top:10px;background:var(--ctrl-bg);border:1px solid var(--gold-line,#d8b878);border-radius:12px;padding:10px 12px}
+.fix-diag{color:var(--fg-main);font-size:0.82em;line-height:1.6;margin-bottom:8px}
+.fix-nochange{color:var(--fg-muted);font-size:0.8em}
+.fix-change{margin-top:8px;padding-top:8px;border-top:1px dashed var(--border-mid)}
+.fix-change-head{display:flex;align-items:center;gap:6px;margin-bottom:4px}
+.fix-file-tag{color:var(--fg-bright);font-size:0.75em;font-weight:600}
+.fix-op-tag{font-size:0.68em;padding:2px 8px;border-radius:10px;border:1px solid var(--border-mid);color:var(--fg-muted)}
+.fix-op-tag.fix{color:#ffb4a8;border-color:#ffb4a8}
+.fix-op-tag.add{color:#8fe3b2;border-color:#8fe3b2}
+.fix-diff-old,.fix-diff-new{
+  white-space:pre-wrap;word-break:break-all;font-size:0.76em;line-height:1.6;
+  border-radius:8px;padding:6px 8px;margin-top:4px;
+}
+.fix-diff-old{background:rgba(255,122,107,.08);color:#e9a9a0}
+.fix-diff-new{background:rgba(127,217,168,.08);color:#a8e6c0}
+.fix-reason{color:var(--fg-muted);font-size:0.72em;margin-top:5px;line-height:1.6}
+.fix-proposal-actions{display:flex;gap:8px;margin-top:10px}
+.fix-refine-hint{color:var(--fg-muted);font-size:0.7em;margin-top:8px;line-height:1.6}
+.fix-proposal-title{display:flex;align-items:center;gap:6px;color:var(--fg-bright);font-size:0.78em;font-weight:600;margin-bottom:6px}
+.fix-proposal-title .fix-op-tag{flex-shrink:0}
+.hb-btn{
+  padding:7px 14px;border-radius:12px;border:1px solid var(--border-mid);cursor:pointer;
   background:transparent;color:var(--fg-muted);font-family:inherit;font-size:0.78em;
 }
-#harness-box .hb-btn.primary{background:var(--btn-bg);color:var(--fg-bright);border-color:transparent}
-#harness-box .hb-meta{color:var(--fg-muted);font-size:0.72em;margin-top:6px}
-/* 对话反馈列表（反馈页内） */
-#feedback-rounds .fr-row{
-  display:flex;align-items:center;gap:8px;padding:7px 8px;margin-top:6px;
-  background:var(--ctrl-bg);border:1px solid var(--border-mid);border-radius:10px;
+.hb-btn.primary{background:var(--btn-bg);color:var(--fg-bright);border-color:transparent}
+#fix-history-box{margin:10px 10px 6px;border-top:1px solid var(--border-mid);padding-top:8px;flex-shrink:0}
+.fix-hist-head{display:flex;align-items:center;justify-content:space-between;gap:8px;color:var(--fg-bright);font-size:0.75em;font-weight:600;margin-bottom:4px}
+.fix-hist{color:var(--fg-muted);font-size:0.72em;line-height:1.7}
+#fix-history-box .hb-btn{margin-top:8px}
+/* 状态点 + 当前模式最近聊天（可折叠参考面板） */
+.fix-dot{width:8px;height:8px;border-radius:50%;display:inline-block;flex-shrink:0}
+.fix-dot.ok{background:#8fe3b2}
+.fix-dot.busy{background:#ffd9a0;animation:guide-pulse 1.2s ease-in-out infinite}
+.fix-dot.ready{background:#ffd9a0}
+.fix-dot.warn{background:#ffb4a8}
+.fix-dot.error{background:#ff7a6b}
+.fix-chathist{margin:8px 10px 0;flex-shrink:0;border:1px solid var(--border-mid);border-radius:12px;background:var(--ctrl-bg);overflow:hidden}
+.fix-chathist summary{
+  display:flex;align-items:center;gap:8px;padding:9px 12px;cursor:pointer;
+  color:var(--fg-bright);font-size:0.8em;user-select:none;list-style:none;
 }
-#feedback-rounds .fr-row.me{background:transparent;border-style:dashed}
-#feedback-rounds .fr-who{flex-shrink:0;color:var(--fg-bright);font-size:0.72em}
-#feedback-rounds .fr-text{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-#feedback-rounds .fr-row.expanded .fr-text{white-space:normal;overflow:visible;text-overflow:clip;word-break:break-all}
-#feedback-rounds .fr-acts{flex-shrink:0;display:flex;gap:4px}
-#feedback-rounds .fr-btn{
-  background:transparent;border:1px solid var(--border-mid);border-radius:10px;
-  color:var(--fg-muted);font-size:0.72em;padding:2px 7px;cursor:pointer;font-family:inherit;
+.fix-chathist summary::-webkit-details-marker{display:none}
+.fix-chathist-meta{flex:1;min-width:0;text-align:right;color:var(--fg-muted);font-size:0.72em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.fix-chathist-arrow{color:var(--fg-muted);font-size:0.78em;transition:transform .18s}
+.fix-chathist[open] .fix-chathist-arrow{transform:rotate(180deg)}
+.fix-chathist-body{display:none;max-height:30vh;overflow-y:auto;padding:2px 12px 10px;border-top:1px dashed var(--border-mid)}
+.fix-chathist[open] .fix-chathist-body{display:block}
+.fix-chathist-tools{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:6px 0 4px;color:var(--fg-muted);font-size:0.7em}
+.fix-mini-btn{
+  padding:5px 12px;border-radius:10px;border:1px solid var(--border-mid);cursor:pointer;
+  background:var(--ctrl-bg-2);color:var(--fg-muted);font-family:inherit;font-size:0.75em;flex-shrink:0;
 }
-#feedback-rounds .fr-btn.disabled{opacity:.35;cursor:default}
-#feedback-rounds .fr-btn:not(.disabled):hover{color:var(--fg-bright);border-color:var(--gold-line,#d8b878)}
-#feedback-rounds .fr-turn{margin-top:10px;padding:8px;border:1px solid var(--border-mid);border-radius:12px}
-#feedback-rounds .fr-turn-label{color:var(--fg-bright);font-size:0.7em;margin-bottom:2px;cursor:pointer;user-select:none}
-#feedback-rounds .fr-turn.collapsed .fr-row{display:none}
-#feedback-rounds .fr-arrow{display:inline-block;width:14px;color:var(--fg-muted)}
-#feedback-rounds .fr-turn .fr-row{margin-top:5px}
+.fix-mini-btn.danger{color:#ffb4a8;border-color:rgba(255,122,107,.4);background:rgba(255,122,107,.08)}
+.fix-hist-msg{padding:7px 0;border-bottom:1px dashed var(--border-mid)}
+.fix-hist-msg:last-child{border-bottom:none}
+.fix-hist-line{display:flex;align-items:baseline;gap:6px;min-width:0}
+.fix-hist-who{color:var(--fg-bright);font-size:0.72em;flex-shrink:0}
+.fix-hist-time{color:var(--fg-muted);font-size:0.66em;flex-shrink:0}
+.fix-hist-text{color:var(--fg-muted);font-size:0.72em;line-height:1.55;white-space:pre-wrap;word-break:break-all;margin-top:2px}
+.fix-hist-msg.me .fix-hist-who{color:var(--fg-accent)}
+
+/* 首次使用引导（纯代码：spotlight + 气泡 + 呼吸边，无图片） */
+#guide-mask{position:fixed;inset:0;z-index:500;background:rgba(5,6,12,.45);pointer-events:none}
+/* 四个透明点击拦截片：只在高亮目标上开洞，其余按钮真的点不到 */
+.guide-block{position:fixed;z-index:501;pointer-events:auto;background:transparent}
+#guide-spot{
+  position:fixed;z-index:501;border:2px solid var(--gold-line,#fbbf24);border-radius:14px;
+  box-shadow:0 0 0 9999px rgba(5,6,12,.55);animation:guide-pulse 1.6s ease-in-out infinite;
+  pointer-events:none;
+}
+@keyframes guide-pulse{0%,100%{border-color:var(--gold-line,#fbbf24)}50%{border-color:#fff3c4}}
+#guide-tip{
+  position:fixed;left:14px;right:14px;bottom:calc(16px + env(safe-area-inset-bottom));
+  z-index:502;background:var(--panel-bg,#14121a);border:1px solid var(--gold-line,#d8b878);
+  border-radius:16px;padding:16px 18px;box-shadow:0 10px 34px rgba(0,0,0,.5);
+  max-width:560px;margin:0 auto;
+  display:flex;flex-direction:column;max-height:calc(100vh - 40px - env(safe-area-inset-bottom));
+  pointer-events:auto;
+}
+/* 目标在屏幕下半部时，气泡移到顶部，避免盖住高亮目标 */
+#guide-tip.top{top:calc(16px + env(safe-area-inset-top));bottom:auto}
+.guide-step{color:var(--fg-muted);font-size:0.68em;letter-spacing:2px;flex-shrink:0}
+.guide-title{color:var(--fg-bright);font-size:1.02em;font-weight:600;margin-top:6px;flex-shrink:0}
+.guide-text{color:var(--fg-muted);font-size:0.82em;line-height:1.8;margin-top:8px;white-space:pre-line;overflow-y:auto;max-height:42vh}
+.guide-actions{display:flex;gap:8px;margin-top:14px;flex-shrink:0}
+.guide-btn{
+  flex:1;padding:9px 14px;border-radius:12px;border:1px solid var(--border-mid);
+  background:transparent;color:var(--fg-muted);font-family:inherit;font-size:0.8em;cursor:pointer;
+}
+.guide-btn.next,.guide-btn.prev{background:var(--btn-bg);color:var(--fg-bright);border-color:transparent}
+.guide-btn.deep{color:var(--fg-bright);border-color:var(--gold-line,#d8b878)}
+.guide-btn.skip{flex:0 0 auto;border-style:dashed}
 </style>
 </head>
 <body>
@@ -180,10 +275,60 @@
                 <button class="am-btn ghost" onclick="logout()">退出登录</button>
             </div>
         </div>
+        <!-- 设定纠错助手：入口卡片；点击进入独立全屏页（与聊天页同级，不再用小窗口） -->
+        <div id="fix-module">
+            <div class="am-card">
+                <div class="am-info">
+                    <div class="am-title">设定不对？告诉流萤</div>
+                    <div class="am-sub">她哪里说得不对，AI 先和你对齐，生成修改方案；你点「应用」才生效</div>
+                </div>
+                <button class="am-btn" id="fix-toggle-btn" onclick="openFixView()">指出问题 →</button>
+            </div>
+        </div>
     </div>
 </div>
 
-<!-- ═══ 反馈面板（首页 ✉ 打开） ═══ -->
+<!-- ═══ 设定纠错助手：独立全屏页（聊天式，对齐 → 提案 → 审批 → 应用/撤销） ═══ -->
+<div id="fix-view">
+    <div class="fix-view-header">
+        <button id="fix-back-btn" type="button" onclick="closeFixView()">←</button>
+        <div class="fix-view-title">
+            <div class="name">设定纠错助手</div>
+            <div class="status"><span id="fix-status-dot" class="fix-dot ok"></span><span id="fix-view-status">正在读取状态…</span></div>
+        </div>
+    </div>
+    <div class="fix-modes">
+        <button class="fix-mode active" data-mode="story" type="button">剧情模式</button>
+        <button class="fix-mode" data-mode="haruno" type="button">春日手信</button>
+    </div>
+    <!-- 当前模式的最近聊天记录（可折叠参考面板） -->
+    <details class="fix-chathist" id="fix-chathist">
+        <summary id="fix-chathist-summary">📜 最近聊天记录<span class="fix-chathist-meta" id="fix-chathist-meta">点开查看，方便对照她说错的地方</span><span class="fix-chathist-arrow">▾</span></summary>
+        <div class="fix-chathist-body">
+            <div class="fix-chathist-tools">
+                <span id="fix-chathist-count">读取中…</span>
+                <button class="fix-mini-btn" type="button" id="fix-chathist-refresh">刷新</button>
+            </div>
+            <div id="fix-chathist-list"><div class="fix-hist">正在读取…</div></div>
+        </div>
+    </details>
+    <div id="fix-chat"></div>
+    <div id="fix-proposal" style="display:none"></div>
+    <button id="fix-start-btn" type="button" onclick="startFix()">开始修改</button>
+    <div id="fix-history-box">
+        <div class="fix-hist-head">
+            <span>最近修正记录</span>
+            <button class="fix-mini-btn danger" type="button" onclick="resetFix()">清空当前问题</button>
+        </div>
+        <div id="fix-history-list"><div class="fix-hist">正在读取修正记录…</div></div>
+        <button class="hb-btn" type="button" onclick="rollbackFix()" id="fix-rollback-btn" style="display:none">撤销上次修改</button>
+    </div>
+    <div class="fix-input-row">
+        <input id="fix-input" type="text" maxlength="1000" placeholder="说说她哪里说得不对…" autocomplete="off">
+        <button id="fix-send-btn" type="button">发送</button>
+    </div>
+</div>
+
 <div id="feedback-panel">
     <div class="settings-header">
         <span>✉ 反馈 · 联系</span>
@@ -193,221 +338,232 @@
         <p style="color:var(--fg-muted);font-size:0.8em;line-height:1.8;margin-bottom:16px">
             遇到问题或有建议？欢迎通过以下方式反馈：
         </p>
+        <button class="fb-link" type="button" onclick="startDeepGuide()" style="border:none;font-family:inherit;cursor:pointer;text-align:left;width:100%">📖 查看详细使用教程（讲每个功能怎么用，可重复观看）</button>
         <a class="fb-link" href="https://github.com/10csc/firefly/issues" target="_blank" rel="noopener">🐙 GitHub Issue（推荐：提 bug / 建议）</a>
         <div class="fb-item">💬 QQ交流群：<b style="color:var(--fg-main)">1097936258</b></div>
         <div class="fb-item">✉ 邮箱：<a href="mailto:fangliang2604@163.com" style="color:var(--fg-bright)">fangliang2604@163.com</a></div>
-        <div id="feedback-rounds-box" style="margin-top:18px;padding-top:14px;border-top:1px solid var(--border-mid)">
-            <div style="color:var(--fg-main);font-size:0.9em;font-weight:600" id="feedback-rounds-title">💬 对话反馈</div>
-            <div style="color:var(--fg-muted);font-size:0.72em;margin-top:4px">最多显示最近 10 轮对话（按轮分组，点行展开/收起）——点 👍 / 👎 记下哪里好、哪里不对，供开发者和 AI 参考改进</div>
-            <div id="feedback-rounds" style="color:var(--fg-muted);font-size:0.78em;line-height:1.7;margin-top:8px">加载中…</div>
-        </div>
     </div>
 </div>
 
-<!-- 回复反馈理由弹层（👎 时弹出；标签=归因预分类） -->
-<div id="feedback-reason-mask">
-    <div id="feedback-reason-panel">
-        <div class="fr-title">这条回复哪里不对？</div>
-        <div id="fr-chips"></div>
-        <textarea id="fr-text" maxlength="200" placeholder="（可选）一句话说说哪里不对，比如：她不该提自己的身体"></textarea>
-        <div id="fr-actions">
-            <button id="fr-cancel" type="button">取消</button>
-            <button id="fr-submit" type="button" class="primary">提交</button>
-        </div>
-    </div>
-</div>
-
-<!-- ═══ 设置面板（首页 ⚙ 打开，API 配置独立于此） ═══ -->
+<!-- ═══ 设置面板（首页 ⚙ 打开） ═══ -->
 <div id="settings-panel">
     <div class="settings-header">
-        <span>⚙ 设置 · API 配置</span>
+        <span>⚙ 设置</span>
         <button onclick="closeSettings()">✕</button>
     </div>
     <div class="settings-body">
-        <!-- 运行模式（仅安卓壳注入 FireflyMode 桥时显示；切换后需重新打开应用） -->
-        <div class="field" id="mode-switch-row" style="display:none">
-            <label>运行模式</label>
-            <select id="mode-select">
-                <option value="local">完全本地（默认：数据与 Key 都在本机）</option>
-                <option value="server">服务器后端（登录账号 · 数据同步 · 可托管额度）</option>
-            </select>
-            <div style="color:var(--fg-muted);font-size:0.7em;margin-top:2px">切换后需重新打开应用生效；本地与服务器数据相互独立</div>
-        </div>
-        <div class="field" id="api-source-field">
-            <label>API 来源</label>
-            <select id="api-source-select">
-                <option value="own">用户自带 Key（默认）</option>
-                <option value="proxy">服务器托管 API</option>
-            </select>
-            <div id="api-proxy-tip" style="display:none;color:var(--fg-accent);font-size:0.7em;line-height:1.7;margin-top:6px;padding:8px 10px;border:1px solid var(--gold-line);border-radius:8px;background:var(--gold-glow)">
-                ⚠️ 使用服务器托管 API 时，开发者可能会收集对话数据，用于针对性优化 Agent 流程与提示词。
-            </div>
-        </div>
-        <div class="field" id="api-own-fields">
-            <label id="key-label">API Key（存于本机浏览器，不会上传服务器）</label>
-            <input id="key-input" type="password" placeholder="已设置，留空则保留原 Key">
-            <details style="font-size:0.8em;margin-top:8px;color:var(--fg-muted)">
-                <summary style="cursor:pointer">第一次用？三步获取 Key</summary>
-                <div style="line-height:1.8;padding:6px 2px 0">
-                    ① 浏览器打开 <b>platform.deepseek.com</b>，注册并登录<br>
-                    ② 左侧「API Keys」→ 创建，复制 <b>sk-</b> 开头的 Key<br>
-                    ③ 粘贴到上方输入框 → 保存（Key 只存本机浏览器，不会上传）
+
+        <!-- ① 账号与连接：首次使用只需看这一组 -->
+        <section class="set-group open">
+            <button class="set-head" type="button" data-group="account">🔑 账号与连接<span class="set-arrow">▾</span></button>
+            <div class="set-body">
+                <div class="field" id="mode-switch-row" style="display:none">
+                    <label>运行模式</label>
+                    <select id="mode-select">
+                        <option value="local">完全本地（默认）</option>
+                        <option value="server">服务器后端</option>
+                    </select>
+                    <div style="color:var(--fg-muted);font-size:0.7em;margin-top:2px">切换后需重新打开应用生效；本地与服务器数据相互独立</div>
                 </div>
-            </details>
-        </div>
-        <div class="field" id="api-base-field" style="margin-top:10px">
-            <label>接口地址（用哪个 Key 服务）</label>
-            <select id="api-base-select">
-                <option value="https://api.deepseek.com/v1">DeepSeek 官方（需要 DeepSeek Key）</option>
-                <option value="https://opencode.ai/zen/go/v1">OpenCode Go（复用 opencode 登录 Key，模型一致）</option>
-            </select>
-            <div style="color:var(--fg-muted);font-size:0.7em;margin-top:2px">选 OpenCode Go 后填入 opencode.ai/auth 复制的 Key 即可，无需再申请 DeepSeek Key</div>
-        </div>
-        <div style="margin:14px 0;padding-top:12px;border-top:1px solid var(--border-mid);color:var(--fg-muted);font-size:0.75em;line-height:1.7">
-            以下按对话流程顺序排列：<b style="color:var(--fg-main)">① 知识检索 → ② 意图分析 → ③ 生成回复 → ④ 表情包调度</b>
-        </div>
-        <details style="font-size:0.9em;margin-top:4px">
-            <summary style="cursor:pointer;color:var(--fg-muted)">高级设置：模型与思考档位（默认即可，可跳过）</summary>
-        <div class="field">
-            <label>① 检索器模型（知识检索）</label>
-            <select id="retriever-model-select">
-                <option value="deepseek-v4-flash">Flash（快，便宜）</option>
-                <option value="deepseek-v4-pro">Pro（慢，贵，更强）</option>
-            </select>
-            <label style="margin-top:8px">思考等级（默认无思考）</label>
-            <select id="retriever-effort-select">
-                <option value="none">无思考（推荐）</option>
-                <option value="low">低（=高，官方映射）</option>
-                <option value="high">高</option>
-                <option value="max">最高（~2x token）</option>
-            </select>
-            <label style="margin-top:8px">温度（无思考时生效，控制摘要多样性）<span id="retriever-temp-value">0</span></label>
-            <input id="retriever-temp-slider" type="range" min="0" max="2" step="0.1" value="0">
-            <div style="color:var(--fg-muted);font-size:0.7em;margin-top:2px">默认 0 保证摘要格式稳定；仅此节点受温度影响</div>
-        </div>
-        <div class="field">
-            <label>② 分析器模型（意图 + 事实核查）</label>
-            <select id="analyzer-model-select">
-                <option value="deepseek-v4-flash">Flash（快，便宜）</option>
-                <option value="deepseek-v4-pro">Pro（慢，贵，更强）</option>
-            </select>
-            <label style="margin-top:8px">思考等级（默认高）</label>
-            <select id="analyzer-effort-select">
-                <option value="none">无思考（温度才生效）</option>
-                <option value="low">低（=高，官方映射）</option>
-                <option value="high">高（推荐）</option>
-                <option value="max">最高（~2x token）</option>
-            </select>
-        </div>
-        <div class="field">
-            <label>③ 回复器模型（生成短信）</label>
-            <select id="polisher-model-select">
-                <option value="deepseek-v4-flash">Flash（快，便宜）</option>
-                <option value="deepseek-v4-pro">Pro（慢，贵，更强）</option>
-            </select>
-            <label style="margin-top:8px">思考等级（默认高）</label>
-            <select id="polisher-effort-select">
-                <option value="none">无思考（温度才生效）</option>
-                <option value="low">低（=高，官方映射）</option>
-                <option value="high">高（推荐）</option>
-                <option value="max">最高（~2x token）</option>
-            </select>
-            <div style="color:var(--fg-muted);font-size:0.7em;margin-top:2px">回复器温度固定 0.5（思考模式温度无效，无思考时亦可接受）</div>
-        </div>
-        <div class="field">
-            <label>④ 组织器模型（工具调度）</label>
-            <select id="organizer-model-select">
-                <option value="deepseek-v4-flash">Flash（快，便宜）</option>
-                <option value="deepseek-v4-pro">Pro（慢，贵，更强）</option>
-            </select>
-            <label style="margin-top:8px">思考等级（默认无思考）</label>
-            <select id="organizer-effort-select">
-                <option value="none">无思考（推荐）</option>
-                <option value="low">低（=高，官方映射）</option>
-                <option value="high">高</option>
-                <option value="max">最高（~2x token）</option>
-            </select>
-            <div style="color:var(--fg-muted);font-size:0.7em;margin-top:2px">组织器温度固定 0.3</div>
-        </div>
-        </details>
-        <div style="margin:16px 0 14px;padding-top:14px;border-top:1px solid var(--border-mid)">
-            <label style="display:block;color:var(--fg-main);font-size:0.85em;margin-bottom:8px">主动性（插件）</label>
-            <details id="proactive-panel" style="font-size:0.9em" open>
-                <summary style="cursor:pointer;color:var(--fg-bright);font-size:0.85em;margin-bottom:6px">
-                    主动设置（点击展开/收起）
-                </summary>
-                <div class="field" style="margin-bottom:10px">
+                <div class="field" id="api-source-field">
+                    <label>API 来源</label>
+                    <select id="api-source-select">
+                        <option value="own">用户自带 Key（默认）</option>
+                        <option value="proxy">服务器托管 API</option>
+                    </select>
+                    <div id="api-proxy-tip" style="display:none;color:var(--fg-accent);font-size:0.7em;line-height:1.7;margin-top:6px;padding:8px 10px;border:1px solid var(--gold-line);border-radius:8px;background:var(--gold-glow)">
+                        ⚠️ 使用服务器托管 API 时，开发者可能会收集对话数据，用于针对性优化 Agent 流程与提示词。
+                    </div>
+                </div>
+                <div class="field" id="api-own-fields">
+                    <label id="key-label">API Key（存于本机浏览器，不会上传服务器）</label>
+                    <input id="key-input" type="password" placeholder="已设置，留空则保留原 Key">
+                    <details style="font-size:0.8em;margin-top:8px;color:var(--fg-muted)">
+                        <summary style="cursor:pointer">第一次用？三步获取 Key</summary>
+                        <div style="line-height:1.8;padding:6px 2px 0">
+                            ① 浏览器打开 <b>platform.deepseek.com</b>，注册并登录<br>
+                            ② 左侧「API Keys」→ 创建，复制 <b>sk-</b> 开头的 Key<br>
+                            ③ 粘贴到上方输入框 → 保存（Key 只存本机浏览器，不会上传）
+                        </div>
+                    </details>
+                </div>
+                <details class="set-advanced" id="api-base-advanced">
+                    <summary>高级：接口地址</summary>
+                    <div class="field" id="api-base-field">
+                        <label>接口地址（用哪个 Key 服务）</label>
+                        <select id="api-base-select">
+                            <option value="https://api.deepseek.com/v1">DeepSeek 官方</option>
+                            <option value="https://opencode.ai/zen/go/v1">OpenCode Go</option>
+                        </select>
+                        <div style="color:var(--fg-muted);font-size:0.7em;margin-top:2px;line-height:1.6">DeepSeek 官方需填 DeepSeek Key；OpenCode Go 填 opencode.ai/auth 登录 Key（模型一致，无需 DeepSeek Key）</div>
+                    </div>
+                </details>
+                <div class="set-save-row">
+                    <button id="key-save" type="button">保存 Key 与连接设置</button>
+                    <span id="config-msg" class="set-save-msg"></span>
+                </div>
+            </div>
+        </section>
+
+        <!-- ② 主动消息：自然语言 + 高级折叠 -->
+        <section class="set-group">
+            <button class="set-head" type="button" data-group="proactive">💬 主动消息<span class="set-summary" id="proactive-summary">已开启</span><span class="set-arrow">▾</span></button>
+            <div class="set-body">
+                <div class="field">
                     <label style="display:flex;align-items:center;gap:8px">
                         <input id="proactive-enabled" type="checkbox" style="width:auto;accent-color:var(--fg-bright)">
-                        开启主动式回复（流萤在对话轮次间隙主动说话）
+                        让流萤在聊天里主动找你
                     </label>
-                    <label style="margin-top:8px">主动频率（每 <span id="proactive-hard-value">4</span> 轮对话 1 次机会）</label>
-                    <input id="proactive-hard-slider" type="range" min="1" max="10" step="1" value="4">
-                    <label style="margin-top:8px">触发概率 <span id="proactive-soft-value">50%</span></label>
-                    <input id="proactive-soft-slider" type="range" min="0" max="10" step="1" value="5">
-                    <div style="color:var(--fg-muted);font-size:0.7em;margin-top:2px">
-                        频率：每 N 轮用户对话给 1 次主动机会（数字越大越少）。概率：机会到来时真正发起的概率。
-                        主动消息只在有真实动机时发出（记忆里的约定、想分享的事、牵挂）——不会定时打扰。
-                    </div>
+                    <label style="margin-top:8px">主动频率</label>
+                    <select id="proactive-preset">
+                        <option value="less">较少（约每 8 轮一次机会）</option>
+                        <option value="medium">偶尔（推荐）</option>
+                        <option value="often">经常（约每 4 轮一次机会）</option>
+                    </select>
                 </div>
-                <div class="field" style="margin-bottom:0;border-top:1px solid var(--border-mid);padding-top:10px">
+                <div class="field">
                     <label style="display:flex;align-items:center;gap:8px">
                         <input id="prob-reply-enabled" type="checkbox" style="width:auto;accent-color:var(--fg-bright)">
-                        开启概率式回复（用户在应用内但空闲时，流萤偶尔想起你）
+                        你空闲时，偶尔想起你
                     </label>
-                    <label style="margin-top:8px">触发概率 <span id="prob-reply-value">30%</span></label>
-                    <input id="prob-reply-slider" type="range" min="0" max="10" step="1" value="3">
-                    <label style="display:flex;align-items:center;gap:8px;margin-top:8px">
+                </div>
+                <div class="field" id="hidden-reply-field" style="display:none">
+                    <label style="display:flex;align-items:center;gap:8px">
                         <input id="hidden-reply-enabled" type="checkbox" style="width:auto;accent-color:var(--fg-bright)">
-                        开启隐藏式回复（App 在后台时，流萤偶尔发消息提醒你）
+                        App 在后台时，发消息提醒你（仅安卓）
                     </label>
-                    <div style="color:var(--fg-muted);font-size:0.7em;margin-top:2px">
-                        概率式：应用内空闲时按概率触发；隐藏式：App 在后台时低频触发。
-                        触发时机符合时段作息（傍晚最活跃、深夜几乎不打扰），触发概率随上方滑条整体调整。
-                        概率式/隐藏式优先带真实动机（约定、想分享的事、牵挂），想起你时也会偶尔轻轻问候。
+                </div>
+                <details class="set-advanced" id="proactive-advanced">
+                    <summary>自定义频率（高级）</summary>
+                    <div class="field">
+                        <label>主动机会：每 <span id="proactive-hard-value">6</span> 轮对话一次</label>
+                        <input id="proactive-hard-slider" type="range" min="1" max="10" step="1" value="6">
+                        <label style="margin-top:8px">机会触发概率 <span id="proactive-soft-value">35%</span></label>
+                        <input id="proactive-soft-slider" type="range" min="0" max="100" step="5" value="35">
+                        <label style="margin-top:8px">空闲触发概率 <span id="prob-reply-value">10%</span></label>
+                        <input id="prob-reply-slider" type="range" min="0" max="100" step="5" value="10">
+                        <div style="color:var(--fg-muted);font-size:0.7em;margin-top:2px">空闲主动每 10 分钟只判断一次；后台主动另有时段节奏（傍晚更活跃、深夜几乎不打扰）。</div>
+                    </div>
+                </details>
+            </div>
+        </section>
+
+        <!-- ③ 模型与速度：两档预设 + 自定义折叠 -->
+        <section class="set-group">
+            <button class="set-head" type="button" data-group="model">🧠 模型与速度<span class="set-summary" id="model-summary">快速 · Flash</span><span class="set-arrow">▾</span></button>
+            <div class="set-body">
+                <div class="field">
+                    <label>回复质量</label>
+                    <select id="model-preset">
+                        <option value="fast">快速（推荐：便宜、快、日常够用）</option>
+                        <option value="strong">更强（Pro：更聪明，更贵、更慢）</option>
+                    </select>
+                </div>
+                <details class="set-advanced" id="model-custom">
+                    <summary>自定义各阶段模型与思考档位</summary>
+                    <div class="field">
+                        <label>① 检索器模型（知识检索）</label>
+                        <select id="retriever-model-select">
+                            <option value="deepseek-v4-flash">Flash（快，便宜）</option>
+                            <option value="deepseek-v4-pro">Pro（慢，贵，更强）</option>
+                        </select>
+                        <label style="margin-top:8px">思考等级（默认无思考）</label>
+                        <select id="retriever-effort-select">
+                            <option value="none">无思考（推荐）</option>
+                            <option value="high">高</option>
+                            <option value="max">最高（约2倍消耗）</option>
+                        </select>
+                        <label style="margin-top:8px">温度（无思考时生效）<span id="retriever-temp-value">0</span></label>
+                        <input id="retriever-temp-slider" type="range" min="0" max="2" step="0.1" value="0">
+                    </div>
+                    <div class="field">
+                        <label>② 分析器模型（意图 + 事实核查）</label>
+                        <select id="analyzer-model-select">
+                            <option value="deepseek-v4-flash">Flash（快，便宜）</option>
+                            <option value="deepseek-v4-pro">Pro（慢，贵，更强）</option>
+                        </select>
+                        <label style="margin-top:8px">思考等级（默认高）</label>
+                        <select id="analyzer-effort-select">
+                            <option value="none">无思考</option>
+                            <option value="high">高（推荐）</option>
+                            <option value="max">最高（约2倍消耗）</option>
+                        </select>
+                    </div>
+                    <div class="field">
+                        <label>③ 回复器模型（生成短信）</label>
+                        <select id="polisher-model-select">
+                            <option value="deepseek-v4-flash">Flash（快，便宜）</option>
+                            <option value="deepseek-v4-pro">Pro（慢，贵，更强）</option>
+                        </select>
+                        <label style="margin-top:8px">思考等级（默认高）</label>
+                        <select id="polisher-effort-select">
+                            <option value="none">无思考（温度才生效）</option>
+                            <option value="high">高（推荐）</option>
+                            <option value="max">最高（约2倍消耗）</option>
+                        </select>
+                    </div>
+                    <div class="field">
+                        <label>④ 组织器模型（表情包 / 旁白）</label>
+                        <select id="organizer-model-select">
+                            <option value="deepseek-v4-flash">Flash（快，便宜）</option>
+                            <option value="deepseek-v4-pro">Pro（慢，贵，更强）</option>
+                        </select>
+                        <label style="margin-top:8px">思考等级（剧情模式默认无思考；春日手信旁白固定思考）</label>
+                        <select id="organizer-effort-select">
+                            <option value="none">无思考（推荐）</option>
+                            <option value="high">高</option>
+                            <option value="max">最高（约2倍消耗）</option>
+                        </select>
+                    </div>
+                </details>
+            </div>
+        </section>
+
+        <!-- ④ 外观 -->
+        <section class="set-group">
+            <button class="set-head" type="button" data-group="look">🎨 外观<span class="set-arrow">▾</span></button>
+            <div class="set-body">
+                <div class="field">
+                    <label>消息 / 头像 / 气泡缩放 <span id="ui-scale-value">100%</span></label>
+                    <input id="ui-scale-slider" type="range" min="80" max="130" step="5" value="100">
+                    <div style="color:#8a8a8a;font-size:0.7em;margin-top:2px">80%~130%，实时预览</div>
+                </div>
+            </div>
+        </section>
+
+        <!-- ⑤ 数据与系统 -->
+        <section class="set-group">
+            <button class="set-head" type="button" data-group="system">🛠 数据与系统<span class="set-arrow">▾</span></button>
+            <div class="set-body">
+                <div class="field">
+                    <label>版本与更新</label>
+                    <div style="margin-top:6px"><span id="current-version"></span></div>
+                    <button id="check-update-btn" type="button" style="margin-top:8px">检查更新</button>
+                    <div id="update-msg" style="color:var(--fg-muted);font-size:0.75em;margin-top:6px"></div>
+                </div>
+                <div class="field">
+                    <label>数据备份</label>
+                    <div style="margin-top:6px">
+                        <button id="export-btn" type="button" onclick="exportData()">导出当前模式数据（zip）</button>
+                        <button id="import-btn" type="button" onclick="importData()">导入备份（zip）</button>
+                        <input id="import-file" type="file" accept=".zip,application/zip" style="display:none">
+                    </div>
+                    <div style="color:var(--fg-muted);font-size:0.7em;margin-top:6px">备份对话 / 记忆 / 手账 / 设定（不含 API Key）；导入会覆盖当前模式数据（导入前自动备份）</div>
+                    <div class="field" id="sync-fields" style="display:none;margin-top:10px">
+                        <button id="sync-upload-btn" type="button" onclick="syncToAccount()">备份到账号（云端）</button>
+                        <button id="sync-restore-btn" type="button" onclick="restoreFromAccount()">从账号恢复</button>
+                        <div style="color:var(--fg-muted);font-size:0.7em;margin-top:6px">云端备份存服务器你的账号目录（每模式保留最近 3 份）；恢复会覆盖当前数据</div>
                     </div>
                 </div>
-            </details>
-        </div>
-        <div style="margin:16px 0 14px;padding-top:14px;border-top:1px solid var(--border-mid)">
-            <label style="display:block;color:var(--fg-main);font-size:0.85em;margin-bottom:8px">界面大小</label>
-            <div class="field" style="margin-bottom:0">
-                <label>消息 / 头像 / 气泡缩放 <span id="ui-scale-value">100%</span></label>
-                <input id="ui-scale-slider" type="range" min="80" max="130" step="5" value="100">
-                <div style="color:#8a8a8a;font-size:0.7em;margin-top:2px">80%~130%，实时预览</div>
+                <div id="app-exit-row" style="display:none">
+                    <div class="field">
+                        <button id="app-exit-btn" type="button" style="background:rgba(255,107,107,.12);color:var(--red,#ff7a6b);border:1px solid rgba(255,107,107,.35)">退出应用</button>
+                        <div style="color:var(--fg-muted);font-size:0.7em;margin-top:6px">关闭后台服务并退出（聊天数据已实时保存）</div>
+                    </div>
+                </div>
             </div>
-        </div>
-        <div style="margin:16px 0 14px;padding-top:14px;border-top:1px solid var(--border-mid)">
-            <label style="display:block;color:var(--fg-main);font-size:0.85em;margin-bottom:8px">版本</label>
-            <div class="field" style="margin-bottom:0">
-                <label>当前版本 <span id="current-version"></span></label>
-                <button id="check-update-btn" type="button">检查更新</button>
-                <div id="update-msg" style="color:var(--fg-muted);font-size:0.75em;margin-top:6px"></div>
-            </div>
-        </div>
-        <div style="margin:16px 0 14px;padding-top:14px;border-top:1px solid var(--border-mid)">
-            <label style="display:block;color:var(--fg-main);font-size:0.85em;margin-bottom:8px">数据备份</label>
-            <div class="field" style="margin-bottom:0">
-                <button id="export-btn" type="button" onclick="exportData()">导出当前模式数据（zip）</button>
-                <button id="import-btn" type="button" onclick="importData()">导入备份（zip）</button>
-                <input id="import-file" type="file" accept=".zip,application/zip" style="display:none">
-                <div style="color:var(--fg-muted);font-size:0.7em;margin-top:6px">备份对话 / 记忆 / 手账 / 设定（不含 API Key）；导入会覆盖当前模式数据（导入前自动备份）</div>
-            </div>
-            <div class="field" id="sync-fields" style="display:none;margin-top:10px">
-                <button id="sync-upload-btn" type="button" onclick="syncToAccount()">备份到账号（云端）</button>
-                <button id="sync-restore-btn" type="button" onclick="restoreFromAccount()">从账号恢复</button>
-                <div style="color:var(--fg-muted);font-size:0.7em;margin-top:6px">云端备份存服务器你的账号目录（每模式保留最近 3 份）；恢复会覆盖当前数据</div>
-            </div>
-        </div>
-        <div id="app-exit-row" style="margin:16px 0 14px;padding-top:14px;border-top:1px solid var(--border-mid);display:none">
-            <label style="display:block;color:var(--fg-main);font-size:0.85em;margin-bottom:8px">退出</label>
-            <div class="field" style="margin-bottom:0">
-                <button id="app-exit-btn" type="button" style="background:rgba(255,107,107,.12);color:var(--red,#ff7a6b);border:1px solid rgba(255,107,107,.35)">退出应用</button>
-                <div style="color:var(--fg-muted);font-size:0.7em;margin-top:6px">关闭后台服务并退出（聊天数据已实时保存）</div>
-            </div>
-        </div>
-        <button id="key-save">保存</button>
-        <div id="config-msg"></div>
+        </section>
+
     </div>
 </div>
 
@@ -494,7 +650,7 @@
             <div class="field">
                 <label>用户记忆 · 跨会话记忆</label>
                 <div class="field-tip">记录开拓者（你）的相关信息与重要事情；「让流萤休息」时会由流萤自动整理进来，也可手动修改。保存后下次对话生效。</div>
-                <textarea id="user-memory-editor" style="height:200px"></textarea>
+                <textarea id="user-memory-editor" style="height:180px"></textarea>
                 <div class="btn-row">
                     <button id="user-memory-reload" type="button">重新加载</button>
                     <button id="user-memory-save" type="button">保存</button>
@@ -504,7 +660,7 @@
             <div style="margin:14px 0;padding-top:14px;border-top:1px solid rgba(255,255,255,0.08)">
                 <label>用户设定 · 补充剧情设定（与核心设定一起加载）</label>
                 <div class="field-tip">你补充的剧情设定，与核心设定同等权威、每轮生效。格式：`[事实]` 长期成立 / `[经历]` 已发生 / `[若]` 触发条件 / `[原句]` 原话勿照搬（文件内有示例）。</div>
-                <textarea id="user-setting-editor" style="height:200px"></textarea>
+                <textarea id="user-setting-editor" style="height:180px"></textarea>
                 <div class="btn-row">
                     <button id="user-setting-reload" type="button">重新加载</button>
                     <button id="user-setting-save" type="button">保存</button>
@@ -518,7 +674,7 @@
                     <button id="journal-reload" style="flex:1">重新加载</button>
                     <button id="journal-save" style="flex:1">保存</button>
                 </div>
-                <textarea id="journal-editor" style="height:260px;color:#e0d5c1"></textarea>
+                <textarea id="journal-editor" style="height:180px"></textarea>
                 <div id="journal-msg" style="color:#8a8a8a;font-size:0.75em;margin-top:4px"></div>
             </div>
         </div>
@@ -532,7 +688,7 @@
                     <option value="可爱">可爱</option>
                     <option value="帅气">帅气</option>
                 </select>
-                <input type="text" id="sticker-label" placeholder="含义描述（如：害羞）" maxlength="20">
+                <input type="text" id="sticker-label" placeholder="含义描述（如：害羞地低头）" maxlength="120">
                 <button id="sticker-submit" type="button">保存</button>
                 <div id="sticker-add-msg"></div>
             </div>

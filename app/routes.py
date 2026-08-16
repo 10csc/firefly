@@ -32,7 +32,9 @@ _SESSION_MAX = 30   # 会话上限：防任意 session_id 无限撑内存（超�
 
 
 def _session_key(sid: str, mode: str) -> str:
-    return f"{sid}::{mode}"
+    # 服务器版多用户：会话 key 必须带上用户作用域，否则同 session_id（如 "default"）
+    # 的两个账号会命中同一份内存上下文/记忆头（跨用户串数据）
+    return f"{sid}::{mode}::{cfg.user_scope_key()}"
 
 
 def get_session(sid: str, mode: str = DEFAULT_MODE) -> dict:
@@ -76,7 +78,10 @@ _CONTENT_MAX = 200_000
 
 
 def _read_json(h) -> dict:
-    length = int(h.headers.get("Content-Length", 0))
+    try:
+        length = int(h.headers.get("Content-Length", 0))
+    except (TypeError, ValueError):
+        return {}
     if length <= 0:
         return {}
     if length > _MAX_BODY:
@@ -126,7 +131,10 @@ def set_config(h):
     new_key = "" if _is_server() else (body.get("api_key") or "").strip()
     for key in ("analyzer_model", "organizer_model", "polisher_model", "retriever_model"):
         val = body.get(key, cfg.config[key])
-        if val in cfg.VALID_MODELS:
+        # 服务器版模型锁：用户无论提交什么，模型字段只允许是 flash（忽略 pro 等其它值）
+        if _is_server():
+            cfg.config[key] = "deepseek-v4-flash"
+        elif val in cfg.VALID_MODELS:
             cfg.config[key] = val
     for key in ("retriever_effort", "analyzer_effort", "polisher_effort", "organizer_effort"):
         val = body.get(key, cfg.config[key])
@@ -547,7 +555,10 @@ def add_sticker_route(h):
         if ext not in (".png", ".jpg", ".jpeg", ".webp", ".gif"):
             h._json({"ok": False, "error": "仅支持 png/jpg/jpeg/webp/gif 图片格式"}); return
         safe_name = f"user_{int(time.time())}_{secrets.token_hex(4)}{ext}"
-        save_dir = cfg.USER_DIR / "stickers"
+        # 图片文件与注册表同作用域：服务器版写入 user_data/{uid}/stickers/（账号隔离），
+        # 本地版退回 USER_DIR/stickers（行为不变）
+        from tools.sticker_picker import _user_registry_file
+        save_dir = _user_registry_file().parent
         save_dir.mkdir(parents=True, exist_ok=True)
         (save_dir / safe_name).write_bytes(file_info["data"])
 
@@ -566,9 +577,14 @@ def sticker_update(h):
     sid = (body.get("id") or "").strip()
     new_label = (body.get("label") or "").strip() or None
     new_category = (body.get("category") or "").strip() or None
+    new_enabled = body.get("enabled")
+    if new_enabled is not None and not isinstance(new_enabled, bool):
+        h._json({"ok": False, "error": "enabled 必须是 true/false"}); return
     try:
-        entry = update_sticker(sid, new_label=new_label, new_category=new_category)
-        h._json({"ok": True, "id": entry.id, "label": entry.label, "category": entry.category})
+        entry = update_sticker(sid, new_label=new_label, new_category=new_category,
+                               new_enabled=new_enabled)
+        h._json({"ok": True, "id": entry.id, "label": entry.label,
+                 "category": entry.category, "enabled": entry.enabled})
     except StickerUpdateError as e:
         h._json({"ok": False, "error": str(e)})
     except Exception as e:
@@ -613,51 +629,185 @@ def character_file_update(h):
         h._json({"ok": False, "error": f"保存失败: {e}"})
 
 
-# ── 行为改进（harness P2）：候选批准 / 忽略 / 回滚 ──
-# 权限模型：候选由优化器离线生成（pending），这里的端点只做「人批准」与回滚。
-# 服务器版按 user context 天然 per-user 隔离；apply 前 registry 会再跑一次静态校验。
+# ── 设定纠错助手（对齐 → 提案 → 批准应用 → 回滚）────────────
+# 权限模型：AI 只提案（pending），用户点「应用」才生效。
+# 运行位置：本地版=本地 Python；服务器版=服务器 Python（按用户上下文隔离）。
 
-def prompt_candidates(h):
+def _fix_need_key(h) -> bool:
+    if not cfg.get_client():
+        h._json({"ok": False, "error": "请先设置 API Key", "need_key": True})
+        return True
+    if cfg.relay_needs_key():
+        h._json({"ok": False, "error": "请先设置 API Key", "need_key": True})
+        return True
+    return False
+
+
+def _fix_err_code(e: Exception) -> str:
+    from modules.api_client import ApiError
+    return e.code if isinstance(e, ApiError) else "unknown"
+
+
+def setting_fix_status(h):
+    from modules.setting_fix_store import get_status
     mode = _query_mode(h)
     try:
-        from modules.prompt_registry import get_status
-        st = get_status(mode)
-        h._json({"ok": True, **st})
+        h._json(get_status(mode))
     except Exception as e:
-        h._json({"ok": False, "error": f"读取候选失败: {e}"})
+        h._json({"ok": False, "error": f"读取状态失败: {e}"})
 
 
-def prompt_apply(h):
+def setting_fix_message(h):
+    if _fix_need_key(h):
+        return
     body = _read_json(h)
     mode = _body_mode(body)
-    try:
-        from modules.prompt_registry import apply
-        r = apply(mode)
-        h._json(r)
-    except Exception as e:
-        h._json({"ok": False, "error": f"应用失败: {e}"})
+    text = body.get("text")
+    if not isinstance(text, str) or not text.strip():
+        h._json({"ok": False, "error": "请描述她哪里说得不对"})
+        return
+    text = text.strip()
+
+    from modules.setting_fix import run_alignment, run_proposal
+    from modules.setting_fix_store import (locked, load_conversation,
+                                           append_conversation, load_pending,
+                                           save_pending)
+    client = cfg.get_client()
+    model = cfg.config.get("polisher_model", "deepseek-v4-flash")
+    effort = cfg.config.get("polisher_effort", "high")
+    with locked(mode):
+        conversation = load_conversation(mode)
+        pending = load_pending(mode)
+        try:
+            if pending is not None:
+                # proposal 阶段用户继续补充 → 先记下用户的话，再重新生成方案（仍不生效）
+                append_conversation(mode, "user", text, stage="proposal")
+                conversation = load_conversation(mode)
+                result = run_proposal(client, mode, conversation, model, effort)
+            else:
+                result = run_alignment(client, mode, conversation, text, model, effort)
+        except Exception as e:
+            h._json({"ok": False, "error": f"分析失败，请稍后再试: {e}",
+                     "error_code": _fix_err_code(e)})
+            return
+
+        if "error" in result and not result.get("ok", True):
+            h._json(result)
+            return
+
+        if pending is not None:
+            if result.get("kind") in ("proposal", "no_fix"):
+                proposal = {
+                    "kind": result.get("kind"),
+                    "diagnosis": result.get("diagnosis", ""),
+                    "changes": result.get("changes", []),
+                    "model": model,
+                    "created_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+                }
+                save_pending(mode, proposal)
+            h._json({"ok": True, "stage": "proposal",
+                     "diagnosis": result.get("diagnosis", ""),
+                     "changes": result.get("changes", [])})
+            return
+
+        append_conversation(mode, "user", text, stage=result.get("stage", "aligning"))
+        assistant = append_conversation(
+            mode, "assistant", result.get("text", ""),
+            options=result.get("options", []), stage=result.get("stage", "aligning"))
+        h._json({"ok": True, "stage": result.get("stage", "aligning"),
+                 "text": result.get("text", ""),
+                 "options": result.get("options", []),
+                 "message": assistant})
 
 
-def prompt_dismiss(h):
+def setting_fix_start(h):
+    if _fix_need_key(h):
+        return
     body = _read_json(h)
     mode = _body_mode(body)
-    try:
-        from modules.prompt_registry import dismiss
-        r = dismiss(mode)
-        h._json(r)
-    except Exception as e:
-        h._json({"ok": False, "error": f"忽略失败: {e}"})
+
+    from modules.setting_fix import run_proposal
+    from modules.setting_fix_store import locked, load_conversation, save_pending
+    client = cfg.get_client()
+    model = cfg.config.get("polisher_model", "deepseek-v4-flash")
+    effort = cfg.config.get("polisher_effort", "high")
+    with locked(mode):
+        conversation = load_conversation(mode)
+        if not conversation:
+            h._json({"ok": False, "error": "请先描述她哪里说得不对"})
+            return
+        try:
+            result = run_proposal(client, mode, conversation, model, effort)
+        except Exception as e:
+            h._json({"ok": False, "error": f"生成修改方案失败，请稍后再试: {e}",
+                     "error_code": _fix_err_code(e)})
+            return
+        if not result.get("ok"):
+            h._json(result)
+            return
+        proposal = {
+            "kind": result.get("kind"),
+            "diagnosis": result.get("diagnosis", ""),
+            "changes": result.get("changes", []),
+            "model": model,
+            "created_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+        }
+        save_pending(mode, proposal)
+        h._json({"ok": True, "stage": "proposal",
+                 "diagnosis": proposal["diagnosis"],
+                 "changes": proposal["changes"]})
 
 
-def prompt_rollback(h):
+def setting_fix_apply(h):
     body = _read_json(h)
     mode = _body_mode(body)
+    session_id = body.get("session_id", "default")
+
+    from modules.setting_fix_store import locked, apply_pending
+    with locked(mode):
+        ok, err, applied, version = apply_pending(mode)
+    if not ok:
+        h._json({"ok": False, "error": err})
+        return
+
+    # 若本次改了 memory.md：让当前会话立即用新记忆头部（不等待重启）
     try:
-        from modules.prompt_registry import rollback
-        r = rollback(mode)
-        h._json(r)
+        if "memory.md" in applied:
+            session = get_session(session_id, mode)
+            from modules.memory_manager import wake as memory_wake
+            session["memory_head"] = memory_wake(None, cfg.MODEL, mode)
     except Exception as e:
-        h._json({"ok": False, "error": f"回滚失败: {e}"})
+        logger.warning("应用后重载会话记忆失败: %s", e)
+
+    h._json({"ok": True, "version": version, "applied": applied,
+             "message": "修改已生效，可在「最近修正记录」中撤销"})
+
+
+def setting_fix_dismiss(h):
+    body = _read_json(h)
+    mode = _body_mode(body)
+    from modules.setting_fix_store import locked, dismiss
+    with locked(mode):
+        ok, err = dismiss(mode)
+    h._json({"ok": ok, "error": err})
+
+
+def setting_fix_rollback(h):
+    body = _read_json(h)
+    mode = _body_mode(body)
+    from modules.setting_fix_store import locked, rollback
+    with locked(mode):
+        ok, err, version = rollback(mode)
+    h._json({"ok": ok, "error": err, "version": version})
+
+
+def setting_fix_reset(h):
+    body = _read_json(h)
+    mode = _body_mode(body)
+    from modules.setting_fix_store import locked, reset
+    with locked(mode):
+        ok, err = reset(mode)
+    h._json({"ok": ok, "error": err})
 
 
 def undo(h):
@@ -673,149 +823,6 @@ def undo(h):
         h._json({"ok": True, "removed_turn": 1, "files_removed": removed})
     else:
         h._json({"ok": False, "error": "没有可撤回的轮次"})
-
-
-# ── 反馈采集（harness P1）────────────────────────────
-# 定位：失败案例采样器，不是投票计分器。计数不作质量统计，
-# 👎 的价值在上下文快照（归因器原料），👍 是风格样本来源。
-_FEEDBACK_LABELS = ("人设崩了", "记错了", "重复", "太冷淡", "太黏", "不像她", "其他")
-_FEEDBACK_REASON_MAX = 200       # 理由长度上限（字符）
-_FEEDBACK_SNAPSHOT_TURNS = 8     # 上下文快照轮数
-_FEEDBACK_MAX_ENTRIES = 500      # 反馈记录队列上限：只保留最近 N 条（丢最旧）
-
-
-def feedback(h):
-    body = _read_json(h)
-    mode = _body_mode(body)
-    verdict = body.get("verdict")
-    if verdict not in ("like", "dislike"):
-        h._json({"ok": False, "error": "verdict 必须是 like 或 dislike"}); return
-    label = (body.get("reason_label") or "").strip()
-    if label and label not in _FEEDBACK_LABELS:
-        h._json({"ok": False, "error": "未知的反馈标签"}); return
-    text = (body.get("reason_text") or "").strip()[:_FEEDBACK_REASON_MAX]
-    # seq：反馈模块按消息定位（可选；聊天页旧入口不传时为空）
-    seq = None
-    raw_seq = body.get("seq")
-    if raw_seq is not None:
-        try:
-            seq = int(raw_seq)
-        except (TypeError, ValueError):
-            h._json({"ok": False, "error": "seq 必须是整数"}); return
-
-    session = get_session(body.get("session_id", "default"), mode)
-    with session["lock"]:
-        turn = int(getattr(session["context"], "turn_count", 0) or 0)
-        snapshot = [
-            {"role": str(m.get("role", "")), "content": str(m.get("content", ""))[:_FEEDBACK_SNAPSHOT_TURNS * 25]}
-            for m in session["context"].get_recent(_FEEDBACK_SNAPSHOT_TURNS)
-        ]
-
-    entry = {
-        "time": time.strftime("%Y-%m-%d %H:%M:%S"),
-        "mode": mode,
-        "turn": turn,
-        "seq": seq,
-        "verdict": verdict,
-        "reason_label": label,
-        "reason_text": text,
-        "context": snapshot,
-    }
-    try:
-        fp = cfg.mode_data_dir(mode) / "feedback.jsonl"
-        fp.parent.mkdir(parents=True, exist_ok=True)
-        # 去重（幂等）：同一消息同一评价只记一次，防反馈模块重复点击污染数据。
-        # 只扫文件尾部 64KB（反馈稀疏，足够覆盖最近几百条）。
-        if seq is not None and fp.exists():
-            tail = fp.read_bytes()[-65536:].decode("utf-8", errors="ignore")
-            for line in tail.splitlines():
-                try:
-                    old = json.loads(line)
-                except Exception:
-                    continue
-                if (old.get("seq") == seq and old.get("verdict") == verdict
-                        and old.get("mode") == mode):
-                    h._json({"ok": True, "duplicate": True})
-                    return
-        with open(fp, "a", encoding="utf-8") as f:
-            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
-        # 队列上限：只保留最近 _FEEDBACK_MAX_ENTRIES 条（丢最旧，防无限增长）
-        try:
-            lines = fp.read_text(encoding="utf-8").splitlines()
-            if len(lines) > _FEEDBACK_MAX_ENTRIES:
-                tmp = fp.with_name(fp.name + ".tmp")
-                tmp.write_text("\n".join(lines[-_FEEDBACK_MAX_ENTRIES:]) + "\n", encoding="utf-8")
-                tmp.replace(fp)
-        except Exception as e:
-            logger.warning("反馈队列裁剪失败: %s", e)
-        h._json({"ok": True})
-    except Exception as e:
-        h._json({"ok": False, "error": f"反馈保存失败: {e}"})
-
-
-# ── 换一条（harness P1）────────────────────────────
-# 复用 undo 的轮次移除 + 完整流水线重跑：实现简单、复用全部逻辑，
-# 且能沉淀 (选中, 落选) 偏好对——比纯文本理由更可信的训练信号。
-def reroll(h):
-    client = cfg.get_client()
-    if not client:
-        h._json({"ok": False, "error": "请先设置 API Key", "need_key": True}); return
-    if cfg.relay_needs_key():
-        h._json({"ok": False, "error": "请先设置 API Key", "need_key": True}); return
-
-    body = _read_json(h)
-    session_id = body.get("session_id", "default")
-    mode = _body_mode(body)
-
-    from modules.proactive import reply_lock, reply_unlock
-    reply_lock(mode)
-    try:
-        session = get_session(session_id, mode)
-        with session["lock"]:
-            popped = session["context"].pop_last_turn()
-            if popped is None:
-                h._json({"ok": False, "error": "没有可重来的回复"}); return
-            user_msg, old_reply = popped
-            if user_msg == "__proactive__":
-                h._json({"ok": False, "error": "主动消息暂不支持换一条（可先撤回）"}); return
-            from modules.conversation_store import remove_last_turn
-            remove_last_turn(mode=mode)
-            result = handle_chat(
-                user_msg, session, client,
-                analyzer_model=cfg.config["analyzer_model"],
-                organizer_model=cfg.config["organizer_model"],
-                polisher_model=cfg.config["polisher_model"],
-                retriever_model=cfg.config["retriever_model"],
-                retriever_effort=cfg.config["retriever_effort"],
-                analyzer_effort=cfg.config["analyzer_effort"],
-                polisher_effort=cfg.config["polisher_effort"],
-                organizer_effort=cfg.config["organizer_effort"],
-                retriever_temperature=cfg.config["retriever_temperature"],
-                polisher_temperature=cfg.config["polisher_temperature"],
-                memory_head=session.get("memory_head", ""),
-                hint="",
-                mode=mode,
-            )
-        enriched = _write_replies(result, mode)
-        try:
-            fp = cfg.mode_data_dir(mode) / "preference.jsonl"
-            fp.parent.mkdir(parents=True, exist_ok=True)
-            with open(fp, "a", encoding="utf-8") as f:
-                f.write(json.dumps({
-                    "time": time.strftime("%Y-%m-%d %H:%M:%S"),
-                    "mode": mode,
-                    "turn": int(getattr(session["context"], "turn_count", 0) or 0),
-                    "chosen": [m.get("content", "") for m in enriched if m.get("type") == "text"],
-                    "rejected": old_reply,
-                }, ensure_ascii=False) + "\n")
-        except Exception as e:
-            logger.warning("偏好对落盘失败: %s", e)
-        resp = {"ok": True, "messages": enriched}
-        if result.error_code:
-            resp["error_code"] = result.error_code
-        h._json(resp)
-    finally:
-        reply_unlock(mode)
 
 
 def clear_history(h):
@@ -940,7 +947,8 @@ def _zip_safe_entries(zf) -> list[tuple[str, object]]:
         if info.is_dir():
             continue
         name = info.filename.replace("\\", "/")
-        if name.startswith("/") or ".." in name.split("/"):
+        # zip slip 防御：拒绝绝对路径（/ 或 Windows 盘符 C:/）、.. 穿越，只收普通文件
+        if name.startswith("/") or (len(name) >= 2 and name[1] == ":") or ".." in name.split("/"):
             raise ValueError("压缩包内含非法路径，已拒绝")
         if info.file_size > _IMPORT_MAX_FILE_BYTES:
             raise ValueError("压缩包内单个文件过大，已拒绝")
@@ -1083,10 +1091,12 @@ def sync_download(h):
 
 def get_config(h):
     key = cfg.config.get("api_key", "")
+    # 服务器版不返回 key_prefix：全局/env 兜底 Key 的前缀也不能向登录用户暴露
+    key_prefix = "" if _is_server() else (key[:12] + "..." if key else "")
     h._json({
         "platform": _platform_tag(),
         "has_key": bool(cfg.get_api_key()),
-        "key_prefix": key[:12] + "..." if key else "",
+        "key_prefix": key_prefix,
         "api_base": cfg.config.get("api_base", cfg.API_BASE),
         "api_bases": [cfg.API_BASE, cfg.GO_BASE],
         "analyzer_model": cfg.config["analyzer_model"],
@@ -1105,7 +1115,7 @@ def get_config(h):
         "prob_reply_enabled": bool(cfg.config.get("prob_reply_enabled", True)),
         "prob_reply_value": cfg.config.get("prob_reply_value", 0.3),
         "hidden_reply_enabled": bool(cfg.config.get("hidden_reply_enabled", True)),
-        "valid_models": list(cfg.VALID_MODELS),
+        "valid_models": ["deepseek-v4-flash"] if _is_server() else list(cfg.VALID_MODELS),
         "valid_efforts": list(cfg.VALID_EFFORTS),
     })
 
@@ -1175,17 +1185,23 @@ def get_wake_status(h):
 
 
 def get_stickers(h):
-    # 返回全量表情包列表（供前端管理表展示）。editable：当前用户可改/删的条目
-    # （服务器版=自己上传的；本地版=全部；默认项与公共项不可删改）
+    # 返回表情包列表。?enabled=1 只返回启用项（聊天页选择面板）；
+    # 不带参数返回全量（管理页，含停用项）。editable：当前用户可改/删的条目。
     from tools.sticker_picker import list_all_stickers, _STICKERS_DEFAULT, editable_ids
+    qs = parse_qs(urlparse(h.path).query)
+    enabled_only = qs.get("enabled", [""])[0] == "1"
     ids = editable_ids()
     editable_all = not cfg.user_scope_key()   # 本地版（无用户上下文）全部可编辑
+    items = list_all_stickers()
+    if enabled_only:
+        items = [s for s in items if s.enabled]
     h._json({
         "stickers": [
             {"id": s.id, "file": s.file, "category": s.category,
-             "label": s.label, "is_default": s.id in _STICKERS_DEFAULT,
+             "label": s.label, "enabled": bool(s.enabled),
+             "is_default": s.id in _STICKERS_DEFAULT,
              "editable": editable_all or s.id in ids}
-            for s in list_all_stickers()
+            for s in items
         ],
     })
 
@@ -1644,11 +1660,12 @@ POST_ROUTES = {
     "/sync/upload": sync_upload,
     "/undo": undo,
     "/clear-history": clear_history,
-    "/feedback": feedback,
-    "/chat/reroll": reroll,
-    "/prompt-apply": prompt_apply,
-    "/prompt-dismiss": prompt_dismiss,
-    "/prompt-rollback": prompt_rollback,
+    "/setting-fix/message": setting_fix_message,
+    "/setting-fix/start": setting_fix_start,
+    "/setting-fix/apply": setting_fix_apply,
+    "/setting-fix/dismiss": setting_fix_dismiss,
+    "/setting-fix/rollback": setting_fix_rollback,
+    "/setting-fix/reset": setting_fix_reset,
 }
 
 GET_ROUTES = {
@@ -1667,7 +1684,7 @@ GET_ROUTES = {
     "/journal": get_journal,
     "/export-data": export_data,
     "/sync/download": sync_download,
-    "/prompt-candidates": prompt_candidates,
+    "/setting-fix/status": setting_fix_status,
     "/assets/index": assets_index,
     "/assets/raw": assets_raw,
 }
