@@ -13,6 +13,7 @@ import sys
 import threading
 import time
 import urllib.request
+import hashlib
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs, unquote
 
@@ -1055,7 +1056,8 @@ def get_chat_stage(h):
 
 
 def export_data(h):
-    """导出当前模式数据为 zip 备份（对话/记忆/手账/设定/表情包，不含 API Key）。
+    """导出当前模式数据为 zip 备份（对话/记忆/手账/设定 + config.json[剥离 Key] +
+    表情包文字元数据[内容哈希，不含图片字节]——换机迁移用；媒体本体留本机，A1 范围）。
     Content-Disposition: attachment 触发浏览器/WebView 下载。只读打包，不修改数据。"""
     q = parse_qs(urlparse(h.path).query)
     mode = (q.get("mode") or [DEFAULT_MODE])[0]
@@ -1069,6 +1071,41 @@ def export_data(h):
         for fp in sorted(root.rglob("*")):
             if fp.is_file():
                 zf.write(fp, fp.relative_to(root).as_posix())
+        # config.json：全量配置但剥离 API Key（换机迁移带上供应商/base 信息）
+        try:
+            import copy as _copy
+            cfg_copy = _copy.deepcopy(cfg.config)
+            cfg_copy.pop("api_key", None)
+            for _p in cfg_copy.get("providers") or []:
+                _p.pop("api_key", None)
+            zf.writestr("_config.json",
+                        json.dumps(cfg_copy, ensure_ascii=False, indent=1))
+        except Exception:
+            pass
+        # 表情包元数据：{file名: {label, category, enabled, sha256}}——图片本体不打包。
+        # 用户表情包目录与注册表在 USER_DIR/{uid}/stickers/（无模式维度，见 sticker_picker）
+        try:
+            from tools.sticker_picker import _user_registry_file
+            meta = {}
+            reg = _user_registry_file()
+            sdir = reg.parent if reg is not None else None
+            if reg.exists() and sdir is not None:
+                data = json.loads(reg.read_text(encoding="utf-8"))
+                entries = data if isinstance(data, list) else data.get("stickers", [])
+                for e in entries:
+                    if not isinstance(e, dict):
+                        continue
+                    fname = str(e.get("file", "")).rsplit("/", 1)[-1]
+                    fp = sdir / fname
+                    if not fp.exists() or not fp.is_file():
+                        continue
+                    meta[fname] = {"label": e.get("label", ""), "category": e.get("category", ""),
+                                   "enabled": bool(e.get("enabled", True)),
+                                   "sha256": hashlib.sha256(fp.read_bytes()).hexdigest()}
+            if meta:
+                zf.writestr("stickers-meta.json", json.dumps(meta, ensure_ascii=False, indent=1))
+        except Exception:
+            pass
     data = buf.getvalue()
     fname = f"firefly-backup-{mode}-{time.strftime('%Y%m%d-%H%M%S')}.zip"
     h.send_response(200)
@@ -1192,7 +1229,7 @@ def import_data(h):
 
 
 def sync_upload(h):
-    """账号云端备份：上传导出的 zip（服务器版专属；本地版无账号概念）。"""
+    """整包备份：上传导出的 zip（账号云端备份，留 3 份；区别于 A1 增量同步 /sync/manifest|import|export）。"""
     if not _is_server():
         h._json({"ok": False, "error": "仅服务器版支持账号备份"}, 403); return
     fields, files = parse_multipart(h, max_bytes=_IMPORT_MAX_BYTES)
@@ -1220,7 +1257,7 @@ def sync_upload(h):
 
 
 def sync_download(h):
-    """账号云端备份下载：最新一份 zip（服务器版专属）。"""
+    """整包备份下载：最新一份 zip（区别于 A1 增量同步 /sync/export）。"""
     if not _is_server():
         h._json({"ok": False, "error": "仅服务器版支持账号备份"}, 403); return
     mode = _query_mode(h)
@@ -1238,6 +1275,273 @@ def sync_download(h):
     h.send_header("Content-Length", str(len(data)))
     h.end_headers()
     h.wfile.write(data)
+
+
+# ══ A1 增量同步（文件级双向：三端同一套 Python，按用户上下文隔离）══
+# 协议：客户端（本地后端）直连认证服务器——
+#   GET  /sync/manifest            ← 服务器侧清单（该用户 {mode} 目录）
+#   POST /sync/import  (multipart) → 服务器合并写入（append 行合并 / 文档新者胜，冲突备份）
+#   POST /sync/export  {"files"}   → 服务器侧差异文件 zip（客户端拉回合并）
+#   POST /sync/now                 → 本地后端编排：manifest → 对比 → 上传/拉取 → 本地落盘
+# 媒体不受影响：stickers/ images/ 不在清单（只同步文字元数据，见 sync_engine）。
+
+
+def _sync_mode_root(mode: str):
+    """同步数据根：服务器版=该用户目录（server_app 注入上下文）；本地版=USER_DIR/{mode}。"""
+    m = mode if mode in cfg.MODES else DEFAULT_MODE
+    return cfg.mode_root(m), m
+
+
+def sync_manifest(h):
+    """服务器侧清单（A1）。GET /sync/manifest?mode=story  → {files: {path: {size,sha256,mtime}}}。"""
+    from modules.sync_engine import scan_manifest
+    root, m = _sync_mode_root(_query_mode(h))
+    h._json({"ok": True, "mode": m, "files": scan_manifest(root)})
+
+
+def sync_import(h):
+    """服务器侧合并写入（A1）。POST /sync/import multipart：
+    fields: mode + mtimes(json {path: mtime})；parts: 每个待写文件一个 part（名字 = 相对路径）。
+    裁决：jsonl → 行合并；favorites.json → 按 seq/f-id 并集；文档类 → mtime 新者胜（服务器更新则跳过）。
+    冲突/覆盖前备份到 {mode}/.sync_backups/（客户端同理）。"""
+    from modules.sync_engine import (in_sync_scope, merge_jsonl, merge_favorites,
+                                     apply_merge_file, backup_file)
+    root, m = _sync_mode_root(DEFAULT_MODE)
+    fields, files = parse_multipart(h, max_bytes=_IMPORT_MAX_BYTES)
+    mode = fields.get("mode", DEFAULT_MODE)
+    if mode not in cfg.MODES:
+        h._json({"ok": False, "error": "非法模式"}); return
+    root, m = _sync_mode_root(mode)
+    try:
+        mtimes = json.loads(fields.get("mtimes", "{}") or "{}")
+        if not isinstance(mtimes, dict):
+            mtimes = {}
+    except Exception:
+        mtimes = {}
+    backups_dir = root / ".sync_backups"
+    applied, skipped, conflicts = [], [], []
+    for name, info in files.items():
+        try:
+            rel = Path(name)
+            if rel.is_absolute() or ".." in rel.parts or not in_sync_scope(rel, root):
+                skipped.append(f"{name}（非法路径/超范围）")
+                continue
+            data = info["data"]
+            if not isinstance(data, bytes):
+                data = bytes(data)
+            fp = root / rel
+            local_text = fp.read_text(encoding="utf-8") if fp.exists() else ""
+            remote_text = data.decode("utf-8", errors="replace")
+            st = fp.stat() if fp.exists() else None
+            local_mtime = st.st_mtime if st else 0.0
+            remote_mtime = float(mtimes.get(rel.as_posix(), time.time()) or time.time())
+            if rel.suffix == ".jsonl":
+                merged, cf = merge_jsonl(local_text, remote_text)
+                if cf:
+                    backup_file(fp, backups_dir, "conflict")
+                if merged != local_text:
+                    fp.parent.mkdir(parents=True, exist_ok=True)
+                    fp.write_text(merged, encoding="utf-8")
+                    applied.append(rel.as_posix())
+                else:
+                    skipped.append(rel.as_posix() + "（无变化）")
+                conflicts.extend(cf)
+            elif rel.name == "favorites.json":
+                merged, cf = merge_favorites(local_text, remote_text)
+                if merged != local_text:
+                    fp.parent.mkdir(parents=True, exist_ok=True)
+                    fp.write_text(merged, encoding="utf-8")
+                    applied.append(rel.as_posix())
+                else:
+                    skipped.append(rel.as_posix() + "（无变化）")
+                conflicts.extend(cf)
+            else:
+                # 文档类：新者胜。服务器已有且 mtime 更新 → 跳过（客户端应 pull 服务器版）
+                if st and (float(mtimes.get(rel.as_posix(), 0) or 0) < st.st_mtime):
+                    skipped.append(rel.as_posix() + "（服务器更新，客户端将拉取）")
+                elif remote_text != local_text:
+                    if st:
+                        backup_file(fp, backups_dir, "pre")
+                    fp.parent.mkdir(parents=True, exist_ok=True)
+                    fp.write_text(remote_text, encoding="utf-8")
+                    applied.append(rel.as_posix())
+                else:
+                    skipped.append(rel.as_posix() + "（无变化）")
+        except Exception as e:
+            logger.warning("同步导入失败 %s: %s", name, e)
+            skipped.append(f"{name}（{e}）")
+    h._json({"ok": True, "applied": applied, "skipped": skipped,
+             "conflicts": len(conflicts)})
+
+
+def sync_export(h):
+    """服务器侧差异文件 zip（A1）。POST /sync/export {"mode","files":[...]} → zip 流。"""
+    import io
+    import zipfile
+    from modules.sync_engine import in_sync_scope
+    body = _read_json(h)
+    mode = _body_mode(body)
+    root, _ = _sync_mode_root(mode)
+    files = body.get("files") or []
+    if not isinstance(files, list):
+        h._json({"ok": False, "error": "files 必须为列表"}); return
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for name in files[:200]:   # 上限防超大响应
+            try:
+                rel = Path(str(name))
+                if rel.is_absolute() or ".." in rel.parts or not in_sync_scope(rel, root):
+                    continue
+                fp = root / rel
+                if fp.is_file():
+                    zf.write(fp, rel.as_posix())
+            except OSError:
+                continue
+    data = buf.getvalue()
+    h.send_response(200)
+    h.send_header("Content-Type", "application/zip")
+    h.send_header("Content-Disposition", 'attachment; filename="sync-diff.zip"')
+    h.send_header("Content-Length", str(len(data)))
+    h.end_headers()
+    h.wfile.write(data)
+
+
+def sync_now(h):
+    """本地端编排（A1）：本地后端直连认证服务器完成一轮双向同步。
+    触发时机：登录态冷启动 / 聊天页回前台 / 设置页手动按钮（W4 前端接线在 W7）。
+    媒体本地策略：stickers/images 不进清单；表情包元数据随 character 注册表？——
+    见 sync_engine 说明（当前迭代：对话/记忆/手账/设定/收藏/pipeline 文字类）。"""
+    if _is_server():
+        h._json({"error": "服务器版数据已在云端，无需本端点"}, 403); return
+    import io
+    import urllib.request
+    import zipfile
+    from modules.auth_store import get_token
+    from modules.sync_engine import (scan_manifest, plan_sync, merge_jsonl,
+                                     merge_favorites, backup_file)
+    body = _read_json(h)
+    mode = _body_mode(body)
+    token = get_token()
+    if not token:
+        h._json({"ok": False, "error": "未登录（请先在首页登录账号）"}); return
+    root, m = _sync_mode_root(mode)
+    reports = {"uploaded": [], "downloaded": [], "merged": [], "skipped": [], "conflicts": 0}
+    base = _auth_server_base()
+
+    def call(path: str, payload: dict | None = None, binary: bool = False):
+        headers = {"Authorization": f"Bearer {token}"}
+        data = None
+        if payload is not None:
+            headers["Content-Type"] = "application/json"
+            data = json.dumps(payload).encode("utf-8")
+        req = urllib.request.Request(base + path, data=data, headers=headers,
+                                     method="POST" if payload is not None else "GET")
+        with urllib.request.urlopen(req, timeout=60) as r:
+            raw = r.read()
+        return raw if binary else json.loads(raw.decode("utf-8"))
+
+    try:
+        # 1. 服务器清单
+        remote = call(f"/sync/manifest?mode={m}").get("files", {})
+    except Exception as e:
+        h._json({"ok": False, "error": f"连接服务器失败: {e}"}); return
+
+    local = scan_manifest(root)
+    plan = plan_sync(local, remote)
+
+    # 2. 上传（本地独有 + 需合并的文件；文档类新者胜在服务器侧裁决）
+    upload_paths = plan["to_upload"] + plan["to_merge"]
+    if upload_paths:
+        # 构建 multipart: 每个文件一个 part（名字=相对路径）
+        boundary = "ffsync" + time.strftime("%H%M%S") + "x"
+        parts = []
+        mtimes = {}
+        for name in upload_paths:
+            fp = root / name
+            if not fp.is_file():
+                continue
+            try:
+                data = fp.read_bytes()
+            except OSError:
+                continue
+            mtimes[name] = round(fp.stat().st_mtime, 3)
+            parts.append(
+                b"--" + boundary.encode() + b"\r\n"
+                + f'Content-Disposition: form-data; name="{name}"; filename="{name}"\r\n'.encode("utf-8")
+                + b"Content-Type: application/octet-stream\r\n\r\n" + data + b"\r\n")
+        body_m = (b"--" + boundary.encode() + b"\r\n"
+                  + b'Content-Disposition: form-data; name="mode"\r\n\r\n' + m.encode("utf-8") + b"\r\n")
+        body_mt = (b"--" + boundary.encode() + b"\r\n"
+                   + b'Content-Disposition: form-data; name="mtimes"\r\n\r\n'
+                   + json.dumps(mtimes).encode("utf-8") + b"\r\n")
+        body_mp = b"".join(parts) + b"--" + boundary.encode() + b"--\r\n"
+        req = urllib.request.Request(base + "/sync/import",
+                                     data=body_m + body_mt + body_mp,
+                                     headers={"Authorization": f"Bearer {token}",
+                                              "Content-Type": f"multipart/form-data; boundary={boundary}"},
+                                     method="POST")
+        try:
+            with urllib.request.urlopen(req, timeout=120) as r:
+                rp = json.loads(r.read().decode("utf-8"))
+            reports["uploaded"].extend(rp.get("applied", []))
+            reports["conflicts"] += int(rp.get("conflicts", 0))
+            reports["skipped"].extend(rp.get("skipped", []))
+        except urllib.error.HTTPError as e:
+            h._json({"ok": False, "error": f"上传失败（{e.code}）"}); return
+
+    # 3. 拉取（服务器独有 + 服务器更新的合并项）→ 本地合并落盘
+    local_after = scan_manifest(root)
+    need = [p for p in plan["to_download"]]
+    # 服务器侧判定"服务器更新"而跳过的上传项 → 拉回
+    for p in plan["to_merge"]:
+        if (local_after.get(p, {}).get("sha256") or "") != (remote.get(p, {}).get("sha256") or ""):
+            need.append(p)
+    need = sorted(set(need))
+    if need:
+        try:
+            zip_raw = call("/sync/export", {"mode": m, "files": need}, binary=True)
+        except Exception as e:
+            h._json({"ok": False, "error": f"拉取失败: {e}"}); return
+        with zipfile.ZipFile(io.BytesIO(zip_raw)) as zf:
+            backups_dir = root / ".sync_backups"
+            for info in zf.infolist():
+                name = info.filename
+                try:
+                    rel = Path(name)
+                    if rel.is_absolute() or ".." in rel.parts:
+                        continue
+                    remote_text = zf.read(info).decode("utf-8", errors="replace")
+                    fp = root / rel
+                    local_text = fp.read_text(encoding="utf-8") if fp.exists() else ""
+                    if rel.suffix == ".jsonl":
+                        merged, cf = merge_jsonl(local_text, remote_text)
+                        if cf:
+                            backup_file(fp, backups_dir, "conflict")
+                        reports["conflicts"] += len(cf)
+                        if merged != local_text:
+                            fp.parent.mkdir(parents=True, exist_ok=True)
+                            fp.write_text(merged, encoding="utf-8")
+                            reports["merged"].append(name)
+                    elif rel.name == "favorites.json":
+                        merged, cf = merge_favorites(local_text, remote_text)
+                        if merged != local_text:
+                            fp.parent.mkdir(parents=True, exist_ok=True)
+                            fp.write_text(merged, encoding="utf-8")
+                            reports["merged"].append(name)
+                    else:
+                        st = fp.stat().st_mtime if fp.exists() else 0.0
+                        if str(name) in local and (local[str(name)].get("mtime", 0) or 0) > st + 0.05:
+                            reports["skipped"].append(name + "（本地更新，保留）")
+                        elif remote_text != local_text:
+                            if fp.exists():
+                                backup_file(fp, backups_dir, "pre")
+                            fp.parent.mkdir(parents=True, exist_ok=True)
+                            fp.write_text(remote_text, encoding="utf-8")
+                            reports["merged"].append(name)
+                except Exception as e:
+                    logger.warning("同步拉取落盘失败 %s: %s", name, e)
+                    reports["skipped"].append(f"{name}（{e}）")
+    h._json({"ok": True, **reports})
 
 
 def get_config(h):
@@ -1893,6 +2197,9 @@ POST_ROUTES = {
     "/relay/proxy": relay_proxy,
     "/import-data": import_data,
     "/sync/upload": sync_upload,
+    "/sync/import": sync_import,
+    "/sync/export": sync_export,
+    "/sync/now": sync_now,
     "/undo": undo,
     "/clear-history": clear_history,
     "/setting-fix/message": setting_fix_message,
@@ -1912,6 +2219,7 @@ GET_ROUTES = {
     "/check-key": check_key,
     "/config": get_config,
     "/models": get_models,
+    "/sync/manifest": sync_manifest,
     "/auth/state": auth_state,
     "/chat-stage": get_chat_stage,
     "/metrics": get_metrics,
