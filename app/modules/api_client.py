@@ -9,6 +9,7 @@
 
 import json
 import logging
+import random
 import secrets
 import threading
 import time
@@ -18,10 +19,70 @@ import requests
 
 logger = logging.getLogger(__name__)
 
-# 网络重试配置：后台切前台/WiFi 省电恢复场景下，首次请求可能因 TCP 连接
-# 中断而失败，等待 2 秒让网络栈恢复后重试一次即可成功。
-_RETRY_DELAY = 2.0        # 重试前等待秒数
-_MAX_RETRIES = 1           # 最多重试 1 次（即总共 2 次尝试）
+# ── 容错策略（A3：按本项目真实调用链设计，2026-08-21）────────────
+# 网络/5xx/429 → Full Jitter 重试（base=1s、cap=30s、最多 3 次）；401/400/402 不重试。
+# 连续失败 → 端点冷却 60s（期间快速失败走降级话术）；429 遵守 Retry-After。
+_RETRY_BASE = 1.0        # Full Jitter 基准延迟（秒）
+_RETRY_CAP = 30.0        # 单次延迟上限（秒）
+_RETRY_MAX = 3           # 重试次数（总尝试 = 4）
+_RETRY_AFTER_CAP = 60.0  # Retry-After 上限（秒）
+_COOLDOWN_SEC = 60.0     # 端点冷却时长（连续失败后）
+_RETRY_DELAY = 2.0       # 兼容旧常量（旧 1 次重试延迟；新逻辑不再使用，保留防外部引用）
+_MAX_RETRIES = _RETRY_MAX
+
+# 端点冷却表：base_url -> 冷却截止时间戳（进程级）
+_COOLDOWNS: dict[str, float] = {}
+_COOLDOWN_LOCK = threading.Lock()
+
+
+def _endpoint_key(base_url: str) -> str:
+    return base_url.rstrip("/")
+
+
+def _in_cooldown(base_url: str) -> bool:
+    now = time.time()
+    with _COOLDOWN_LOCK:
+        until = _COOLDOWNS.get(_endpoint_key(base_url), 0)
+        if until and until > now:
+            return True
+        if until:
+            _COOLDOWNS.pop(_endpoint_key(base_url), None)
+    return False
+
+
+def _set_cooldown(base_url: str):
+    with _COOLDOWN_LOCK:
+        _COOLDOWNS[_endpoint_key(base_url)] = time.time() + _COOLDOWN_SEC
+    logger.warning("[API] 端点 %s 连续失败 → 冷却 %.0fs（期间快速失败降级）", base_url, _COOLDOWN_SEC)
+
+
+def _jitter_delay(attempt: int, retry_after: float | None = None) -> float:
+    """Full Jitter（AWS 推荐）：0 ~ min(cap, base * 2^attempt)；Retry-After 优先（有上限）。"""
+    if retry_after is not None:
+        return min(max(retry_after, 0.1), _RETRY_AFTER_CAP)
+    cap = min(_RETRY_CAP, _RETRY_BASE * (2 ** attempt))
+    return random.uniform(0, max(cap, 0.1))
+
+
+def _retry_after_from(resp) -> float | None:
+    try:
+        v = resp.headers.get("Retry-After")
+        if v is None:
+            return None
+        return float(v)
+    except (TypeError, ValueError):
+        return None
+
+
+def _retriable(code: str, status: int) -> bool:
+    """哪些错误值得重试：网络不通 / 服务端 5xx / 429 限流 / 超时类。"""
+    return code in ("network", "server_error", "rate_limit", "timeout")
+
+
+def error_code_of(e: Exception) -> str:
+    """从异常中提取分类（ApiError 自带 code；其它异常统一 unknown）。透传前端提示用。"""
+    code = getattr(e, "code", "")
+    return code if isinstance(code, str) and code else "unknown"
 
 
 class ApiError(Exception):
@@ -83,9 +144,14 @@ class _Completions:
             for k in extra_body:
                 payload_no_extra.pop(k, None)
 
+        # 冷却期（该端点连续失败后 60s）：快速失败走降级话术，不再烧时间
+        if _in_cooldown(self._client._base_url):
+            raise ApiError("上游服务波动中（冷却期），请稍后再试", code="cooldown")
+
         last_error = None
+        retry_count = 0          # 已重试次数（分类重试）
         stripped_extra = False   # 本次已剥离 extra_body（unknown-param 探针重试中）
-        for attempt in range(_MAX_RETRIES + 2):   # +1 次给能力探测重试
+        for attempt in range(_RETRY_MAX + 2):   # +2：未知参数探针 1 次 + 常规重试余量
             try:
                 resp = requests.post(
                     self._client._base_url + "/chat/completions",
@@ -96,20 +162,21 @@ class _Completions:
                 )
             except requests.RequestException as e:
                 last_error = ApiError(f"网络请求失败: {e}", code="network")
-                if attempt < _MAX_RETRIES:
-                    logger.warning("[API] 请求失败（尝试 %d/%d），%ss 后重试 — "
-                                   "model=%s %s: %s",
-                                   attempt + 1, _MAX_RETRIES + 1, _RETRY_DELAY,
-                                   model, type(e).__name__, e)
-                    time.sleep(_RETRY_DELAY)
+                if retry_count < _RETRY_MAX and not stripped_extra:
+                    retry_count += 1
+                    delay = _jitter_delay(retry_count - 1)
+                    logger.warning("[API] 网络失败（重试 %d/%d，%.1fs 后）— model=%s %s: %s",
+                                   retry_count, _RETRY_MAX, delay, model, type(e).__name__, e)
+                    time.sleep(delay)
                     continue
-                logger.error("[API] 请求失败（已达最大重试）— model=%s %s: %s",
+                logger.error("[API] 网络失败（重试耗尽）— model=%s %s: %s",
                              model, type(e).__name__, e)
+                _set_cooldown(self._client._base_url)
                 raise last_error from e
 
             if resp.status_code != 200:
                 detail = resp.text[:300]
-                # 能力探测：4xx「未知参数」→ 剥离 extra_body 重试一次并回写 caps
+                # 能力探测：4xx「未知参数」→ 剥离 extra_body 重试一次并回写 caps（不计重试配额）
                 if (not stripped_extra and sent_extra and resp.status_code in (400, 422)
                         and _looks_unknown_param(detail)):
                     stripped_extra = True
@@ -126,16 +193,19 @@ class _Completions:
                     _code = "rate_limit"
                 elif 500 <= resp.status_code < 600:
                     _code = "server_error"
-                # 5xx 服务端错误可重试
-                if 500 <= resp.status_code < 600 and attempt < _MAX_RETRIES:
-                    logger.warning("[API] 服务端错误 HTTP %d（尝试 %d/%d），%ss 后重试 — model=%s",
-                                   resp.status_code, attempt + 1, _MAX_RETRIES + 1,
-                                   _RETRY_DELAY, model)
-                    time.sleep(_RETRY_DELAY)
+                # 分类重试：429/5xx 可重试（Full Jitter + 遵守 Retry-After）；4xx 确定性错误不重试
+                if _retriable(_code, resp.status_code) and retry_count < _RETRY_MAX:
+                    retry_count += 1
+                    delay = _jitter_delay(retry_count - 1, _retry_after_from(resp))
+                    logger.warning("[API] HTTP %d（重试 %d/%d，%.1fs 后）— model=%s",
+                                   resp.status_code, retry_count, _RETRY_MAX, delay, model)
+                    time.sleep(delay)
                     continue
                 last_error = ApiError(f"HTTP {resp.status_code}: {detail}", code=_code)
                 logger.error("[API] HTTP 错误 — model=%s status=%d detail=%s",
                              model, resp.status_code, detail[:100])
+                if _retriable(_code, resp.status_code):
+                    _set_cooldown(self._client._base_url)
                 raise last_error
 
             try:
@@ -215,14 +285,17 @@ class _CompatClient:
 
 
 class _QuotaCompletions(_Completions):
-    """配额版 completions：每次调用前执行配额检查+记账（服务器托管模式）。
+    """配额版 completions：每次调用前配额检查，成功后记账（服务器托管模式）。
+    A3 默认拍板：失败调用不占用户额度，单独记 proxy_usage_failed（处理方注册回调）。
 
     托管模型锁：服务器托管 API 只允许 OpenCode Go 的 mimo-v2.5 模型（运营者套餐约束），
     调用方传入的任何 model（含全局配置被改成其它模型的情况）一律强制为 mimo-v2.5。"""
 
-    def __init__(self, client: "_CompatClient", quota_fn):
+    def __init__(self, client: "_CompatClient", quota_fn, counter_fn=None, fail_fn=None):
         super().__init__(client)
         self._quota_fn = quota_fn
+        self._counter_fn = counter_fn
+        self._fail_fn = fail_fn
 
     def create(self, **kwargs):
         if self._quota_fn is not None:
@@ -230,29 +303,57 @@ class _QuotaCompletions(_Completions):
             if err:
                 raise ApiError(err, code="quota_exhausted")
         kwargs["model"] = "mimo-v2.5"   # 托管模式模型锁：只允许 mimo-v2.5
-        return super().create(**kwargs)
+        try:
+            result = super().create(**kwargs)
+        except Exception as e:
+            # 失败调用：不占用户额度，单独记录（有处理方则通知）
+            try:
+                if self._fail_fn is not None:
+                    self._fail_fn()
+            except Exception:
+                pass
+            raise
+        try:
+            if self._counter_fn is not None:
+                self._counter_fn()
+        except Exception:
+            pass
+        return result
 
 
 class QuotaClient(_CompatClient):
-    """托管模式客户端：运营者 Key 直发，每 LLM 调用前经 quota_fn 检查+记账。
-    quota_fn 由服务器注册（见 app_config.set_proxy_quota_checker）。"""
+    """托管模式客户端：运营者 Key 直发，每 LLM 调用前经 quota_fn 检查，成功后 counter_fn 记账。
+    quota_fn/counter_fn/fail_fn 由服务器注册（见 app_config.set_proxy_quota_*）。"""
 
-    def __init__(self, api_key: str, base_url: str, quota_fn, timeout: float = 120.0):
+    def __init__(self, api_key: str, base_url: str, quota_fn, timeout: float = 120.0,
+                 counter_fn=None, fail_fn=None):
         super().__init__(api_key, base_url=base_url, timeout=timeout)
-        self.chat.completions = _QuotaCompletions(self, quota_fn)
+        self.chat.completions = _QuotaCompletions(self, quota_fn,
+                                                  counter_fn=counter_fn, fail_fn=fail_fn)
 
 
 # ══ 中转客户端（RelayClient）═════════════════════
 # 后端代理模式：服务器构建请求体（含资产占位符）→ APP 代发 DeepSeek（用户 Key）→ 回传
 # 服务器不持有用户 Key；APP 本地填充资产（知识库/设定）后调用。
 # 实现：create() 把 payload 入队（按用户隔离）并阻塞等待 APP 回传，超时抛 ApiError。
-_RELAY_TIMEOUT = 120.0   # APP 代发超时（秒），超时降级
+_RELAY_TIMEOUT = 120.0   # APP 代发超时（秒），超时降级（阶段预算会覆盖成更小值）
+_RELAY_HEARTBEAT_SEC = 30.0   # 超过该秒数无 /relay/pending 轮询 → 判定 APP 离线（快速失败）
+_recent_retry_delay = 0.0     # 兼容旧测试引用（新逻辑用 _jitter_delay）
 _relay_lock = threading.Lock()
 _relay_queues: dict[str, list] = {}     # user_key -> [{"call_id","payload","cond","result"}]
+_relay_heartbeats: dict[str, float] = {}  # user_key -> 最近轮询时刻（心跳）
 
 
-def relay_submit(user_key: str, payload: dict, api_base: str):
-    """请求体入队并阻塞等待 APP 回传。返回兼容响应结构（SimpleNamespace）。"""
+def relay_submit(user_key: str, payload: dict, api_base: str, timeout: float = _RELAY_TIMEOUT):
+    """请求体入队并阻塞等待 APP 回传。返回兼容响应结构（SimpleNamespace）。
+    A3 活性快速失败：APP 从未心跳或心跳停滞 >30s（掉线/冻结）→ 立即失败降级，
+    不干等超时（旧行为每阶段最多 120s，story 单轮最坏 480s）。"""
+    now = time.time()
+    with _relay_lock:
+        last_hb = _relay_heartbeats.get(user_key)
+    if last_hb is not None and (now - last_hb) > _RELAY_HEARTBEAT_SEC:
+        logger.warning("relay 心跳停滞 %.0fs（>30s），判定 APP 离线，快速失败", now - last_hb)
+        raise ApiError("APP 已离线（心跳停滞），请重新打开应用", code="relay_timeout")
     with _relay_lock:
         # call_id 密码学随机（曾为全局自增 r1/r2，可被同用户预测伪造回传）
         call_id = secrets.token_hex(8)
@@ -262,7 +363,7 @@ def relay_submit(user_key: str, payload: dict, api_base: str):
         q = _relay_queues[user_key]
     with item["cond"]:
         # 等待结果（或超时）
-        if not item["cond"].wait(timeout=_RELAY_TIMEOUT):
+        if not item["cond"].wait(timeout=timeout):
             # 超时：从队列移除（可能已被取走，防误删新项——只删自己）
             with _relay_lock:
                 try:
@@ -278,8 +379,10 @@ def relay_submit(user_key: str, payload: dict, api_base: str):
 
 
 def relay_pending(user_key: str) -> dict | None:
-    """取队首待转发请求体（APP 轮询）。返回 {call_id, payload, api_base} 或 None。"""
+    """取队首待转发请求体（APP 轮询）。返回 {call_id, payload, api_base} 或 None。
+    A3：/relay/pending 的 1s 轮询本身就是心跳——每次调用刷新用户最近活动时刻。"""
     with _relay_lock:
+        _relay_heartbeats[user_key] = time.time()
         q = _relay_queues.get(user_key)
         if not q:
             return None
@@ -361,7 +464,25 @@ class _RelayCompletions:
             payload["response_format"] = response_format
         if extra_body:
             payload.update(extra_body)
-        return relay_submit(self._client._user_key, payload, self._client._api_base)
+        if _in_cooldown(self._client._api_base):
+            raise ApiError("上游服务波动中（冷却期），请稍后再试", code="cooldown")
+        # A3：relay 链路补重试（现状零重试）——代发超时/网络类失败重试最多 2 次
+        last_error = None
+        for attempt in range(3):
+            try:
+                return relay_submit(self._client._user_key, payload, self._client._api_base,
+                                    timeout=self._client._timeout)
+            except ApiError as e:
+                last_error = e
+                if e.code not in ("relay_timeout", "network") or attempt >= 2:
+                    if e.code in ("relay_timeout", "network"):
+                        _set_cooldown(self._client._api_base)
+                    raise
+                delay = _jitter_delay(attempt)
+                logger.warning("[RELAY] 代发失败（%s，重试 %d/2，%.1fs 后）",
+                               e.code, attempt + 1, delay)
+                time.sleep(delay)
+        raise last_error or ApiError("代发失败", code="relay_timeout")
 
 
 class _RelayChat:
@@ -373,7 +494,9 @@ class RelayClient:
     """中转客户端：请求体入队 → APP 代发（用户 Key，本地资产填充）→ 回传。
     用法与 _CompatClient 一致（chat.completions.create），模块零改动。"""
 
-    def __init__(self, user_key: str, api_base: str = "https://api.deepseek.com/v1"):
+    def __init__(self, user_key: str, api_base: str = "https://api.deepseek.com/v1",
+                 timeout: float = _RELAY_TIMEOUT):
         self._user_key = user_key
         self._api_base = api_base.rstrip("/")
+        self._timeout = timeout
         self.chat = _RelayChat(self)

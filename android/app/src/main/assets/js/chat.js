@@ -373,6 +373,8 @@ const ERROR_TIPS = {
     server_error: "服务端暂时出错，请稍后再试",
     bad_response: "服务返回异常，请稍后再试",
     relay_timeout: "代发超时，请检查网络后重试",
+    timeout: "回复超时了，稍后再试一次吧",
+    cooldown: "上游服务波动中，休息一下再试试",
     quota_exhausted: "今日服务器托管额度已用完，可在设置中切换为自带 Key 模式",
     unknown: "出了点问题，请稍后再试",
 };
@@ -479,15 +481,22 @@ async function restoreFromAccount() {
 window.restoreFromAccount = restoreFromAccount;
 
 /** 等待回复期间轮询流水线阶段（检索→分析→回复→表情包），把"对方正在输入…"换成具体阶段。
- *  仅在拿到 stage 时替换文本；请求结束由 _chatSend 的 finally 清除。 */
+ *  仅在拿到 stage 时替换文本；请求结束由 _chatSend 的 finally 清除。
+ *  A3：消费后端 waited 字段——等待偏久（>60s）提示"上游有点慢"，不再像卡死。 */
+let _waitedWarned = false;
 function _pollStage(statusEl) {
     clearInterval(_stageTimer);
+    _waitedWarned = false;
     _stageTimer = setInterval(async () => {
         if (_inflight <= 0) { clearInterval(_stageTimer); _stageTimer = null; return; }
         try {
             const r = await fetch(`/chat-stage?sid=${encodeURIComponent(SESSION_ID)}&mode=${encodeURIComponent(CURRENT_MODE)}`);
             const d = await r.json();
             if (d.stage && d.label && _inflight > 0 && statusEl) statusEl.textContent = d.label;
+            if (d.waited != null && d.waited > 60 && !_waitedWarned && _inflight > 0 && statusEl) {
+                _waitedWarned = true;
+                statusEl.textContent = "上游有点忙，正在努力回复…";
+            }
         } catch (e) { /* 网络抖动静默，状态保持"对方正在输入" */ }
     }, 2000);
 }

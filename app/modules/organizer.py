@@ -37,6 +37,8 @@ class OrganizerOutput:
     narrations: list = field(default_factory=list)  # haruno：[{"text","style"}] style=scene|action
     raw_json: str = ""
     reasoning: str = ""              # 调试观测用
+    degraded: bool = False           # A3：本次为降级输出（LLM 调用失败被吞）
+    error_code: str = ""             # A3：被吞的 ApiError 分类（透传 /chat 提示）
 
 
 # ── 监控 ──────────────────────────────────────────
@@ -204,7 +206,12 @@ class Organizer:
             with _lock:
                 _LLM_ERRORS += 1
             record_error("organizer", self._model, str(e))
-            return OrganizerOutput()  # 降级：不发表情包
+            # A3：降级输出携带被吞的 error_code（透传 /chat → 前端人话提示）
+            from modules.api_client import error_code_of
+            out = OrganizerOutput()
+            out.degraded = True
+            out.error_code = error_code_of(e)
+            return out
 
         out = _parse_and_validate(raw)
         out.reasoning = rc
@@ -272,7 +279,12 @@ class Organizer:
             with _lock:
                 _LLM_ERRORS += 1
             record_error("organizer", self._model, str(e))
-            return OrganizerOutput()  # 降级：无旁白
+            # A3：降级输出携带被吞的 error_code（透传 /chat → 前端人话提示）
+            from modules.api_client import error_code_of
+            out = OrganizerOutput()
+            out.degraded = True
+            out.error_code = error_code_of(e)
+            return out
 
         out = _parse_narration(raw)
         out.reasoning = rc

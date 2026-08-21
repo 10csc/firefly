@@ -244,7 +244,22 @@ async function sendFixMessage(text) {
             showToast("请先到 ⚙ 设置里填写 API Key");
             openSettings();
         } else {
-            showToast(data.error || "分析失败，请稍后再试");
+            // A3：LLM 错误分类 → 人话提示（与聊天页 ERROR_TIPS 同口径）
+            const FIX_ERROR_TIPS = {
+                key_invalid: "API Key 无效或已过期，请到设置中检查",
+                no_balance: "API 余额不足，请充值后再试",
+                rate_limit: "请求太频繁，稍等一会儿再试试",
+                network: "网络不通，请检查网络后重试",
+                server_error: "服务端暂时出错，请稍后再试",
+                relay_timeout: "代发超时，请检查网络后重试",
+                timeout: "回复超时了，稍后再试一次吧",
+                cooldown: "上游服务波动中，休息一下再试试",
+                quota_exhausted: "今日服务器托管额度已用完，可切换为自带 Key 模式",
+                unknown: "出了点问题，请稍后再试",
+            };
+            showToast(data.error_code
+                ? (FIX_ERROR_TIPS[data.error_code] || FIX_ERROR_TIPS.unknown)
+                : (data.error || "分析失败，请稍后再试"));
         }
     } catch (e) {
         showToast("网络错误，请稍后再试");

@@ -39,6 +39,8 @@ class AnalyzerOutput:
     summary: str = ""
     raw_json: str = ""
     reasoning: str = ""               # 模型思考过程（调试观测用）
+    degraded: bool = False            # A3：本次为降级输出（LLM 调用失败被吞）
+    error_code: str = ""              # A3：被吞的 ApiError 分类（透传 /chat 提示）
 
 
 # ── 默认输出（降级用，每次生成新实例避免跨请求污染）──
@@ -223,7 +225,12 @@ class Analyzer:
             with _lock:
                 _LLM_ERRORS += 1
             record_error("analyzer", self._model, str(e))
-            return _default_output()
+            # A3：降级输出携带被吞的 error_code（透传 /chat → 前端人话提示）
+            from modules.api_client import error_code_of
+            out = _default_output()
+            out.degraded = True
+            out.error_code = error_code_of(e)
+            return out
 
         out = _parse_and_validate(raw)
         out.reasoning = rc

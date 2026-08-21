@@ -87,13 +87,27 @@ def relay_needs_key() -> bool:
 
 # ── 托管模式配额钩子（服务器注册；本地版不注册 = 不限制）──
 _proxy_quota_checker = None
+_proxy_quota_counter = None
+_proxy_quota_failer = None
 
 
 def set_proxy_quota_checker(fn) -> None:
-    """注册托管模式配额检查函数：fn() 返回错误文案（""=放行），
-    放行时负责记账（服务器端在 db 中累加调用次数）。"""
+    """注册托管模式配额检查函数：fn() 返回错误文案（""=放行）。
+    A3（默认拍板）：检查与记账分离——检查放行后才调用，成功再记数（失败单独记失败表）。"""
     global _proxy_quota_checker
     _proxy_quota_checker = fn
+
+
+def set_proxy_quota_counter(fn) -> None:
+    """注册成功记账函数：每次调用成功（无异常）后调用。"""
+    global _proxy_quota_counter
+    _proxy_quota_counter = fn
+
+
+def set_proxy_quota_failer(fn) -> None:
+    """注册失败记账函数：调用抛异常时调用（失败不占额度，单独记录）。"""
+    global _proxy_quota_failer
+    _proxy_quota_failer = fn
 
 # ── 路径 ────────────────────────────────────────
 BASE_DIR = Path(__file__).resolve().parent.parent          # app/（打包后 _internal/，安卓下=解压 backend/app/）
@@ -601,7 +615,8 @@ def get_client():
         # 无论是否注册了配额钩子，托管模式一律走 QuotaClient：它会在每次 create 时
         # 强制 model=mimo-v2.5，用户/全局配置不可能把运营者 Key 切到其它模型。
         return QuotaClient(api_key=key, base_url=GO_BASE,
-                           quota_fn=_proxy_quota_checker, timeout=120.0)
+                           quota_fn=_proxy_quota_checker, timeout=120.0,
+                           counter_fn=_proxy_quota_counter, fail_fn=_proxy_quota_failer)
     mode = config.get("api_mode", "relay" if ctx else "direct")
     if mode == "relay":
         from modules.api_client import RelayClient

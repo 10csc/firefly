@@ -41,6 +41,8 @@ class RetrieveInput:
 class RetrieveOutput:
     knowledge: str = ""                   # 压缩知识摘要
     raw: str = ""                         # LLM 原始输出（调试观测用）
+    degraded: bool = False                # A3：本次为降级输出（LLM 调用失败被吞）
+    error_code: str = ""                  # A3：被吞的 ApiError 分类（透传 /chat 提示）
 
 
 # ── 知识库加载（模块级缓存，按模式隔离）────────────
@@ -183,7 +185,10 @@ class LlmRetriever:
             with _lock:
                 _LLM_ERRORS += 1
             record_error("llm_retriever", self._model, str(e))
-            return RetrieveOutput(knowledge="", raw="")
+            # A3：降级输出携带被吞的 error_code（透传 /chat → 前端人话提示）
+            from modules.api_client import error_code_of
+            return RetrieveOutput(knowledge="", raw="", degraded=True,
+                                  error_code=error_code_of(e))
 
         # 4. 验证：空输出 / 对话体污染（模拟流萤回复而非摘要）→ 降级为空
         if not raw or _looks_like_dialogue(raw):

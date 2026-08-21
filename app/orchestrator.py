@@ -45,6 +45,41 @@ def _err_code(e: Exception) -> str:
     return e.code if isinstance(e, ApiError) else "unknown"
 
 
+def _first_degraded_code(*outputs) -> str | None:
+    """A3：模块级降级（LLM 失败被吞）时取首个非空 error_code 透传给 /chat。
+    流水线已降级不阻断；前端据此显示人话提示（Key 无效/余额/限流…）。"""
+    for o in outputs:
+        if o is not None and getattr(o, "degraded", False):
+            code = getattr(o, "error_code", "") or ""
+            if code:
+                return code
+    return None
+
+
+# ── A3 超时预算：单轮硬顶 210s（与网关 600s / 前端 4 分钟对齐的收紧）──
+_TURN_BUDGET_SEC = 210.0
+_STAGE_TIMEOUT_THINK = 90.0    # 分析/回复（思考档）单阶段超时
+_STAGE_TIMEOUT_NON_THINK = 30.0  # 检索/组织（非思考）单阶段超时
+
+
+def _stage_timeout(client, effort: str, deadline: float, stage: str) -> float:
+    """按阶段设客户端超时（min(阶段预算, 剩余总预算)）；剩余不足 5s → 立即放弃本轮。
+    返回本阶段超时秒数。client 是 _CompatClient / RelayClient / QuotaClient 任意一种。"""
+    now = time.time()
+    remaining = deadline - now
+    if remaining <= 5.0:
+        from modules.api_client import ApiError
+        raise ApiError(f"单轮总预算（{int(_TURN_BUDGET_SEC)}s）已耗尽", code="timeout")
+    budget = _STAGE_TIMEOUT_THINK if effort != "none" else _STAGE_TIMEOUT_NON_THINK
+    sec = min(max(budget, 5.0), max(remaining, 5.0))
+    try:
+        client._timeout = sec
+    except Exception:
+        pass
+    logger.info("[PIPELINE] %s 阶段超时预算 %.0fs（剩余 %.0fs）", stage, sec, remaining)
+    return sec
+
+
 def _merge_narrations(messages: list, narrations: list) -> list:
     """旁白按 after 位置插入消息流（视觉小说式穿插演出）。
 
@@ -251,6 +286,9 @@ def handle_chat(
     ctx: ContextManager = session["context"]
     _set_stage(session, None)   # 清除旧阶段（异常/完成路径也会清）
 
+    # A3：本轮总预算（前方链路的每阶段超时 + 本硬顶共同约束）
+    deadline = time.time() + _TURN_BUDGET_SEC
+
     # ── 前置规则 ──────────────────────────────
     if not user_input or not user_input.strip():
         with _lock:
@@ -283,6 +321,7 @@ def handle_chat(
             anchor = [m for m in ctx.get_recent(10) if m.get("role") == "user"][-1:]
             _rt0 = time.perf_counter()
             logger.info("[PIPELINE #%d] ⓪ Retriever 开始...", turn)
+            _stage_timeout(client, retriever_effort, deadline, "retriever")
             r_out = LlmRetriever(client, model=retriever_model,
                                  temperature=retriever_temperature,
                                  effort=retriever_effort, mode=mode).retrieve(RetrieveInput(
@@ -294,6 +333,10 @@ def handle_chat(
             retrieved_memory = ""   # 子代理输出为混合摘要，两层合并
             logger.info("[PIPELINE #%d] ⓪ Retriever 完成 (%.1fs)", turn, _rt1 - _rt0)
     except Exception as e:
+        from modules.api_client import ApiError
+        # 预算耗尽：异常上抛（走外层 api:error 路径带 timeout 码），不静默吞掉
+        if isinstance(e, ApiError) and e.code == "timeout":
+            raise
         retrieved_knowledge = ""
         retrieved_memory = ""
         _rt0 = _rt1 = time.perf_counter()
@@ -310,6 +353,7 @@ def handle_chat(
         _t0 = time.perf_counter()
         logger.info("[PIPELINE #%d] ① Analyzer 开始...", turn)
         _set_stage(session, "analyzer")
+        _stage_timeout(client, analyzer_effort, deadline, "analyzer")
         analyzer = Analyzer(client, model=analyzer_model, effort=analyzer_effort, mode=mode)
         analysis = analyzer.analyze(AnalyzerInput(
             user_input=input_text,
@@ -325,6 +369,7 @@ def handle_chat(
         # ── 2. 回复器（全权生成回复文本）────────
         logger.info("[PIPELINE #%d] ② Polisher 开始...", turn)
         _set_stage(session, "polisher")
+        _stage_timeout(client, polisher_effort, deadline, "polisher")
         polisher = Polisher(client, model=polisher_model,
                             effort=polisher_effort, temperature=polisher_temperature, mode=mode)
         polish_output = polisher.polish(PolisherInput(
@@ -347,6 +392,7 @@ def handle_chat(
         _set_stage(session, "organizer")
         org_output = None
         try:
+            _stage_timeout(client, organizer_effort, deadline, "organizer")
             organizer = Organizer(client, model=organizer_model, effort=organizer_effort, mode=mode)
             org_output = organizer.organize(OrganizerInput(
                 user_input=user_input,
@@ -440,4 +486,5 @@ def handle_chat(
             # 旁白进上下文：回复器下轮能看到"她做了什么动作/环境如何"
             ctx.add_action("旁白", m.get("text", ""))
 
-    return ChatResult(messages=messages, bubble=None)
+    return ChatResult(messages=messages, bubble=None, error_code=_first_degraded_code(
+        locals().get("r_out"), analysis, polish_output, org_output))
