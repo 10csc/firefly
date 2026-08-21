@@ -574,7 +574,7 @@
 
         <!-- ⑤ 数据与系统 -->
         <section class="set-group">
-            <button class="set-head" type="button" data-group="system">🛠 数据与系统<span class="set-arrow">▾</span></button>
+            <button class="set-head" type="button" data-group="system">📦 数据<span class="set-arrow">▾</span></button>
             <div class="set-body">
                 <div class="field">
                     <label>版本与更新</label>
@@ -589,7 +589,15 @@
                         <button id="import-btn" type="button" onclick="importData()">导入备份（zip）</button>
                         <input id="import-file" type="file" accept=".zip,application/zip" style="display:none">
                     </div>
-                    <div style="color:var(--fg-muted);font-size:0.7em;margin-top:6px">备份对话 / 记忆 / 手账 / 设定（不含 API Key）；导入会覆盖当前模式数据（导入前自动备份）</div>
+                    <div style="color:var(--fg-muted);font-size:0.7em;margin-top:6px">备份对话 / 记忆 / 手账 / 设定与表情包描述（不含 API Key / 图片本体）；导入会覆盖当前模式数据（导入前自动备份）</div>
+                    <div class="field" id="sync-now-field" style="margin-top:10px">
+                        <label>增量同步（登录后云端同步文字数据）</label>
+                        <button id="sync-now-btn" type="button" onclick="syncNow()">立即同步</button>
+                        <div id="sync-now-msg" style="color:var(--fg-muted);font-size:0.7em;margin-top:6px"></div>
+                    </div>
+                    <div style="color:var(--fg-accent);font-size:0.7em;margin-top:8px;padding:8px 10px;border:1px solid var(--gold-line);border-radius:8px;background:var(--gold-glow)">
+                        🖼 <b>图片与表情包只保存在本机</b>，云端仅存文字（含 AI 看图描述）——服务器不会保存你的图片。
+                    </div>
                     <div class="field" id="sync-fields" style="display:none;margin-top:10px">
                         <button id="sync-upload-btn" type="button" onclick="syncToAccount()">备份到账号（云端）</button>
                         <button id="sync-restore-btn" type="button" onclick="restoreFromAccount()">从账号恢复</button>
@@ -664,6 +672,13 @@
     <input type="file" id="image-file-input" accept="image/png,image/jpeg,image/webp,image/gif" style="display:none">
 </div>
 
+<!-- 底部导航（A5 档：安卓/窄屏三主视图直达；PC 宽屏自动隐藏） -->
+<nav id="bottom-tab">
+    <button class="bt-item" id="bt-chat" type="button"><span class="bt-ico">💬</span><span>聊天</span></button>
+    <button class="bt-item" id="bt-home" type="button"><span class="bt-ico">🏠</span><span>首页</span></button>
+    <button class="bt-item" id="bt-mine" type="button"><span class="bt-ico">👤</span><span>我的</span></button>
+</nav>
+
 <!-- 表情包面板 -->
 <div id="sticker-panel">
     <div class="sp-title">
@@ -681,13 +696,15 @@
             <button onclick="closeMenu()">✕</button>
         </div>
         <div class="menu-tabs">
+            <div class="menu-group-title">与她相关</div>
             <button class="menu-tab" data-tab="fav">收藏</button>
             <button class="menu-tab" data-tab="sticker">表情包</button>
             <button class="menu-tab" data-tab="char">设定文件</button>
-            <button class="menu-tab" data-tab="log">请求记录</button>
-            <button class="menu-tab" data-tab="pipeline">流程日志</button>
             <!-- 流萤状态：状态系统下线后的占位 tab（4.5：隐藏不删，接回后恢复） -->
             <button class="menu-tab" data-tab="state" style="display:none">流萤状态</button>
+            <div class="menu-group-title">与系统相关</div>
+            <button class="menu-tab" data-tab="log">请求记录</button>
+            <button class="menu-tab" data-tab="pipeline">流程日志</button>
         </div>
         <div class="menu-actions">
             <button onclick="showHome()"><img class="menu-act-icon" src="assets/icon_home.png?v=1" alt=""> 返回首页</button>

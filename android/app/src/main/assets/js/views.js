@@ -2,10 +2,27 @@
 import { S, messagesEl } from "./state.js";
 import { initAuth, showAuthModule, IS_SERVER } from "./api.js";
 import { showToast } from "./util.js";
-import { closeMenu } from "./panels.js";
+import { closeMenu, openSettings } from "./panels.js";
 import { loadHistory, renderMessages, scrollToBottom } from "./chat.js";
 import { openFixView } from "./fix.js";
 import { initAssets } from "./relay.js";
+
+// ═══ A5 入口收敛：底部导航（窄屏/安卓三主视图；PC 宽屏自动隐藏）═══
+export function activateTab(tab) {
+    for (const [k, id] of Object.entries({chat: "bt-chat", home: "bt-home", mine: "bt-mine"})) {
+        const el = document.getElementById(id);
+        if (el) el.classList.toggle("active", k === tab);
+    }
+}
+window.btActivate = activateTab;
+for (const [k, fn] of [["chat", () => showChat()], ["home", () => showHome()],
+                       ["mine", () => openSettings()]]) {
+    const el = document.getElementById("bt-" + k);
+    if (el) el.addEventListener("click", () => {
+        try { fn(); } catch (e) {}
+        activateTab(k);
+    });
+}
 
 // ═══════════════════════════════════════════
 // 界面大小调节（消息/头像/气泡缩放，设置面板滑条）
@@ -98,6 +115,7 @@ export function showHome() {
     stopCarousel();
     goCarousel(0);   // 回到首页重置轮播位置
     startCarousel();   // 重新开始自动轮播
+    try { activateTab("home"); } catch (e) {}
 }
 window.showHome = showHome;   // ESM 拆分后供 pc_nav.js（classic script）与内联 onclick 使用
 export async function showChat() {
@@ -142,6 +160,7 @@ export async function showChat() {
         }
     }
     try { if (location.hash !== "#chat") history.pushState({chat: true}, "", "#chat"); } catch (e) {}
+    try { activateTab("chat"); } catch (e) {}
 }
 window.showChat = showChat;   // 同上：pc_nav.js / home-start 按钮 onclick
 

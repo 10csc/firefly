@@ -466,6 +466,7 @@ const settingsPanel = document.getElementById("settings-panel");
 function openSettings() {
     settingsPanel.classList.add("show");
     loadConfig();
+    try { window.btActivate && window.btActivate("mine"); } catch (e) {}
 }
 function closeSettings() { settingsPanel.classList.remove("show"); }
 window.openSettings = openSettings;
@@ -1003,6 +1004,9 @@ async function loadConfig() {
         if (srcField) srcField.style.display = IS_SERVER ? "" : "none";
         const syncFields = _$("sync-fields");
         if (syncFields) syncFields.style.display = IS_SERVER ? "" : "none";
+        // A5：增量同步（本地版登录后可用；服务器版数据天然在云端）
+        const syncNowField = _$("sync-now-field");
+        if (syncNowField) syncNowField.style.display = IS_SERVER ? "none" : "";
 
         if (data.retriever_temperature != null && el.rt) {
             el.rt.value = data.retriever_temperature;
@@ -1133,6 +1137,26 @@ _$("key-save")?.addEventListener("click", () => saveConfigNow(true));
 // ═══════════════════════════════════════════
 // 状态 tab（数值状态系统已下线，接回后再渲染条）
 // ═══════════════════════════════════════════
+/** A1 增量同步（W4 编排端点）：登录后把本地文字数据与云端账号双向合并 */
+window.syncNow = async function () {
+    const msg = document.getElementById("sync-now-msg");
+    if (msg) msg.textContent = "同步中…";
+    try {
+        const r = await fetch("/sync/now", {
+            method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({mode: CURRENT_MODE}),
+        });
+        const d = await r.json();
+        if (msg) {
+            msg.textContent = d.ok
+                ? `✓ 已同步：上传 ${(d.uploaded || []).length}，拉取合并 ${(d.merged || []).length}，冲突 ${d.conflicts || 0}（见 .sync_backups）`
+                : "同步未完成：" + (d.error || "请先登录账号");
+        }
+    } catch (e) {
+        if (msg) msg.textContent = "网络错误，稍后再试";
+    }
+};
 function loadStateTab() {
     const list = document.getElementById("state-list");
     if (list) {
@@ -2877,6 +2901,23 @@ window.resetFix = resetFix;
 /* ── 来源：js/views.js ── */
 // 视图切换：首页 / 聊天 / 轮播 / 主题 / 界面缩放 / 粒子与降级开关
 
+// ═══ A5 入口收敛：底部导航（窄屏/安卓三主视图；PC 宽屏自动隐藏）═══
+function activateTab(tab) {
+    for (const [k, id] of Object.entries({chat: "bt-chat", home: "bt-home", mine: "bt-mine"})) {
+        const el = document.getElementById(id);
+        if (el) el.classList.toggle("active", k === tab);
+    }
+}
+window.btActivate = activateTab;
+for (const [k, fn] of [["chat", () => showChat()], ["home", () => showHome()],
+                       ["mine", () => openSettings()]]) {
+    const el = document.getElementById("bt-" + k);
+    if (el) el.addEventListener("click", () => {
+        try { fn(); } catch (e) {}
+        activateTab(k);
+    });
+}
+
 // ═══════════════════════════════════════════
 // 界面大小调节（消息/头像/气泡缩放，设置面板滑条）
 // ═══════════════════════════════════════════
@@ -2968,6 +3009,7 @@ function showHome() {
     stopCarousel();
     goCarousel(0);   // 回到首页重置轮播位置
     startCarousel();   // 重新开始自动轮播
+    try { activateTab("home"); } catch (e) {}
 }
 window.showHome = showHome;   // ESM 拆分后供 pc_nav.js（classic script）与内联 onclick 使用
 async function showChat() {
@@ -3012,6 +3054,7 @@ async function showChat() {
         }
     }
     try { if (location.hash !== "#chat") history.pushState({chat: true}, "", "#chat"); } catch (e) {}
+    try { activateTab("chat"); } catch (e) {}
 }
 window.showChat = showChat;   // 同上：pc_nav.js / home-start 按钮 onclick
 
