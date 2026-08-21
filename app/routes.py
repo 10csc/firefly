@@ -131,9 +131,9 @@ def set_config(h):
     new_key = "" if _is_server() else (body.get("api_key") or "").strip()
     for key in ("analyzer_model", "organizer_model", "polisher_model", "retriever_model"):
         val = body.get(key, cfg.config[key])
-        # 服务器版模型锁：用户无论提交什么，模型字段只允许是 flash（忽略 pro 等其它值）
+        # 服务器版模型锁：用户无论提交什么，模型字段只允许是 mimo-v2.5（忽略其它值）
         if _is_server():
-            cfg.config[key] = "deepseek-v4-flash"
+            cfg.config[key] = "mimo-v2.5"
         elif val in cfg.VALID_MODELS:
             cfg.config[key] = val
     for key in ("retriever_effort", "analyzer_effort", "polisher_effort", "organizer_effort"):
@@ -327,7 +327,11 @@ def chat(h):
     # 前端分条发送（messages 数组）→ 分条写盘（刷新后显示多条），
     # LLM 侧用合并文本（\n 连接，保持一轮处理）。
     # 表情包消息：{"type":"sticker","label":...} → 写盘 sticker 类型 + LLM 提示。
+    # 引用消息：{"type":"text","content":...,"quote":{...}} → 引用快照随消息写盘，
+    # LLM 侧以 [引用流萤：「…」] 前缀体现（长按消息 → 引用功能）。
     from modules.conversation_store import append_message as _append_msg
+    from modules.conversation_store import sanitize_quote as _sanitize_quote
+    from modules.conversation_store import compose_user_text as _compose_user_text
     msgs = body.get("messages")
     llm_parts = []
     if isinstance(msgs, list):
@@ -336,11 +340,16 @@ def chat(h):
             if isinstance(m, dict) and m.get("type") == "text" and m.get("content"):
                 text = str(m["content"]).strip()
                 if text:
-                    _append_msg("user", {"type": "text", "content": text}, mode=mode)
-                    llm_parts.append(text)
+                    q = _sanitize_quote(m.get("quote"))
+                    rec = {"type": "text", "content": text}
+                    if q:
+                        rec["quote"] = q
+                    _append_msg("user", rec, mode=mode)
+                    llm_parts.append(_compose_user_text(text, q))
             elif isinstance(m, dict) and m.get("type") == "sticker" and m.get("label"):
                 label = m["label"]
                 path = m.get("path") or m.get("file") or ""
+                q = None
                 if not path:
                     try:
                         from tools.sticker_picker import pick_sticker_by_label
@@ -349,8 +358,12 @@ def chat(h):
                     except Exception:
                         path = ""
                 if path:
-                    _append_msg("user", {"type": "sticker", "label": label, "path": path}, mode=mode)
-                llm_parts.append(f"[表情包：{label}]")
+                    q = _sanitize_quote(m.get("quote"))
+                    rec = {"type": "sticker", "label": label, "path": path}
+                    if q:
+                        rec["quote"] = q
+                    _append_msg("user", rec, mode=mode)
+                llm_parts.append(_compose_user_text(f"[表情包：{label}]", q))
             elif isinstance(m, str) and m.strip():
                 # 兼容旧格式（纯字符串）
                 _append_msg("user", {"type": "text", "content": m.strip()}, mode=mode)
@@ -885,8 +898,9 @@ def _platform_tag() -> str:
 
 
 def get_chat_stage(h):
-    """流水线阶段进度（前端等待回复时轮询）：?sid=&mode= → {"stage": "retriever"|...|null}。
-    只读不创建会话；查不到会话返回 null（前端回退默认"对方正在输入…"）。"""
+    """流水线阶段进度（前端等待回复时轮询）：?sid=&mode= → {"stage": "retriever"|...|null, "waited": 秒}。
+    只读不创建会话；查不到会话返回 null（前端回退默认"对方正在输入…"）。
+    waited：当前阶段已等待秒数，供前端在上游卡住时显示超时预警。"""
     q = parse_qs(urlparse(h.path).query)
     sid = (q.get("sid") or [""])[0] or "default"
     mode = (q.get("mode") or [DEFAULT_MODE])[0]
@@ -896,11 +910,12 @@ def get_chat_stage(h):
     with _SESSIONS_LOCK:
         session = sessions.get(key)
     if not session:
-        h._json({"stage": None})
+        h._json({"stage": None, "waited": 0})
         return
-    from orchestrator import get_chat_stage as _get_stage, stage_label
+    from orchestrator import get_chat_stage as _get_stage, stage_label, get_stage_waited
     stage = _get_stage(session)
-    h._json({"stage": stage, "label": stage_label(stage) if stage else None})
+    h._json({"stage": stage, "label": stage_label(stage) if stage else None,
+             "waited": round(get_stage_waited(session)) if stage else 0})
 
 
 def export_data(h):
@@ -1249,6 +1264,40 @@ def save_user_memory(h):
 def get_journal(h):
     from modules.llm_base import load_journal
     h._json({"content": load_journal(_query_mode(h))})
+
+
+# ═══ 收藏夹（长按消息 → 收藏）═══
+def add_favorite_route(h):
+    from modules.favorite_store import add_favorite, FavoriteError
+    body = _read_json(h)
+    mode = _body_mode(body)
+    try:
+        rec = add_favorite(mode, body.get("message"))
+    except FavoriteError as e:
+        h._json({"ok": False, "error": str(e)})
+        return
+    except Exception as e:
+        logger.warning("收藏失败: %s", e)
+        h._json({"ok": False, "error": "收藏失败，请重试"})
+        return
+    h._json({"ok": True, "id": rec["id"]})
+
+
+def get_favorites(h):
+    from modules.favorite_store import list_favorites
+    h._json({"items": list_favorites(_query_mode(h))})
+
+
+def delete_favorite_route(h):
+    from modules.favorite_store import delete_favorite
+    body = _read_json(h)
+    mode = _body_mode(body)
+    fav_id = (body.get("id") or "").strip()
+    if not fav_id:
+        h._json({"ok": False, "error": "缺少收藏 id"})
+        return
+    ok = delete_favorite(mode, fav_id)
+    h._json({"ok": ok, "error": "" if ok else "收藏不存在或已删除"})
 
 
 def open_mode(h):
@@ -1666,6 +1715,8 @@ POST_ROUTES = {
     "/setting-fix/dismiss": setting_fix_dismiss,
     "/setting-fix/rollback": setting_fix_rollback,
     "/setting-fix/reset": setting_fix_reset,
+    "/favorite": add_favorite_route,
+    "/favorites/delete": delete_favorite_route,
 }
 
 GET_ROUTES = {
@@ -1687,4 +1738,5 @@ GET_ROUTES = {
     "/setting-fix/status": setting_fix_status,
     "/assets/index": assets_index,
     "/assets/raw": assets_raw,
+    "/favorites": get_favorites,
 }

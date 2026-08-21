@@ -30,12 +30,12 @@ def extract(path: str, pattern: str, group: int = 1) -> str | None:
 
 sources = {
     "app_config.APP_VERSION":  ("app/modules/app_config.py", r'APP_VERSION\s*=\s*"([^"]+)"'),
-    "app.js CURRENT_VERSION":  ("app/static/app.js",         r'CURRENT_VERSION\s*=\s*"([^"]+)"'),
+    "panels.js CURRENT_VERSION": ("app/static/js/panels.js",  r'CURRENT_VERSION\s*=\s*"([^"]+)"'),
     "android versionName":     ("android/app/build.gradle.kts", r'versionName\s*=\s*"([^"]+)"'),
     "android versionCode":     ("android/app/build.gradle.kts", r'versionCode\s*=\s*(\d+)'),
     "iss AppVersion":          ("package/firefly.iss",        r'AppVersion=(\d+\.\d+\.\d+)'),
     # 服务器前端为 app/static 的同步副本（tools/sync_frontends.py）；version.json 为服务器版本源
-    "server app.js CURRENT_VERSION":     ("server/frontend/app.js",               r'CURRENT_VERSION\s*=\s*"([^"]+)"'),
+    "server panels.js CURRENT_VERSION":  ("server/frontend/js/panels.js",         r'CURRENT_VERSION\s*=\s*"([^"]+)"'),
     "server version.json tag":           ("server/version.json",                  r'"tag"\s*:\s*"v?([^"]+)"'),
 }
 

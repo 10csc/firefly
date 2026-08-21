@@ -130,6 +130,8 @@ _ORCH_ERRORS = 0
 # ── 阶段进度（前端等待回复时轮询 /chat-stage 显示"正在做什么"）──
 # 键 = id(session)（进程内唯一，服务器版多用户天然隔离，不泄露 session_id）
 _STAGES: dict[str, str] = {}
+# 阶段开始时间戳：前端据此显示"已等待 N 秒"，上游卡住时预警而不静默
+_STAGE_START: dict[str, float] = {}
 _STAGE_LABELS = {
     "retriever": "正在翻阅记忆与资料…",
     "analyzer": "正在理解你的话…",
@@ -143,14 +145,23 @@ def _set_stage(session, stage: str | None) -> None:
         key = str(id(session))
         if stage is None:
             _STAGES.pop(key, None)
+            _STAGE_START.pop(key, None)
         else:
             _STAGES[key] = stage
+            _STAGE_START[key] = time.time()
 
 
 def get_chat_stage(session) -> str | None:
     """返回当前流水线阶段（None=空闲）。前端轮询用。"""
     with _lock:
         return _STAGES.get(str(id(session)))
+
+
+def get_stage_waited(session) -> float:
+    """当前阶段已等待秒数（无阶段或异常清除后返回 0）。前端超时预警用。"""
+    with _lock:
+        ts = _STAGE_START.get(str(id(session)))
+        return max(0.0, time.time() - ts) if ts else 0.0
 
 
 def stage_label(stage: str) -> str:

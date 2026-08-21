@@ -1,0 +1,782 @@
+// 聊天核心：消息渲染 / 打字机 / 长按菜单 / 引用 / 发送 / 历史 / 休息撤回
+import { S, SESSION_ID, inputEl, messagesEl, sendBtn } from "./state.js";
+import { _toast, showToast } from "./util.js";
+import { API_BASE, IS_SERVER } from "./api.js";
+import { TB_AVATARS, closeMenu, openAvatarPicker, openMenu, openSettings, tbChoice } from "./panels.js";
+import { CURRENT_MODE, MODE_NAMES, _modeGen } from "./views.js";
+import { _idleOk, _notifyFirefly, checkProactive } from "./proactive.js";
+
+// 消息渲染
+// ═══════════════════════════════════════════
+// ═══════════════════════════════════════════
+// 滚动到底部（rAF 延迟：等 DOM 更新/键盘 resize 后再滚，QQ/微信式自动拉底）
+// ═══════════════════════════════════════════
+export function scrollToBottom() {
+    requestAnimationFrame(() => {
+        messagesEl.scrollTop = messagesEl.scrollHeight;
+    });
+}
+// 键盘弹起/收起导致可视高度变化时：若用户原本在底部则自动补滚
+if (window.visualViewport) {
+    window.visualViewport.addEventListener("resize", () => {
+        if (messagesEl.scrollTop + messagesEl.clientHeight >= messagesEl.scrollHeight - 60) {
+            scrollToBottom();
+        }
+    });
+}
+
+function _addAvatar(row, who) {    const img = document.createElement("img");
+    img.className = "msg-avatar";
+    if (who === "user") {
+        img.src = TB_AVATARS[tbChoice];
+        img.classList.add("tb-toggle");
+        img.title = "点击切换开拓者";
+        img.addEventListener("click", openAvatarPicker);
+        img.classList.add("tb-avatar");
+    } else {
+        img.src = "流萤_头像.png";
+    }
+    row.insertBefore(img, row.firstChild);
+}
+
+function addTextMessage(text, who, prepend = false, seq = null, quote = null) {
+    const row = document.createElement("div");
+    row.className = "msg-row " + (who === "user" ? "user" : "firefly");
+    if (seq !== null) row.dataset.seq = seq;
+    if (!prepend) row.classList.add("float-in");   // 新消息从下方浮现（历史加载不带动画）
+    const bubble = document.createElement("div");
+    bubble.className = "bubble";
+    bubble.textContent = text;
+    if (quote) {
+        // 带引用的消息：气泡上方加引用小卡片（QQ 式）
+        const col = document.createElement("div");
+        col.className = "msg-col";
+        col.appendChild(_buildQuotePreview(quote));
+        col.appendChild(bubble);
+        row.appendChild(col);
+    } else {
+        row.appendChild(bubble);
+    }
+    _addAvatar(row, who);
+    if (prepend) { messagesEl.insertBefore(row, messagesEl.firstChild); }
+    else { messagesEl.appendChild(row); scrollToBottom(); }
+    return row;
+}
+
+/** 引用快照 → 气泡上方的小卡片（谁 + 内容摘要） */
+function _quoteContentText(q) {
+    if (!q) return "";
+    if (q.type === "sticker") return "[表情包：" + (q.label || "") + "]";
+    if (q.type === "narration") return q.text || "";
+    return q.content || "";
+}
+function _quoteWhoName(q) { return q && q.who === "user" ? "我" : "流萤"; }
+function _buildQuotePreview(q) {
+    const div = document.createElement("div");
+    div.className = "quote-preview";
+    const who = document.createElement("span");
+    who.className = "qp-who";
+    who.textContent = _quoteWhoName(q);
+    const txt = document.createElement("span");
+    txt.className = "qp-text";
+    txt.textContent = _quoteContentText(q);
+    div.appendChild(who);
+    div.appendChild(txt);
+    return div;
+}
+
+function addSticker(stickerPath, who, prepend = false, seq = null, label = null, quote = null) {
+    const row = document.createElement("div");
+    row.className = "msg-row " + (who === "user" ? "user" : "firefly");
+    if (seq !== null) row.dataset.seq = seq;
+    if (label) row.dataset.stickerLabel = label;   // 长按菜单需要表情含义
+    if (!prepend) row.classList.add("float-in");
+    const img = document.createElement("img");
+    img.className = "sticker-img";
+    img.src = (IS_SERVER ? API_BASE : "") + "/assets/" + stickerPath;
+    img.dataset.stickerPath = stickerPath;
+    // 容错：表情包文件缺失（历史遗留/用户删除）时降级为文字占位，不显示裂图
+    img.onerror = () => {
+        if (img.dataset.fallback) return;
+        img.dataset.fallback = "1";
+        const span = document.createElement("span");
+        span.className = "sticker-fallback";
+        span.textContent = "（表情包已失效）";
+        row.replaceChild(span, img);
+    };
+    if (quote) {
+        const col = document.createElement("div");
+        col.className = "msg-col";
+        col.appendChild(_buildQuotePreview(quote));
+        col.appendChild(img);
+        row.appendChild(col);
+    } else {
+        row.appendChild(img);
+    }
+    _addAvatar(row, who);
+    if (prepend) { messagesEl.insertBefore(row, messagesEl.firstChild); }
+    else { messagesEl.appendChild(row); scrollToBottom(); }
+    return row;
+}
+
+function addNarration(text, style, prepend = false, seq = null) {
+    // 视觉小说式旁白：scene=居中小字（环境/事件），action=居中括号（动作）
+    // 防御：历史数据/LLM 可能自带括号，先剥离避免双重括号
+    let t = (text || "").trim();
+    if ((t.startsWith("（") && t.endsWith("）")) || (t.startsWith("(") && t.endsWith(")"))) {
+        t = t.slice(1, -1).trim();
+    }
+    const row = document.createElement("div");
+    row.className = "msg-row narration-row";
+    if (seq !== null) row.dataset.seq = seq;
+    if (!prepend) row.classList.add("float-in");
+    const el = document.createElement("div");
+    el.className = "narration " + (style === "scene" ? "narration-scene" : "narration-action");
+    if (style === "action") el.textContent = "（" + t + "）";
+    else el.textContent = t;
+    row.appendChild(el);
+    if (prepend) { messagesEl.insertBefore(row, messagesEl.firstChild); }
+    else { messagesEl.appendChild(row); scrollToBottom(); }
+    return row;
+}
+
+// ═══════════════════════════════════════════
+// 长按消息菜单（QQ 式）：引用 / 收藏
+// ═══════════════════════════════════════════
+const _LONG_PRESS_MS = 500;
+let _lpTimer = null, _lpRow = null, _lpStart = null;
+let _msgMenu = null;
+let _quoteTarget = null;   // 引用快照（发送后随消息提交，然后清空）
+
+/** 从消息行提取快照（who/type/content…；seq 只在历史渲染的消息上有） */
+function _msgSnapshot(row) {
+    const who = row.classList.contains("user") ? "user" : "firefly";
+    const snap = {who};
+    const seq = parseInt(row.dataset.seq, 10);
+    if (!isNaN(seq)) snap.seq = seq;
+    if (row.classList.contains("narration-row")) {
+        snap.type = "narration";
+        const el = row.querySelector(".narration");
+        let t = el ? el.textContent : "";
+        t = t.replace(/^（|）$/g, "").trim();   // 剥掉旁白自带括号，引用内容更干净
+        snap.text = t;
+    } else if (row.querySelector(".sticker-img")) {
+        snap.type = "sticker";
+        snap.label = row.dataset.stickerLabel || "";
+        const img = row.querySelector(".sticker-img");
+        if (img) snap.path = img.dataset.stickerPath || "";
+    } else {
+        snap.type = "text";
+        const b = row.querySelector(".bubble");
+        snap.content = b ? b.textContent : "";
+    }
+    return snap;
+}
+
+function _snapHasContent(s) {
+    if (!s) return false;
+    if (s.type === "text") return !!(s.content && s.content.trim());
+    if (s.type === "sticker") return !!(s.label || s.path);
+    if (s.type === "narration") return !!(s.text && s.text.trim());
+    return false;
+}
+
+function _closeMsgMenu() {
+    if (_msgMenu) { _msgMenu.remove(); _msgMenu = null; }
+}
+window._closeMsgMenu = _closeMsgMenu;
+
+/** PC 侧栏导航用：打开菜单抽屉并切到指定 tab（双栏下抽屉即右栏视图） */
+function openMenuTab(tab) {
+    openMenu();
+    const b = document.querySelector('.menu-tab[data-tab="' + tab + '"]');
+    if (b) b.click();
+}
+window.openMenuTab = openMenuTab;
+
+function _showMsgMenu(row, x, y) {
+    const snap = _msgSnapshot(row);
+    if (!_snapHasContent(snap)) return;
+    _closeMsgMenu();   // 唯一性：先清掉旧菜单，保证同一时刻只有一个「引用/收藏」菜单
+    const menu = document.createElement("div");
+    menu.id = "msg-long-menu";
+    _msgMenu = menu;   // 登记为当前菜单（_closeMsgMenu 靠它清理；漏掉会越积越多）
+    const mkBtn = (label, icon, fn) => {
+        const b = document.createElement("button");
+        b.type = "button";
+        b.className = "mlm-btn";
+        b.textContent = icon + " " + label;
+        b.addEventListener("click", fn);
+        return b;
+    };
+    menu.appendChild(mkBtn("引用", "📎", () => { _closeMsgMenu(); _setQuote(snap); }));
+    menu.appendChild(mkBtn("收藏", "⭐", async () => {
+        _closeMsgMenu();
+        try {
+            const resp = await fetch("/favorite", {
+                method: "POST",
+                headers: {"Content-Type": "application/json"},
+                body: JSON.stringify({mode: CURRENT_MODE, message: snap}),
+            });
+            const d = await resp.json();
+            showToast(d.ok ? "已收藏（菜单 → 收藏可查看）" : "收藏失败：" + (d.error || ""));
+        } catch (e) { showToast("收藏失败，请重试"); }
+    }));
+    document.body.appendChild(menu);
+    // 定位：消息在上半屏 → 菜单放下方；下半屏 → 放上方（QQ 式，且不超出视口）
+    const mw = menu.offsetWidth, mh = menu.offsetHeight;
+    const r = row.getBoundingClientRect();
+    const vw = innerWidth, vh = innerHeight;
+    let left = Math.min(Math.max(8, x - mw / 2), vw - mw - 8);
+    const cy = r.top + r.height / 2;
+    let top = cy < vh / 2 ? r.bottom + 10 : r.top - mh - 10;
+    top = Math.max(8, Math.min(top, vh - mh - 8));
+    menu.style.left = left + "px";
+    menu.style.top = top + "px";
+}
+
+function _cancelLongPress() {
+    if (_lpTimer) { clearTimeout(_lpTimer); _lpTimer = null; }
+    _lpRow = null; _lpStart = null;
+}
+
+// 长按（触屏/鼠标按住）与 PC 右键都弹菜单
+messagesEl.addEventListener("pointerdown", (e) => {
+    if (e.pointerType === "mouse" && e.button !== 0) return;
+    const row = e.target.closest(".msg-row");
+    if (!row || e.target.closest(".msg-avatar")) return;          // 头像长按留给形象切换
+    if (row.querySelector(".typing-bubble")) return;              // 加载占位不可长按
+    _cancelLongPress();
+    _lpRow = row;
+    _lpStart = {x: e.clientX, y: e.clientY};
+    _lpTimer = setTimeout(() => {
+        _lpTimer = null;
+        if (_lpRow && _lpRow.isConnected) {
+            try { if (navigator.vibrate) navigator.vibrate(20); } catch (e) {}   // 触觉反馈
+            _showMsgMenu(_lpRow, _lpStart.x, _lpStart.y);
+        }
+    }, _LONG_PRESS_MS);
+});
+window.addEventListener("pointermove", (e) => {
+    if (_lpTimer && _lpStart) {
+        const dx = e.clientX - _lpStart.x, dy = e.clientY - _lpStart.y;
+        if (dx * dx + dy * dy > 64) _cancelLongPress();   // 移动超 8px = 滚动/滑动，取消长按
+    }
+}, {passive: true});
+window.addEventListener("pointerup", _cancelLongPress);
+window.addEventListener("pointercancel", _cancelLongPress);
+messagesEl.addEventListener("scroll", _closeMsgMenu, {passive: true});
+// 点击菜单外任意处关闭
+document.addEventListener("pointerdown", (e) => {
+    if (_msgMenu && !e.target.closest("#msg-long-menu")) _closeMsgMenu();
+}, {capture: true});
+// PC 右键同样弹菜单
+messagesEl.addEventListener("contextmenu", (e) => {
+    const row = e.target.closest(".msg-row");
+    if (!row) return;
+    e.preventDefault();
+    _showMsgMenu(row, e.clientX, e.clientY);
+});
+
+// ── 引用：设置引用条（输入框上方） ──
+function _setQuote(snap) {
+    _quoteTarget = snap;
+    const bar = document.getElementById("quote-bar");
+    if (!bar) return;
+    const whoEl = document.getElementById("quote-who");
+    const txtEl = document.getElementById("quote-text");
+    if (whoEl) whoEl.textContent = "引用 " + _quoteWhoName(snap);
+    if (txtEl) txtEl.textContent = _quoteContentText(snap);
+    bar.style.display = "flex";
+    inputEl.focus();
+}
+function _clearQuote() {
+    _quoteTarget = null;
+    const bar = document.getElementById("quote-bar");
+    if (bar) bar.style.display = "none";
+}
+document.getElementById("quote-cancel")?.addEventListener("click", _clearQuote);
+
+function addTimeDivider(timeStr) {
+    const div = document.createElement("div");
+    div.className = "time-divider";
+    div.textContent = timeStr;
+    messagesEl.appendChild(div);
+}
+
+/** 消息加载占位：三个流水灯圆点（0.5~1s 后替换为真实内容） */
+function addTypingBubble(who) {
+    const row = document.createElement("div");
+    row.className = "msg-row " + (who === "user" ? "user" : "firefly");
+    const bubble = document.createElement("div");
+    bubble.className = "bubble typing-bubble";
+    bubble.innerHTML = "<span></span><span></span><span></span>";
+    row.appendChild(bubble);
+    _addAvatar(row, who);
+    messagesEl.appendChild(row);
+    scrollToBottom();
+    return row;
+}
+
+export function renderMessages(messages, who, data) {
+    if (!messages || messages.length === 0) return;
+    S._lastRenderTs = Date.now();   // 渲染时间戳（供主动性轮询门控；原二次包装已合并进来）
+    const gen = _modeGen;   // 捕获渲染启动时的模式代际
+    S._rendering = true;   // 渲染动画开始：防主动轮询中途插入乱序
+    // 时间标注：取第一条消息的时间，放居中分割线
+    const ts = messages[0].time ? messages[0].time.slice(11, 16) : new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
+    addTimeDivider(ts);
+    // 逐条消息加载：先显示三圆点占位，再替换为真实内容（消息含文本与表情包）
+    // 加载时长按字数 0.7~1.5s（表情包按最短 0.7s）；消息之间留 0.5s 空白模拟游戏节奏
+    let seq = 0;
+    const showNext = () => {
+        if (gen !== _modeGen) { S._rendering = false; return; }   // 模式已切换：丢弃剩余动画
+        if (seq >= messages.length) {
+            S._rendering = false;   // 渲染动画完成
+            return;
+        }
+        const msg = messages[seq++];
+        const chars = (msg.content || msg.text || "").length;
+        const loadMs = Math.min(1500, Math.max(700, 700 + chars * 25));
+        const typingRow = addTypingBubble(who);
+        setTimeout(() => {
+            if (gen !== _modeGen) { typingRow.remove(); S._rendering = false; return; }
+            typingRow.remove();
+            if (msg.type === "sticker") addSticker(msg.path, who);
+            else if (msg.type === "narration") addNarration(msg.text, msg.style);
+            else addTextMessage(msg.content, who);
+            setTimeout(showNext, 500);   // 消息间隔：0.5s 空白
+        }, loadMs);
+    };
+    showNext();
+}
+
+// 消息渲染后记录时间（renderMessages 内调用；0.9.0 起已合并进函数本体，保留此注释防回归）
+
+// ═══════════════════════════════════════════
+// 发送消息 — 四阶段模型：输入 → 发送 → 提交 → 回复
+//   输入：打字（内容只在输入框，不触发队列）
+//   发送：Enter / 发送按钮 / 点表情 → 消息**立即 POST 后端**（不等 5 秒，切后台不丢）
+//   提交：后端 5 秒滑动窗口合并（后端控制；/chat/hint 重置窗口、/chat/flush 提前结束）
+//   回复：流萤回复渲染
+// 关键：发送 ≠ 提交。后端窗口合并连续消息；输入框未发送的内容永不提交（绝不自动发送）。
+// ═══════════════════════════════════════════
+export let _inflight = 0;        // 在飞请求数（WakeLock 引用计数：全部完成才释放）
+let _stageTimer = null;   // 阶段进度轮询句柄（等待回复期间轮询 /chat-stage）
+
+// LLM 错误分类 → 人话提示（后端 /chat 返回 error_code 时展示）
+const ERROR_TIPS = {
+    key_invalid: "API Key 无效或已过期，请到设置中检查",
+    no_balance: "API 余额不足，请到 DeepSeek 平台充值后再试",
+    rate_limit: "请求太频繁，稍等一会儿再试试",
+    network: "网络不通，请检查网络后重试",
+    server_error: "服务端暂时出错，请稍后再试",
+    bad_response: "服务返回异常，请稍后再试",
+    relay_timeout: "代发超时，请检查网络后重试",
+    quota_exhausted: "今日服务器托管额度已用完，可在设置中切换为自带 Key 模式",
+    unknown: "出了点问题，请稍后再试",
+};
+
+
+/** 导出当前模式数据备份（zip）。
+ *  local：window.location.href（PC 浏览器直接下载 / 安卓壳 DownloadListener 接管下载目录）；
+ *  server：fetch → blob → a.click()（file:// 页面跨域，不能直接 window.location）。 */
+async function exportData() {
+    if (!IS_SERVER) {
+        window.location.href = `/export-data?mode=${encodeURIComponent(CURRENT_MODE)}`;
+        _toast("正在导出备份…");
+        return;
+    }
+    try {
+        const resp = await fetch(`/export-data?mode=${encodeURIComponent(CURRENT_MODE)}`);
+        if (!resp.ok) { _toast("导出失败，请稍后再试"); return; }
+        const blob = await resp.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `firefly-backup-${CURRENT_MODE}.zip`;
+        document.body.appendChild(a);
+        a.click();
+        setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 1500);
+        _toast("已开始导出备份");
+    } catch (e) { _toast("导出失败，请检查网络"); }
+}
+window.exportData = exportData;
+
+/** 导入 zip 备份（覆盖当前模式数据；导入前后端自动备份现有数据）。 */
+function importData() {
+    const input = document.getElementById("import-file");
+    if (!input) return;
+    input.onchange = async () => {
+        const f = input.files && input.files[0];
+        input.value = "";   // 允许重复选同一文件
+        if (!f) return;
+        if (!confirm(`导入将覆盖当前「${MODE_NAMES[CURRENT_MODE] || CURRENT_MODE}」的全部数据（导入前会自动备份现有数据）。\n\n确定导入 ${f.name} 吗？`)) return;
+        _toast("正在导入…");
+        try {
+            const fd = new FormData();
+            fd.append("file", f);
+            fd.append("mode", CURRENT_MODE);
+            const resp = await fetch("/import-data", { method: "POST", body: fd });
+            const data = await resp.json().catch(() => ({}));
+            if (resp.ok && data.ok) {
+                _toast("导入成功，正在重新加载…");
+                setTimeout(() => location.reload(), 800);
+            } else {
+                _toast("导入失败：" + (data.error || "请检查文件"));
+            }
+        } catch (e) { _toast("导入失败，请检查网络"); }
+    };
+    input.click();
+}
+window.importData = importData;
+
+/** 备份到账号（服务器模式专属）：导出 zip → 上传 /sync/upload。 */
+async function syncToAccount() {
+    if (!IS_SERVER) return;
+    _toast("正在备份到账号…");
+    try {
+        const resp = await fetch(`/export-data?mode=${encodeURIComponent(CURRENT_MODE)}`);
+        if (!resp.ok) { _toast("导出失败，无法备份"); return; }
+        const blob = await resp.blob();
+        const fd = new FormData();
+        fd.append("file", blob, `firefly-backup-${CURRENT_MODE}.zip`);
+        fd.append("mode", CURRENT_MODE);
+        const up = await fetch("/sync/upload", { method: "POST", body: fd });
+        const data = await up.json().catch(() => ({}));
+        if (up.ok && data.ok) _toast("已备份到账号（云端保留最近 3 份）");
+        else _toast("备份失败：" + (data.error || ""));
+    } catch (e) { _toast("备份失败，请检查网络"); }
+}
+window.syncToAccount = syncToAccount;
+
+/** 从账号恢复（服务器模式专属）：下载最新云端备份 → 导入。 */
+async function restoreFromAccount() {
+    if (!IS_SERVER) return;
+    if (!confirm(`从账号恢复将覆盖当前「${MODE_NAMES[CURRENT_MODE] || CURRENT_MODE}」的全部数据（导入前会自动备份现有数据）。\n\n确定恢复吗？`)) return;
+    _toast("正在从账号恢复…");
+    try {
+        const resp = await fetch(`/sync/download?mode=${encodeURIComponent(CURRENT_MODE)}`);
+        if (!resp.ok) {
+            const d = await resp.json().catch(() => ({}));
+            _toast(d.error || "账号还没有备份");
+            return;
+        }
+        const blob = await resp.blob();
+        const fd = new FormData();
+        fd.append("file", blob, `firefly-restore-${CURRENT_MODE}.zip`);
+        fd.append("mode", CURRENT_MODE);
+        const up = await fetch("/import-data", { method: "POST", body: fd });
+        const data = await up.json().catch(() => ({}));
+        if (up.ok && data.ok) {
+            _toast("恢复成功，正在重新加载…");
+            setTimeout(() => location.reload(), 800);
+        } else {
+            _toast("恢复失败：" + (data.error || ""));
+        }
+    } catch (e) { _toast("恢复失败，请检查网络"); }
+}
+window.restoreFromAccount = restoreFromAccount;
+
+/** 等待回复期间轮询流水线阶段（检索→分析→回复→表情包），把"对方正在输入…"换成具体阶段。
+ *  仅在拿到 stage 时替换文本；请求结束由 _chatSend 的 finally 清除。 */
+function _pollStage(statusEl) {
+    clearInterval(_stageTimer);
+    _stageTimer = setInterval(async () => {
+        if (_inflight <= 0) { clearInterval(_stageTimer); _stageTimer = null; return; }
+        try {
+            const r = await fetch(`/chat-stage?sid=${encodeURIComponent(SESSION_ID)}&mode=${encodeURIComponent(CURRENT_MODE)}`);
+            const d = await r.json();
+            if (d.stage && d.label && _inflight > 0 && statusEl) statusEl.textContent = d.label;
+        } catch (e) { /* 网络抖动静默，状态保持"对方正在输入" */ }
+    }, 2000);
+}
+
+/** 打字中：重置后端合并窗口（流萤继续等开拓者说完）。
+ * 输入框仍有内容 → 持续定时重置（前端在且输入框有残留 = 用户在打字 → 永不提交）；
+ * 输入框清空/切后台 → 停止发 hint，后端窗口自然到期兜底。 */
+function _sendHint() {
+    fetch("/chat/hint", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({ session_id: SESSION_ID, mode: CURRENT_MODE }),
+    }).catch(() => {});
+    // 输入框仍有残留（用户还在打字/未清空）→ 继续定时重置窗口
+    if (inputEl && inputEl.value.trim()) {
+        S._hintTimer = setTimeout(_sendHint, 2000);
+    }
+}
+
+/** 提交窗口到期：立即结束后端合并窗口（前台加速；切后台冻结不触发，后端窗口兜底）。
+ * 状态显示时机：只有提交（进入核心流水线）才显示"对方正在输入"，窗口等待期不显示。 */
+function _sendFlush() {
+    if (inputEl) inputEl.placeholder = "说点什么…";   // 提交窗口结束：还原补话提示（3.6）
+    if (_inflight === 0) return;   // 无在飞请求（已完成）：不显示状态，防止卡"正在输入"
+    const statusEl = document.querySelector("#header .status");
+    if (statusEl) statusEl.textContent = "对方正在输入...";
+    fetch("/chat/flush", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({ session_id: SESSION_ID, mode: CURRENT_MODE }),
+    }).catch(() => {});
+}
+
+/** 发送消息到后端并处理响应：
+ *  副请求（窗口内）→ 后端返回 {queued:true}，回复由主请求带回，忽略；
+ *  主请求（窗口结束/新窗口）→ 挂起等回复，返回后渲染。
+ *  状态显示不在此处设置——窗口等待期不显示"正在输入"，由 _sendFlush（提交）触发。
+ *  超时护栏：/chat 挂 4 分钟 AbortController，上游（LLM 端点）卡住时
+ *  自动放弃等待并提示，避免页面无限挂起"对方正在输入…"（历史上游 5xx 重试
+ *  + 单阶段 120s 超时可拖 15 分钟以上，会话锁全线阻塞）。 */
+const _CHAT_FETCH_TIMEOUT = 4 * 60 * 1000;   // 4 分钟（覆盖 4 阶段最长流水线）
+
+async function _chatSend(msgs) {
+    _inflight++;
+    const statusEl = document.querySelector("#header .status");
+    const defaultStatus = statusEl ? statusEl.textContent : "";
+    const gen = _modeGen;   // 捕获发起时的模式代际
+    // 后台保活（安卓 WebView JS Bridge）：回复流程（检索→分析→回复→调度）期间
+    // 持 CPU/WiFi 锁，用户切后台/锁屏也能完成回复；引用计数归零才释放。
+    // 浏览器端（PC/服务器版）无 androidWakeLock，此段安全跳过
+    if (window.androidWakeLock && _inflight === 1) { window.androidWakeLock.acquire(); }
+    _pollStage(statusEl);   // 启动阶段进度轮询（回复到达后 finally 清除）
+    const abortCtrl = typeof AbortController !== "undefined" ? new AbortController() : null;
+    const abortTimer = abortCtrl ? setTimeout(() => abortCtrl.abort(), _CHAT_FETCH_TIMEOUT) : null;
+    try {
+        const fetchOpts = {
+            method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({ messages: msgs, session_id: SESSION_ID, mode: CURRENT_MODE }),
+        };
+        // 旧 WebView 无 AbortController：不带 signal 字段，行为与之前一致
+        if (abortCtrl) fetchOpts.signal = abortCtrl.signal;
+        const resp = await fetch("/chat", fetchOpts);
+        const data = await resp.json();
+        if (gen !== _modeGen) return;   // 模式已切换：丢弃回复（消息已写盘到原模式，不渲染）
+        if (data.need_key) openSettings();
+        else if (data.messages) {
+            renderMessages(data.messages, "firefly", data);
+            _notifyFirefly(data.messages);   // 切后台时回复完成通知（桥判断前台与否）
+        }
+        else if (data.reply) addTextMessage(data.reply, "firefly");
+        if (data.error_code) _toast(ERROR_TIPS[data.error_code] || ERROR_TIPS.unknown);
+        // data.queued：副请求，回复由主请求带回，无 UI 操作
+    } catch (e) {
+        if (gen === _modeGen && _inflight === 1) {
+            if (abortCtrl && e && e.name === "AbortError") {
+                // 上游卡住被超时中止：消息已即时写盘不丢，提示用户稍后再试
+                addTextMessage("嗯…上游有点忙，我先不打扰了，过会儿再试试？", "firefly");
+            } else {
+                addTextMessage("嗯…信号不太好，等会儿再试试？", "firefly");
+            }
+        }
+    } finally {
+        if (abortTimer) clearTimeout(abortTimer);
+        if (window.androidWakeLock && _inflight === 1) { window.androidWakeLock.release(); }
+        _inflight--;
+        if (_inflight === 0) {
+            clearTimeout(S._flushTimer); S._flushTimer = null;   // 请求完成：提交计时器作废
+            clearInterval(_stageTimer); _stageTimer = null;  // 阶段轮询结束
+            if (statusEl) statusEl.textContent = defaultStatus;
+            inputEl.focus();
+            // 响应式回复完成后 ≥1s 防抖，触发主动式判断（主动式未触发则服务端串联概率式）
+            setTimeout(() => { if (_idleOk()) checkProactive(); }, 1000);
+        }
+    }
+}
+
+async function send() {
+    const text = inputEl.value.trim();
+    if (!text || S.waiting) return;   // 主动消息思考渲染中：禁止发送防乱序
+    inputEl.value = "";
+    const q = _quoteTarget;
+    addTextMessage(text, "user", false, null, q);
+    inputEl.focus();
+    // 输入框清空 → 停止 hint 循环 + 重置 5 秒提交窗口（到期 flush 结束后端窗口）
+    clearTimeout(S._hintTimer);
+    clearTimeout(S._flushTimer);
+    S._flushTimer = setTimeout(_sendFlush, 5000);
+    // 3.6：提交窗口内（5s）用占位符提示"还能补话"，窗口到期由 _sendFlush 还原
+    inputEl.placeholder = "还可以继续说…";
+    const msg = {type: "text", content: text};
+    if (q) msg.quote = q;   // 引用随消息提交（后端写盘 + LLM 上下文）
+    _chatSend([msg]);   // 统一消息对象类型，立即发送
+    _clearQuote();
+}
+
+// ═══════════════════════════════════════════
+// 表情包面板（输入框内 😊 按钮）
+// ═══════════════════════════════════════════
+const stickerPanel = document.getElementById("sticker-panel");
+const stickerGrid = document.getElementById("sticker-grid");
+const stickerBtn = document.getElementById("sticker-btn");
+
+stickerBtn.addEventListener("click", async () => {
+    if (stickerPanel.classList.contains("show")) {
+        stickerPanel.classList.remove("show");
+        return;
+    }
+    stickerPanel.classList.add("show");
+    if (!stickerGrid.dataset.loaded) {
+        try {
+            const resp = await fetch("/stickers?enabled=1");
+            const data = await resp.json();
+            const list = data.stickers || [];
+            stickerGrid.innerHTML = list.map(s =>
+                `<img src="${IS_SERVER ? API_BASE : ""}/assets/${escapeHtml(s.file)}" alt="${escapeHtml(s.label)}" data-label="${escapeHtml(s.label)}" data-file="${escapeHtml(s.file)}">`).join("");
+            stickerGrid.dataset.loaded = "1";
+            stickerGrid.querySelectorAll("img").forEach(img => {
+                img.addEventListener("click", () => {
+                    stickerPanel.classList.remove("show");
+                    sendStickerMessage(img.dataset.label, img.dataset.file);
+                });
+            });
+        } catch (e) { /* 静默 */ }
+    }
+});
+// 点击聊天区关闭表情面板
+messagesEl.addEventListener("click", () => stickerPanel.classList.remove("show"));
+document.getElementById("sticker-panel-close").addEventListener("click", () => stickerPanel.classList.remove("show"));
+
+/** 发送表情包：作为一条消息立即发送（与文字同一窗口合并，不碰输入框内容） */
+function sendStickerMessage(label, file) {
+    if (S.waiting) return;   // 主动消息思考渲染中：禁止发送防乱序
+    const q = _quoteTarget;
+    if (file) addSticker(file, "user", false, null, label, q);   // 本地立即渲染表情图
+    inputEl.focus();
+    clearTimeout(S._flushTimer);
+    S._flushTimer = setTimeout(_sendFlush, 5000);   // 表情入队 → 重置提交窗口
+    const msg = {type: "sticker", label, file};
+    if (q) msg.quote = q;
+    _chatSend([msg]);
+    _clearQuote();
+}
+
+sendBtn.addEventListener("click", send);
+inputEl.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
+});
+// 提交窗口控制（发送≠提交，窗口在后端）：
+// - 输入框有内容（打字中）→ 暂停 flush + 防抖 hint（后端重置窗口，流萤等开拓者说完）
+// - 输入框清空 → 重新 5 秒 flush 计时（到期结束后端窗口；切后台冻结则后端窗口兜底）
+inputEl.addEventListener("input", () => {
+    clearTimeout(S._hintTimer);
+    if (inputEl.value.trim()) {
+        inputEl.placeholder = "说点什么…";   // 开始打字即还原提示（3.6）
+        clearTimeout(S._flushTimer);
+        S._flushTimer = null;   // 有未发送内容：暂停 flush，不提前结束后端窗口
+        S._hintTimer = setTimeout(_sendHint, 2000);   // 停顿 2 秒发 hint 重置后端窗口（持续打字则持续等待）
+    } else {
+        S._flushTimer = setTimeout(_sendFlush, 5000);   // 清空：5 秒后提交
+    }
+});
+
+// ═══════════════════════════════════════════
+// 休息 / 清除 / 撤回
+// ═══════════════════════════════════════════
+const restOverlay = document.getElementById("rest-overlay");
+document.getElementById("menu-rest-btn").addEventListener("click", async () => {
+    if (!confirm("让流萤去休息吗？她会整理这段对话的记忆。")) return;
+    closeMenu();
+    restOverlay.style.display = "flex";
+    document.getElementById("rest-text").textContent = "流萤正在整理记忆…";
+    try {
+        const resp = await fetch("/rest", {
+            method: "POST", headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({ session_id: SESSION_ID, mode: CURRENT_MODE }),
+        });
+        const data = await resp.json();
+        restOverlay.style.display = "none";   // 无论成败都收起遮罩（失败信息已在 text 中展示）
+        document.getElementById("rest-text").textContent = data.ok
+            ? `流萤已休息。新增记忆 ${data.added} 条，解决 ${data.resolved} 条。下次见。`
+            : "整理出了点问题：" + (data.error || "未知");
+    } catch (e) {
+        restOverlay.style.display = "none";
+        document.getElementById("rest-text").textContent = "信号不好，等会儿再试。";
+    }
+});
+
+document.getElementById("menu-clear-btn").addEventListener("click", async () => {
+    if (!confirm("确认清除全部对话历史？此操作不可撤销。")) return;
+    closeMenu();
+    try {
+        const resp = await fetch("/clear-history", {
+            method: "POST", headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({ session_id: SESSION_ID, mode: CURRENT_MODE }),
+        });
+        const data = await resp.json();
+        if (data.ok) { messagesEl.innerHTML = ""; }
+    } catch (e) { alert("网络错误"); }
+});
+
+const undoBtn = document.getElementById("menu-undo-btn");
+undoBtn.addEventListener("click", async () => {
+    if (!confirm("撤回上一轮对话？")) return;
+    closeMenu();
+    undoBtn.disabled = true;
+    try {
+        const resp = await fetch("/undo", {
+            method: "POST", headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({ session_id: SESSION_ID, mode: CURRENT_MODE }),
+        });
+        const data = await resp.json();
+        if (data.ok) {
+            // 删除最后一段连续 user 块及其后的所有消息（整轮）
+            const rows = messagesEl.querySelectorAll(".msg-row");
+            const users = [...rows].filter(r => r.classList.contains("user"));
+            if (users.length > 0) {
+                let start = users[users.length - 1];
+                let sib = start.previousElementSibling;
+                while (sib && sib.classList.contains("msg-row") && sib.classList.contains("user")) {
+                    start = sib; sib = sib.previousElementSibling;
+                }
+                let node = start;
+                while (node) {
+                    const nxt = node.nextElementSibling;
+                    node.remove();
+                    node = nxt;
+                }
+            }
+        }
+    } catch (e) {}
+    undoBtn.disabled = false;
+});
+
+// ═══════════════════════════════════════════
+// 历史加载
+// ═══════════════════════════════════════════
+let _loading = false;
+let _lastWho = null;
+function renderHistoryMessage(m, prepend=false) {
+    const ts = m.time ? m.time.slice(11,16) : null;
+    // 发送方变化时插入时间分割线
+    if (m.who !== _lastWho && ts) {
+        addTimeDivider(ts);
+        _lastWho = m.who;
+    }
+    if (m.type==="sticker") addSticker(m.path, m.who, prepend, m.seq, m.label, m.quote);
+    else if (m.type==="narration") addNarration(m.text, m.style, prepend, m.seq);
+    else addTextMessage(m.content, m.who, prepend, m.seq, m.quote);
+}
+export async function loadHistory(beforeSeq=null) {
+    if (_loading) return; _loading = true;
+    const gen = _modeGen;   // 捕获发起时的模式代际
+    const url = beforeSeq ? `/history?limit=150&before_seq=${beforeSeq}&mode=${CURRENT_MODE}` : `/history?limit=150&mode=${CURRENT_MODE}`;
+    _lastWho = null;
+    try {
+        const resp = await fetch(url);
+        const data = await resp.json();
+        if (gen !== _modeGen) return;   // 模式已切换：丢弃旧模式历史，防止渲染进新模式界面
+        if (!data.messages || data.messages.length===0) { S._hasMore=false; return; }
+        if (!beforeSeq) { data.messages.forEach(m=>renderHistoryMessage(m,false)); messagesEl.scrollTop=messagesEl.scrollHeight; undoBtn.disabled=false; }
+        else { const ph=messagesEl.scrollHeight, ps=messagesEl.scrollTop; data.messages.slice().reverse().forEach(m=>renderHistoryMessage(m,true)); messagesEl.scrollTop=ps+(messagesEl.scrollHeight-ph); }
+        S._hasMore = !!data.has_more;
+    } catch(e) {} finally { _loading=false; }
+}
+messagesEl.addEventListener("scroll", () => {
+    if (messagesEl.scrollTop===0 && S._hasMore && !_loading) {
+        const first = messagesEl.firstChild;
+        const seq = first ? parseInt(first.dataset.seq) : null;
+        if (seq) loadHistory(seq);
+    }
+});

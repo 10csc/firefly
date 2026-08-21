@@ -33,12 +33,16 @@ android/app/src/main/python/backend/
 
 # ── 外来资料（搜索下载，禁止入库）──
 docs/搜索资料结果/
+docs/前端/截图/
 downloads/
 firefly_backup_*.bundle
 firefly_keystore_backup_*/
 
 # ── 封装/训练产物（3GB，禁止入库）──
 封装（没指定就不读）/
+FireflyVoiceResearch/
+论文/
+dsh-update/
 
 # ── 本地杂物 ──
 .vscode/

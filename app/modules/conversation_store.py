@@ -37,6 +37,69 @@ class InputRejected(ConversationStoreError):
     pass
 
 
+# ── 消息引用（长按消息 → 引用）─────────────────────
+# 引用 = 消息快照 {who, type, content/path/label/text, seq?}，随用户消息写盘；
+# LLM 侧以 [引用流萤：「…」] 前缀形式进入上下文，前端渲染引用小卡片。
+_QUOTE_FIELDS = ("who", "type", "content", "path", "label", "text", "style", "seq")
+_QUOTE_CONTENT_MAX = 2000
+_QUOTE_TYPES = ("text", "sticker", "narration")
+
+
+def sanitize_quote(q):
+    """净化引用快照：只保留白名单字段、字符串长度截断、类型校验。返回 dict 或 None（无效）。"""
+    if not isinstance(q, dict):
+        return None
+    out = {}
+    for k in _QUOTE_FIELDS:
+        v = q.get(k)
+        if v is None:
+            continue
+        if k == "seq":
+            try:
+                v = int(v)
+            except (TypeError, ValueError):
+                continue
+        else:
+            if not isinstance(v, str):
+                continue
+            v = v.strip()[:_QUOTE_CONTENT_MAX]
+            if not v:
+                continue
+        out[k] = v
+    if out.get("who") not in ("user", "firefly"):
+        out.pop("who", None)
+    if out.get("type") not in _QUOTE_TYPES:
+        out.pop("type", None)
+    if not out.get("type"):
+        return None
+    return out
+
+
+def format_quote_for_llm(quote) -> str:
+    """引用快照 → LLM 可见文本（如 [引用流萤：「…」]）。无效返回空串。"""
+    if not isinstance(quote, dict):
+        return ""
+    who = {"firefly": "流萤", "user": "开拓者"}.get(quote.get("who"), "对方")
+    t = quote.get("type")
+    if t == "sticker":
+        body = f"[表情包：{quote.get('label') or quote.get('path') or ''}]"
+    elif t == "narration":
+        body = quote.get("text") or ""
+    else:
+        body = quote.get("content") or ""
+    body = str(body).strip()
+    if not body:
+        return ""
+    return f"[引用{who}：「{body}」]"
+
+
+def compose_user_text(content, quote) -> str:
+    """带引用的用户消息 → 提交给 LLM 的文本（无引用时原样返回）。"""
+    prefix = format_quote_for_llm(quote)
+    text = str(content or "")
+    return (prefix + "\n" + text) if prefix else text
+
+
 # ── 内部 ──────────────────────────────────────────
 def _migrate_legacy(mode: str = DEFAULT_MODE):
     """app/data → {mode}/data，只迁一次。"""
@@ -196,6 +259,13 @@ def append_message(who: str, msg: dict, mode: str = DEFAULT_MODE) -> tuple:
         time_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         record = {"seq": seq, "time": time_str, "who": who}
         record.update(msg)
+        # 引用净化：只保留白名单字段（防前端注入任意键/超长字符串）
+        if "quote" in record:
+            q = sanitize_quote(record.get("quote"))
+            if q:
+                record["quote"] = q
+            else:
+                record.pop("quote", None)
         with conv_file(mode).open("a", encoding="utf-8") as f:
             f.write(json.dumps(record, ensure_ascii=False) + "\n")
 
@@ -307,13 +377,13 @@ def hydrate_context(ctx, max_turns: int = 40, mode: str = DEFAULT_MODE) -> int:
                                 stickers, narrations))
             continue
         if m.get("who") == "user" and m.get("type") == "text" and m.get("content"):
-            user_texts = [m["content"]]
+            user_texts = [compose_user_text(m["content"], m.get("quote"))]
             texts, stickers, narrations = [], [], []
             i += 1
             # 连续 user 消息合并为一轮（分条写盘场景：5s 批处理的多条消息）
             while i < n and raw[i].get("who") == "user":
                 if raw[i].get("type") == "text" and raw[i].get("content"):
-                    user_texts.append(raw[i]["content"])
+                    user_texts.append(compose_user_text(raw[i]["content"], raw[i].get("quote")))
                 i += 1
             while i < n and raw[i].get("who") == "firefly":
                 fm = raw[i]

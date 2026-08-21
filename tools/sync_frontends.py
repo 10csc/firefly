@@ -44,10 +44,37 @@ def _copy(src: Path, dst: Path) -> None:
 
 
 def _copy_static(dst: Path, exclude: tuple = ()) -> None:
-    """把 app/static 全部文件拷到 dst（config.js 除外——安卓 assets 用服务器版 config.js）。"""
+    """把 app/static 全部文件拷到 dst（config.js 除外——安卓 assets 用服务器版 config.js）。
+    含子目录（js/ 模块、vendor/ 依赖），0.9.0 起 app.js 拆分为 js/*.js。"""
     for fp in STATIC.iterdir():
         if fp.is_file() and fp.name not in exclude:
             _copy(fp, dst / fp.name)
+    for sub in ("js", "vendor"):
+        src_dir = STATIC / sub
+        if not src_dir.is_dir():
+            continue
+        for fp in src_dir.rglob("*"):
+            if fp.is_file():
+                _copy(fp, dst / sub / fp.relative_to(src_dir))
+
+
+def _remove_stale(dst: Path, names: tuple) -> None:
+    """删除目标处已退役的旧文件（如 0.9.0 拆分前的 app.js）。"""
+    for name in names:
+        fp = dst / name
+        if fp.exists():
+            fp.unlink()
+            print(f"  -> 删除旧文件 {dst.name}/{name}")
+
+
+def _check_dir(name: str, a: Path, b: Path) -> bool:
+    """校验两个目录树内容一致（文件集合 + md5）。"""
+    ok = True
+    a_files = {fp.relative_to(a) for fp in a.rglob("*") if fp.is_file()} if a.is_dir() else set()
+    b_files = {fp.relative_to(b) for fp in b.rglob("*") if fp.is_file()} if b.is_dir() else set()
+    for rel in sorted(a_files | b_files):
+        ok &= _check_pair(f"{name}/{rel.as_posix()}", a / rel, b / rel)
+    return ok
 
 
 def _copy_assets(dst_dir: Path) -> None:
@@ -69,10 +96,23 @@ def _check_pair(name: str, a: Path, b: Path) -> bool:
 def sync(check_only: bool) -> int:
     print("=== 前端同步" + ("（--check 校验模式）" if check_only else "") + " ===")
 
+    # 0) 运行时 bundle：js/*.js（模块源码）→ js/bundle.js（classic，三端统一入口）。
+    #    不跑这步会把旧 bundle 同步出去（2026-08-18 file:// 拦截 ESM 事故的配套防线）。
+    import subprocess
+    bcmd = [sys.executable, str(ROOT / "tools" / "build_frontend_bundle.py")]
+    rb = subprocess.run(bcmd + (["--check"] if check_only else []), capture_output=True,
+                        encoding="utf-8", errors="replace")
+    if rb.returncode != 0:
+        print("X bundle 生成/校验失败：\n" + (rb.stdout + rb.stderr)[:800])
+        return 1
+    if check_only and "漂移" in rb.stdout:
+        print(rb.stdout.strip())
+        return 1
+
     # 1) server/frontend：三份共享前端文件（config.js/login.html/admin.html 为 server 独有，不动）
-    sf_targets = ("index.html", "app.js", "style.css")
+    sf_targets = ("index.html", "style.css")
     # 2) 安卓 assets：app/static 全部 + assets 子集 + server 版 config.js/login.html
-    aa_static = ("index.html", "app.js", "style.css",
+    aa_static = ("index.html", "style.css",
                  "剧情模式.png", "春日手信.png",
                  "开拓者_穹.png", "开拓者_星.png", "流萤_头像.png")
 
@@ -80,8 +120,18 @@ def sync(check_only: bool) -> int:
         ok = True
         for name in sf_targets:
             ok &= _check_pair(name, STATIC / name, SERVER_FRONT / name)
+        ok &= _check_dir("server/js", STATIC / "js", SERVER_FRONT / "js")
+        ok &= _check_dir("server/vendor", STATIC / "vendor", SERVER_FRONT / "vendor")
+        if (SERVER_FRONT / "app.js").exists():
+            print("  X 漂移: server/frontend 旧 app.js 未清理")
+            ok = False
+        if (ANDROID_ASSETS / "app.js").exists():
+            print("  X 漂移: android assets 旧 app.js 未清理")
+            ok = False
         for name in aa_static:
             ok &= _check_pair(name, STATIC / name, ANDROID_ASSETS / name)
+        ok &= _check_dir("android/js", STATIC / "js", ANDROID_ASSETS / "js")
+        ok &= _check_dir("android/vendor", STATIC / "vendor", ANDROID_ASSETS / "vendor")
         ok &= _check_pair("config.js", SERVER_FRONT / "config.js", ANDROID_ASSETS / "config.js")
         ok &= _check_pair("login.html", SERVER_FRONT / "login.html", ANDROID_ASSETS / "login.html")
         for name in ASSET_FILES:
@@ -92,9 +142,18 @@ def sync(check_only: bool) -> int:
     for name in sf_targets:
         _copy(STATIC / name, SERVER_FRONT / name)
         print(f"  -> server/frontend/{name}")
+    for sub in ("js", "vendor"):
+        src_dir = STATIC / sub
+        if src_dir.is_dir():
+            for fp in src_dir.rglob("*"):
+                if fp.is_file():
+                    _copy(fp, SERVER_FRONT / sub / fp.relative_to(src_dir))
+            print(f"  -> server/frontend/{sub}/（{sum(1 for _ in src_dir.rglob('*') if _.is_file())} 文件）")
+    _remove_stale(SERVER_FRONT, ("app.js",))
 
     _copy_static(ANDROID_ASSETS, exclude=("config.js",))
-    print("  -> android assets（app/static 全量，config.js 除外）")
+    _remove_stale(ANDROID_ASSETS, ("app.js",))
+    print("  -> android assets（app/static 全量 + js/ + vendor/，config.js 除外）")
     _copy_assets(ANDROID_ASSETS / "assets")
     print("  -> android assets/assets（背景/字体/图标 9 件）")
     _copy(SERVER_FRONT / "config.js", ANDROID_ASSETS / "config.js")

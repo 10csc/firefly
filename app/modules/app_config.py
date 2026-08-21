@@ -118,7 +118,7 @@ PORT = 8765
 # ── 版本号（唯一权威源）──────────────────────────
 # 发版铁律：改这里必须同步改 4 处：
 #   1. 本文件 APP_VERSION
-#   2. app/static/app.js 的 CURRENT_VERSION
+#   2. app/static/js/panels.js 的 CURRENT_VERSION（0.9.0 起 app.js 已拆分为 js/ 模块）
 #   3. android/app/build.gradle.kts 的 versionName
 #   4. package/firefly.iss 的 AppVersion
 # 用 tools/check_version.py 一键校验四者一致；格式 x.y.z 纯数字点分，
@@ -272,10 +272,10 @@ def _load_config() -> dict:
             for key in ("analyzer_model", "organizer_model", "polisher_model", "retriever_model"):
                 val = data.get(key, "deepseek-v4-flash")
                 cfg[key] = val if val in VALID_MODELS else "deepseek-v4-flash"
-            # 服务器版模型锁：核心流水线只允许 flash（无论配置文件/用户 /set-config 写进什么）
+            # 服务器版模型锁：核心流水线只允许 mimo-v2.5（无论配置文件/用户 /set-config 写进什么）
             if os.environ.get("FIREFLY_SERVER"):
                 for key in ("analyzer_model", "organizer_model", "polisher_model", "retriever_model"):
-                    cfg[key] = "deepseek-v4-flash"
+                    cfg[key] = "mimo-v2.5"
             _effort_defaults = {"retriever_effort": "none", "analyzer_effort": "high",
                                 "polisher_effort": "high", "organizer_effort": "none"}
             for key in _effort_defaults:
@@ -344,10 +344,10 @@ config = _load_config()
 
 
 def save_config() -> None:
-    # 服务器版模型锁：落盘前再次强制 flash，防止任何路径把 pro 写进全局配置
+    # 服务器版模型锁：落盘前再次强制 mimo-v2.5，防止任何路径把其它模型写进全局配置
     if os.environ.get("FIREFLY_SERVER"):
         for key in ("analyzer_model", "organizer_model", "polisher_model", "retriever_model"):
-            config[key] = "deepseek-v4-flash"
+            config[key] = "mimo-v2.5"
     CONFIG_FILE.write_text(
         json.dumps({
             "api_key": config.get("api_key", ""),
@@ -395,7 +395,7 @@ def get_client():
             return None
         from modules.api_client import QuotaClient
         # 无论是否注册了配额钩子，托管模式一律走 QuotaClient：它会在每次 create 时
-        # 强制 model=deepseek-v4-flash，用户/全局配置不可能把运营者 Key 切到 pro。
+        # 强制 model=mimo-v2.5，用户/全局配置不可能把运营者 Key 切到其它模型。
         return QuotaClient(api_key=key, base_url=GO_BASE,
                            quota_fn=_proxy_quota_checker, timeout=120.0)
     mode = config.get("api_mode", "relay" if ctx else "direct")

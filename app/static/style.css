@@ -2,8 +2,8 @@
    流萤聊天 App 样式
    布局策略：移动优先 + clamp() 流式尺寸
    - base（默认）= 手机全宽，字号/头像/间距随视口自动缩放（clamp 按 vw）
-   - 唯一断点 @media (min-width: 720px) 在文件末尾：桌面居中 520px
-   任何屏幕尺寸（320px 小屏 → 折叠屏 → 平板 → 桌面）自动适配。
+   - 720~1100px 过渡档：单栏居中放宽 640px（文件末尾）
+   - ≥1100px 桌面档：IM 双栏（左侧 300px 导航 #pc-sidebar + 右侧主区，文件末尾）
    ═══════════════════════════════════════════ */
 
 /* ── 主题变量（默认暗色；body.theme-light 覆盖为游戏聊天亮色）── */
@@ -20,9 +20,9 @@
     --bub-f-bg: rgba(60,58,72,0.9);     /* 流萤气泡 */
     --bub-f-fg: #d0c8bc;
     --bub-f-border: rgba(200,180,160,0.12);
-    --bub-u-bg: rgba(52,78,120,0.85);   /* 用户气泡 */
-    --bub-u-fg: #c8d8f0;
-    --bub-u-border: rgba(140,170,210,0.18);
+    --bub-u-bg: rgba(38,90,84,0.85);    /* 用户气泡：青金（流萤发色同系，与灰泡拉开重心） */
+    --bub-u-fg: #c9ecdf;
+    --bub-u-border: rgba(120,200,180,0.22);
     --ctrl-bg: rgba(255,255,255,0.08);  /* 输入框/深色控件底 */
     --ctrl-bg-2: rgba(255,255,255,0.06);/* 按钮/标签底 */
     --ctrl-bg-3: rgba(255,255,255,0.04);/* 卡片底 */
@@ -35,6 +35,20 @@
     --carousel-bg: rgba(0,0,0,0.25);    /* 轮播区底 */
     --shadow-panel: rgba(0,0,0,0.5);    /* 桌面面板阴影 */
     --overlay-dark: rgba(0,0,0,0.5);    /* 菜单遮罩 */
+    /* ── 萤火暖金体系（2.1：点缀贯穿——发送键/标签/时间线/纠错/引导统一取用） ── */
+    --gold-line: rgba(255,217,160,0.35);/* 暖金描边（纠错/引导/提示卡；此前散落 fallback，统一收口） */
+    --gold-glow: rgba(255,217,160,0.08);/* 暖金底光 */
+    --red: #ff7a6b;
+    --green: #7fd9a8;
+    --send-bg: rgba(255,196,107,0.22);  /* 发送按钮：萤火暖金 */
+    --send-bg-hover: rgba(255,196,107,0.36);
+    --send-fg: #ffd9a0;
+    --divider-fg: rgba(255,217,160,0.42);/* 时间分割线 */
+    /* 萤火粒子色（canvas 内联脚本经 getComputedStyle 读取；亮色主题覆盖） */
+    --particle-1: 255,196,107;
+    --particle-2: 245,166,35;
+    --particle-3: 143,230,201;
+    --particle-4: 255,214,140;
 }
 /* 亮色主题（游戏聊天样式：浅灰蓝背景、米白面板、流萤白气泡黑字、用户深色气泡） */
 body.theme-light {
@@ -64,6 +78,17 @@ body.theme-light {
     --carousel-bg: rgba(0,0,0,0.08);
     --shadow-panel: rgba(0,0,0,0.35);
     --overlay-dark: rgba(0,0,0,0.4);
+    /* 亮色萤火体系（同步校准：金棕点缀 + 粒子加深保证浅底可见） */
+    --gold-line: rgba(176,122,32,0.4);
+    --gold-glow: rgba(176,122,32,0.08);
+    --send-bg: rgba(176,122,32,0.18);
+    --send-bg-hover: rgba(176,122,32,0.3);
+    --send-fg: #8a6116;
+    --divider-fg: rgba(176,122,32,0.45);
+    --particle-1: 200,140,40;
+    --particle-2: 178,118,28;
+    --particle-3: 62,148,124;
+    --particle-4: 210,158,66;
 }
 /* 亮色下背景图提亮（游戏浅色氛围） */
 body.theme-light #bg { filter: blur(4px) brightness(1.1); }
@@ -166,7 +191,8 @@ body {
 }
 #messages::-webkit-scrollbar { width: 4px; }
 #messages::-webkit-scrollbar-thumb { background: var(--input-border); border-radius: 2px; }
-.msg-row { display: flex; align-items: flex-end; gap: clamp(6px, 2vw, 8px); position: relative; z-index: 0; }
+.msg-row { display: flex; align-items: flex-end; gap: clamp(6px, 2vw, 8px); position: relative; z-index: 0;
+    -webkit-user-select: none; user-select: none; }   /* 禁选：长按触发消息菜单，不触发系统文本选择 */
 .msg-row.user { flex-direction: row-reverse; }
 .msg-row .bubble {
     max-width: 76%;
@@ -230,8 +256,8 @@ body {
 .typing-bubble span:nth-child(2) { animation-delay: 0.18s; }
 .typing-bubble span:nth-child(3) { animation-delay: 0.36s; }
 @keyframes typingFlow {
-    0%, 100% { opacity: 0.2; transform: translateY(0); }
-    30%      { opacity: 1; transform: translateY(-2px); }
+    0%, 100% { opacity: 0.2; transform: translateY(0) scale(1); }
+    30%      { opacity: 1; transform: translateY(-2px) scale(1.18); }   /* 3.1：加点呼吸缩放，更细腻 */
 }
 
 /* ═══ 消息气泡尾巴（默认样式；0.7.2 起聊天气泡主题功能已移除）═══ */
@@ -248,8 +274,13 @@ body {
 .msg-row .time { font-size: 0.65em; color: var(--dot-bg); flex-shrink: 0; margin-bottom: 4px; }
 /* 时间分割线 */
 .time-divider {
-    text-align: center; font-size: 0.7em; color: rgba(255,255,255,0.22);
+    text-align: center; font-size: 0.7em; color: var(--divider-fg);
     padding: 6px 0 8px; user-select: none;
+}
+/* 小字号辅助文字回退系统字体（2.4：StarRailFont 在 ≤0.78em 下可读性一般；正文不变） */
+.field-tip, .am-sub, .msg-row .time, .time-divider, .quote-preview,
+.fav-time, .fav-who, .narration, .set-summary, .notice-tip, .guide-step {
+    font-family: "Microsoft YaHei", "PingFang SC", sans-serif;
 }
 .sticker-img {
     max-width: calc(min(140px, 34vw) * var(--ui-scale));
@@ -265,14 +296,73 @@ body {
     font-size: 0.8em;
 }
 
+/* ═══ 消息引用（长按 → 引用）═══ */
+/* 引用+气泡纵向容器：气泡上方出现引用小卡片 */
+.msg-col {
+    display: flex; flex-direction: column;
+    max-width: 76%; min-width: 0;
+}
+.msg-row.user .msg-col { align-items: flex-end; }
+.msg-row.firefly .msg-col { align-items: flex-start; }
+.msg-col .bubble { max-width: 100%; }
+.quote-preview {
+    max-width: 100%; margin-bottom: 4px; padding: 5px 9px;
+    border-radius: 6px; background: var(--ctrl-bg-3);
+    border-left: 2px solid var(--fg-accent);
+    color: var(--fg-muted); font-size: 0.76em; line-height: 1.5;
+    word-break: break-word; overflow: hidden;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+}
+.quote-preview .qp-who { color: var(--fg-bright); margin-right: 5px; }
+
+/* ═══ 长按消息菜单（QQ 式：消息上方/下方弹出）═══ */
+#msg-long-menu {
+    position: fixed; z-index: 120;
+    display: flex; gap: 8px; padding: 8px;
+    background: var(--panel-solid);
+    border: 1px solid var(--border-mid); border-radius: 14px;
+    box-shadow: 0 8px 30px var(--shadow-panel);
+    animation: mlmPop 0.16s ease-out;   /* 3.3：缩放淡入（节点每次新建，动画必触发） */
+}
+@keyframes mlmPop {
+    from { opacity: 0; transform: scale(0.85); }
+    to   { opacity: 1; transform: scale(1); }
+}
+#msg-long-menu .mlm-btn {
+    border: none; background: var(--ctrl-bg-2); color: var(--fg-main);
+    font-family: inherit; font-size: 0.85em; cursor: pointer;
+    padding: 8px 14px; border-radius: 10px; white-space: nowrap;
+    display: flex; align-items: center; gap: 5px;
+}
+#msg-long-menu .mlm-btn:hover { background: var(--btn-bg); color: var(--fg-bright); }
+
 /* ── 输入栏 ── */
+/* 引用条（输入框上方，发送后消失） */
+#quote-bar {
+    display: none; align-items: center; gap: 8px;
+    margin: 0 clamp(12px, 4vw, 16px); padding: 7px 10px;
+    background: var(--ctrl-bg-2); border-left: 3px solid var(--fg-accent);
+    border-radius: 8px; flex-shrink: 0;
+}
+#quote-bar .quote-who { color: var(--fg-accent); font-size: 0.72em; flex-shrink: 0; }
+#quote-bar .quote-text {
+    flex: 1; min-width: 0; color: var(--fg-muted); font-size: 0.75em;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+#quote-bar #quote-cancel {
+    border: none; background: transparent; color: var(--fg-muted);
+    font-size: 0.9em; cursor: pointer; padding: 2px 6px; flex-shrink: 0;
+}
 #input-bar {
     display: flex; align-items: center;
     padding: clamp(10px, 3vw, 12px) clamp(12px, 4vw, 16px)
              max(clamp(10px, 3vw, 12px), env(safe-area-inset-bottom));
     gap: clamp(6px, 2.5vw, 10px); flex-shrink: 0;
     border-top: 1px solid var(--ctrl-bg-2);
+    transition: box-shadow 0.2s;
 }
+/* 键盘弹起（输入聚焦）时给输入栏一点浮起感，缓冲高度跳变的生硬（3.2） */
+#input-bar:focus-within { box-shadow: 0 -2px 14px rgba(0,0,0,0.28); }
 /* 输入框容器：表情按钮悬浮于输入框内部右侧 */
 .input-wrap {
     position: relative; flex: 1 1 auto; min-width: 0;
@@ -297,11 +387,12 @@ body {
 #sticker-btn:hover { opacity: 1; background: var(--ctrl-bg); }
 #send-btn {
     padding: 8px clamp(12px, 4vw, 16px); border-radius: 8px;
-    border: none; background: rgba(140,160,200,0.25);
-    color: var(--fg-bright); font-size: clamp(13px, 3.8vw, 14px); cursor: pointer;
+    border: 1px solid var(--gold-line); background: var(--send-bg);
+    color: var(--send-fg); font-size: clamp(13px, 3.8vw, 14px); cursor: pointer;
     font-family: inherit; letter-spacing: 1px; white-space: nowrap; flex-shrink: 0;
+    transition: background 0.2s;
 }
-#send-btn:hover { background: var(--btn-bg-hover); }
+#send-btn:hover { background: var(--send-bg-hover); }
 #send-btn:disabled { opacity: 0.3; cursor: default; }
 
 /* 表情包面板（浮层） */
@@ -377,7 +468,7 @@ body {
 }
 .menu-header button { background:none; border:none; color:var(--fg-main); cursor:pointer; font-size:1.2em; }
 
-/* 菜单标签行：手机上一行 5 个，不换行 */
+/* 菜单标签行：手机上一行 5 个（状态 tab 占位隐藏），不换行 */
 .menu-tabs {
     display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 6px;
     padding: 10px clamp(12px, 4vw, 16px); border-bottom: 1px solid var(--ctrl-bg-2);
@@ -476,6 +567,26 @@ body {
     #sticker-list { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 #sticker-add-msg, #sticker-manage-msg { color:var(--fg-muted); font-size:0.8em; margin-top:6px; }
+
+/* ═══ 收藏列表（菜单 → 收藏）═══ */
+.fav-empty { color: var(--fg-muted); font-size: 0.8em; line-height: 1.8; padding: 12px 0; }
+.fav-item {
+    display: flex; flex-direction: column; gap: 5px;
+    padding: 10px 12px; margin-bottom: 10px;
+    background: var(--ctrl-bg-2); border: 1px solid var(--border-mid); border-radius: 12px;
+}
+.fav-head { display: flex; justify-content: space-between; align-items: center; }
+.fav-who { color: var(--fg-accent); font-size: 0.72em; }
+.fav-time { color: var(--fg-muted); font-size: 0.68em; }
+.fav-body { color: var(--fg-main); font-size: 0.85em; line-height: 1.6; word-break: break-word; }
+/* 注意：.menu-content button{width:100%} 会继承到删除按钮，必须显式覆盖（同 stk-save 教训） */
+.fav-item .fav-del {
+    width: auto; margin-top: 0; padding: 5px 12px; align-self: flex-end;
+    border-radius: 8px; border: 1px solid rgba(255,122,107,0.35);
+    background: rgba(255,107,107,0.1); color: var(--red, #ff7a6b);
+    font-family: inherit; font-size: 0.72em; cursor: pointer;
+}
+.fav-item .fav-del:hover { background: rgba(255,107,107,0.22); }
 .sticker-row {
     display: grid; grid-template-columns: 86px minmax(0, 1fr); gap: 8px; align-items: start;
     padding: 10px; border-radius: 12px;
@@ -635,10 +746,11 @@ body {
 .notice-icon { width: 20px; height: 20px; image-rendering: pixelated; flex-shrink: 0; }
 .notice-icon-sm { width: 18px; height: 18px; image-rendering: pixelated; vertical-align: -3px; }
 .notice-arrow { color: var(--fg-muted); font-size: 0.8em; transition: transform 0.2s; }
-/* 第二栏：滚动播放（约 30% 高度） */
+/* 第二栏：滚动播放（4.1：高度收敛——原 aspect 2/1 全宽占首屏近半，现限高 30vh 居中） */
 .home-carousel {
-    height: auto;
+    height: min(calc((100vw - 20px) / 2), 30vh);
     aspect-ratio: 2 / 1;   /* 适配轮播图本身比例（680x340），不裁剪不缩放 */
+    width: auto; max-width: calc(100% - 20px);
     position: relative; overflow: hidden; flex-shrink: 0;
     background: var(--carousel-bg);
     /* 圆角框：border-radius + clip-path 双保险——
@@ -647,7 +759,7 @@ body {
        图片文件本身不动，是显示层圆角。 */
     border-radius: 18px;
     clip-path: inset(0 round 18px);
-    margin: 0 10px;
+    margin: 0 auto;
 }
 .carousel-track {
     position: relative; height: 100%; width: 100%;
@@ -673,29 +785,39 @@ body {
     display: flex; justify-content: center; gap: 6px;
 }
 .carousel-dots span {
-    width: 6px; height: 6px; border-radius: 50%;
+    width: 10px; height: 3px; border-radius: 2px;   /* 星铁式短线指示（2.5） */
     background: var(--dot-bg); transition: all 0.3s;
 }
-.carousel-dots span.active { background: var(--fg-accent); width: 14px; border-radius: 3px; }
+.carousel-dots span.active {
+    background: var(--fg-accent); width: 22px;
+    box-shadow: 0 0 6px var(--fg-accent);          /* 微光 */
+}
+/* PC 桌面欢迎区（默认隐藏，≥1100px 媒体查询内展开为左右双卡） */
+.home-modes { display: none; }
 /* 留白 + 开始按钮 */
 .home-blank { flex: 1; }
 .home-start {
-    margin: 0 auto 24px; padding: 12px 40px;
-    border-radius: 24px; border: none;
-    background: var(--btn-bg); color: var(--fg-main);
+    display: block; margin: 14px auto 0; padding: 12px 40px;
+    border-radius: 24px; border: 1px solid var(--gold-line);
+    background: var(--send-bg); color: var(--send-fg);
     font-family: inherit; font-size: clamp(15px, 4.5vw, 17px);
     cursor: pointer; letter-spacing: 2px; flex-shrink: 0;
+    transition: background 0.2s;
 }
-.home-start:hover { background: var(--btn-bg-hover); }
+.home-start:hover { background: var(--send-bg-hover); }
+/* 手机端不显示「继续聊天」按钮（点轮播图进入是既有习惯）；仅 PC 桌面保留显式入口 */
+@media (max-width: 1099px) {
+    .home-start { display: none; }
+}
 /* 聊天页模式标签 */
 .chat-mode-tag {
     display: inline-block;
     margin-left: 8px;
     padding: 1px 8px;
     border-radius: 9px;
-    border: 1px solid var(--border-mid);
-    background: var(--ctrl-bg-3);
-    color: var(--fg-muted);
+    border: 1px solid var(--gold-line);
+    background: var(--gold-glow);
+    color: var(--fg-accent);
     font-size: 0.62em;
     vertical-align: middle;
     letter-spacing: 1px;
@@ -800,16 +922,27 @@ body {
 .notice-tip { color: var(--fg-muted); font-size: 0.85em; }
 
 /* ═══════════════════════════════════════════
-   桌面断点（唯一）：≥720px 时主面板居中 520px，保留模糊背景
+   面板进出场过渡统一（3.4）：抽屉原本就有滑入；浮层补淡入/上滑
+   均为 .show 触发（display none→flex/block 时动画必播），不改 JS
+   ═══════════════════════════════════════════ */
+@keyframes panelFadeIn { from { opacity: 0; } to { opacity: 1; } }
+@keyframes panelSlideUp { from { opacity: 0; transform: translateY(16px); } to { opacity: 1; transform: translateY(0); } }
+#menu-overlay.show { animation: panelFadeIn 0.2s; }
+#settings-panel.show, #notice-panel.show, #feedback-panel.show { animation: panelSlideUp 0.22s ease-out; }
+#sticker-panel.show { animation: panelSlideUp 0.2s ease-out; }
+#fix-view.show, #home-view.show { animation: panelFadeIn 0.18s; }
+
+/* ═══════════════════════════════════════════
+   过渡断点：720~1100px 单栏居中放宽 640px，保留模糊背景
    ═══════════════════════════════════════════ */
 @media (min-width: 720px) {
     body { background: var(--page-bg); }
     #app {
-        max-width: 520px;
+        max-width: 640px;
         box-shadow: 0 0 30px var(--shadow-panel);
     }
-    #menu-drawer { max-width: 520px; }
-    #home-view { max-width: 520px; box-shadow: 0 0 30px var(--shadow-panel); }
+    #menu-drawer { max-width: 640px; }
+    #home-view { max-width: 640px; box-shadow: 0 0 30px var(--shadow-panel); }
 }
 /* 首页作为覆盖层时桌面居中 */
 @media (min-width: 720px) {
@@ -817,8 +950,166 @@ body {
         left: 50%;
         right: auto;              /* 取消 inset:0 的 right:0 */
         margin: 0;                /* 覆盖基础 margin:0 auto：auto margin 与 left:50% 叠加会把面板推右（实测 1532 宽右偏 123px） */
-        width: 520px;             /* 显式宽度替代 max-width（transform 百分比参照确定） */
+        width: 640px;             /* 显式宽度替代 max-width（transform 百分比参照确定） */
         transform: translateX(-50%);
         box-shadow: 0 0 30px var(--shadow-panel);
     }
+}
+
+/* ═══════════════════════════════════════════
+   低端机降级（5.5）：JS 探测 deviceMemory/hardwareConcurrency 打 body.low-end，
+   关掉毛玻璃（backdrop-filter 在低端 GPU 掉帧），面板改不透明底
+   ═══════════════════════════════════════════ */
+body.low-end #app, body.low-end #fix-view { backdrop-filter: none; }
+body.low-end #app { background: var(--panel-solid); }
+
+/* ═══════════════════════════════════════════
+   桌面双栏（≥1100px）：左 264px 导航 + 右侧主区
+   实现策略：现有各视图都是 position:fixed 全屏层，桌面档统一 left:264px
+   收进右栏——视图切换逻辑（JS）零改动；移动端 DOM/样式完全不受影响。
+   ═══════════════════════════════════════════ */
+#pc-sidebar {
+    display: none;   /* 移动端永不显示；petite-vue 也只在桌面档加载（js/pc_nav.js） */
+}
+@media (min-width: 1100px) {
+    #pc-sidebar {
+        position: fixed; left: 0; top: 0; bottom: 0; width: 264px; z-index: 40;
+        display: flex; flex-direction: column;
+        background: var(--panel-solid);
+        border-right: 1px solid var(--border-mid);
+        padding-top: env(safe-area-inset-top);
+    }
+    /* 各全屏视图收进右栏 */
+    #app, #home-view, #fix-view, #settings-panel, #notice-panel, #feedback-panel,
+    #menu-overlay, #sticker-panel {
+        left: 264px;
+    }
+    #app { position: fixed; max-width: none; width: auto; box-shadow: none; }
+    #home-view { left: 264px; right: 0; width: auto; max-width: none; transform: none; }
+    /* 抽屉桌面化：右区整页视图（与设置同级），不再滑出窄面板；遮罩不再需要 */
+    #menu-drawer {
+        top: 20px; bottom: 20px; right: 20px; left: 284px;
+        width: auto; max-width: none; height: auto;
+        border: 1px solid var(--border-mid); border-radius: 14px;
+        box-shadow: 0 12px 44px rgba(0,0,0,0.45);
+        transform: none; transition: none;
+        visibility: hidden;              /* 桌面无滑入动画：用 visibility 显隐（.open 显示） */
+    }
+    #menu-drawer.open { visibility: visible; animation: panelFadeIn 0.18s; }
+    #menu-overlay { display: none !important; }
+    #fix-view { max-width: none; }
+    /* 抽屉内容桌面密度：tab 行靠左、列表网格化 */
+    .menu-tabs { grid-template-columns: repeat(5, minmax(90px, 130px)); justify-content: start; }
+    .menu-content { max-width: 980px; margin: 0 auto; }
+    #fav-list, #log-list, #pipeline-list {
+        display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 10px; max-height: none !important; align-content: start;
+    }
+    #fav-list .fav-item, #fav-list .fav-empty { margin-bottom: 0; }
+    #fav-list .fav-empty, #log-list > div, #pipeline-list > div { grid-column: 1 / -1; }
+    #fav-list .fav-item { grid-column: auto; }
+    /* 首页 PC 欢迎区：轮播退役，左右模式大卡 */
+    .home-carousel, .home-start { display: none; }
+    .home-modes {
+        display: grid; grid-template-columns: 1fr 1fr; gap: 18px;
+        padding: 22px clamp(20px, 4vw, 48px) 8px; flex-shrink: 0;
+    }
+    .hm-card {
+        position: relative; padding: 0; border: 1px solid var(--border-mid);
+        border-radius: 16px; overflow: hidden; cursor: pointer;
+        background: var(--ctrl-bg-3); font-family: inherit; text-align: left;
+        transition: transform 0.18s, border-color 0.18s, box-shadow 0.18s;
+    }
+    .hm-card:hover {
+        transform: translateY(-3px); border-color: var(--gold-line);
+        box-shadow: 0 10px 30px rgba(0,0,0,0.4);
+    }
+    .hm-card img { width: 100%; aspect-ratio: 2 / 1; object-fit: cover; display: block; }
+    .hm-card .hm-name {
+        display: block; color: var(--fg-main); font-size: 1.05em; font-weight: 600;
+        padding: 12px 16px 2px;
+    }
+    .hm-card .hm-desc {
+        display: block; color: var(--fg-muted); font-size: 0.78em;
+        padding: 0 16px 14px;
+    }
+    /* 首页下方卡片区限宽 */
+    .home-blank { max-width: 980px; width: 100%; margin: 0 auto; }
+    /* 桌面有侧栏导航，聊天页汉堡按钮冗余 */
+    #menu-btn { display: none; }
+
+    /* ── PC 浏览器观感（非手机 UI 拉伸）── */
+    /* ① 主视图窗口卡片化：四周留白透出萤火背景，圆角+描边+投影 */
+    #app, #home-view, #fix-view, #settings-panel, #notice-panel, #feedback-panel {
+        top: 20px; bottom: 20px; right: 20px; left: 284px;
+        width: auto; height: auto;
+        border: 1px solid var(--border-mid); border-radius: 14px;
+        overflow: hidden;
+        box-shadow: 0 12px 44px rgba(0,0,0,0.45);
+    }
+    #menu-overlay { border-radius: 0; }
+    #menu-drawer {
+        top: 20px; bottom: 20px; right: 20px; height: auto;
+        border: 1px solid var(--border-mid); border-radius: 14px;
+    }
+    #sticker-panel {
+        left: 284px; right: 20px; bottom: 20px;
+        border: 1px solid var(--border-mid); border-radius: 14px;
+        max-width: 640px; margin-left: auto; margin-right: auto;
+    }
+    /* ② 桌面密度：气泡收窄、行高放松、滚动条加粗 */
+    .msg-row .bubble { max-width: 68%; line-height: 1.7; }
+    .msg-col { max-width: 68%; }
+    #messages::-webkit-scrollbar { width: 8px; }
+    #messages::-webkit-scrollbar-thumb { border-radius: 4px; }
+    /* ③ 桌面输入区：悬浮作曲卡片 */
+    #input-bar {
+        margin: 0 12px 12px; padding: 8px 10px;
+        border: 1px solid var(--border-mid); border-radius: 14px;
+        background: var(--ctrl-bg-2);
+    }
+    #input-bar:focus-within { border-color: var(--gold-line); box-shadow: 0 0 0 2px var(--gold-glow); }
+    #quote-bar { margin: 0 12px 8px; }
+    /* ④ 头部去手机感：去底部分隔线，留窗口标题栏感 */
+    #header { border-bottom: none; padding-bottom: 4px; }
+    #messages { padding-top: 4px; }
+    /* 聊天列限宽居中：宽屏下气泡行宽保持可读 */
+    #header, #messages { max-width: 880px; width: 100%; margin-left: auto; margin-right: auto; }
+    #input-bar, #quote-bar { max-width: 856px; box-sizing: border-box; width: calc(100% - 24px); margin-left: auto; margin-right: auto; }
+    /* 面板内容限宽居中 */
+    .settings-body > *, .notice-body > * { max-width: 760px; margin-left: auto; margin-right: auto; }
+    /* 侧栏内部 */
+    .pcs-head {
+        display: flex; flex-direction: column; align-items: center;
+        padding: 24px 16px 16px; border-bottom: 1px solid var(--ctrl-bg);
+    }
+    .pcs-avatar { width: 60px; height: 60px; border-radius: 50%; object-fit: cover; }
+    .pcs-name { color: var(--fg-main); font-size: 1.02em; font-weight: bold; margin-top: 10px; }
+    .pcs-status {
+        color: var(--fg-muted); font-size: 0.72em; margin-top: 4px;
+        max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .pcs-nav { flex: 1; overflow-y: auto; padding: 10px 10px; }
+    .pcs-foot { padding: 8px 10px 10px; border-top: 1px solid var(--ctrl-bg); }
+    .pcs-item {
+        display: flex; align-items: center; gap: 10px;
+        width: 100%; padding: 10px 14px; margin-bottom: 2px;
+        border: none; border-radius: 10px; background: transparent;
+        color: var(--fg-bright); font-family: inherit; font-size: 0.88em;
+        cursor: pointer; text-align: left; transition: background 0.15s;
+    }
+    .pcs-item:hover { background: var(--ctrl-bg-2); }
+    .pcs-item.active { background: var(--gold-glow); color: var(--fg-accent); box-shadow: inset 2px 0 0 var(--fg-accent); }
+    .pcs-item .pcs-ico { width: 20px; text-align: center; flex-shrink: 0; }
+    /* 诊断/系统项弱化：字号小一档、颜色 muted */
+    .pcs-item.pcs-dim { font-size: 0.78em; color: var(--fg-muted); padding: 7px 14px; }
+    .pcs-diag-row { display: flex; gap: 4px; }
+    .pcs-diag-row .pcs-item { flex: 1; }
+    .pcs-label {
+        color: var(--fg-muted); font-size: 0.66em; letter-spacing: 2px;
+        padding: 4px 14px 6px; user-select: none;
+    }
+    .pcs-foot .pcs-label { padding-top: 2px; }
+    /* 侧栏卡片化微调：与右区间留出呼吸 */
+    .pcs-head { padding-top: 28px; }
 }

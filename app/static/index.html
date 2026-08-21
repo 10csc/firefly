@@ -200,6 +200,31 @@
 <!-- 萤火粒子场：呼吸光点 · 鼠标惊扰散开 · 点击向落点轻聚（资源：单 canvas + rAF） -->
 <canvas id="firefly-field"></canvas>
 
+<!-- ═══ PC 双栏左侧导航（仅 ≥1100px 显示；petite-vue 挂载，js/pc_nav.js 按需加载） ═══ -->
+<nav id="pc-sidebar">
+    <div class="pcs-head">
+        <img class="pcs-avatar" src="流萤_头像.png" alt="流萤">
+        <div class="pcs-name">流萤</div>
+        <div class="pcs-status">会找到的，属于我的梦...</div>
+    </div>
+    <div class="pcs-nav">
+        <div class="pcs-label">功能</div>
+        <button v-for="item in items" :key="item.key" type="button"
+                class="pcs-item" :class="{active: current === item.key}"
+                @click="go(item)"><span class="pcs-ico">{{item.icon}}</span>{{item.label}}</button>
+    </div>
+    <div class="pcs-foot">
+        <div class="pcs-label">诊断与系统</div>
+        <div class="pcs-diag-row">
+            <button v-for="item in diagItems" :key="item.key" type="button"
+                    class="pcs-item pcs-dim" :class="{active: current === item.key}"
+                    @click="go(item)"><span class="pcs-ico">{{item.icon}}</span>{{item.label}}</button>
+        </div>
+        <button type="button" class="pcs-item pcs-dim" :class="{active: current === 'settings'}" @click="goSettings()"><span class="pcs-ico">⚙</span>设置</button>
+        <button type="button" class="pcs-item pcs-dim" @click="switchTheme()"><span class="pcs-ico">🌗</span>切换配色</button>
+    </div>
+</nav>
+
 <!-- ═══ 首页（独立视图） ═══ -->
 <div id="home-view">
     <div class="home-topbar">
@@ -219,6 +244,21 @@
         </div>
         <div class="carousel-dots" id="carousel-dots"></div>
     </div>
+    <!-- PC 桌面欢迎区：左右模式大卡（仅 ≥1100px 显示，移动端仍为轮播） -->
+    <div class="home-modes">
+        <button class="hm-card" type="button" onclick="enterMode('story')">
+            <img src="剧情模式.png?v=3" alt="剧情模式">
+            <span class="hm-name">剧情模式</span>
+            <span class="hm-desc">她的故事，与你共同推进</span>
+        </button>
+        <button class="hm-card" type="button" onclick="enterMode('haruno')">
+            <img src="春日手信.png?v=3" alt="春日手信">
+            <span class="hm-name">春日手信</span>
+            <span class="hm-desc">流萤想象的普通学生生活</span>
+        </button>
+    </div>
+    <!-- 显式主入口（4.1：不点轮播图也能进聊天；进入当前模式） -->
+    <button class="home-start" id="home-start-btn" type="button" onclick="showChat()">继续聊天 →</button>
     <div class="home-blank">
         <!-- 服务器版：登录/用户模块（0.8.0 内联表单，单页完成登录注册，不跳页） -->
         <div id="auth-module" style="display:none">
@@ -521,12 +561,18 @@
 
         <!-- ④ 外观 -->
         <section class="set-group">
-            <button class="set-head" type="button" data-group="look">🎨 外观<span class="set-arrow">▾</span></button>
+            <button class="set-head" type="button" data-group="look">🎨 外观<span class="set-summary" id="ui-scale-summary">100%</span><span class="set-arrow">▾</span></button>
             <div class="set-body">
                 <div class="field">
                     <label>消息 / 头像 / 气泡缩放 <span id="ui-scale-value">100%</span></label>
                     <input id="ui-scale-slider" type="range" min="80" max="130" step="5" value="100">
                     <div style="color:#8a8a8a;font-size:0.7em;margin-top:2px">80%~130%，实时预览</div>
+                </div>
+                <div class="field">
+                    <label style="display:flex;align-items:center;gap:8px">
+                        <input id="particles-enabled" type="checkbox" style="width:auto;accent-color:var(--fg-bright)">
+                        萤火背景动画（关闭可省电）
+                    </label>
                 </div>
             </div>
         </section>
@@ -606,6 +652,12 @@
         <button id="menu-btn" title="菜单">☰</button>
     </div>
     <div id="messages"></div>
+    <!-- 引用条（长按消息 → 引用后出现在输入框上方，随消息发送） -->
+    <div id="quote-bar">
+        <span class="quote-who" id="quote-who">引用</span>
+        <span class="quote-text" id="quote-text"></span>
+        <button id="quote-cancel" title="取消引用">✕</button>
+    </div>
     <div id="input-bar">
         <div class="input-wrap">
             <input type="text" id="msg-input" placeholder="说点什么…" maxlength="500" autocomplete="off" autofocus>
@@ -632,11 +684,13 @@
             <button onclick="closeMenu()">✕</button>
         </div>
         <div class="menu-tabs">
-            <button class="menu-tab" data-tab="char">设定文件</button>
+            <button class="menu-tab" data-tab="fav">收藏</button>
             <button class="menu-tab" data-tab="sticker">表情包</button>
-            <button class="menu-tab" data-tab="state">流萤状态</button>
+            <button class="menu-tab" data-tab="char">设定文件</button>
             <button class="menu-tab" data-tab="log">请求记录</button>
             <button class="menu-tab" data-tab="pipeline">流程日志</button>
+            <!-- 流萤状态：状态系统下线后的占位 tab（4.5：隐藏不删，接回后恢复） -->
+            <button class="menu-tab" data-tab="state" style="display:none">流萤状态</button>
         </div>
         <div class="menu-actions">
             <button onclick="showHome()"><img class="menu-act-icon" src="assets/icon_home.png?v=1" alt=""> 返回首页</button>
@@ -704,6 +758,15 @@
             <div id="state-list"></div>
         </div>
 
+        <!-- Tab: 收藏（长按聊天消息 → 收藏） -->
+        <div class="menu-content" id="tab-fav">
+            <div style="display:flex;justify-content:space-between;margin-bottom:8px">
+                <span style="color:#8a8a8a;font-size:0.75em" id="fav-count"></span>
+                <button class="menu-tab" style="font-size:0.7em" onclick="loadFavorites()">刷新</button>
+            </div>
+            <div id="fav-list" style="max-height:60vh;overflow-y:auto"></div>
+        </div>
+
         <!-- Tab: 请求记录 -->
         <div class="menu-content" id="tab-log">
             <div style="display:flex;justify-content:space-between;margin-bottom:8px">
@@ -765,7 +828,17 @@
     var W = 0, H = 0, DPR = 1;
     var reduced = window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches;
     var N = (navigator.maxTouchPoints > 0 || innerWidth < 720) ? 40 : 64;
-    var COLORS = ["255,196,107", "245,166,35", "143,230,201", "255,214,140"];
+    // 粒子色主题化（2.6）：读 CSS 变量，亮/暗主题各一套；读取失败回退暗色原值
+    function _cssVar(n, fb) {
+        try {
+            var v = getComputedStyle(document.body).getPropertyValue(n).trim();
+            return v || fb;
+        } catch (e) { return fb; }
+    }
+    var COLORS = [
+        _cssVar("--particle-1", "255,196,107"), _cssVar("--particle-2", "245,166,35"),
+        _cssVar("--particle-3", "143,230,201"), _cssVar("--particle-4", "255,214,140")
+    ];
     var dots = [], mouse = { x: -1e4, y: -1e4 };
     for (var i = 0; i < N; i++) dots.push({
         x: Math.random(), y: Math.random(),
@@ -785,6 +858,8 @@
     function frame(t) {
         requestAnimationFrame(frame);
         if (reduced) return;
+        // 5.1：页面隐藏或用户关闭粒子时不绘制（rAF 空转成本 ≈0，绘制才是开销）
+        if (document.hidden || window.__particlesOff) { last = t; return; }
         var dt = Math.min((t - last) / 1000, 0.05) || 0.016;
         last = t;
         x.clearRect(0, 0, W, H);
@@ -840,7 +915,8 @@
 })();
 </script>
 <script src="config.js"></script>
-<script src="config.js"></script>
-<script src="app.js"></script>
+<!-- 运行时入口：bundle.js（classic script，file:// 兼容；ES Module 在安卓服务器模式 file:// 下被 CORS 拦截） -->
+<script src="js/bundle.js"></script>
+<script src="js/pc_nav.js"></script>
 </body>
 </html>

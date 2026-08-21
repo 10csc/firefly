@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""服务器版安全回归：模型锁（只允许 flash）+ 托管模式运营者 Key 不切 pro + 每用户配额记账"""
+"""服务器版安全回归：模型锁（只允许 mimo-v2.5）+ 托管模式运营者 Key 不切其它模型 + 每用户配额记账"""
 import os
 import sys
 import tempfile
@@ -36,25 +36,25 @@ def check(desc, cond):
 
 
 print("=== A. 服务器配置加载模型锁 ===")
-# 把配置文件写成 pro，重新加载后必须全部回落到 flash
+# 把配置文件写成 pro，重新加载后必须全部回落到 mimo-v2.5
 cfg.CONFIG_FILE.write_text(
     '{"analyzer_model":"deepseek-v4-pro","organizer_model":"deepseek-v4-pro",'
     '"polisher_model":"deepseek-v4-pro","retriever_model":"deepseek-v4-pro"}',
     encoding="utf-8")
 cfg.config = cfg._load_config()
-check("A1 加载后 analyzer=flash", cfg.config["analyzer_model"] == "deepseek-v4-flash")
-check("A2 加载后 polisher=flash", cfg.config["polisher_model"] == "deepseek-v4-flash")
-check("A3 加载后 retriever=flash", cfg.config["retriever_model"] == "deepseek-v4-flash")
-check("A4 加载后 organizer=flash", cfg.config["organizer_model"] == "deepseek-v4-flash")
+check("A1 加载后 analyzer=mimo-v2.5", cfg.config["analyzer_model"] == "mimo-v2.5")
+check("A2 加载后 polisher=mimo-v2.5", cfg.config["polisher_model"] == "mimo-v2.5")
+check("A3 加载后 retriever=mimo-v2.5", cfg.config["retriever_model"] == "mimo-v2.5")
+check("A4 加载后 organizer=mimo-v2.5", cfg.config["organizer_model"] == "mimo-v2.5")
 
-# save_config 落盘前也要强制 flash
+# save_config 落盘前也要强制 mimo-v2.5
 cfg.config["polisher_model"] = "deepseek-v4-pro"
 cfg.save_config()
 import json
 saved = json.loads(cfg.CONFIG_FILE.read_text(encoding="utf-8"))
-check("A5 save_config 落盘仍为 flash", saved["polisher_model"] == "deepseek-v4-flash")
+check("A5 save_config 落盘仍为 mimo-v2.5", saved["polisher_model"] == "mimo-v2.5")
 
-print("=== B. routes.set_config 服务器分支拒绝 pro ===")
+print("=== B. routes.set_config 服务器分支拒绝其它模型 ===")
 import routes
 
 
@@ -68,10 +68,10 @@ class FakeH:
 
 h = FakeH()
 routes.set_config(h)
-check("B1 set_config 响应 polisher=flash", h.data["polisher_model"] == "deepseek-v4-flash")
+check("B1 set_config 响应 polisher=mimo-v2.5", h.data["polisher_model"] == "mimo-v2.5")
 check("B2 set_config 响应 valid_models 不在此处（get_config 检查）", True)
 
-print("=== C. 托管模式 QuotaClient 强制 flash ===")
+print("=== C. 托管模式 QuotaClient 强制 mimo-v2.5 ===")
 os.environ["FIREFLY_PROXY_KEY"] = "op-key-not-real"
 token = cfg.set_user_context(user_dir=_tmp / "u1", proxy=True)
 try:
@@ -85,7 +85,7 @@ try:
             client.chat.completions.create(model="deepseek-v4-pro", messages=[{"role": "user", "content": "x"}])
         except Exception:
             pass
-    check("C3 传入 pro 被强制替换为 flash", captured.get("model") == "deepseek-v4-flash")
+    check("C3 传入 pro 被强制替换为 mimo-v2.5", captured.get("model") == "mimo-v2.5")
 finally:
     cfg.reset_user_context(token)
 
