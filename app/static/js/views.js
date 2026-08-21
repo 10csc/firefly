@@ -1,6 +1,7 @@
 // 视图切换：首页 / 聊天 / 轮播 / 主题 / 界面缩放 / 粒子与降级开关
 import { S, messagesEl } from "./state.js";
-import { initAuth } from "./api.js";
+import { initAuth, showAuthModule, IS_SERVER } from "./api.js";
+import { showToast } from "./util.js";
 import { closeMenu } from "./panels.js";
 import { loadHistory, renderMessages, scrollToBottom } from "./chat.js";
 import { openFixView } from "./fix.js";
@@ -100,6 +101,19 @@ export function showHome() {
 }
 window.showHome = showHome;   // ESM 拆分后供 pc_nav.js（classic script）与内联 onclick 使用
 export async function showChat() {
+    // A7 登录前置（本地版）：未登录 → 回首页展开登录表单（本地后端离线时放行）
+    if (!IS_SERVER) {
+        try {
+            const st = await (await fetch("/auth/state")).json();
+            if (st.logged_in === false) {
+                showHome();
+                showAuthModule();
+                try { toggleAuthForms(); } catch (e) {}
+                try { showToast("请先登录（登录后本地数据可云端同步，Key 仍只存本机）"); } catch (e) {}
+                return;
+            }
+        } catch (e) { /* 本地后端未就绪：放行（聊天不依赖账号） */ }
+    }
     const fixView = document.getElementById("fix-view");    if (fixView) fixView.classList.remove("show");
     homeView.classList.remove("show");
     appView.style.display = "flex";     // 恢复聊天页

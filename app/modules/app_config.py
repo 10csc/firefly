@@ -258,6 +258,10 @@ def _migrate_legacy_providers(data: dict) -> dict:
 
 CONFIG_FILE = USER_DIR / "config.json"
 
+# ── A7：认证/同步服务器（登录前置化；本地版经本地后端代理转发）──
+# 公网入口（8787 网关）；发版时若切换服务器/域名，改此处 + docs/服务器管理规范.md
+AUTH_SERVER_DEFAULT = "http://101.200.14.126:8787"
+
 # ── 模式（多模式隔离）─────────────────────────────
 # 每个模式独立数据根：USER_DIR/{mode}/，其下 character/ data/ journal/ 各一份。
 # story = 剧情模式（现有闭环，数据迁移自旧平铺目录）；haruno = 春日手信（匹诺康尼黄金时刻·普通学生旅行AU）。
@@ -373,9 +377,8 @@ def _load_config() -> dict:
         "api_key": "", "api_base": API_BASE,
         "active_provider": "deepseek",
         "providers": [_deepseek_preset()],
-        # 服务器地址（远程部署用）：空 = 本机（127.0.0.1:PORT），
-        # 非空 = 远程服务器（如 http://47.xx.xx.xx:8765）——前端按此地址连后端，需重启生效
-        "server_url": "",
+        # 服务器地址（A7 认证/同步服务器）：默认公网 8787；开发/自建可改
+        "auth_server_url": AUTH_SERVER_DEFAULT,
         "analyzer_model": "deepseek-v4-flash",
         "organizer_model": "deepseek-v4-flash", "polisher_model": "deepseek-v4-flash",
         "retriever_model": "deepseek-v4-flash",
@@ -390,9 +393,14 @@ def _load_config() -> dict:
     try:
         data = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
         if isinstance(data, dict):
-            # 服务器地址：仅允许 http/https 开头，防注入（空 = 本机）
-            _srv = str(data.get("server_url", "") or "").strip().rstrip("/")
-            cfg["server_url"] = _srv if _srv.startswith(("http://", "https://")) else ""
+            # 服务器地址（A7 起=认证/同步服务器；空默认公网）。仅 http(s)，防注入。
+            _srv = str(data.get("auth_server_url", "") or "").strip().rstrip("/")
+            if not _srv:
+                # 旧字段迁移：0.8.0 的 server_url（远程部署用）语义并入 auth_server_url
+                _srv = str(data.get("server_url", "") or "").strip().rstrip("/")
+            cfg["auth_server_url"] = (_srv if _srv.startswith(("http://", "https://"))
+                                      else AUTH_SERVER_DEFAULT)
+            cfg["server_url"] = ""   # 旧字段兼容占位（保存时不再写）
             # 多供应商：新结构直接读；旧结构（顶层 api_key/api_base）自动迁移
             if "providers" in data:
                 providers = normalize_providers(data.get("providers"))
@@ -570,7 +578,7 @@ def save_config() -> None:
         json.dumps({
             "providers": config.get("providers") or [_deepseek_preset()],
             "active_provider": config.get("active_provider", "deepseek"),
-            "server_url": config.get("server_url", ""),
+            "auth_server_url": config.get("auth_server_url", AUTH_SERVER_DEFAULT),
             "analyzer_model": config.get("analyzer_model", "deepseek-v4-flash"),
             "organizer_model": config.get("organizer_model", "deepseek-v4-flash"),
             "polisher_model": config.get("polisher_model", "deepseek-v4-flash"),

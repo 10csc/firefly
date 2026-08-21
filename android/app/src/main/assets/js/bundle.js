@@ -135,39 +135,56 @@ function applyApiSource(isProxy) {
     if (tip) tip.style.display = isProxy ? "block" : "none";
 }
 
-// ═══ 服务器版：登录状态模块（轮播图下） ═══
+// ═══ 登录状态模块（双模式：服务器版 localStorage token / 本地版后端 auth.json）═══
 function showAuthModule() {
     const mod = document.getElementById("auth-module");
-    if (mod && IS_SERVER) mod.style.display = "block";
+    if (mod) mod.style.display = "block";
 }
 function initAuth() {
-    if (!IS_SERVER) return;   // 本地模式无账号概念：登录模块不显示
-    initAuthForms();          // 内联登录/注册/重置表单接线（幂等）
-    const token = (() => { try { return localStorage.getItem("firefly_token") || ""; } catch (e) { return ""; } })();
+    initAuthForms();          // 内联登录/注册/重置表单接线（幂等；本地模式走后端 /auth/* 代理）
     const loginEntry = document.getElementById("auth-login-entry");
     const userEntry = document.getElementById("auth-user-entry");
-    if (!token) {
-        showAuthModule();
-        if (loginEntry) loginEntry.style.display = "flex";
-        if (userEntry) userEntry.style.display = "none";
-        return;
-    }
-    fetch("/auth/me").then(r => r.json()).then(d => {
-        if (d.error) {
-            try { localStorage.removeItem("firefly_token"); } catch (e) {}
+    if (IS_SERVER) {
+        const token = (() => { try { return localStorage.getItem("firefly_token") || ""; } catch (e) { return ""; } })();
+        if (!token) {
+            showAuthModule();
             if (loginEntry) loginEntry.style.display = "flex";
             if (userEntry) userEntry.style.display = "none";
-        } else {
+            return;
+        }
+        fetch("/auth/me").then(r => r.json()).then(d => {
+            if (d.error) {
+                try { localStorage.removeItem("firefly_token"); } catch (e) {}
+                if (loginEntry) loginEntry.style.display = "flex";
+                if (userEntry) userEntry.style.display = "none";
+            } else {
+                const emailEl = document.getElementById("auth-email");
+                const meta = document.getElementById("auth-meta");
+                if (emailEl) emailEl.textContent = "邮箱 " + (d.email || "");
+                if (meta) meta.textContent = "注册于 " + (d.created_at || "-").slice(0, 10);
+                if (loginEntry) loginEntry.style.display = "none";
+                if (userEntry) userEntry.style.display = "flex";
+                initAssets();   // 登录态确认：资产本地化（relay 代发前占位符填充用）
+            }
+            showAuthModule();
+        }).catch(() => {});
+        return;
+    }
+    // 本地版（A7）：登录态由本地后端持有（auth.json）；/auth/state 隐式 verify（滚动续期）
+    fetch("/auth/state").then(r => r.json()).then(d => {
+        showAuthModule();
+        if (d.logged_in) {
             const emailEl = document.getElementById("auth-email");
             const meta = document.getElementById("auth-meta");
             if (emailEl) emailEl.textContent = "邮箱 " + (d.email || "");
-            if (meta) meta.textContent = "注册于 " + (d.created_at || "-").slice(0, 10);
+            if (meta) meta.textContent = d.offline_ok ? "已登录 · 云端同步就绪" : "登录已过期，请重新登录";
             if (loginEntry) loginEntry.style.display = "none";
             if (userEntry) userEntry.style.display = "flex";
-            initAssets();   // 登录态确认：资产本地化（relay 代发前占位符填充用）
+        } else {
+            if (loginEntry) loginEntry.style.display = "flex";
+            if (userEntry) userEntry.style.display = "none";
         }
-        showAuthModule();
-    }).catch(() => {});
+    }).catch(() => { /* 本地后端未就绪：静默（首次启动拉服务时） */ });
 }
 function logout() {
     const t = (() => { try { return localStorage.getItem("firefly_token") || ""; } catch (e) { return ""; } })();
@@ -189,7 +206,7 @@ function toggleAuthForms() {
 window.toggleAuthForms = toggleAuthForms;
 
 function initAuthForms() {
-    if (!IS_SERVER) return;
+    // A7：本地版同样接线（表单请求走本地后端 /auth/* 代理 → 认证服务器）
     const $ = id => document.getElementById(id);
     const LOGIN = $("loginForm"), REG = $("registerForm"), RESET = $("resetForm");
     if (!LOGIN || !REG || !RESET || LOGIN.dataset.wired) return;
@@ -2762,6 +2779,19 @@ function showHome() {
 }
 window.showHome = showHome;   // ESM 拆分后供 pc_nav.js（classic script）与内联 onclick 使用
 async function showChat() {
+    // A7 登录前置（本地版）：未登录 → 回首页展开登录表单（本地后端离线时放行）
+    if (!IS_SERVER) {
+        try {
+            const st = await (await fetch("/auth/state")).json();
+            if (st.logged_in === false) {
+                showHome();
+                showAuthModule();
+                try { toggleAuthForms(); } catch (e) {}
+                try { showToast("请先登录（登录后本地数据可云端同步，Key 仍只存本机）"); } catch (e) {}
+                return;
+            }
+        } catch (e) { /* 本地后端未就绪：放行（聊天不依赖账号） */ }
+    }
     const fixView = document.getElementById("fix-view");    if (fixView) fixView.classList.remove("show");
     homeView.classList.remove("show");
     appView.style.display = "flex";     // 恢复聊天页
