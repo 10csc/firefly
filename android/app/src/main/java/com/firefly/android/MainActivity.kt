@@ -16,7 +16,6 @@ import android.os.Environment
 import android.os.Handler
 import android.os.Looper
 import android.os.PowerManager
-import android.os.Process
 import android.provider.Settings
 import android.util.Log
 import android.view.ViewGroup
@@ -52,24 +51,10 @@ class MainActivity : AppCompatActivity() {
     companion object {
         private const val SERVER_URL = "http://127.0.0.1:8765"
         private const val LOCAL_HOME = "file:///android_asset/index.html"
-        private const val READY_TIMEOUT_MS = 60_000L
+        private const val READY_TIMEOUT_MS = 12_000L   // A7c：本地引擎启动探测窗口（超时自动回落服务器）
         private const val NOTIF_PERMISSION_REQUEST = 1001
         private const val FILE_CHOOSER_REQUEST = 1002
         private const val TAG = "Firefly"
-        private const val PREFS = "firefly_prefs"
-        private const val KEY_MODE = "firefly_mode"   // local（默认）/ server
-
-        /** 当前运行模式：local=完全本地（内置引擎）/ server=服务器后端（file:// 页面 + 跨域 API） */
-        fun currentMode(ctx: Context): String {
-            val m = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-                .getString(KEY_MODE, "local") ?: "local"
-            return if (m == "server") "server" else "local"
-        }
-
-        fun setMode(ctx: Context, mode: String) {
-            ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-                .edit().putString(KEY_MODE, if (mode == "server") "server" else "local").apply()
-        }
 
         /** 服务器地址单点：读 assets/config.js（Kotlin 启动时读取做 URL 白名单/拦截注入） */
         fun loadServerBase(ctx: Context): String {
@@ -81,6 +66,13 @@ class MainActivity : AppCompatActivity() {
                 "http://101.200.14.126:8787"
             }
         }
+
+        // A7c（登录前提化）：本地优先 / 失败自动回落服务器——删除手动模式切换（SharedPreferences + 杀进程重启）。
+        // 当前后端类型："local"（内嵌引擎） | "server"（回落：file:// 页面 + 服务器地址注入）；KeepAliveService 同读。
+        @JvmStatic @Volatile
+        var backend = "local"
+
+        fun isServerBackend(): Boolean = backend == "server"
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -113,14 +105,25 @@ class MainActivity : AppCompatActivity() {
             }
         })
 
-        // 双模式（0.8.0）：local 启动内置 Python 引擎；server 不启动引擎，直接 file:// 加载
-        if (currentMode(this) == "server") {
-            loadWebView(LOCAL_HOME)
-        } else {
+        // A7c：本地优先——始终尝试启动内嵌引擎；探测失败/超时自动回落服务器后端（界面显示"云端连接中"）
+        try {
             startEmbeddedServer()
             waitForServerReady {
+                backend = "local"
                 loadWebView(SERVER_URL)
             }
+        } catch (e: Exception) {
+            Log.w(TAG, "[Backend] 内嵌引擎启动失败，自动回落服务器后端: ${e.message}")
+            fallbackToServer()
+        }
+    }
+
+    /** 本地后端不可用：加载 file:// 页面并注入服务器模式（登录后直连云端；界面由前端展示"云端连接中"） */
+    private fun fallbackToServer() {
+        backend = "server"
+        uiHandler.post {
+            Toast.makeText(this, "本地后端不可用，已切换云端连接", Toast.LENGTH_SHORT).show()
+            loadWebView(LOCAL_HOME)
         }
     }
 
@@ -316,7 +319,7 @@ class MainActivity : AppCompatActivity() {
         py.getModule("start_server").callAttr("start_in_thread")
     }
 
-    /** 轮询服务就绪（知识库预加载需要几秒），就绪后回调 */
+    /** 轮询服务就绪（知识库预加载需要几秒），就绪后回调；超时 → 自动回落服务器后端（A7c） */
     private fun waitForServerReady(onReady: () -> Unit) {
         Thread {
             val deadline = System.currentTimeMillis() + READY_TIMEOUT_MS
@@ -328,7 +331,8 @@ class MainActivity : AppCompatActivity() {
             if (ready) {
                 uiHandler.post { onReady() }
             } else {
-                uiHandler.post { showError("服务启动超时，请重启应用") }
+                Log.w(TAG, "[Backend] 引擎探测超时（${READY_TIMEOUT_MS / 1000}s），回落服务器后端")
+                fallbackToServer()
             }
         }.start()
     }
@@ -395,14 +399,13 @@ class MainActivity : AppCompatActivity() {
                 override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {}
                 override fun onPageFinished(view: WebView?, url: String?) {}
 
-                // config.js 动态注入（双模式单点）：页面先加载 config.js 再加载 app.js，
-                // 由壳按当前运行模式返回字段——local：FIREFLY_MODE=local；
-                // server：FIREFLY_MODE=server + FIREFLY_SERVER_BASE（读 assets/config.js 的地址单点）
+                // config.js 动态注入（A7c 单态）：页面先加载 config.js 再加载 app.js，
+                // 壳按当前后端类型返回字段——local：FIREFLY_MODE=local；
+                // 回落 server：FIREFLY_MODE=server + FIREFLY_SERVER_BASE（读 assets/config.js 的地址单点）
                 override fun shouldInterceptRequest(view: WebView?, request: WebResourceRequest?): WebResourceResponse? {
                     val url = request?.url?.toString() ?: return null
                     if (url.endsWith("/config.js") || url.endsWith("config.js")) {
-                        val mode = currentMode(this@MainActivity)
-                        val js = if (mode == "server") {
+                        val js = if (backend == "server") {
                             "window.FIREFLY_MODE=\"server\";window.FIREFLY_SERVER_BASE=\"$serverBase\";"
                         } else {
                             "window.FIREFLY_MODE=\"local\";"
@@ -438,7 +441,7 @@ class MainActivity : AppCompatActivity() {
                 }
             }
             webChromeClient = object : WebChromeClient() {
-                // 文件选择（数据导入：<input type="file" accept=".zip">）
+                // 文件选择（数据导入 zip + A9 发图 image/*）：MME 用通配 + 扩展白名单双保险
                 override fun onShowFileChooser(
                     webView: WebView?,
                     filePathCallback: ValueCallback<Array<Uri>>?,
@@ -447,11 +450,14 @@ class MainActivity : AppCompatActivity() {
                     pendingFileCallback = filePathCallback
                     val intent = Intent(Intent.ACTION_GET_CONTENT).apply {
                         addCategory(Intent.CATEGORY_OPENABLE)
-                        type = "application/zip"
+                        type = "*/*"
+                        putExtra(Intent.EXTRA_MIME_TYPES, arrayOf(
+                            "application/zip", "image/png", "image/jpeg",
+                            "image/webp", "image/gif"))
                         putExtra(Intent.EXTRA_ALLOW_MULTIPLE, false)
                     }
                     try {
-                        startActivityForResult(Intent.createChooser(intent, "选择备份 zip 文件"), FILE_CHOOSER_REQUEST)
+                        startActivityForResult(Intent.createChooser(intent, "选择文件（zip 备份 / 图片）"), FILE_CHOOSER_REQUEST)
                     } catch (e: Exception) {
                         pendingFileCallback = null
                         return false
@@ -477,32 +483,11 @@ class MainActivity : AppCompatActivity() {
                 }
             }
             addJavascriptInterface(WakeLockBridge(), "androidWakeLock")
-            addJavascriptInterface(ModeBridge(), "FireflyMode")
             loadUrl(baseUrl)
         }
         (findViewById<ViewGroup>(android.R.id.content)).addView(webView)
         // 服务器模式后台主动：KeepAliveService 经 evaluateJavascript 触发页面 __serverProactive()
         KeepAliveService.webView = webView
-    }
-
-    /** 运行模式桥：前端设置面板切换 local/server；壳保存后重启应用生效 */
-    inner class ModeBridge {
-        @JavascriptInterface
-        fun getMode(): String = currentMode(this@MainActivity)
-
-        @JavascriptInterface
-        fun setMode(mode: String) {
-            val m = if (mode == "server") "server" else "local"
-            setMode(this@MainActivity, m)
-            uiHandler.post {
-                Toast.makeText(this@MainActivity, "已切换运行模式，正在重启应用…", Toast.LENGTH_SHORT).show()
-            }
-            // 重启自身：finishAffinity 清任务栈 → 杀进程（下次点击图标冷启动按新模式加载）
-            uiHandler.postDelayed({
-                finishAffinity()
-                Process.killProcess(Process.myPid())
-            }, 800)
-        }
     }
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {

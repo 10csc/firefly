@@ -1045,7 +1045,7 @@ async function loadConfig() {
         _updateKeyGuide();
 
         const hiddenField = _$("hidden-reply-field");
-        if (hiddenField) hiddenField.style.display = window.FireflyMode ? "" : "none";
+        if (hiddenField) hiddenField.style.display = window.androidWakeLock ? "" : "none";
 
         const exitRow = _$("app-exit-row");
         if (exitRow && data.platform === "pc") {
@@ -1550,32 +1550,9 @@ async function loadStickerList() {
 }
 
 // ═══════════════════════════════════════════
-// 运行模式切换（0.8.0）：仅安卓壳注入 FireflyMode 桥时显示。
-// 切换 = 壳保存 SharedPreferences → 重启应用 → 按新模式加载数据源。
-// PC 浏览器（本地）/ 服务器网页：无桥 → 该行隐藏。
+// 运行模式切换（A7c 已删除）：本地优先 + 后端失败自动回落服务器——无手动切换入口。
+// 保留此注释防止旧代码/测试引用复活。
 // ═══════════════════════════════════════════
-(function initModeSwitch() {
-    const row = document.getElementById("mode-switch-row");
-    if (!row || !window.FireflyMode) return;
-    row.style.display = "";
-    const sel = document.getElementById("mode-select");
-    let cur = "local";
-    try { cur = window.FireflyMode.getMode() || "local"; } catch (e) {}
-    if (cur !== "local" && cur !== "server") cur = "local";
-    sel.value = cur;
-    sel.addEventListener("change", () => {
-        const next = sel.value;
-        if (next === cur) return;
-        const desc = next === "server"
-            ? "服务器模式：登录账号后使用，数据存服务器你的账号目录（可同步 / 可托管额度）。"
-            : "本地模式：数据与 Key 全部在本机，无需登录、无网络要求（调 API 除外）。";
-        if (!confirm("切换运行模式需要重新打开应用。\n\n" + desc + "\n\n确定切换吗？")) {
-            sel.value = cur;
-            return;
-        }
-        try { window.FireflyMode.setMode(next); } catch (e) { /* 壳负责重启 */ }
-    });
-})();
 
 
 /* ── 来源：js/chat.js ── */

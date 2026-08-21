@@ -125,7 +125,7 @@ class KeepAliveService : Service() {
      * - server：无内置引擎 → evaluateJavascript 触发页面 __serverProactive()（页面轮询服务器）。 */
     private fun triggerBackgroundProactive() {
         val ctx = appContext ?: return
-        if (MainActivity.currentMode(ctx) == "server") {
+        if (MainActivity.isServerBackend()) {
             val wv = webView ?: return
             try {
                 wv.post {
