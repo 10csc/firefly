@@ -17,7 +17,7 @@ class ResponseMixin:
         ".css": "text/css", ".js": "application/javascript",
         ".ttf": "font/ttf", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
         ".png": "image/png", ".svg": "image/svg+xml", ".webp": "image/webp",
-        ".json": "application/json",
+        ".gif": "image/gif", ".json": "application/json",
     }
 
     def _serve_file(self, filepath: Path):

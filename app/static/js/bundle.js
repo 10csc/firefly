@@ -62,6 +62,62 @@ function _esc(s) {
         .replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
 }
 
+// ═══ 媒体本地存储（A2：服务器只传输不保存图片；本体存 WebView IndexedDB）═══
+// 键 = 内容 sha256（服务器返回的 local:<sha256>.<ext> 引用）；Blob 存取。
+let _idbPromise = null;
+function _idb() {
+    if (!_idbPromise) {
+        _idbPromise = new Promise((res, rej) => {
+            try {
+                if (!window.indexedDB) { rej(new Error("IndexedDB 不可用")); return; }
+                const req = indexedDB.open("firefly_media", 1);
+                req.onupgradeneeded = () => {
+                    const db = req.result;
+                    if (!db.objectStoreNames.contains("media")) db.createObjectStore("media");
+                };
+                req.onsuccess = () => res(req.result);
+                req.onerror = () => rej(req.error);
+            } catch (e) { rej(e); }
+        });
+    }
+    return _idbPromise;
+}
+
+async function idbSaveMedia(key, blob) {
+    try {
+        const db = await _idb();
+        return await new Promise((res, rej) => {
+            const tx = db.transaction("media", "readwrite");
+            tx.objectStore("media").put(blob, key);
+            tx.oncomplete = () => res(true);
+            tx.onerror = () => rej(tx.error);
+        });
+    } catch (e) { return false; }
+}
+
+async function idbGetMedia(key) {
+    try {
+        const db = await _idb();
+        return await new Promise((res) => {
+            const tx = db.transaction("media", "readonly");
+            const rq = tx.objectStore("media").get(key);
+            rq.onsuccess = () => res(rq.result || null);
+            rq.onerror = () => res(null);
+        });
+    } catch (e) { return null; }
+}
+
+/** 表情包图片源解析：local: 引用 → IndexedDB dataURL（无图返回 null=占位）；否则服务器资产 URL。 */
+async function stickerSrc(file, isServer, apiBase) {
+    if (!file) return null;
+    if (String(file).startsWith("local:")) {
+        const blob = await idbGetMedia(String(file).slice(6));
+        if (!blob) return null;
+        try { return URL.createObjectURL(blob); } catch (e) { return null; }
+    }
+    return (isServer ? apiBase : "") + "/assets/" + encodeURI(String(file));
+}
+
 
 /* ── 来源：js/api.js ── */
 // 双模式与请求封装：FIREFLY_MODE / fetch 鉴权注入 / 登录与注册表单
@@ -1348,7 +1404,14 @@ document.getElementById("sticker-submit").addEventListener("click", async () => 
         const resp = await fetch("/add-sticker", { method: "POST", body: fd });
         const data = await resp.json();
         if (data.ok) {
-            msg.textContent = "已添加：" + data.label;
+            // A2 媒体本地策略（服务器版）：图片本体存本机 IndexedDB（key=内容哈希），
+            // 服务器只保留文字元数据（label/category/哈希）；上传后立即本地化
+            if (data.local && data.file && file instanceof Blob) {
+                await idbSaveMedia(String(data.file).slice("local:".length), file);
+                msg.textContent = "已添加：" + data.label + "（图片仅存本机）";
+            } else {
+                msg.textContent = "已添加：" + data.label;
+            }
             document.getElementById("sticker-file").value = "";
             document.getElementById("sticker-label").value = "";
             loadStickerList();
@@ -1371,10 +1434,16 @@ async function loadStickerList() {
         const data = await resp.json();
         const stickers = data.stickers || [];
         msg.textContent = `共 ${stickers.length} 个`;
-        list.innerHTML = stickers.map(s => `
+        // A2：缩略图异步解析（local: 引用 → IndexedDB；无图显示占位块）
+        const rows = await Promise.all(stickers.map(async s => {
+            const src = await stickerSrc(s.file, IS_SERVER, API_BASE);
+            const thumb = src
+                ? `<img class="stk-thumb" src="${escapeHtml(src)}" loading="lazy" onerror="this.style.opacity=0.2">`
+                : `<div class="stk-thumb" style="display:flex;align-items:center;justify-content:center;opacity:0.35;font-size:0.6em">无图</div>`;
+            return `
         <div class="sticker-row" data-id="${escapeHtml(s.id)}">
             <div class="stk-head">
-                <img class="stk-thumb" src="${IS_SERVER ? API_BASE : ""}/assets/${escapeHtml(s.file)}" loading="lazy" onerror="this.style.opacity=0.2">
+                ${thumb}
                 <button class="stk-toggle ${s.enabled ? "on" : ""}" data-on="${s.enabled ? "1" : ""}" ${(s.editable || s.is_default) ? "" : "disabled"}>${s.enabled ? "启用中" : "已停用"}</button>
             </div>
             <div class="stk-main">
@@ -1388,7 +1457,9 @@ async function loadStickerList() {
                     <button class="stk-del" ${(s.is_default || !s.editable) ? "disabled" : ""}>删</button>
                 </div>
             </div>
-        </div>`).join("");
+        </div>`;
+        }));
+        list.innerHTML = rows.join("");
         list.querySelectorAll(".sticker-row").forEach(row => {
             const id = row.dataset.id;
             const inp = row.querySelector(".stk-label-input");
@@ -1565,25 +1636,35 @@ function _buildQuotePreview(q) {
     return div;
 }
 
-function addSticker(stickerPath, who, prepend = false, seq = null, label = null, quote = null) {
+async function addSticker(stickerPath, who, prepend = false, seq = null, label = null, quote = null) {
     const row = document.createElement("div");
     row.className = "msg-row " + (who === "user" ? "user" : "firefly");
     if (seq !== null) row.dataset.seq = seq;
     if (label) row.dataset.stickerLabel = label;   // 长按菜单需要表情含义
     if (!prepend) row.classList.add("float-in");
-    const img = document.createElement("img");
-    img.className = "sticker-img";
-    img.src = (IS_SERVER ? API_BASE : "") + "/assets/" + stickerPath;
-    img.dataset.stickerPath = stickerPath;
-    // 容错：表情包文件缺失（历史遗留/用户删除）时降级为文字占位，不显示裂图
-    img.onerror = () => {
-        if (img.dataset.fallback) return;
-        img.dataset.fallback = "1";
+    // A2 媒体本地策略：local: 引用 → IndexedDB 取本体；缺失降级占位（服务器不保存图片）
+    const src = await stickerSrc(stickerPath, IS_SERVER, API_BASE);
+    let img = null;
+    if (src) {
+        img = document.createElement("img");
+        img.className = "sticker-img";
+        img.src = src;
+        img.dataset.stickerPath = stickerPath;
+        // 容错：表情包文件缺失（历史遗留/用户删除）时降级为文字占位，不显示裂图
+        img.onerror = () => {
+            if (img.dataset.fallback) return;
+            img.dataset.fallback = "1";
+            const span = document.createElement("span");
+            span.className = "sticker-fallback";
+            span.textContent = "（表情包已失效）";
+            row.replaceChild(span, img);
+        };
+    } else {
         const span = document.createElement("span");
         span.className = "sticker-fallback";
         span.textContent = "（表情包已失效）";
-        row.replaceChild(span, img);
-    };
+        img = span;
+    }
     if (quote) {
         const col = document.createElement("div");
         col.className = "msg-col";

@@ -68,15 +68,10 @@ def _read_registry_items(path: Path) -> list[dict]:
 
 
 def _migrate_legacy_registry():
-    """旧位置（app/assets/stickers/）一次性迁移到 user_data/stickers/。"""
-    if not _REGISTRY_FILE.exists() and _REGISTRY_LEGACY.exists():
-        try:
-            _REGISTRY_FILE.parent.mkdir(parents=True, exist_ok=True)
-            _REGISTRY_FILE.write_text(
-                _REGISTRY_LEGACY.read_text(encoding="utf-8"), encoding="utf-8")
-            logger.info("registry.json 已迁移到 user_data/stickers/")
-        except Exception as e:
-            logger.warning("registry.json 迁移失败: %s", e)
+    """旧位置（app/assets/stickers/）一次性迁移到 user_data/stickers/。
+    A2 收口：storage.migrate_once（幂等，旧文件保留）。"""
+    from modules.storage import migrate_once
+    migrate_once(_REGISTRY_FILE, _REGISTRY_LEGACY)
 
 
 def _migrate_enabled_defaults():
@@ -149,8 +144,9 @@ def _load_registry() -> dict[str, StickerEntry]:
                 logger.warning("registry.json 条目分类非法，跳过: %s", item)
                 continue
             file = item.get("file", "")
-            # 路径校验：仅允许 stickers/ 相对前缀，防手改 registry.json 写 ../../ 越权读取
-            if not isinstance(file, str) or not file.startswith("stickers/") \
+            # 路径校验：仅允许 stickers/ 相对前缀或 local:（服务器版经过式引用，本体在客户端）
+            # 防手改 registry.json 写 ../../ 越权读取
+            if not isinstance(file, str) or not (file.startswith("stickers/") or file.startswith("local:")) \
                     or ".." in file or "\\" in file:
                 logger.warning("registry.json 条目路径非法，跳过: %s", item)
                 continue
@@ -313,7 +309,8 @@ def delete_sticker(sid: str) -> None:
     """删除表情包条目。
 
     默认项（_STICKERS_DEFAULT 里的 5 个）不允许删除——它们是代码内置的兜底。
-    用户添加项可删：从 registry.json 移除条目；图片文件保留（不删盘，避免误删）。
+    用户添加项可删：从 registry.json 移除条目；若该图片文件不再被任何条目引用，
+    顺带清理孤儿文件（A2；删除前校验文件位于当前用户 stickers 目录内，防越权删盘）。
     Raises:
         StickerDeleteError: sid 不存在 / 试图删默认项
     """
@@ -330,8 +327,19 @@ def delete_sticker(sid: str) -> None:
         if user_scope_key() and sid not in editable_ids():
             raise StickerDeleteError("公共表情包不可删除（仅可删除自己上传的）")
 
-        del stickers[sid]
+        entry = stickers.pop(sid)
         _write_registry_all(stickers)
+        # 孤儿清理：该文件不再被剩余条目引用 → 删除（仅当前用户 stickers 目录内）
+        try:
+            remaining_files = {s.file.rsplit("/", 1)[-1] for s in stickers.values()}
+            fname = entry.file.rsplit("/", 1)[-1]
+            sdir = _user_registry_file().parent
+            if fname and fname not in remaining_files and (sdir / fname).exists() \
+                    and not fname.startswith("..") and "/" not in fname:
+                (sdir / fname).unlink()
+                logger.info("清理孤儿表情包文件: %s", fname)
+        except OSError as e:
+            logger.warning("孤儿文件清理跳过 %s: %s", sid, e)
     logger.info("用户删除表情包: id=%s", sid)
 
 

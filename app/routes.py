@@ -131,9 +131,71 @@ def set_key(h):
 
 def set_config(h):
     body = _read_json(h)
+    is_proxy = (h.headers.get("X-API-Mode", "") or "").strip().lower() == "proxy"
+    if _is_server():
+        # A2：服务器版 per-user 覆盖——只写 user_data/{uid}/settings.json（全站默认不被污染）
+        _USER_KEYS = ("analyzer_model", "organizer_model", "polisher_model", "retriever_model",
+                      "retriever_effort", "analyzer_effort", "polisher_effort", "organizer_effort",
+                      "retriever_temperature", "polisher_temperature",
+                      "proactive_enabled", "proactive_hard", "proactive_soft",
+                      "prob_reply_enabled", "prob_reply_value", "hidden_reply_enabled")
+        overlay = dict(cfg.get_user_overlay())
+        for key in _USER_KEYS:
+            if key not in body:
+                continue
+            if key.endswith("_model"):
+                overlay[key] = "mimo-v2.5" if is_proxy else cfg._clean_model(body[key], "deepseek-v4-flash")
+            elif key.endswith("_temperature"):
+                try:
+                    overlay[key] = max(0.0, min(2.0, float(body[key])))
+                except (TypeError, ValueError):
+                    pass
+            elif key.endswith("_effort"):
+                if body[key] in cfg.VALID_EFFORTS:
+                    overlay[key] = body[key]
+            elif key.startswith("proactive_hard"):
+                try:
+                    overlay[key] = max(1, min(10, int(body[key])))
+                except (TypeError, ValueError):
+                    pass
+            elif key in ("proactive_soft", "prob_reply_value"):
+                try:
+                    overlay[key] = max(0.0, min(1.0, float(body[key])))
+                except (TypeError, ValueError):
+                    pass
+            else:
+                overlay[key] = bool(body[key])
+        try:
+            from modules.storage import atomic_write_json
+            ov_path = cfg.USER_DIR / str(cfg.user_dir_id()) / "settings.json"
+            atomic_write_json(ov_path, overlay)
+            cfg.set_user_overlay(overlay)
+        except Exception as e:
+            logger.warning("用户设置覆盖保存失败: %s", e)
+        h._json({
+            "ok": True,
+            "active_provider": cfg.config.get("active_provider", "deepseek"),
+            "analyzer_model": overlay.get("analyzer_model", cfg.config["analyzer_model"]),
+            "organizer_model": overlay.get("organizer_model", cfg.config["organizer_model"]),
+            "polisher_model": overlay.get("polisher_model", cfg.config["polisher_model"]),
+            "retriever_model": overlay.get("retriever_model", cfg.config["retriever_model"]),
+            "retriever_effort": overlay.get("retriever_effort", cfg.config["retriever_effort"]),
+            "analyzer_effort": overlay.get("analyzer_effort", cfg.config["analyzer_effort"]),
+            "polisher_effort": overlay.get("polisher_effort", cfg.config["polisher_effort"]),
+            "organizer_effort": overlay.get("organizer_effort", cfg.config["organizer_effort"]),
+            "retriever_temperature": overlay.get("retriever_temperature", cfg.config["retriever_temperature"]),
+            "polisher_temperature": overlay.get("polisher_temperature", cfg.config["polisher_temperature"]),
+            "proactive_enabled": bool(overlay.get("proactive_enabled", cfg.config.get("proactive_enabled", True))),
+            "proactive_hard": overlay.get("proactive_hard", cfg.config.get("proactive_hard", 4)),
+            "proactive_soft": overlay.get("proactive_soft", cfg.config.get("proactive_soft", 0.5)),
+            "prob_reply_enabled": bool(overlay.get("prob_reply_enabled", cfg.config.get("prob_reply_enabled", True))),
+            "prob_reply_value": overlay.get("prob_reply_value", cfg.config.get("prob_reply_value", 0.3)),
+            "hidden_reply_enabled": bool(overlay.get("hidden_reply_enabled", cfg.config.get("hidden_reply_enabled", True))),
+        })
+        return
+    # ── 本地版（单用户写全站配置，行为同 0.8.0）──
     # 服务器版：剥离 api_key 字段（Key 不落服务器全局配置；模型/主动性等全局参数照常）
     new_key = "" if _is_server() else (body.get("api_key") or "").strip()
-    is_proxy = (h.headers.get("X-API-Mode", "") or "").strip().lower() == "proxy"
     # A8：模型名自由输入（官方英文名，无白名单）；仅服务器托管（proxy）模式锁 mimo-v2.5
     for key in ("analyzer_model", "organizer_model", "polisher_model", "retriever_model"):
         val = body.get(key, cfg.config[key])
@@ -216,22 +278,22 @@ def set_config(h):
         "ok": bool(cfg.config["api_key"]),
         "active_provider": cfg.config.get("active_provider", "deepseek"),
         "api_base": cfg.config.get("api_base", cfg.API_BASE),
-        "analyzer_model": cfg.config["analyzer_model"],
-        "organizer_model": cfg.config["organizer_model"],
-        "polisher_model": cfg.config["polisher_model"],
-        "retriever_model": cfg.config["retriever_model"],
-        "retriever_effort": cfg.config["retriever_effort"],
-        "analyzer_effort": cfg.config["analyzer_effort"],
-        "polisher_effort": cfg.config["polisher_effort"],
-        "organizer_effort": cfg.config["organizer_effort"],
-        "retriever_temperature": cfg.config["retriever_temperature"],
-        "polisher_temperature": cfg.config["polisher_temperature"],
-        "proactive_enabled": bool(cfg.config.get("proactive_enabled", True)),
-        "proactive_hard": cfg.config.get("proactive_hard", 4),
-        "proactive_soft": cfg.config.get("proactive_soft", 0.5),
-        "prob_reply_enabled": bool(cfg.config.get("prob_reply_enabled", True)),
-        "prob_reply_value": cfg.config.get("prob_reply_value", 0.3),
-        "hidden_reply_enabled": bool(cfg.config.get("hidden_reply_enabled", True)),
+        "analyzer_model": cfg.eff_cfg("analyzer_model"),
+        "organizer_model": cfg.eff_cfg("organizer_model"),
+        "polisher_model": cfg.eff_cfg("polisher_model"),
+        "retriever_model": cfg.eff_cfg("retriever_model"),
+        "retriever_effort": cfg.eff_cfg("retriever_effort"),
+        "analyzer_effort": cfg.eff_cfg("analyzer_effort"),
+        "polisher_effort": cfg.eff_cfg("polisher_effort"),
+        "organizer_effort": cfg.eff_cfg("organizer_effort"),
+        "retriever_temperature": cfg.eff_cfg("retriever_temperature"),
+        "polisher_temperature": cfg.eff_cfg("polisher_temperature"),
+        "proactive_enabled": bool(cfg.eff_cfg("proactive_enabled", True)),
+        "proactive_hard": cfg.eff_cfg("proactive_hard", 4),
+        "proactive_soft": cfg.eff_cfg("proactive_soft", 0.5),
+        "prob_reply_enabled": bool(cfg.eff_cfg("prob_reply_enabled", True)),
+        "prob_reply_value": cfg.eff_cfg("prob_reply_value", 0.3),
+        "hidden_reply_enabled": bool(cfg.eff_cfg("hidden_reply_enabled", True)),
     })
 
 
@@ -514,16 +576,16 @@ def chat(h):
             session = get_session(session_id, mode)
             with session["lock"]:
                 result = handle_chat("", session, client,
-                                     analyzer_model=cfg.config["analyzer_model"],
-                                     organizer_model=cfg.config["organizer_model"],
-                                     polisher_model=cfg.config["polisher_model"],
-                                     retriever_model=cfg.config["retriever_model"],
-                                     retriever_effort=cfg.config["retriever_effort"],
-                                     analyzer_effort=cfg.config["analyzer_effort"],
-                                     polisher_effort=cfg.config["polisher_effort"],
-                                     organizer_effort=cfg.config["organizer_effort"],
-                                     retriever_temperature=cfg.config["retriever_temperature"],
-                                     polisher_temperature=cfg.config["polisher_temperature"],
+                                     analyzer_model=cfg.eff_cfg("analyzer_model"),
+                                     organizer_model=cfg.eff_cfg("organizer_model"),
+                                     polisher_model=cfg.eff_cfg("polisher_model"),
+                                     retriever_model=cfg.eff_cfg("retriever_model"),
+                                     retriever_effort=cfg.eff_cfg("retriever_effort"),
+                                     analyzer_effort=cfg.eff_cfg("analyzer_effort"),
+                                     polisher_effort=cfg.eff_cfg("polisher_effort"),
+                                     organizer_effort=cfg.eff_cfg("organizer_effort"),
+                                     retriever_temperature=cfg.eff_cfg("retriever_temperature"),
+                                     polisher_temperature=cfg.eff_cfg("polisher_temperature"),
                                      memory_head=session.get("memory_head", ""),
                                      hint=hint,
                                      mode=mode,
@@ -582,16 +644,16 @@ def chat(h):
         with session["lock"]:
             result = handle_chat(
                 user_input, session, client,
-                analyzer_model=cfg.config["analyzer_model"],
-                organizer_model=cfg.config["organizer_model"],
-                polisher_model=cfg.config["polisher_model"],
-                retriever_model=cfg.config["retriever_model"],
-                retriever_effort=cfg.config["retriever_effort"],
-                analyzer_effort=cfg.config["analyzer_effort"],
-                polisher_effort=cfg.config["polisher_effort"],
-                organizer_effort=cfg.config["organizer_effort"],
-                retriever_temperature=cfg.config["retriever_temperature"],
-                polisher_temperature=cfg.config["polisher_temperature"],
+                analyzer_model=cfg.eff_cfg("analyzer_model"),
+                organizer_model=cfg.eff_cfg("organizer_model"),
+                polisher_model=cfg.eff_cfg("polisher_model"),
+                retriever_model=cfg.eff_cfg("retriever_model"),
+                retriever_effort=cfg.eff_cfg("retriever_effort"),
+                analyzer_effort=cfg.eff_cfg("analyzer_effort"),
+                polisher_effort=cfg.eff_cfg("polisher_effort"),
+                organizer_effort=cfg.eff_cfg("organizer_effort"),
+                retriever_temperature=cfg.eff_cfg("retriever_temperature"),
+                polisher_temperature=cfg.eff_cfg("polisher_temperature"),
                 memory_head=session.get("memory_head", ""),
                 hint=hint,
                 mode=mode,
@@ -668,7 +730,9 @@ def rest(h):
 
 
 def add_sticker_route(h):
-    # multipart/form-data 解析：保存图片到 user_data/stickers/，写入 registry.json
+    # multipart/form-data 解析：本地版保存图片到 user_data/stickers/；
+    # 服务器版（A2 媒体策略）只传输不保存：校验+哈希 → 仅注册文字元数据（file=local:<sha256>.<ext>，
+    # 图片本体由前端存 WebView IndexedDB；其它设备无图 → 占位提示「（表情包已失效）」）
     from tools.sticker_picker import add_sticker, StickerAddError
     try:
         fields, files = parse_multipart(h)
@@ -681,6 +745,24 @@ def add_sticker_route(h):
             h._json({"ok": False, "error": "分类必须为 可爱/帅气"}); return
         if not label:
             h._json({"ok": False, "error": "缺少含义描述"}); return
+
+        if _is_server():
+            import hashlib
+            original = file_info["filename"] or "sticker"
+            ext = Path(original).suffix.lower()
+            if ext not in (".png", ".jpg", ".jpeg", ".webp", ".gif"):
+                h._json({"ok": False, "error": "仅支持 png/jpg/jpeg/webp/gif 图片格式"}); return
+            data = file_info["data"]
+            if not isinstance(data, bytes) or len(data) > 10 * 1024 * 1024:
+                h._json({"ok": False, "error": "图片过大（上限 10MB）"}); return
+            # 服务器对图片字节只传输不保存：仅登记元数据（内容哈希供客户端索引
+            # IndexedDB；label 即图片文字描述，已入 LLM 上下文）
+            digest = hashlib.sha256(data).hexdigest()
+            entry = add_sticker(f"local:{digest}{ext}", category, label)
+            h._json({"ok": True, "id": entry.id, "label": entry.label,
+                     "file": entry.file, "local": True,
+                     "note": "图片已存于本机（服务器不保存图片）"})
+            return
 
         # 保存图片：扩展名白名单（防 .html/.svg 落盘后被静态服务按 MIME 回吐成存储型 XSS），
         # 随机后缀防同秒同名碰撞覆盖
@@ -808,8 +890,8 @@ def setting_fix_message(h):
                                            append_conversation, load_pending,
                                            save_pending)
     client = cfg.get_client()
-    model = cfg.config.get("polisher_model", "deepseek-v4-flash")
-    effort = cfg.config.get("polisher_effort", "high")
+    model = cfg.eff_cfg("polisher_model", "deepseek-v4-flash")
+    effort = cfg.eff_cfg("polisher_effort", "high")
     with locked(mode):
         conversation = load_conversation(mode)
         pending = load_pending(mode)
@@ -864,8 +946,8 @@ def setting_fix_start(h):
     from modules.setting_fix import run_proposal
     from modules.setting_fix_store import locked, load_conversation, save_pending
     client = cfg.get_client()
-    model = cfg.config.get("polisher_model", "deepseek-v4-flash")
-    effort = cfg.config.get("polisher_effort", "high")
+    model = cfg.eff_cfg("polisher_model", "deepseek-v4-flash")
+    effort = cfg.eff_cfg("polisher_effort", "high")
     with locked(mode):
         conversation = load_conversation(mode)
         if not conversation:
@@ -1569,22 +1651,22 @@ def get_config(h):
         "suggested_providers": cfg.SUGGESTED_PROVIDERS,
         "api_base": cfg.config.get("api_base", cfg.API_BASE),
         "api_bases": [cfg.API_BASE, cfg.GO_BASE],
-        "analyzer_model": cfg.config["analyzer_model"],
-        "organizer_model": cfg.config["organizer_model"],
-        "polisher_model": cfg.config["polisher_model"],
-        "retriever_model": cfg.config["retriever_model"],
-        "retriever_effort": cfg.config["retriever_effort"],
-        "analyzer_effort": cfg.config["analyzer_effort"],
-        "polisher_effort": cfg.config["polisher_effort"],
-        "organizer_effort": cfg.config["organizer_effort"],
-        "retriever_temperature": cfg.config["retriever_temperature"],
-        "polisher_temperature": cfg.config["polisher_temperature"],
-        "proactive_enabled": bool(cfg.config.get("proactive_enabled", True)),
-        "proactive_hard": cfg.config.get("proactive_hard", 4),
-        "proactive_soft": cfg.config.get("proactive_soft", 0.5),
-        "prob_reply_enabled": bool(cfg.config.get("prob_reply_enabled", True)),
-        "prob_reply_value": cfg.config.get("prob_reply_value", 0.3),
-        "hidden_reply_enabled": bool(cfg.config.get("hidden_reply_enabled", True)),
+        "analyzer_model": cfg.eff_cfg("analyzer_model"),
+        "organizer_model": cfg.eff_cfg("organizer_model"),
+        "polisher_model": cfg.eff_cfg("polisher_model"),
+        "retriever_model": cfg.eff_cfg("retriever_model"),
+        "retriever_effort": cfg.eff_cfg("retriever_effort"),
+        "analyzer_effort": cfg.eff_cfg("analyzer_effort"),
+        "polisher_effort": cfg.eff_cfg("polisher_effort"),
+        "organizer_effort": cfg.eff_cfg("organizer_effort"),
+        "retriever_temperature": cfg.eff_cfg("retriever_temperature"),
+        "polisher_temperature": cfg.eff_cfg("polisher_temperature"),
+        "proactive_enabled": bool(cfg.eff_cfg("proactive_enabled", True)),
+        "proactive_hard": cfg.eff_cfg("proactive_hard", 4),
+        "proactive_soft": cfg.eff_cfg("proactive_soft", 0.5),
+        "prob_reply_enabled": bool(cfg.eff_cfg("prob_reply_enabled", True)),
+        "prob_reply_value": cfg.eff_cfg("prob_reply_value", 0.3),
+        "hidden_reply_enabled": bool(cfg.eff_cfg("hidden_reply_enabled", True)),
         "suggested_models": list(cfg.SUGGESTED_MODELS),
         "valid_models": list(cfg.SUGGESTED_MODELS),
         "valid_efforts": list(cfg.VALID_EFFORTS),
@@ -1829,16 +1911,16 @@ def proactive_status(h):
         with session["lock"]:
             result = check_and_generate(
                 session, client, mode=mode,
-                enabled=bool(cfg.config.get("proactive_enabled", True)),
-                hard=cfg.config.get("proactive_hard", 4),
-                soft=cfg.config.get("proactive_soft", 0.5),
-                prob_enabled=bool(cfg.config.get("prob_reply_enabled", True)),
-                prob_value=cfg.config.get("prob_reply_value", 0.3),
-                polisher_model=cfg.config["polisher_model"],
-                polisher_effort=cfg.config["polisher_effort"],
-                polisher_temperature=cfg.config["polisher_temperature"],
-                organizer_model=cfg.config["organizer_model"],
-                organizer_effort=cfg.config["organizer_effort"],
+                enabled=bool(cfg.eff_cfg("proactive_enabled", True)),
+                hard=cfg.eff_cfg("proactive_hard", 4),
+                soft=cfg.eff_cfg("proactive_soft", 0.5),
+                prob_enabled=bool(cfg.eff_cfg("prob_reply_enabled", True)),
+                prob_value=cfg.eff_cfg("prob_reply_value", 0.3),
+                polisher_model=cfg.eff_cfg("polisher_model"),
+                polisher_effort=cfg.eff_cfg("polisher_effort"),
+                polisher_temperature=cfg.eff_cfg("polisher_temperature"),
+                organizer_model=cfg.eff_cfg("organizer_model"),
+                organizer_effort=cfg.eff_cfg("organizer_effort"),
                 memory_head=session.get("memory_head", ""),
             )
     finally:

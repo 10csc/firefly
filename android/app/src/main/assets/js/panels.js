@@ -1,6 +1,6 @@
 // 面板族：菜单抽屉 / 设置 / 反馈 / 检查更新 / 配置管理 / 收藏 / 日志 / 表情包管理
 import { S } from "./state.js";
-import { _esc, escapeHtml, showToast } from "./util.js";
+import { _esc, escapeHtml, showToast, stickerSrc, idbSaveMedia } from "./util.js";
 import { IS_SERVER, applyApiSource } from "./api.js";
 import { CURRENT_MODE } from "./views.js";
 
@@ -998,7 +998,14 @@ document.getElementById("sticker-submit").addEventListener("click", async () => 
         const resp = await fetch("/add-sticker", { method: "POST", body: fd });
         const data = await resp.json();
         if (data.ok) {
-            msg.textContent = "已添加：" + data.label;
+            // A2 媒体本地策略（服务器版）：图片本体存本机 IndexedDB（key=内容哈希），
+            // 服务器只保留文字元数据（label/category/哈希）；上传后立即本地化
+            if (data.local && data.file && file instanceof Blob) {
+                await idbSaveMedia(String(data.file).slice("local:".length), file);
+                msg.textContent = "已添加：" + data.label + "（图片仅存本机）";
+            } else {
+                msg.textContent = "已添加：" + data.label;
+            }
             document.getElementById("sticker-file").value = "";
             document.getElementById("sticker-label").value = "";
             loadStickerList();
@@ -1021,10 +1028,16 @@ async function loadStickerList() {
         const data = await resp.json();
         const stickers = data.stickers || [];
         msg.textContent = `共 ${stickers.length} 个`;
-        list.innerHTML = stickers.map(s => `
+        // A2：缩略图异步解析（local: 引用 → IndexedDB；无图显示占位块）
+        const rows = await Promise.all(stickers.map(async s => {
+            const src = await stickerSrc(s.file, IS_SERVER, API_BASE);
+            const thumb = src
+                ? `<img class="stk-thumb" src="${escapeHtml(src)}" loading="lazy" onerror="this.style.opacity=0.2">`
+                : `<div class="stk-thumb" style="display:flex;align-items:center;justify-content:center;opacity:0.35;font-size:0.6em">无图</div>`;
+            return `
         <div class="sticker-row" data-id="${escapeHtml(s.id)}">
             <div class="stk-head">
-                <img class="stk-thumb" src="${IS_SERVER ? API_BASE : ""}/assets/${escapeHtml(s.file)}" loading="lazy" onerror="this.style.opacity=0.2">
+                ${thumb}
                 <button class="stk-toggle ${s.enabled ? "on" : ""}" data-on="${s.enabled ? "1" : ""}" ${(s.editable || s.is_default) ? "" : "disabled"}>${s.enabled ? "启用中" : "已停用"}</button>
             </div>
             <div class="stk-main">
@@ -1038,7 +1051,9 @@ async function loadStickerList() {
                     <button class="stk-del" ${(s.is_default || !s.editable) ? "disabled" : ""}>删</button>
                 </div>
             </div>
-        </div>`).join("");
+        </div>`;
+        }));
+        list.innerHTML = rows.join("");
         list.querySelectorAll(".sticker-row").forEach(row => {
             const id = row.dataset.id;
             const inp = row.querySelector(".stk-label-input");

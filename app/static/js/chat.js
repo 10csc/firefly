@@ -1,6 +1,6 @@
 // 聊天核心：消息渲染 / 打字机 / 长按菜单 / 引用 / 发送 / 历史 / 休息撤回
 import { S, SESSION_ID, inputEl, messagesEl, sendBtn } from "./state.js";
-import { _toast, showToast } from "./util.js";
+import { _toast, showToast, stickerSrc } from "./util.js";
 import { API_BASE, IS_SERVER } from "./api.js";
 import { TB_AVATARS, closeMenu, openAvatarPicker, openMenu, openSettings, tbChoice } from "./panels.js";
 import { CURRENT_MODE, MODE_NAMES, _modeGen } from "./views.js";
@@ -85,25 +85,35 @@ function _buildQuotePreview(q) {
     return div;
 }
 
-function addSticker(stickerPath, who, prepend = false, seq = null, label = null, quote = null) {
+async function addSticker(stickerPath, who, prepend = false, seq = null, label = null, quote = null) {
     const row = document.createElement("div");
     row.className = "msg-row " + (who === "user" ? "user" : "firefly");
     if (seq !== null) row.dataset.seq = seq;
     if (label) row.dataset.stickerLabel = label;   // 长按菜单需要表情含义
     if (!prepend) row.classList.add("float-in");
-    const img = document.createElement("img");
-    img.className = "sticker-img";
-    img.src = (IS_SERVER ? API_BASE : "") + "/assets/" + stickerPath;
-    img.dataset.stickerPath = stickerPath;
-    // 容错：表情包文件缺失（历史遗留/用户删除）时降级为文字占位，不显示裂图
-    img.onerror = () => {
-        if (img.dataset.fallback) return;
-        img.dataset.fallback = "1";
+    // A2 媒体本地策略：local: 引用 → IndexedDB 取本体；缺失降级占位（服务器不保存图片）
+    const src = await stickerSrc(stickerPath, IS_SERVER, API_BASE);
+    let img = null;
+    if (src) {
+        img = document.createElement("img");
+        img.className = "sticker-img";
+        img.src = src;
+        img.dataset.stickerPath = stickerPath;
+        // 容错：表情包文件缺失（历史遗留/用户删除）时降级为文字占位，不显示裂图
+        img.onerror = () => {
+            if (img.dataset.fallback) return;
+            img.dataset.fallback = "1";
+            const span = document.createElement("span");
+            span.className = "sticker-fallback";
+            span.textContent = "（表情包已失效）";
+            row.replaceChild(span, img);
+        };
+    } else {
         const span = document.createElement("span");
         span.className = "sticker-fallback";
         span.textContent = "（表情包已失效）";
-        row.replaceChild(span, img);
-    };
+        img = span;
+    }
     if (quote) {
         const col = document.createElement("div");
         col.className = "msg-col";

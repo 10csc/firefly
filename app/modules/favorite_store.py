@@ -49,11 +49,10 @@ def _load(mode: str) -> list:
 
 
 def _save(mode: str, items: list) -> None:
-    fp = _fav_file(mode)
-    fp.parent.mkdir(parents=True, exist_ok=True)
-    tmp = fp.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(items, ensure_ascii=False, indent=1), encoding="utf-8")
-    tmp.replace(fp)
+    # A2 收口：统一原子写（storage.atomic_write_text，tmp+replace）
+    from modules.storage import atomic_write_text
+    atomic_write_text(_fav_file(mode),
+                      json.dumps(items, ensure_ascii=False, indent=1))
 
 
 def _snapshot(msg) -> dict:

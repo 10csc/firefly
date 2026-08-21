@@ -205,11 +205,10 @@ class MemoryManager:
             with _lock: _REST_ERRORS += 1
             return RestResult(False, old_head, [], [], last_integrated, str(e))
 
-        # 3. 原子落盘（先写临时文件再 rename）
+        # 3. 原子落盘（A2 收口：统一 storage.atomic_write_text）
         new_content = self._compose_memory_text(parsed.new_head, old_tail, parsed)
-        tmp = self._mem_file.with_suffix(".tmp")
-        tmp.write_text(new_content, encoding="utf-8")
-        tmp.replace(self._mem_file)
+        from modules.storage import atomic_write_text
+        atomic_write_text(self._mem_file, new_content)
         self._write_index(current_turn_count)
         return RestResult(True, parsed.new_head, parsed.added, parsed.resolved, current_turn_count)
 

@@ -64,10 +64,9 @@ def _pending_path(mode: str) -> Path:
 
 
 def _atomic_write(fp: Path, text: str) -> None:
-    fp.parent.mkdir(parents=True, exist_ok=True)
-    tmp = fp.with_name(fp.name + ".tmp")
-    tmp.write_text(text, encoding="utf-8")
-    tmp.replace(fp)
+    # A2 收口：统一原子写（storage.atomic_write_text，tmp+replace）
+    from modules.storage import atomic_write_text
+    atomic_write_text(fp, text)
 
 
 # ── 对话（阶段一）──────────────────────────────────────

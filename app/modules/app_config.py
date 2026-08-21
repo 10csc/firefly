@@ -64,6 +64,28 @@ def user_dir_id() -> int:
         return 0
 
 
+# ── 按用户配置覆盖（A2：/set-config 服务器版只写覆盖，不污染全站默认）──
+_user_overlay: contextvars.ContextVar = contextvars.ContextVar("firefly_user_overlay", default=None)
+
+
+def set_user_overlay(d: dict | None) -> None:
+    """注入当前请求的用户配置覆盖（server_app 每请求从 user_data/{uid}/settings.json 读）。"""
+    _user_overlay.set(d if isinstance(d, dict) else {})
+
+
+def get_user_overlay() -> dict:
+    return _user_overlay.get() or {}
+
+
+def eff_cfg(key: str, default=None):
+    """生效配置取值：用户覆盖（服务器版）→ 全局 config → default。
+    本地版无覆盖时行为与读 config 完全一致。"""
+    ov = _user_overlay.get() or {}
+    if key in ov and ov[key] not in (None, ""):
+        return ov[key]
+    return config.get(key, default)
+
+
 def user_has_key() -> bool:
     """当前请求是否具备可用 Key：服务器版看用户请求头（env/全局配置不算用户的），
     本地版看 config/env。"""
