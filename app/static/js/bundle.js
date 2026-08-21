@@ -1052,7 +1052,7 @@ async function loadPipeline() {
 }
 window.loadPipeline = loadPipeline;
 // ═══════════════════════════════════════════
-// 用户记忆（= 跨会话记忆 memory.md，休息时自动整理）/ 用户设定（补充设定）
+// 用户记忆（= memory.md，休息时自动整理的过往摘要）/ 用户设定（补充设定）
 // ═══════════════════════════════════════════
 async function loadUserMemory() {
     const editor = document.getElementById("user-memory-editor");
@@ -1967,6 +1967,11 @@ inputEl.addEventListener("input", () => {
 // 休息 / 清除 / 撤回
 // ═══════════════════════════════════════════
 const restOverlay = document.getElementById("rest-overlay");
+// 休息结果展示后 3 秒自动收起（修复：原来先隐藏遮罩再写文案，用户看不见结果）
+function _showRestResult(txt) {
+    document.getElementById("rest-text").textContent = txt;
+    setTimeout(() => { restOverlay.style.display = "none"; }, 3000);
+}
 document.getElementById("menu-rest-btn").addEventListener("click", async () => {
     if (!confirm("让流萤去休息吗？她会整理这段对话的记忆。")) return;
     closeMenu();
@@ -1978,13 +1983,11 @@ document.getElementById("menu-rest-btn").addEventListener("click", async () => {
             body: JSON.stringify({ session_id: SESSION_ID, mode: CURRENT_MODE }),
         });
         const data = await resp.json();
-        restOverlay.style.display = "none";   // 无论成败都收起遮罩（失败信息已在 text 中展示）
-        document.getElementById("rest-text").textContent = data.ok
+        _showRestResult(data.ok
             ? `流萤已休息。新增记忆 ${data.added} 条，解决 ${data.resolved} 条。下次见。`
-            : "整理出了点问题：" + (data.error || "未知");
+            : "整理出了点问题：" + (data.error || "未知"));
     } catch (e) {
-        restOverlay.style.display = "none";
-        document.getElementById("rest-text").textContent = "信号不好，等会儿再试。";
+        _showRestResult("信号不好，等会儿再试。");
     }
 });
 
@@ -2082,7 +2085,7 @@ messagesEl.addEventListener("scroll", () => {
 // ═══════════════════════════════════════════
 const FIX_FILE_LABELS = {
     "core.md": "核心设定", "identity.md": "关系与习惯", "sms_samples.md": "短信风格",
-    "用户设定.md": "用户补充设定", "memory.md": "跨会话记忆", "手账.md": "流萤手账",
+    "用户设定.md": "用户补充设定", "memory.md": "过往摘要", "手账.md": "流萤手账",
 };
 let FIX_MODE = "story";   // 首页卡片选择的模式；进入聊天后跟随最近使用模式
 let _fixBusy = false;

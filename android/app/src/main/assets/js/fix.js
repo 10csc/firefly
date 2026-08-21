@@ -9,7 +9,7 @@ import { MODE_NAMES, appView, homeView, showHome } from "./views.js";
 // ═══════════════════════════════════════════
 const FIX_FILE_LABELS = {
     "core.md": "核心设定", "identity.md": "关系与习惯", "sms_samples.md": "短信风格",
-    "用户设定.md": "用户补充设定", "memory.md": "跨会话记忆", "手账.md": "流萤手账",
+    "用户设定.md": "用户补充设定", "memory.md": "过往摘要", "手账.md": "流萤手账",
 };
 let FIX_MODE = "story";   // 首页卡片选择的模式；进入聊天后跟随最近使用模式
 let _fixBusy = false;

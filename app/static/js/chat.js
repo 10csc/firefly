@@ -675,6 +675,11 @@ inputEl.addEventListener("input", () => {
 // 休息 / 清除 / 撤回
 // ═══════════════════════════════════════════
 const restOverlay = document.getElementById("rest-overlay");
+// 休息结果展示后 3 秒自动收起（修复：原来先隐藏遮罩再写文案，用户看不见结果）
+function _showRestResult(txt) {
+    document.getElementById("rest-text").textContent = txt;
+    setTimeout(() => { restOverlay.style.display = "none"; }, 3000);
+}
 document.getElementById("menu-rest-btn").addEventListener("click", async () => {
     if (!confirm("让流萤去休息吗？她会整理这段对话的记忆。")) return;
     closeMenu();
@@ -686,13 +691,11 @@ document.getElementById("menu-rest-btn").addEventListener("click", async () => {
             body: JSON.stringify({ session_id: SESSION_ID, mode: CURRENT_MODE }),
         });
         const data = await resp.json();
-        restOverlay.style.display = "none";   // 无论成败都收起遮罩（失败信息已在 text 中展示）
-        document.getElementById("rest-text").textContent = data.ok
+        _showRestResult(data.ok
             ? `流萤已休息。新增记忆 ${data.added} 条，解决 ${data.resolved} 条。下次见。`
-            : "整理出了点问题：" + (data.error || "未知");
+            : "整理出了点问题：" + (data.error || "未知"));
     } catch (e) {
-        restOverlay.style.display = "none";
-        document.getElementById("rest-text").textContent = "信号不好，等会儿再试。";
+        _showRestResult("信号不好，等会儿再试。");
     }
 });
 

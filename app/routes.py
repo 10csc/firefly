@@ -541,6 +541,9 @@ def rest(h):
             mm.update_journal(full_history[-100:])
             from modules.llm_base import reload_journal
             reload_journal(mode)
+            # 立即刷新当前会话的 memory_head：新头部随下一条消息生效，
+            # 不再等进程重启 / 30 会话淘汰（真 bug 修复）
+            session["memory_head"] = mm.load_head()
     h._json({"ok": result.success, "added": len(result.added_entries),
              "resolved": len(result.resolved_entries), "error": result.error})
 
@@ -831,6 +834,21 @@ def undo(h):
         result = session["context"].pop_last_turn()
         from modules.conversation_store import remove_last_turn
         removed = remove_last_turn(mode=mode)
+        # 撤回后回退 .memory_index：若整合游标 > 当前轮数（说明被撤回轮次
+        # 已被记过数），必须压低游标，否则后续 rest 按 turn 号切片会把新的
+        # 对话全部误判为"已整理过"而永远跳过（真 bug 修复）
+        try:
+            from modules.memory_manager import _index_file
+            fp = _index_file(mode)
+            if fp.exists():
+                idx = json.loads(fp.read_text(encoding="utf-8"))
+                last_turn = int(idx.get("last_integrated_turn", 0))
+                cur_turn = session["context"].turn_count
+                if last_turn > cur_turn:
+                    idx["last_integrated_turn"] = cur_turn
+                    fp.write_text(json.dumps(idx, ensure_ascii=False), encoding="utf-8")
+        except Exception:
+            pass
     # 以文件为准：重启后内存 context 为空但文件仍有历史，文件删成功就算成功
     if removed > 0 or result is not None:
         h._json({"ok": True, "removed_turn": 1, "files_removed": removed})
@@ -1234,7 +1252,7 @@ def get_character_files(h):
 
 
 def get_user_memory(h):
-    # 用户记忆 = 跨会话记忆文件（休息时自动整理），展示为可编辑
+    # 用户记忆 = memory.md（休息时自动整理的过往摘要），展示为可编辑
     from modules.memory_manager import _memory_file
     mode = _query_mode(h)
     fp = _memory_file(mode)

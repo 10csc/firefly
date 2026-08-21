@@ -724,7 +724,7 @@ async function loadPipeline() {
 }
 window.loadPipeline = loadPipeline;
 // ═══════════════════════════════════════════
-// 用户记忆（= 跨会话记忆 memory.md，休息时自动整理）/ 用户设定（补充设定）
+// 用户记忆（= memory.md，休息时自动整理的过往摘要）/ 用户设定（补充设定）
 // ═══════════════════════════════════════════
 async function loadUserMemory() {
     const editor = document.getElementById("user-memory-editor");

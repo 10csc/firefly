@@ -248,6 +248,8 @@ class ContextManager:
         return sum(1 for m in self._history if m["role"] == "user")
 
     # ── 内部计算 ─────────────────────────────────
+    # 废弃标注（A 阶段仅标注，B 阶段移除）：energy / fatigue_visible 无任何消费方，
+    # 属于早期"精力值"设计的遗留，prompt 不读、前端不显示。
     def _compute_stats(self) -> ContextStats:
         total_tokens = _estimate_messages_tokens(self._history)
         energy = max(0, self._energy_max - total_tokens // 1000)

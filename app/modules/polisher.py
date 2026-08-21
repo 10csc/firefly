@@ -34,7 +34,7 @@ class PolisherInput:
     analyzer_intent: str = ""        # 分析器意图
     analyzer_fact_check: list = field(default_factory=list)
     recent_history: list = field(default_factory=list)
-    memory_head: str = ""            # 跨会话核心记忆
+    memory_head: str = ""            # 这段对话的过往摘要（rest 整理，窗口外压缩存档）
     environment: str = ""            # 环境（时段描述等）
     proactive_context: str = ""      # 非空 = 主动发消息场景（流萤找开拓者，不是回复）
 
@@ -344,7 +344,7 @@ class Polisher:
         )
 
         history_section = format_history(inp.recent_history)
-        memory_section = f"## 核心记忆（跨会话）\n{inp.memory_head}\n\n" if inp.memory_head else ""
+        memory_section = f"## 这段对话的过往摘要\n{inp.memory_head}\n\n" if inp.memory_head else ""
         env_section = f"## 当前环境\n{inp.environment}\n\n" if inp.environment else ""
 
         # 防复读（数据注入）：提取流萤最近说过的话，显式列出"不要重复"。
