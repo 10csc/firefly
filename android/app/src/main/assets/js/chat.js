@@ -1,6 +1,6 @@
 // 聊天核心：消息渲染 / 打字机 / 长按菜单 / 引用 / 发送 / 历史 / 休息撤回
 import { S, SESSION_ID, inputEl, messagesEl, sendBtn } from "./state.js";
-import { _toast, showToast, stickerSrc } from "./util.js";
+import { _toast, showToast, stickerSrc, idbSaveMedia, idbGetMedia } from "./util.js";
 import { API_BASE, IS_SERVER } from "./api.js";
 import { TB_AVATARS, closeMenu, openAvatarPicker, openMenu, openSettings, tbChoice } from "./panels.js";
 import { CURRENT_MODE, MODE_NAMES, _modeGen } from "./views.js";
@@ -67,6 +67,7 @@ function addTextMessage(text, who, prepend = false, seq = null, quote = null) {
 function _quoteContentText(q) {
     if (!q) return "";
     if (q.type === "sticker") return "[表情包：" + (q.label || "") + "]";
+    if (q.type === "image") return "[图片：" + (q.desc || "（无描述）") + "]";
     if (q.type === "narration") return q.text || "";
     return q.content || "";
 }
@@ -129,6 +130,62 @@ async function addSticker(stickerPath, who, prepend = false, seq = null, label =
     return row;
 }
 
+/** A9 图片消息渲染：本地版向后端 /image/<img_id> 取图；服务器版图片本体在 IndexedDB（key=img_id），
+ *  缺失 → 显示 desc 文字占位（图片字节不出设备，服务器只有描述）。 */
+async function addImage(msg, who, prepend = false, seq = null, quote = null) {
+    const row = document.createElement("div");
+    row.className = "msg-row " + (who === "user" ? "user" : "firefly") + " image-row";
+    if (seq !== null) row.dataset.seq = seq;
+    if (!prepend) row.classList.add("float-in");
+    const imgId = (msg.img_id || "").toString().slice(0, 200);
+    const desc = (msg.desc || "").toString().slice(0, 300);
+    let src = null;
+    if (IS_SERVER) {
+        const blob = await idbGetMedia(imgId);
+        if (blob) { try { src = URL.createObjectURL(blob); } catch (e) {} }
+    } else if (imgId) {
+        src = "/image?id=" + encodeURIComponent(imgId);
+    }
+    let content;
+    if (src) {
+        const img = document.createElement("img");
+        img.className = "image-img";
+        img.style.cssText = "max-width:min(56vw,320px);max-height:280px;border-radius:12px;display:block";
+        img.src = src;
+        img.dataset.imgId = imgId;
+        img.dataset.desc = desc;
+        img.onerror = () => {
+            if (img.dataset.fallback) return;
+            img.dataset.fallback = "1";
+            const span = document.createElement("span");
+            span.className = "sticker-fallback";
+            span.textContent = desc ? `（图片：${desc}）` : "（图片已失效）";
+            row.replaceChild(span, img);
+        };
+        content = img;
+    } else {
+        const span = document.createElement("span");
+        span.className = "sticker-fallback";
+        span.textContent = desc ? `（图片：${desc}）` : "（图片已失效）";
+        span.dataset.imgId = imgId;
+        span.dataset.desc = desc;
+        content = span;
+    }
+    if (quote) {
+        const col = document.createElement("div");
+        col.className = "msg-col";
+        col.appendChild(_buildQuotePreview(quote));
+        col.appendChild(content);
+        row.appendChild(col);
+    } else {
+        row.appendChild(content);
+    }
+    _addAvatar(row, who);
+    if (prepend) { messagesEl.insertBefore(row, messagesEl.firstChild); }
+    else { messagesEl.appendChild(row); scrollToBottom(); }
+    return row;
+}
+
 function addNarration(text, style, prepend = false, seq = null) {
     // 视觉小说式旁白：scene=居中小字（环境/事件），action=居中括号（动作）
     // 防御：历史数据/LLM 可能自带括号，先剥离避免双重括号
@@ -175,6 +232,13 @@ function _msgSnapshot(row) {
         snap.label = row.dataset.stickerLabel || "";
         const img = row.querySelector(".sticker-img");
         if (img) snap.path = img.dataset.stickerPath || "";
+    } else if (row.querySelector(".image-img")) {
+        snap.type = "image";
+        const img = row.querySelector(".image-img");
+        if (img) {
+            snap.img_id = img.dataset.imgId || "";
+            snap.desc = img.dataset.desc || "";
+        }
     } else {
         snap.type = "text";
         const b = row.querySelector(".bubble");
@@ -188,6 +252,7 @@ function _snapHasContent(s) {
     if (s.type === "text") return !!(s.content && s.content.trim());
     if (s.type === "sticker") return !!(s.label || s.path);
     if (s.type === "narration") return !!(s.text && s.text.trim());
+    if (s.type === "image") return !!(s.img_id || s.desc);
     return false;
 }
 
@@ -354,6 +419,7 @@ export function renderMessages(messages, who, data) {
             typingRow.remove();
             if (msg.type === "sticker") addSticker(msg.path, who);
             else if (msg.type === "narration") addNarration(msg.text, msg.style);
+            else if (msg.type === "image") addImage(msg, who);
             else addTextMessage(msg.content, who);
             setTimeout(showNext, 500);   // 消息间隔：0.5s 空白
         }, loadMs);
@@ -621,6 +687,51 @@ async function send() {
     if (q) msg.quote = q;   // 引用随消息提交（后端写盘 + LLM 上下文）
     _chatSend([msg]);   // 统一消息对象类型，立即发送
     _clearQuote();
+}
+
+// ═══════════════════════════════════════════
+// 发图片（A9）：🖼 按钮 → 选图 → 上传/本地化 → 描述 → 发送 image 消息
+// ═══════════════════════════════════════════
+const imageBtn = document.getElementById("image-btn");
+const imageFileInput = document.getElementById("image-file-input");
+if (imageBtn && imageFileInput) {
+    imageBtn.addEventListener("click", () => { imageFileInput.value = ""; imageFileInput.click(); });
+    imageFileInput.addEventListener("change", async () => {
+        const f = imageFileInput.files && imageFileInput.files[0];
+        imageFileInput.value = "";
+        if (!f || S.waiting) return;
+        if (!/^image\/(png|jpe?g|webp|gif)$/.test(f.type || "")) { _toast("仅支持 png/jpg/webp/gif 图片"); return; }
+        if (f.size > 10 * 1024 * 1024) { _toast("图片过大（上限 10MB）"); return; }
+        let imgId = "", desc = "";
+        if (IS_SERVER) {
+            // 服务器版铁律：图片字节只存本机（IndexedDB），服务器只收描述文字
+            imgId = "img_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+            await idbSaveMedia(imgId, f);
+        } else {
+            try {
+                const fd = new FormData();
+                fd.append("file", f);
+                fd.append("mode", CURRENT_MODE);
+                const resp = await fetch("/upload-image", {method: "POST", body: fd});
+                const data = await resp.json();
+                if (!data.ok) { _toast("图片上传失败：" + (data.error || "")); return; }
+                imgId = data.img_id || "";
+                desc = data.desc || "";
+                if (data.need_desc) desc = "";
+            } catch (e) { _toast("网络错误，图片未发送"); return; }
+        }
+        if (!desc) {
+            // 描述缺失（vision 不支持/失败）：让用户填一句（可为空 → [图片] 占位）
+            desc = (window.prompt("流萤还没有识图能力，这幅图是什么？（可留空）", "") || "").trim().slice(0, 300);
+        }
+        const q = _quoteTarget;
+        addImage({img_id: imgId, desc}, "user");
+        const msg = {type: "image", img_id: imgId};
+        if (desc) msg.desc = desc;
+        if (q) msg.quote = q;
+        _chatSend([msg]);
+        _clearQuote();
+    });
 }
 
 // ═══════════════════════════════════════════

@@ -40,9 +40,9 @@ class InputRejected(ConversationStoreError):
 # ── 消息引用（长按消息 → 引用）─────────────────────
 # 引用 = 消息快照 {who, type, content/path/label/text, seq?}，随用户消息写盘；
 # LLM 侧以 [引用流萤：「…」] 前缀形式进入上下文，前端渲染引用小卡片。
-_QUOTE_FIELDS = ("who", "type", "content", "path", "label", "text", "style", "seq")
+_QUOTE_FIELDS = ("who", "type", "content", "path", "label", "text", "style", "seq", "img_id", "desc")
 _QUOTE_CONTENT_MAX = 2000
-_QUOTE_TYPES = ("text", "sticker", "narration")
+_QUOTE_TYPES = ("text", "sticker", "narration", "image")
 
 
 def sanitize_quote(q):
@@ -85,6 +85,8 @@ def format_quote_for_llm(quote) -> str:
         body = f"[表情包：{quote.get('label') or quote.get('path') or ''}]"
     elif t == "narration":
         body = quote.get("text") or ""
+    elif t == "image":
+        body = f"[图片：{quote.get('desc') or '（无描述）'}]"
     else:
         body = quote.get("content") or ""
     body = str(body).strip()
@@ -250,8 +252,12 @@ def append_message(who: str, msg: dict, mode: str = DEFAULT_MODE) -> tuple:
     elif mtype == "narration":
         if not msg.get("text"):
             raise InputRejected("narration 消息缺 text")
+    elif mtype == "image":
+        # A9：只存 img_id + desc 文字（图片字节本地持有，永不进 jsonl）
+        if not msg.get("img_id"):
+            raise InputRejected("image 消息缺 img_id")
     else:
-        raise InputRejected(f"type 必须为 text/sticker/narration，实际: {mtype}")
+        raise InputRejected(f"type 必须为 text/sticker/narration/image，实际: {mtype}")
 
     with _lock:
         _ensure_dir(mode)
@@ -376,14 +382,26 @@ def hydrate_context(ctx, max_turns: int = 40, mode: str = DEFAULT_MODE) -> int:
                 pending.append(("proactive", "\n".join(texts) if texts else "(表情包)",
                                 stickers, narrations))
             continue
-        if m.get("who") == "user" and m.get("type") == "text" and m.get("content"):
-            user_texts = [compose_user_text(m["content"], m.get("quote"))]
+        if m.get("who") == "user" and m.get("type") in ("text", "image"):
+            if m.get("type") == "text" and m.get("content"):
+                user_texts = [compose_user_text(m["content"], m.get("quote"))]
+            elif m.get("type") == "image":
+                user_texts = [compose_user_text(
+                    f"[图片：{m.get('desc') or '（无描述）'}]", m.get("quote"))]
+            else:
+                i += 1
+                continue
             texts, stickers, narrations = [], [], []
             i += 1
             # 连续 user 消息合并为一轮（分条写盘场景：5s 批处理的多条消息）
             while i < n and raw[i].get("who") == "user":
-                if raw[i].get("type") == "text" and raw[i].get("content"):
-                    user_texts.append(compose_user_text(raw[i]["content"], raw[i].get("quote")))
+                um = raw[i]
+                if um.get("type") == "text" and um.get("content"):
+                    user_texts.append(compose_user_text(um["content"], um.get("quote")))
+                elif um.get("type") == "image":
+                    # A9：图片字节本地持有，上下文只见文字描述
+                    user_texts.append(compose_user_text(
+                        f"[图片：{um.get('desc') or '（无描述）'}]", um.get("quote")))
                 i += 1
             while i < n and raw[i].get("who") == "firefly":
                 fm = raw[i]

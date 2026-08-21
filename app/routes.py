@@ -488,6 +488,72 @@ def _notify_reply_if_background(enriched: list):
         pass
 
 
+def _image_dir(mode: str):
+    root = cfg.mode_root(mode)
+    d = root / "images"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def _load_image_data_url(mode: str, img_id: str) -> str | None:
+    """本地版首轮识图：按 img_id 找本地文件 → data URL（A9；字节只内存，不落日志）。"""
+    from modules.vision import to_data_url
+    d = _image_dir(mode)
+    candidates = sorted(d.glob(img_id + ".*"))
+    for fp in candidates:
+        try:
+            data = fp.read_bytes()
+            url = to_data_url(data, fp.suffix)
+            if url and len(data) <= 10 * 1024 * 1024:
+                return url
+        except OSError:
+            continue
+    return None
+
+
+def upload_image(h):
+    """POST /upload-image（A9）：本地版接收图片字节 → 落盘 {mode}/images/ + desc 生成。
+    服务器版不做字节接收（铁律：图片不出设备）——403 提示（前端直接走 /chat 文字描述）。"""
+    if _is_server():
+        h._json({"ok": False, "error": "服务器版图片保存在本机（仅传输描述文字）"}, 403)
+        return
+    from modules.vision import to_data_url, describe_image
+    import uuid as _uuid
+    fields, files = parse_multipart(h, max_bytes=11 * 1024 * 1024)
+    mode = fields.get("mode", DEFAULT_MODE)
+    if mode not in cfg.MODES:
+        h._json({"ok": False, "error": "非法模式"}); return
+    file_info = files.get("file")
+    if not file_info:
+        h._json({"ok": False, "error": "缺少图片文件"}); return
+    data = file_info["data"]
+    ext = Path(str(file_info.get("filename") or "")).suffix.lower()
+    if ext not in (".png", ".jpg", ".jpeg", ".webp", ".gif"):
+        h._json({"ok": False, "error": "仅支持 png/jpg/jpeg/webp/gif 图片格式"}); return
+    if not isinstance(data, bytes) or len(data) > 10 * 1024 * 1024:
+        h._json({"ok": False, "error": "图片过大（上限 10MB）"}); return
+    img_id = "img_" + _uuid.uuid4().hex[:12]
+    fp = _image_dir(mode) / (img_id + ext)
+    from modules.storage import atomic_write_bytes
+    if not atomic_write_bytes(fp, data):
+        h._json({"ok": False, "error": "图片保存失败"}); return
+    # desc 生成（vision 模型）：失败/不支持 → 空串（前端可让用户手填）
+    desc = ""
+    client = cfg.get_client()
+    try:
+        vision_model = (cfg.config.get("vision_model", "deepseek-v4-flash-vision-exp")
+                        or "deepseek-v4-flash-vision-exp")
+        caps_ok = bool(getattr(client, "_caps", {}).get("vision", True))
+        if caps_ok and client is not None:
+            url = to_data_url(data, ext)
+            if url:
+                desc = describe_image(client, vision_model, url)
+    except Exception as e:
+        logger.warning("图片描述生成跳过: %s", e)
+    h._json({"ok": True, "img_id": img_id, "file": fp.name, "desc": desc,
+             "need_desc": not desc, "server_side": False})
+
+
 def chat(h):
     client = cfg.get_client()
     if not client:
@@ -515,6 +581,7 @@ def chat(h):
     from modules.conversation_store import compose_user_text as _compose_user_text
     msgs = body.get("messages")
     llm_parts = []
+    vision_urls = []   # A9：本批图片的 data URL（本地版 direct 首轮识图用；空=不生效）
     if isinstance(msgs, list):
         for m in msgs:
             # 统一消息对象类型：{"type":"text","content":...} / {"type":"sticker","label":...}
@@ -545,6 +612,23 @@ def chat(h):
                         rec["quote"] = q
                     _append_msg("user", rec, mode=mode)
                 llm_parts.append(_compose_user_text(f"[表情包：{label}]", q))
+            elif isinstance(m, dict) and m.get("type") == "image" and m.get("img_id"):
+                # A9：jsonl 只存 img_id + desc（图片字节本地持有，不进任何历史/日志）
+                img_id = str(m["img_id"]).strip()[:_CONTENT_MAX]
+                desc = str(m.get("desc") or "").strip()[:_CONTENT_MAX]
+                q = _sanitize_quote(m.get("quote"))
+                rec = {"type": "image", "img_id": img_id}
+                if desc:
+                    rec["desc"] = desc
+                if q:
+                    rec["quote"] = q
+                _append_msg("user", rec, mode=mode)
+                llm_parts.append(_compose_user_text(f"[图片：{desc or '（无描述）'}]", q))
+                # 首轮识图（仅本地版 direct 链路；服务器版图片不出设备→ desc 文本化）
+                if not _is_server() and len(vision_urls) < 4:
+                    url = _load_image_data_url(mode, img_id)
+                    if url:
+                        vision_urls.append(url)
             elif isinstance(m, str) and m.strip():
                 # 兼容旧格式（纯字符串）
                 _append_msg("user", {"type": "text", "content": m.strip()}, mode=mode)
@@ -615,6 +699,9 @@ def chat(h):
                 is_primary = False
             win["msgs"].append(user_input)          # 入队（消息已写盘，不会丢）
             win["deadline"] = time.time() + _CHAT_WINDOW_SEC   # 新消息重置 5 秒窗口
+            if vision_urls:
+                win["vision"] = list(win.get("vision") or [])
+                win["vision"].extend(vision_urls[:4 - len(win.get("vision") or [])])
             win["cond"].notify_all()
 
     if not is_primary:
@@ -629,10 +716,13 @@ def chat(h):
             if remaining <= 0:
                 merged_msgs = list(win["msgs"])
                 win["msgs"] = []
+                vision_merge = list(win.get("vision") or [])
+                win["vision"] = []
                 win["active"] = False   # 释放主请求权：后续消息开新一批
                 break
             win["cond"].wait(timeout=min(remaining, 1.0))
     user_input = "\n".join(merged_msgs)
+    vision_images = vision_merge  # A9：本批首轮识图 base64 列表（orchestrator 按 caps.vision 决定）
 
     # 回复通道锁（阻塞）：用户消息不可丢，等待本模式任何主动生成完成后再处理
     # （按模式分锁：不阻塞其他模式的回复通道）
@@ -657,6 +747,7 @@ def chat(h):
                 memory_head=session.get("memory_head", ""),
                 hint=hint,
                 mode=mode,
+                vision_images=vision_images,
             )
         # 即时写盘：流萤回复每条立刻记，并把 time 回传给前端
         enriched = _write_replies(result, mode)
@@ -1626,6 +1717,39 @@ def sync_now(h):
     h._json({"ok": True, **reports})
 
 
+def get_image(h):
+    """GET /image?id=<img_id>（A9）：本地版图片字节服务（用户目录 images/，按 ext 给 MIME）。
+    服务器版 404——图片不出设备（该端由前端 IndexedDB 渲染）。"""
+    if _is_server():
+        h._json({"error": "服务器版图片保存在本机"}, 404)
+        return
+    qs = parse_qs(urlparse(h.path).query)
+    img_id = (qs.get("id", [""])[0] or "").strip()[:200]
+    if not img_id or ".." in img_id or "/" in img_id or "\\" in img_id:
+        h._json({"error": "非法图片 id"}, 400)
+        return
+    mode = (qs.get("mode", [DEFAULT_MODE])[0] or DEFAULT_MODE)
+    mode = mode if mode in cfg.MODES else DEFAULT_MODE
+    from modules.vision import EXT_MIME
+    d = _image_dir(mode)
+    for fp in sorted(d.glob(img_id + ".*")):
+        mime = EXT_MIME.get(fp.suffix.lower())
+        if not mime:
+            continue
+        try:
+            data = fp.read_bytes()
+            h.send_response(200)
+            h.send_header("Content-Type", mime)
+            h.send_header("Cache-Control", "no-cache")
+            h.send_header("Content-Length", str(len(data)))
+            h.end_headers()
+            h.wfile.write(data)
+            return
+        except OSError:
+            continue
+    h._json({"error": "图片不存在"}, 404)
+
+
 def get_config(h):
     key = cfg.active_provider().get("api_key", "") or cfg.config.get("api_key", "")
     # 服务器版不返回 key_prefix：全局/env 兜底 Key 的前缀也不能向登录用户暴露
@@ -2292,6 +2416,7 @@ POST_ROUTES = {
     "/setting-fix/reset": setting_fix_reset,
     "/favorite": add_favorite_route,
     "/favorites/delete": delete_favorite_route,
+    "/upload-image": upload_image,
 }
 # A7：本地版认证代理端点（账号体系在服务器；本地模式前端同源调用）
 for _a_path, _a_ep in _AUTH_PROXY_MAP.items():
@@ -2302,6 +2427,7 @@ GET_ROUTES = {
     "/config": get_config,
     "/models": get_models,
     "/sync/manifest": sync_manifest,
+    "/image": get_image,
     "/auth/state": auth_state,
     "/chat-stage": get_chat_stage,
     "/metrics": get_metrics,

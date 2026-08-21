@@ -37,6 +37,7 @@ class PolisherInput:
     memory_head: str = ""            # 这段对话的过往摘要（rest 整理，窗口外压缩存档）
     environment: str = ""            # 环境（时段描述等）
     proactive_context: str = ""      # 非空 = 主动发消息场景（流萤找开拓者，不是回复）
+    vision_images: list = field(default_factory=list)   # A9：base64 data URL 列表（仅首轮）
 
 
 @dataclass
@@ -396,11 +397,21 @@ class Polisher:
                 extra = {"thinking": {"type": "enabled"}, "reasoning_effort": self._effort}
             else:
                 extra = {"thinking": {"type": "disabled"}}
+            # A9 首轮识图：vision_images（base64 data URL）→ user 消息 content blocks；
+            # 文本部分照旧（`[图片：desc]` 已在 user_input），图片字节仅此一轮进入模型
+            if inp.vision_images:
+                blocks = [{"type": "text", "text": dynamic}]
+                for url in inp.vision_images:
+                    blocks.append({"type": "image_url",
+                                   "image_url": {"url": url}})
+                user_content = blocks
+            else:
+                user_content = dynamic
             resp = self._client.chat.completions.create(
                 model=self._model,
                 messages=[
                     {"role": "system", "content": stable},
-                    {"role": "user", "content": dynamic},
+                    {"role": "user", "content": user_content},
                 ],
                 max_tokens=10000, temperature=self._temperature,
                 extra_body=extra,

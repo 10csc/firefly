@@ -73,9 +73,11 @@ h = FakeH()
 routes.set_config(h)
 check("B1 BYOK set_config 接受用户模型", h.data["polisher_model"] == "gpt-4o")
 
-# proxy 托管：强制 mimo-v2.5
+# proxy 托管：请求体带模型 → 强制 mimo-v2.5（空体 = 透传全局默认，不影响运行链——QuotaClient 运行时锁兜底）
 h2 = FakeH({"X-API-Mode": "proxy"})
-routes.set_config(h2)
+with patch("routes._read_json", return_value={"polisher_model": "deepseek-v4-pro",
+                                              "analyzer_model": "deepseek-v4-pro"}):
+    routes.set_config(h2)
 check("B2 proxy set_config 强制 mimo-v2.5", h2.data["polisher_model"] == "mimo-v2.5")
 
 print("=== C. 托管模式 QuotaClient 强制 mimo-v2.5 ===")

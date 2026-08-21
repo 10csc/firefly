@@ -56,6 +56,14 @@ def _first_degraded_code(*outputs) -> str | None:
     return None
 
 
+def _caps_vision(client) -> bool:
+    """当前 client 的供应商是否支持视觉输入（caps.vision；QuotaClient/本地 client 有 _caps）。"""
+    try:
+        return bool(getattr(client, "_caps", {}).get("vision", True))
+    except Exception:
+        return False
+
+
 # ── A3 超时预算：单轮硬顶 210s（与网关 600s / 前端 4 分钟对齐的收紧）──
 _TURN_BUDGET_SEC = 210.0
 _STAGE_TIMEOUT_THINK = 90.0    # 分析/回复（思考档）单阶段超时
@@ -273,6 +281,7 @@ def handle_chat(
     memory_head: str = "",
     hint: str = "",
     mode: str = DEFAULT_MODE,
+    vision_images: list | None = None,   # A9：首轮识图 base64 data URL 列表（仅本地版直接链路）
 ) -> ChatResult:
     global _CHAT_COUNT, _DIRECT_COUNT, _ORCH_ERRORS
     with _lock:
@@ -380,6 +389,7 @@ def handle_chat(
             recent_history=ctx.get_recent(15),
             memory_head=memory_head,
             environment=environment,
+            vision_images=(vision_images or []) if _caps_vision(client) else [],
         ))
         _t2 = time.perf_counter()
         messages = list(polish_output.messages)
