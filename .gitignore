@@ -68,3 +68,4 @@ _trash/
 _research/
 verify/
 tests/*.db
+.tmp_test/

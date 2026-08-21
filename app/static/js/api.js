@@ -56,13 +56,18 @@ window.fetch = function (url, opts) {
     });
 };
 
-// API 来源切换：托管模式隐藏 Key/接口地址输入，显示隐私提示
+// API 来源切换：托管模式隐藏 Key/供应商输入，显示隐私提示
 export function applyApiSource(isProxy) {
     const ownFields = document.getElementById("api-own-fields");
-    const baseField = document.getElementById("api-base-field");
+    const providerField = document.getElementById("provider-field");
     const tip = document.getElementById("api-proxy-tip");
     if (ownFields) ownFields.style.display = isProxy ? "none" : "";
-    if (baseField) baseField.style.display = isProxy ? "none" : "";
+    if (providerField) providerField.style.display = isProxy ? "none" : "";
+    if (isProxy) {
+        // 托管模式：供应商/K 由服务器运营方指定，前端不管理
+        const modelCustom = document.getElementById("model-custom");
+        if (modelCustom) modelCustom.style.display = "none";
+    }
     if (tip) tip.style.display = isProxy ? "block" : "none";
 }
 

@@ -143,10 +143,10 @@ class Analyzer:
         self._client = client
         self._model = model
         self._mode = mode
-        # 思考模式：effort=none 显式关闭（温度才生效）；默认 high
+        # 思考模式：effort=none 显式关闭（温度才生效）；默认 high。
+        # 2026-08-13 起 low 是真实档位（直通，旧 low→high 映射已过时）
         self._thinking = effort != "none"
-        effort_map = {"low": "high", "high": "high", "max": "max"}
-        self._effort = effort_map.get(effort, "high")
+        self._effort = effort if effort in ("low", "high", "max") else "high"
 
     def analyze(self, inp: AnalyzerInput) -> AnalyzerOutput:
         global _ANALYZE_COUNT, _LLM_ERRORS

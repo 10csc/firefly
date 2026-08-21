@@ -120,13 +120,18 @@ window.fetch = function (url, opts) {
     });
 };
 
-// API 来源切换：托管模式隐藏 Key/接口地址输入，显示隐私提示
+// API 来源切换：托管模式隐藏 Key/供应商输入，显示隐私提示
 function applyApiSource(isProxy) {
     const ownFields = document.getElementById("api-own-fields");
-    const baseField = document.getElementById("api-base-field");
+    const providerField = document.getElementById("provider-field");
     const tip = document.getElementById("api-proxy-tip");
     if (ownFields) ownFields.style.display = isProxy ? "none" : "";
-    if (baseField) baseField.style.display = isProxy ? "none" : "";
+    if (providerField) providerField.style.display = isProxy ? "none" : "";
+    if (isProxy) {
+        // 托管模式：供应商/K 由服务器运营方指定，前端不管理
+        const modelCustom = document.getElementById("model-custom");
+        if (modelCustom) modelCustom.style.display = "none";
+    }
     if (tip) tip.style.display = isProxy ? "block" : "none";
 }
 
@@ -559,20 +564,13 @@ document.querySelectorAll(".menu-tab").forEach(btn => {
 // 配置管理
 // ═══════════════════════════════════════════
 // 配置管理（设置页分组：账号与连接 / 主动消息 / 模型与速度 / 外观 / 数据与系统）
-const _CFG_DEFAULTS = {
-    fast: {
-        analyzer_model: "deepseek-v4-flash", retriever_model: "deepseek-v4-flash",
-        organizer_model: "deepseek-v4-flash", polisher_model: "deepseek-v4-flash",
-        retriever_effort: "none", analyzer_effort: "high",
-        polisher_effort: "high", organizer_effort: "none",
-    },
-    strong: {
-        analyzer_model: "deepseek-v4-pro", retriever_model: "deepseek-v4-pro",
-        organizer_model: "deepseek-v4-pro", polisher_model: "deepseek-v4-pro",
-        retriever_effort: "none", analyzer_effort: "high",
-        polisher_effort: "high", organizer_effort: "none",
-    },
-};
+// A8 多供应商：_providers 列表 + _activeId（本地存后端 config.json；服务器版存浏览器 localStorage）
+let _providers = [];
+let _activeId = "deepseek";
+const PROVIDERS_LS_KEY = "firefly_providers";
+const ACTIVE_PROVIDER_LS_KEY = "firefly_active_provider";
+const _MODEL_INPUT_IDS = ["retriever-model-input", "analyzer-model-input", "polisher-model-input", "organizer-model-input"];
+
 const _PROACTIVE_PRESETS = {
     less:   { hard: 8, soft: 0.25 },
     medium: { hard: 6, soft: 0.35 },
@@ -589,23 +587,166 @@ function _proactivePresetName(hard, soft) {
     return "medium";
 }
 
-function _modelPresetName(models) {
-    return models.analyzer === "deepseek-v4-pro" && models.polisher === "deepseek-v4-pro"
-        && models.retriever === "deepseek-v4-pro" && models.organizer === "deepseek-v4-pro"
-        ? "strong" : "fast";
+function _activeProviderObject() {
+    return _providers.find(p => p.id === _activeId) || _providers[0] || null;
 }
 
-function _applyModelPreset(name) {
-    const p = _CFG_DEFAULTS[name] || _CFG_DEFAULTS.fast;
-    _$("analyzer-model-select").value = p.analyzer_model;
-    _$("retriever-model-select").value = p.retriever_model;
-    _$("organizer-model-select").value = p.organizer_model;
-    _$("polisher-model-select").value = p.polisher_model;
-    _$("retriever-effort-select").value = p.retriever_effort;
-    _$("analyzer-effort-select").value = p.analyzer_effort;
-    _$("polisher-effort-select").value = p.polisher_effort;
-    _$("organizer-effort-select").value = p.organizer_effort;
+function _providersLS() {
+    try { return JSON.parse(localStorage.getItem(PROVIDERS_LS_KEY) || "[]"); } catch (e) { return []; }
+}
+
+function _setProvidersLS(list, active) {
+    try {
+        localStorage.setItem(PROVIDERS_LS_KEY, JSON.stringify(list));
+        localStorage.setItem(ACTIVE_PROVIDER_LS_KEY, active);
+    } catch (e) {}
+    // 兼容旧字段：relay.js / fetch 包装器仍读 firefly_api_key / firefly_api_base
+    try {
+        const p = list.find(x => x.id === active);
+        if (p) {
+            localStorage.setItem("firefly_api_key", p.api_key || "");
+            localStorage.setItem("firefly_api_base", p.base_url || "");
+        }
+    } catch (e) {}
+}
+
+async function _getProviderModels(provider) {
+    // 本地版：后端带 Key 转发；服务器版：浏览器直连（Key 在本机）
+    if (!provider.base_url || !/^https?:\/\//.test(provider.base_url)) {
+        throw new Error("接口地址必须是 http(s) 开头");
+    }
+    if (!provider.api_key) throw new Error("请先填写该供应商的 API Key");
+    let resp;
+    if (IS_SERVER) {
+        resp = await fetch(provider.base_url.replace(/\/+$/, "") + "/models", {
+            headers: { "Authorization": "Bearer " + provider.api_key },
+        });
+    } else {
+        resp = await fetch("/models?provider=" + encodeURIComponent(provider.id));
+    }
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok && !IS_SERVER) throw new Error(data.error || "获取失败");
+    if (IS_SERVER && !resp.ok) {
+        // 直连失败（CORS/网络）→ 让后端代查（服务器转发自带 Key 的请求）
+        throw new Error("直连获取失败（" + (data.error && data.error.message ? data.error.message : resp.status) + "）");
+    }
+    const models = IS_SERVER ? (data.data || []).map(m => m.id).filter(Boolean)
+                             : (data.models || []);
+    if (!models.length) throw new Error(IS_SERVER ? "供应商未返回模型清单" : "未返回模型清单");
+    return models;
+}
+
+function _renderProviderSelect() {
+    const sel = _$("provider-select");
+    if (!sel) return;
+    sel.innerHTML = "";
+    for (const p of _providers) {
+        const opt = document.createElement("option");
+        opt.value = p.id;
+        opt.textContent = p.name + ((p.api_key || p._has_key) ? "" : "（未填 Key）");
+        sel.appendChild(opt);
+    }
+    if (_providers.length) sel.value = _activeId;
+}
+
+function _renderModelSuggest() {
+    const dl = _$("model-suggest");
+    const p = _activeProviderObject();
+    if (!dl) return;
+    const models = (p && p.models && p.models.length) ? p.models
+        : ["deepseek-v4-flash", "deepseek-v4-pro", "deepseek-v4-flash-vision-exp"];
+    dl.innerHTML = "";
+    for (const m of models) {
+        const opt = document.createElement("option");
+        opt.value = m;
+        dl.appendChild(opt);
+    }
+}
+
+function _updateKeyGuide() {
+    const box = _$("provider-guide");
+    if (!box) return;
+    const p = _activeProviderObject();
+    if (!p) { box.innerHTML = ""; return; }
+    const isDp = /deepseek\.com/.test(p.base_url || "");
+    box.innerHTML = isDp
+        ? `① 浏览器打开 <b>platform.deepseek.com</b>，注册并登录<br>② 左侧「API Keys」→ 创建，复制 <b>sk-</b> 开头的 Key<br>③ 粘贴到「${p.name}」的 Key 输入框 → 保存（Key 只存本机，不会上传）`
+        : `① 打开供应商控制台（<b>${p.base_url.replace(/\/+$/, "")}</b> 所在站点主页）创建 API Key<br>② 粘贴到「${p.name}」的 Key 输入框 → 保存（Key 只存本机，不会上传）`;
+}
+
+function _openProviderForm(provider) {
+    const form = _$("provider-form");
+    if (!form) return;
+    form.style.display = "block";
+    _$("provider-name").value = provider ? provider.name : "";
+    _$("provider-base").value = provider ? provider.base_url : "https://";
+    _$("provider-key").value = "";
+    _$("provider-key").placeholder = provider && provider.api_key ? "已设置，留空保留" : "sk-...";
+    _$("provider-form-msg").textContent = "";
+    form.dataset.editing = provider ? provider.id : "";
+    _$("provider-delete").style.display = provider ? "" : "none";
+}
+
+function _closeProviderForm() {
+    const form = _$("provider-form");
+    if (form) form.style.display = "none";
+}
+
+async function _fetchAndFillModels() {
+    const msg = _$("provider-form-msg");
+    const id = _$("provider-form").dataset.editing;
+    const name = _$("provider-name").value.trim();
+    const base = _$("provider-base").value.trim().replace(/\/+$/, "");
+    const key = _$("provider-key").value.trim();
+    const cur = _providers.find(p => p.id === id) || {};
+    if (!/^https?:\/\//.test(base)) { msg.textContent = "接口地址必须是 http(s) 开头"; return; }
+    msg.textContent = "获取中…";
+    try {
+        const models = await _getProviderModels({ id: id || cur.id || "custom", base_url: base, api_key: key || cur.api_key });
+        const p = _providers.find(x => x.id === id);
+        if (p) { p.models = models; _renderModelSuggest(); msg.textContent = "已获取 " + models.length + " 个模型，记得点「保存供应商」"; }
+        else { msg.textContent = "模型清单：" + models.slice(0, 5).join("、") + (models.length > 5 ? " 等" + models.length + " 个" : "") + "（保存供应商后生效）"; }
+    } catch (e) { msg.textContent = "获取失败：" + e.message; }
+}
+
+async function _saveProviderForm() {
+    const msg = _$("provider-form-msg");
+    const name = _$("provider-name").value.trim();
+    const base = _$("provider-base").value.trim().replace(/\/+$/, "");
+    const key = _$("provider-key").value.trim();
+    const editing = _$("provider-form").dataset.editing;
+    if (!name) { msg.textContent = "请填写名称"; return; }
+    if (!/^https?:\/\//.test(base)) { msg.textContent = "接口地址必须是 http(s) 开头"; return; }
+    const existing = editing && _providers.find(p => p.id === editing);
+    if (existing) {
+        existing.name = name; existing.base_url = base;
+        if (key) existing.api_key = key;
+    } else {
+        const id = "p" + Date.now().toString(36);
+        _providers.push({ id, name, base_url: base, api_key: key,
+                          models: [], caps: {} });
+        _activeId = id;
+    }
+    _renderProviderSelect();
+    _renderModelSuggest();
+    _updateKeyGuide();
     updateSettingsSummaries();
+    await saveConfigNow(true);
+    _closeProviderForm();
+}
+
+function _deleteProviderForm() {
+    const editing = _$("provider-form").dataset.editing;
+    if (!editing || _providers.length <= 1) { _$("provider-form-msg").textContent = "至少保留一个供应商"; return; }
+    if (!confirm("删除供应商「" + editing + "」？")) return;
+    _providers = _providers.filter(p => p.id !== editing);
+    if (_activeId === editing) _activeId = _providers[0].id;
+    _renderProviderSelect();
+    _renderModelSuggest();
+    _updateKeyGuide();
+    updateSettingsSummaries();
+    saveConfigNow(true);
+    _closeProviderForm();
 }
 
 function _applyProactivePreset(name) {
@@ -626,22 +767,18 @@ function updateSettingsSummaries() {
     }
     const ms = _$("model-summary");
     if (ms) {
-        const strong = _modelPresetName({
-            analyzer: _$("analyzer-model-select").value,
-            polisher: _$("polisher-model-select").value,
-            retriever: _$("retriever-model-select").value,
-            organizer: _$("organizer-model-select").value,
-        }) === "strong";
-        ms.textContent = strong ? "更强 · Pro" : "快速 · Flash";
+        const p = _activeProviderObject();
+        const pm = _$("polisher-model-input") ? _$("polisher-model-input").value.trim() : "";
+        ms.textContent = (p ? p.name : "DeepSeek") + " · " + (pm || "Flash");
     }
 }
 
 function _buildSettingsPayload() {
     return {
-        analyzer_model: _$("analyzer-model-select").value,
-        retriever_model: _$("retriever-model-select").value,
-        organizer_model: _$("organizer-model-select").value,
-        polisher_model: _$("polisher-model-select").value,
+        analyzer_model: _$("analyzer-model-input").value.trim(),
+        retriever_model: _$("retriever-model-input").value.trim(),
+        organizer_model: _$("organizer-model-input").value.trim(),
+        polisher_model: _$("polisher-model-input").value.trim(),
         retriever_effort: _$("retriever-effort-select").value,
         analyzer_effort: _$("analyzer-effort-select").value,
         polisher_effort: _$("polisher-effort-select").value,
@@ -680,20 +817,19 @@ async function saveConfigNow(explicit) {
     const src = srcSel ? srcSel.value : "own";
     const keyInput = _$("key-input");
     const k = keyInput ? keyInput.value.trim() : "";
-    const baseSel = _$("api-base-select");
-    const base = baseSel ? baseSel.value : "https://api.deepseek.com/v1";
-    if (IS_SERVER && explicit) {
+    const p0 = _activeProviderObject();
+    if (p0 && k) p0.api_key = k;   // Key 输入框 → 当前激活供应商
+    if (IS_SERVER) {
         try { localStorage.setItem("firefly_api_source", src); } catch (e) {}
-        if (src !== "proxy") {
-            if (k) { try { localStorage.setItem("firefly_api_key", k); } catch (e) {} }
-            try { localStorage.setItem("firefly_api_base", base); } catch (e) {}
-        }
+        if (src !== "proxy") _setProvidersLS(_providers, _activeId);
         if (keyInput) keyInput.value = "";
     }
     const payload = _buildSettingsPayload();
-    if (!IS_SERVER && explicit) {
-        if (k) payload.api_key = k;
-        payload.api_base = base;
+    if (!IS_SERVER) {
+        // 本地版：供应商列表 + 激活项随配置落盘（Key 在 providers 内）
+        payload.providers = _providers;
+        payload.active_provider = _activeId;
+        if (k) payload.api_key = k;   // 后端写入激活供应商
     }
     if (explicit) msg.textContent = "保存中…";
     const ok = await _postSettings(payload, msg);
@@ -712,8 +848,8 @@ function _scheduleAutoSave() {
 
 async function loadConfig() {
     const ids = {
-        a: "analyzer-model-select", r: "retriever-model-select",
-        o: "organizer-model-select", p: "polisher-model-select",
+        a: "analyzer-model-input", r: "retriever-model-input",
+        o: "organizer-model-input", p: "polisher-model-input",
         re: "retriever-effort-select", ae: "analyzer-effort-select",
         pe: "polisher-effort-select", oe: "organizer-effort-select",
         rt: "retriever-temp-slider", rtv: "retriever-temp-value",
@@ -731,7 +867,7 @@ async function loadConfig() {
         const el = {};
         for (const [k, id] of Object.entries(ids)) el[k] = document.getElementById(id);
 
-        const normEffort = v => (v === "low" ? "high" : v);
+        const normEffort = v => (v === "low" ? "low" : v);
         if (el.a) el.a.value = data.analyzer_model || "deepseek-v4-flash";
         if (el.r) el.r.value = data.retriever_model || "deepseek-v4-flash";
         if (el.o) el.o.value = data.organizer_model || "deepseek-v4-flash";
@@ -762,20 +898,28 @@ async function loadConfig() {
         S._hiddenEnabled = data.hidden_reply_enabled !== false;
         const pp = _$("proactive-preset");
         if (pp) pp.value = _proactivePresetName(hard, soft);
-        const mp = _$("model-preset");
-        if (mp) mp.value = _modelPresetName({
-            analyzer: el.a ? el.a.value : "deepseek-v4-flash",
-            polisher: el.p ? el.p.value : "deepseek-v4-flash",
-            retriever: el.r ? el.r.value : "deepseek-v4-flash",
-            organizer: el.o ? el.o.value : "deepseek-v4-flash",
-        });
 
-        const abSel = _$("api-base-select");
-        const localBase = (() => { try { return localStorage.getItem("firefly_api_base") || ""; } catch (e) { return ""; } })();
-        if (abSel) {
-            const want = IS_SERVER ? localBase : data.api_base;
-            if ((data.api_bases || []).includes(want)) abSel.value = want;
+        // 供应商（A8）：本地版走后端 /config；服务器版供应商配置在浏览器 localStorage
+        if (IS_SERVER) {
+            _providers = _providersLS();
+            _activeId = (() => { try { return localStorage.getItem(ACTIVE_PROVIDER_LS_KEY) || ""; } catch (e) { return ""; } })();
+            if (!_providers.length) {
+                _providers = [{ id: "deepseek", name: "DeepSeek",
+                                base_url: "https://api.deepseek.com/v1", api_key: "", models: [], caps: {} }];
+                _activeId = "deepseek";
+                _setProvidersLS(_providers, _activeId);
+            }
+            const p0 = _providers.find(p => p.id === _activeId) || _providers[0];
+            if (p0) _activeId = p0.id;
+        } else {
+            _providers = (data.providers || []).map(p => ({
+                id: p.id, name: p.name, base_url: p.base_url,
+                api_key: "", models: p.models || [], caps: p.caps || {},
+                _has_key: !!p.has_key, _key_prefix: p.key_prefix || "",
+            }));
+            _activeId = data.active_provider || (_providers[0] && _providers[0].id) || "deepseek";
         }
+
         const srcSel = _$("api-source-select");
         const srcField = _$("api-source-field");
         const localSrc = (() => { try { return localStorage.getItem("firefly_api_source") || "own"; } catch (e) { return "own"; } })();
@@ -794,12 +938,16 @@ async function loadConfig() {
 
         if (el.m) {
             const keyLabel = _$("key-label");
+            const pA = _activeProviderObject();
+            const providerLabel = pA ? pA.name : "DeepSeek";
             if (IS_SERVER) {
                 const localKey = (() => { try { return localStorage.getItem("firefly_api_key") || ""; } catch (e) { return ""; } })();
                 el.m.textContent = localKey ? "Key 已设置（仅存本机浏览器）" : "尚未设置 API Key（不会上传服务器）";
                 if (keyLabel) keyLabel.textContent = "API Key（存于本机浏览器，不会上传服务器）";
             } else {
-                el.m.textContent = data.has_key ? "Key 已设置（" + (data.key_prefix || "仅本机") + "）" : "尚未设置 API Key";
+                el.m.textContent = pA && pA._has_key
+                    ? "Key 已设置（" + (pA._key_prefix || "仅本机") + "）"
+                    : "尚未设置 API Key";
                 if (keyLabel) keyLabel.textContent = "API Key（存本机配置文件，仅本机使用）";
             }
         }
@@ -808,10 +956,16 @@ async function loadConfig() {
                 const localKey = (() => { try { return localStorage.getItem("firefly_api_key") || ""; } catch (e) { return ""; } })();
                 el.k.placeholder = localKey ? "已设置，留空则保留" : "sk-...";
             } else {
-                el.k.placeholder = data.has_key ? "已设置，留空则保留原 Key" : "sk-...";
+                const pA = _activeProviderObject();
+                el.k.placeholder = pA && pA._has_key ? "已设置，留空则保留原 Key" : "sk-...";
             }
             el.k.value = "";
         }
+
+        // 供应商 UI（选择器 / 模型建议 / 获取 Key 教程）
+        _renderProviderSelect();
+        _renderModelSuggest();
+        _updateKeyGuide();
 
         const hiddenField = _$("hidden-reply-field");
         if (hiddenField) hiddenField.style.display = window.FireflyMode ? "" : "none";
@@ -862,22 +1016,39 @@ _$("prob-reply-slider")?.addEventListener("input", () => {
     _$("prob-reply-value").textContent = _$("prob-reply-slider").value + "%";
 });
 
-_$("model-preset")?.addEventListener("change", () => {
-    _applyModelPreset(_$("model-preset").value);
-    _scheduleAutoSave();
-});
 _$("proactive-preset")?.addEventListener("change", () => {
     _applyProactivePreset(_$("proactive-preset").value);
     _scheduleAutoSave();
 });
 
-["analyzer-model-select", "retriever-model-select", "organizer-model-select", "polisher-model-select",
+["retriever-model-input", "analyzer-model-input", "polisher-model-input", "organizer-model-input",
  "retriever-effort-select", "analyzer-effort-select", "polisher-effort-select", "organizer-effort-select",
  "retriever-temp-slider", "proactive-enabled", "proactive-hard-slider", "proactive-soft-slider",
  "prob-reply-enabled", "prob-reply-slider", "hidden-reply-enabled"].forEach(id => {
     const el = _$(id);
     if (el) el.addEventListener("change", () => { updateSettingsSummaries(); _scheduleAutoSave(); });
 });
+
+// A8 供应商 UI 接线
+_$("provider-select")?.addEventListener("change", () => {
+    const sel = _$("provider-select");
+    if (sel && sel.value) {
+        _activeId = sel.value;
+        _renderModelSuggest();
+        _updateKeyGuide();
+        updateSettingsSummaries();
+        _scheduleAutoSave();
+    }
+});
+_$("provider-add")?.addEventListener("click", () => _openProviderForm(null));
+_$("provider-edit")?.addEventListener("click", () => {
+    const p = _activeProviderObject();
+    if (p) _openProviderForm(p);
+});
+_$("provider-save")?.addEventListener("click", () => _saveProviderForm());
+_$("provider-delete")?.addEventListener("click", () => _deleteProviderForm());
+_$("provider-cancel")?.addEventListener("click", () => _closeProviderForm());
+_$("provider-fetch-models")?.addEventListener("click", () => _fetchAndFillModels());
 
 const apiSourceSel = _$("api-source-select");
 if (apiSourceSel) {
@@ -2908,6 +3079,29 @@ function fillPlaceholders(payload) {
     }
 }
 
+// A8 能力探测（服务器版）：供应商拒绝 DeepSeek 私有参数（thinking/reasoning_effort）时
+// 剥离后重试一次，并按结果缓存 caps 状态（后续 payload 直接剥离，避免每次探错）。
+function _loadNoThinking() {
+    try { return localStorage.getItem("firefly_no_thinking") === "1"; } catch (e) { return false; }
+}
+
+function _stripThinking(payload) {
+    if (!payload || typeof payload !== "object") return payload;
+    try {
+        const p = JSON.parse(JSON.stringify(payload));
+        delete p.thinking;
+        delete p.reasoning_effort;
+        return p;
+    } catch (e) { return payload; }
+}
+
+function _looksUnknownParam(text) {
+    if (!text) return false;
+    const low = String(text).toLowerCase();
+    return low.indexOf("unknown") >= 0 || low.indexOf("unexpected parameter") >= 0
+        || low.indexOf("not a valid parameter") >= 0 || low.indexOf("not supported") >= 0;
+}
+
 async function relayTick() {
     // 1s 轮询取件。用原始 fetch 手动带头：避开包装器的 401 toast（未登录/过期时静默）。
     if (_relayBusy) return;
@@ -2944,12 +3138,28 @@ async function relayTick() {
         };
         let ds;
         try {
-            // 用户 Key 直连代发（DeepSeek 官方端点支持浏览器 CORS）
+            // 用户 Key 直连代发（DeepSeek 官方端点支持浏览器 CORS）；已知不支持的供应商先剥离私有参数
+            let directPayload = _loadNoThinking() ? _stripThinking(pending.payload) : pending.payload;
             ds = await _serverFetch(apiBase + "/chat/completions", {
                 method: "POST",
                 headers: { "Content-Type": "application/json", "Authorization": "Bearer " + key },
-                body: JSON.stringify(pending.payload),
+                body: JSON.stringify(directPayload),
             });
+            // 能力探测：4xx 未知参数 → 剥离后重试一次（成功后缓存，后续直接剥离）
+            if (!ds.ok && _loadNoThinking() === false) {
+                const errText = await ds.clone().text().catch(() => "");
+                if (_looksUnknownParam(errText)) {
+                    const stripped = _stripThinking(pending.payload);
+                    ds = await _serverFetch(apiBase + "/chat/completions", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json", "Authorization": "Bearer " + key },
+                        body: JSON.stringify(stripped),
+                    });
+                    if (ds.ok) {
+                        try { localStorage.setItem("firefly_no_thinking", "1"); } catch (e) {}
+                    }
+                }
+            }
         } catch (e1) {
             // 直连失败（如 OpenCode Go 端点不支持 CORS）→ 中转降级
             await proxyFallback();

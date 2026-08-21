@@ -419,25 +419,10 @@
                     <label id="key-label">API Key（存于本机浏览器，不会上传服务器）</label>
                     <input id="key-input" type="password" placeholder="已设置，留空则保留原 Key">
                     <details style="font-size:0.8em;margin-top:8px;color:var(--fg-muted)">
-                        <summary style="cursor:pointer">第一次用？三步获取 Key</summary>
-                        <div style="line-height:1.8;padding:6px 2px 0">
-                            ① 浏览器打开 <b>platform.deepseek.com</b>，注册并登录<br>
-                            ② 左侧「API Keys」→ 创建，复制 <b>sk-</b> 开头的 Key<br>
-                            ③ 粘贴到上方输入框 → 保存（Key 只存本机浏览器，不会上传）
-                        </div>
+                        <summary id="key-guide-toggle" style="cursor:pointer">第一次用？三步获取 Key</summary>
+                        <div id="provider-guide" style="line-height:1.8;padding:6px 2px 0">加载中…</div>
                     </details>
                 </div>
-                <details class="set-advanced" id="api-base-advanced">
-                    <summary>高级：接口地址</summary>
-                    <div class="field" id="api-base-field">
-                        <label>接口地址（用哪个 Key 服务）</label>
-                        <select id="api-base-select">
-                            <option value="https://api.deepseek.com/v1">DeepSeek 官方</option>
-                            <option value="https://opencode.ai/zen/go/v1">OpenCode Go</option>
-                        </select>
-                        <div style="color:var(--fg-muted);font-size:0.7em;margin-top:2px;line-height:1.6">DeepSeek 官方需填 DeepSeek Key；OpenCode Go 填 opencode.ai/auth 登录 Key（模型一致，无需 DeepSeek Key）</div>
-                    </div>
-                </details>
                 <div class="set-save-row">
                     <button id="key-save" type="button">保存 Key 与连接设置</button>
                     <span id="config-msg" class="set-save-msg"></span>
@@ -488,28 +473,44 @@
             </div>
         </section>
 
-        <!-- ③ 模型与速度：两档预设 + 自定义折叠 -->
+        <!-- ③ 模型与速度：API 供应商 + 四阶段模型名（A8 多供应商） -->
         <section class="set-group">
-            <button class="set-head" type="button" data-group="model">🧠 模型与速度<span class="set-summary" id="model-summary">快速 · Flash</span><span class="set-arrow">▾</span></button>
+            <button class="set-head" type="button" data-group="model">🧠 模型与速度<span class="set-summary" id="model-summary">DeepSeek · Flash</span><span class="set-arrow">▾</span></button>
             <div class="set-body">
-                <div class="field">
-                    <label>回复质量</label>
-                    <select id="model-preset">
-                        <option value="fast">快速（推荐：便宜、快、日常够用）</option>
-                        <option value="strong">更强（Pro：更聪明，更贵、更慢）</option>
-                    </select>
+                <div class="field" id="provider-field">
+                    <label>API 供应商（默认 DeepSeek，填 Key 即用）</label>
+                    <select id="provider-select"></select>
+                    <div style="display:flex;gap:8px;margin-top:6px">
+                        <button id="provider-add" type="button" style="width:auto;flex:0 0 auto">＋ 添加供应商</button>
+                        <button id="provider-edit" type="button" style="width:auto;flex:0 0 auto">✏️ 编辑当前</button>
+                    </div>
+                    <div id="provider-form" style="display:none;margin-top:8px;padding:10px;border:1px solid var(--gold-line);border-radius:10px">
+                        <label>名称</label>
+                        <input id="provider-name" placeholder="如 DeepSeek / 我的中转">
+                        <label style="margin-top:8px">接口地址（OpenAI 兼容，https 开头）</label>
+                        <input id="provider-base" placeholder="https://api.deepseek.com/v1">
+                        <label style="margin-top:8px">API Key</label>
+                        <input id="provider-key" type="password" placeholder="sk-...（留空则不留 Key）">
+                        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">
+                            <button id="provider-fetch-models" type="button" style="width:auto;flex:0 0 auto">📋 一键获取模型列表</button>
+                            <button id="provider-save" type="button" style="width:auto;flex:0 0 auto">保存供应商</button>
+                            <button id="provider-delete" type="button" style="width:auto;flex:0 0 auto;color:var(--fg-muted)">删除</button>
+                            <button id="provider-cancel" type="button" style="width:auto;flex:0 0 auto;color:var(--fg-muted)">收起</button>
+                        </div>
+                        <div id="provider-form-msg" style="color:var(--fg-accent);font-size:0.7em;margin-top:6px"></div>
+                    </div>
+                    <div id="key-guide" style="color:var(--fg-muted);font-size:0.7em;margin-top:8px;line-height:1.8"></div>
                 </div>
                 <details class="set-advanced" id="model-custom">
                     <summary>自定义各阶段模型与思考档位</summary>
+                    <datalist id="model-suggest"></datalist>
                     <div class="field">
                         <label>① 检索器模型（知识检索）</label>
-                        <select id="retriever-model-select">
-                            <option value="deepseek-v4-flash">Flash（快，便宜）</option>
-                            <option value="deepseek-v4-pro">Pro（慢，贵，更强）</option>
-                        </select>
+                        <input id="retriever-model-input" list="model-suggest" placeholder="deepseek-v4-flash">
                         <label style="margin-top:8px">思考等级（默认无思考）</label>
                         <select id="retriever-effort-select">
                             <option value="none">无思考（推荐）</option>
+                            <option value="low">低</option>
                             <option value="high">高</option>
                             <option value="max">最高（约2倍消耗）</option>
                         </select>
@@ -518,39 +519,33 @@
                     </div>
                     <div class="field">
                         <label>② 分析器模型（意图 + 事实核查）</label>
-                        <select id="analyzer-model-select">
-                            <option value="deepseek-v4-flash">Flash（快，便宜）</option>
-                            <option value="deepseek-v4-pro">Pro（慢，贵，更强）</option>
-                        </select>
+                        <input id="analyzer-model-input" list="model-suggest" placeholder="deepseek-v4-flash">
                         <label style="margin-top:8px">思考等级（默认高）</label>
                         <select id="analyzer-effort-select">
                             <option value="none">无思考</option>
+                            <option value="low">低</option>
                             <option value="high">高（推荐）</option>
                             <option value="max">最高（约2倍消耗）</option>
                         </select>
                     </div>
                     <div class="field">
                         <label>③ 回复器模型（生成短信）</label>
-                        <select id="polisher-model-select">
-                            <option value="deepseek-v4-flash">Flash（快，便宜）</option>
-                            <option value="deepseek-v4-pro">Pro（慢，贵，更强）</option>
-                        </select>
+                        <input id="polisher-model-input" list="model-suggest" placeholder="deepseek-v4-flash">
                         <label style="margin-top:8px">思考等级（默认高）</label>
                         <select id="polisher-effort-select">
                             <option value="none">无思考（温度才生效）</option>
+                            <option value="low">低</option>
                             <option value="high">高（推荐）</option>
                             <option value="max">最高（约2倍消耗）</option>
                         </select>
                     </div>
                     <div class="field">
                         <label>④ 组织器模型（表情包 / 旁白）</label>
-                        <select id="organizer-model-select">
-                            <option value="deepseek-v4-flash">Flash（快，便宜）</option>
-                            <option value="deepseek-v4-pro">Pro（慢，贵，更强）</option>
-                        </select>
+                        <input id="organizer-model-input" list="model-suggest" placeholder="deepseek-v4-flash">
                         <label style="margin-top:8px">思考等级（剧情模式默认无思考；春日手信旁白固定思考）</label>
                         <select id="organizer-effort-select">
                             <option value="none">无思考（推荐）</option>
+                            <option value="low">低</option>
                             <option value="high">高</option>
                             <option value="max">最高（约2倍消耗）</option>
                         </select>

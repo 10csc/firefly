@@ -47,12 +47,17 @@ cfg.reset_user_context(tok)
 check("B7 reset 后恢复默认", cfg.mode_data_dir() == cfg.USER_DIR / "story" / "data")
 check("B8 reset 后 get_api_key 恢复", cfg.get_api_key() == cfg.config.get("api_key", ""))
 
-# 非法 api_base 回退官方
+# A8：http(s) 自定义供应商端点允许（多供应商）；仅非 http(s) 才回退官方
 tok2 = cfg.set_user_context(user_dir=cfg.USER_DIR / "u-test-2", api_key="k2",
                             api_base="http://evil.com/v1")
 c2 = cfg.get_client()
-check("B9 非法 api_base 回退官方", c2._api_base == cfg.API_BASE)
-cfg.reset_user_context(tok2)
+check("B9 自定义 http(s) 供应商端点可用（A8 多供应商）", c2._api_base == "http://evil.com/v1")
+token_evil = cfg.set_user_context(user_dir=cfg.USER_DIR / "u-test-2", api_key="k2",
+                                  api_base="ftp://evil.com/v1")
+c3 = cfg.get_client()
+check("B10 非 http(s) 端点回退官方", c3._api_base == cfg.API_BASE)
+cfg.reset_user_context(token_evil)
+cfg.reset_user_context(tok2)   # 逐层恢复（contextvars 必须逆序 reset）
 
 # ══════════════════════════════════════════════════
 print("\n=== C. 多线程上下文互不干扰（并发隔离）===")

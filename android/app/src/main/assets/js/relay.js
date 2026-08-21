@@ -63,6 +63,29 @@ function fillPlaceholders(payload) {
     }
 }
 
+// A8 能力探测（服务器版）：供应商拒绝 DeepSeek 私有参数（thinking/reasoning_effort）时
+// 剥离后重试一次，并按结果缓存 caps 状态（后续 payload 直接剥离，避免每次探错）。
+function _loadNoThinking() {
+    try { return localStorage.getItem("firefly_no_thinking") === "1"; } catch (e) { return false; }
+}
+
+function _stripThinking(payload) {
+    if (!payload || typeof payload !== "object") return payload;
+    try {
+        const p = JSON.parse(JSON.stringify(payload));
+        delete p.thinking;
+        delete p.reasoning_effort;
+        return p;
+    } catch (e) { return payload; }
+}
+
+function _looksUnknownParam(text) {
+    if (!text) return false;
+    const low = String(text).toLowerCase();
+    return low.indexOf("unknown") >= 0 || low.indexOf("unexpected parameter") >= 0
+        || low.indexOf("not a valid parameter") >= 0 || low.indexOf("not supported") >= 0;
+}
+
 async function relayTick() {
     // 1s 轮询取件。用原始 fetch 手动带头：避开包装器的 401 toast（未登录/过期时静默）。
     if (_relayBusy) return;
@@ -99,12 +122,28 @@ async function relayTick() {
         };
         let ds;
         try {
-            // 用户 Key 直连代发（DeepSeek 官方端点支持浏览器 CORS）
+            // 用户 Key 直连代发（DeepSeek 官方端点支持浏览器 CORS）；已知不支持的供应商先剥离私有参数
+            let directPayload = _loadNoThinking() ? _stripThinking(pending.payload) : pending.payload;
             ds = await _serverFetch(apiBase + "/chat/completions", {
                 method: "POST",
                 headers: { "Content-Type": "application/json", "Authorization": "Bearer " + key },
-                body: JSON.stringify(pending.payload),
+                body: JSON.stringify(directPayload),
             });
+            // 能力探测：4xx 未知参数 → 剥离后重试一次（成功后缓存，后续直接剥离）
+            if (!ds.ok && _loadNoThinking() === false) {
+                const errText = await ds.clone().text().catch(() => "");
+                if (_looksUnknownParam(errText)) {
+                    const stripped = _stripThinking(pending.payload);
+                    ds = await _serverFetch(apiBase + "/chat/completions", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json", "Authorization": "Bearer " + key },
+                        body: JSON.stringify(stripped),
+                    });
+                    if (ds.ok) {
+                        try { localStorage.setItem("firefly_no_thinking", "1"); } catch (e) {}
+                    }
+                }
+            }
         } catch (e1) {
             // 直连失败（如 OpenCode Go 端点不支持 CORS）→ 中转降级
             await proxyFallback();

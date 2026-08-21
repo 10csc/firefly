@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
-"""服务器版安全回归：模型锁（只允许 mimo-v2.5）+ 托管模式运营者 Key 不切其它模型 + 每用户配额记账"""
+"""服务器版安全回归：模型锁仅托管模式（QuotaClient 运行时锁 mimo-v2.5，A8 重分层）
++ 托管模式运营者 Key 不切其它模型 + 每用户配额记账"""
 import os
 import sys
 import tempfile
@@ -35,41 +36,47 @@ def check(desc, cond):
         print(f"  X {desc}")
 
 
-print("=== A. 服务器配置加载模型锁 ===")
-# 把配置文件写成 pro，重新加载后必须全部回落到 mimo-v2.5
+print("=== A. 配置层模型自由（A8：锁只在托管模式运行时，配置层不再强制） ===")
+# 配置文件写 pro：加载后保持用户配置（BYOK 用户可用任意官方模型名）
 cfg.CONFIG_FILE.write_text(
     '{"analyzer_model":"deepseek-v4-pro","organizer_model":"deepseek-v4-pro",'
     '"polisher_model":"deepseek-v4-pro","retriever_model":"deepseek-v4-pro"}',
     encoding="utf-8")
 cfg.config = cfg._load_config()
-check("A1 加载后 analyzer=mimo-v2.5", cfg.config["analyzer_model"] == "mimo-v2.5")
-check("A2 加载后 polisher=mimo-v2.5", cfg.config["polisher_model"] == "mimo-v2.5")
-check("A3 加载后 retriever=mimo-v2.5", cfg.config["retriever_model"] == "mimo-v2.5")
-check("A4 加载后 organizer=mimo-v2.5", cfg.config["organizer_model"] == "mimo-v2.5")
+check("A1 加载后 analyzer 保持用户配置", cfg.config["analyzer_model"] == "deepseek-v4-pro")
+check("A2 加载后 polisher 保持用户配置", cfg.config["polisher_model"] == "deepseek-v4-pro")
+check("A3 加载后 retriever 保持用户配置", cfg.config["retriever_model"] == "deepseek-v4-pro")
+check("A4 加载后 organizer 保持用户配置", cfg.config["organizer_model"] == "deepseek-v4-pro")
 
-# save_config 落盘前也要强制 mimo-v2.5
-cfg.config["polisher_model"] = "deepseek-v4-pro"
+# save_config 不再强制（按 A8 分层：QuotaClient 运行时锁）
+cfg.config["polisher_model"] = "gpt-4o"
 cfg.save_config()
 import json
 saved = json.loads(cfg.CONFIG_FILE.read_text(encoding="utf-8"))
-check("A5 save_config 落盘仍为 mimo-v2.5", saved["polisher_model"] == "mimo-v2.5")
+check("A5 save_config 落盘保留用户模型", saved["polisher_model"] == "gpt-4o")
 
-print("=== B. routes.set_config 服务器分支拒绝其它模型 ===")
+print("=== B. routes.set_config：proxy 请求头才锁 mimo-v2.5，BYOK 不锁 ===")
 import routes
 
 
 class FakeH:
-    headers = {}
+    def __init__(self, headers=None):
+        self.headers = headers or {}
 
     def _json(self, data, status=200):
         self.data = data
         self.status = status
 
 
+# BYOK（无 X-API-Mode）：不锁，接受用户模型
 h = FakeH()
 routes.set_config(h)
-check("B1 set_config 响应 polisher=mimo-v2.5", h.data["polisher_model"] == "mimo-v2.5")
-check("B2 set_config 响应 valid_models 不在此处（get_config 检查）", True)
+check("B1 BYOK set_config 接受用户模型", h.data["polisher_model"] == "gpt-4o")
+
+# proxy 托管：强制 mimo-v2.5
+h2 = FakeH({"X-API-Mode": "proxy"})
+routes.set_config(h2)
+check("B2 proxy set_config 强制 mimo-v2.5", h2.data["polisher_model"] == "mimo-v2.5")
 
 print("=== C. 托管模式 QuotaClient 强制 mimo-v2.5 ===")
 os.environ["FIREFLY_PROXY_KEY"] = "op-key-not-real"

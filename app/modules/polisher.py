@@ -317,9 +317,9 @@ class Polisher:
             self._temperature = 0.5
         # 官方文档：思考模式不支持 temperature（静默无效）；thinking 默认 enabled。
         # effort=none → 显式关闭思考，此时 temperature 才真正生效。
+        # 2026-08-13 起 low 是真实档位（直通，旧 low→high 映射已过时）
         self._thinking = effort != "none"
-        effort_map = {"low": "high", "high": "high", "max": "max"}
-        self._effort = effort_map.get(effort, "high")
+        self._effort = effort if effort in ("low", "high", "max") else "high"
 
     def polish(self, inp: PolisherInput) -> PolisherOutput:
         global _POLISH_COUNT, _LLM_ERRORS

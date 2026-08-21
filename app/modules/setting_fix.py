@@ -380,7 +380,8 @@ def _user_turns(conversation: list[dict]) -> int:
 def _thinking_extra(effort: str) -> dict:
     if effort == "none":
         return {"thinking": {"type": "disabled"}}
-    eff = "high" if effort in ("low", "high") else "max"
+    # 2026-08-13 起 low/high/max 三档平滑直通（旧 low→high 映射已过时，删除）
+    eff = effort if effort in ("low", "high", "max") else "high"
     return {"thinking": {"type": "enabled"}, "reasoning_effort": eff}
 
 

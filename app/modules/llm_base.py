@@ -151,7 +151,7 @@ def _log_request(module: str, model: str, success: bool,
         "module": module, "model": model, "success": success,
         "prompt_tokens": pt, "completion_tokens": ct, "total_tokens": tt,
         "cache_hit": hit, "cache_miss": miss,
-        "cost_cny": round(cost_cny, 6),
+        "cost_cny": round(cost_cny, 6) if cost_cny is not None else None,
     }
     if error:
         entry["error"] = error
@@ -162,14 +162,18 @@ def _log_request(module: str, model: str, success: bool,
 
 
 # 定价（人民币/百万tokens，来源：https://api-docs.deepseek.com/zh-cn/quick_start/pricing）
+# 峰谷定价 2026-08-17 起生效（闲时 50% 折扣）：本表为高峰价，成本统计为约数。
+# A8：未知模型（自定义供应商/非 DeepSeek）成本显示「未知」（None），不再按 flash 错算。
 _PRICING = {
     "deepseek-v4-flash":  {"hit": 0.02, "miss": 1, "output": 2},
     "deepseek-v4-pro":    {"hit": 0.025, "miss": 3, "output": 6},
 }
 
 
-def _calc_cost(model: str, hit: int, miss: int, ct: int) -> float:
-    pr = _PRICING.get(model, _PRICING["deepseek-v4-flash"])
+def _calc_cost(model: str, hit: int, miss: int, ct: int) -> float | None:
+    pr = _PRICING.get(model)
+    if pr is None:
+        return None
     return hit / 1e6 * pr["hit"] + miss / 1e6 * pr["miss"] + ct / 1e6 * pr["output"]
 
 
@@ -220,7 +224,13 @@ def get_token_stats() -> dict:
         total_cost = 0.0
         for model, pt in _model_prompt.items():
             ct = _model_completion.get(model, 0)
-            pr = _PRICING.get(model, _PRICING["deepseek-v4-flash"])
+            pr = _PRICING.get(model)
+            if pr is None:
+                # 未知模型（自定义供应商）：成本未知，不并入总计
+                cost_breakdown[model] = {"prompt_tokens": pt, "completion_tokens": ct,
+                                         "cache_hit": 0, "cache_miss": 0, "cost_cny": None,
+                                         "unknown_price": True}
+                continue
             est_hit = int(pt * rate) if total_input > 0 else 0
             est_miss = pt - est_hit
             cost = est_hit / 1e6 * pr["hit"] + est_miss / 1e6 * pr["miss"] + ct / 1e6 * pr["output"]

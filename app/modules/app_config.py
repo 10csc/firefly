@@ -6,9 +6,11 @@ server 拆分产物：路径引导、目录创建、默认文件拷贝、运行�
 避免各自复制 frozen 判断公式导致路径分裂。
 """
 
-import json, os, sys
+import json, os, sys, time, logging
 import contextvars
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 # ── 用户上下文（服务器版多用户隔离；本地版不设置，行为与之前完全一致）──
 # 每个请求一个上下文：user_dir（该用户数据根）、api_key/api_base（用户自己的 Key）。
@@ -68,7 +70,8 @@ def user_has_key() -> bool:
     ctx = _user_ctx.get()
     if ctx:
         return bool(ctx.get("api_key"))
-    return bool(config.get("api_key", "") or os.environ.get("DEEPSEEK_API_KEY", "").strip())
+    _p = _active_provider()
+    return bool((_p.get("api_key") if _p else "") or os.environ.get("DEEPSEEK_API_KEY", "").strip())
 
 
 def relay_needs_key() -> bool:
@@ -129,8 +132,115 @@ API_BASE = "https://api.deepseek.com/v1"
 GO_BASE = "https://opencode.ai/zen/go/v1"
 MODEL = "deepseek-v4-flash"
 
-VALID_MODELS = ("deepseek-v4-flash", "deepseek-v4-pro")
+# ── 供应商（A8 多供应商；2026-08-21）────────────────
+# 结构：providers=[{id,name,base_url,api_key,models[],caps{}}] + active_provider=id
+# caps 能力位（DeepSeek 私有能力按供应商分支）：
+#   thinking=支持 extra_body thinking/reasoning_effort；reasoning=解析 reasoning_content；
+#   vision=支持 image_url 多模态；prompt_cache=回传缓存命中统计；models_endpoint=GET /models
+# 内置建议清单（v1 时代 VALID_MODELS/端点白名单的替代物：建议 + 用户自由输入，不做硬白名单）
+SUGGESTED_PROVIDERS = [
+    {"id": "deepseek", "name": "DeepSeek", "base_url": "https://api.deepseek.com/v1",
+     "models": ["deepseek-v4-flash", "deepseek-v4-pro", "deepseek-v4-flash-vision-exp"],
+     "caps": {"thinking": True, "reasoning": True, "vision": True,
+              "prompt_cache": True, "models_endpoint": True}},
+    {"id": "opencode-go", "name": "OpenCode Go", "base_url": "https://opencode.ai/zen/go/v1",
+     "models": ["mimo-v2.5", "mimo-v2.5-free"],
+     "caps": {"thinking": False, "reasoning": False, "vision": False,
+              "prompt_cache": False, "models_endpoint": False}},
+]
+# 模型名：官方英文名（UI 下拉建议用 deepseek 官方清单；不再用「快速/更强」中文档位）
+SUGGESTED_MODELS = ["deepseek-v4-flash", "deepseek-v4-pro", "deepseek-v4-flash-vision-exp"]
+# 兼容别名（旧代码/测试仍引用 VALID_MODELS；模型校验已改为自由输入，见 _clean_model）
+VALID_MODELS = tuple(SUGGESTED_MODELS)
 VALID_EFFORTS = ("none", "low", "high", "max")
+
+_MODEL_MAX_LEN = 100
+_BASE_MAX_LEN = 300
+
+
+def _valid_http_base(url: str) -> bool:
+    """base_url 安全校验：必须 http(s)，长度受限（防注入/畸形配置）。"""
+    return url.startswith(("http://", "https://")) and len(url) <= _BASE_MAX_LEN
+
+
+def _clean_model(val, default: str = MODEL) -> str:
+    """模型名校验：非空字符串 + 长度上限；非法回退默认（自由输入，无白名单）。"""
+    if not isinstance(val, str):
+        return default
+    v = val.strip()
+    return v if v and len(v) <= _MODEL_MAX_LEN else default
+
+
+def _clean_provider(p) -> dict | None:
+    """供应商记录校验/净化：缺关键字段或 base_url 非法 → 拒绝（审查约束）。"""
+    if not isinstance(p, dict):
+        return None
+    pid = str(p.get("id", "")).strip()
+    if not pid or len(pid) > 40:
+        return None
+    base = str(p.get("base_url", "") or "").strip().rstrip("/")
+    if not _valid_http_base(base):
+        return None
+    name = str(p.get("name", "") or "").strip() or pid
+    models = [m for m in (str(x).strip() for x in p.get("models", []) if isinstance(x, str))
+              if m and len(m) <= _MODEL_MAX_LEN]
+    caps = {k: bool(v) for k, v in (p.get("caps") or {}).items()
+            if k in ("thinking", "reasoning", "vision", "prompt_cache", "models_endpoint")}
+    return {"id": pid, "name": name, "base_url": base,
+            "api_key": str(p.get("api_key", "") or "").strip(),
+            "models": models, "caps": caps}
+
+
+def normalize_providers(raw) -> list:
+    """整表净化：非法条目剔除；去重（id）。"""
+    if not isinstance(raw, list):
+        return []
+    out, seen = [], set()
+    for p in raw:
+        c = _clean_provider(p)
+        if c and c["id"] not in seen:
+            seen.add(c["id"])
+            out.append(c)
+    return out
+
+
+def _deepseek_preset(api_key: str = "", base_url: str = API_BASE) -> dict:
+    p = {"id": "deepseek", "name": "DeepSeek", "base_url": base_url,
+         "api_key": api_key, "models": list(SUGGESTED_PROVIDERS[0]["models"]),
+         "caps": dict(SUGGESTED_PROVIDERS[0]["caps"])}
+    return p
+
+
+def _migrate_legacy_providers(data: dict) -> dict:
+    """旧结构（顶层 api_key/api_base）→ providers。返回 {providers, active_provider} 或 None。
+    迁移前备份 config.json；迁移后旧字段不再读取/落盘。幂等：新结构存在则不迁。"""
+    if "providers" in data:
+        return None
+    if "api_key" not in data and "api_base" not in data:
+        return None
+    try:
+        _bak = CONFIG_FILE.with_name(CONFIG_FILE.name + ".bak-" + time.strftime("%Y%m%d-%H%M%S"))
+        _bak.write_bytes(CONFIG_FILE.read_bytes())
+        logger.info("多供应商迁移：已备份旧配置 -> %s", _bak.name)
+    except OSError:
+        pass
+    old_key = str(data.get("api_key", "") or "").strip()
+    old_base = str(data.get("api_base", "") or API_BASE).strip()
+    if not _valid_http_base(old_base):
+        old_base = API_BASE
+    old_base = old_base.rstrip("/")
+    if old_base == API_BASE:
+        providers = [_deepseek_preset(old_key, API_BASE)]
+        active = "deepseek"
+    else:
+        # 旧状态 = 非官方端点（如 OpenCode Go）：保留原名端口供用户选用，行为等价
+        p1 = _deepseek_preset("", API_BASE)
+        p2 = _clean_provider({"id": "legacy", "name": "原接口地址",
+                              "base_url": old_base, "api_key": old_key,
+                              "models": [], "caps": {}})
+        providers = [p for p in (p2, p1) if p]   # legacy 置顶 = 与旧行为一致
+        active = providers[0]["id"] if providers else "deepseek"
+    return {"providers": providers, "active_provider": active}
 
 CONFIG_FILE = USER_DIR / "config.json"
 
@@ -242,9 +352,13 @@ def resolve_asset(path: str) -> Path:
 
 # ── 配置状态 ─────────────────────────────────────
 def _load_config() -> dict:
-    """加载配置。缺失字段用默认值。兼容旧 reply_* 字段自动映射到 polisher_*。"""
+    """加载配置。缺失字段用默认值。兼容旧 reply_* 字段自动映射到 polisher_*。
+    A8：providers 多供应商结构 + 旧 api_key/api_base 自动迁移（幂等，迁移前备份）。"""
     cfg = {
+        # 派生便捷字段：api_key/api_base = 当前激活供应商的值（不落盘，见 save_config）
         "api_key": "", "api_base": API_BASE,
+        "active_provider": "deepseek",
+        "providers": [_deepseek_preset()],
         # 服务器地址（远程部署用）：空 = 本机（127.0.0.1:PORT），
         # 非空 = 远程服务器（如 http://47.xx.xx.xx:8765）——前端按此地址连后端，需重启生效
         "server_url": "",
@@ -262,20 +376,31 @@ def _load_config() -> dict:
     try:
         data = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
         if isinstance(data, dict):
-            cfg["api_key"] = data.get("api_key", "") or ""
             # 服务器地址：仅允许 http/https 开头，防注入（空 = 本机）
             _srv = str(data.get("server_url", "") or "").strip().rstrip("/")
             cfg["server_url"] = _srv if _srv.startswith(("http://", "https://")) else ""
-            # 接口地址：仅允许官方 / Go 两个已知端点（防配置污染/注入）
-            _base = data.get("api_base", API_BASE) or API_BASE
-            cfg["api_base"] = _base if _base in (API_BASE, GO_BASE) else API_BASE
+            # 多供应商：新结构直接读；旧结构（顶层 api_key/api_base）自动迁移
+            if "providers" in data:
+                providers = normalize_providers(data.get("providers"))
+                if providers:
+                    cfg["providers"] = providers
+                    active = str(data.get("active_provider", "") or "").strip()
+                    if not any(p["id"] == active for p in providers):
+                        active = providers[0]["id"]
+                    cfg["active_provider"] = active
+            else:
+                mig = _migrate_legacy_providers(data)
+                if mig:
+                    cfg["providers"] = mig["providers"] or [_deepseek_preset()]
+                    cfg["active_provider"] = mig["active_provider"]
+            # 派生便捷字段：取本 dict 内的激活供应商（不可用模块级全局 config）
+            _plist = cfg.get("providers") or []
+            _p = next((pr for pr in _plist if pr["id"] == cfg.get("active_provider")),
+                      _plist[0] if _plist else None)
+            cfg["api_key"] = _p.get("api_key", "") if _p else ""
+            cfg["api_base"] = _p.get("base_url", API_BASE) if _p else API_BASE
             for key in ("analyzer_model", "organizer_model", "polisher_model", "retriever_model"):
-                val = data.get(key, "deepseek-v4-flash")
-                cfg[key] = val if val in VALID_MODELS else "deepseek-v4-flash"
-            # 服务器版模型锁：核心流水线只允许 mimo-v2.5（无论配置文件/用户 /set-config 写进什么）
-            if os.environ.get("FIREFLY_SERVER"):
-                for key in ("analyzer_model", "organizer_model", "polisher_model", "retriever_model"):
-                    cfg[key] = "mimo-v2.5"
+                cfg[key] = _clean_model(data.get(key, "deepseek-v4-flash"))
             _effort_defaults = {"retriever_effort": "none", "analyzer_effort": "high",
                                 "polisher_effort": "high", "organizer_effort": "none"}
             for key in _effort_defaults:
@@ -283,7 +408,7 @@ def _load_config() -> dict:
                 cfg[key] = val if val in VALID_EFFORTS else _effort_defaults[key]
             if "reply_model" in data and "polisher_model" not in data:
                 rm = data.get("reply_model", "deepseek-v4-flash")
-                cfg["polisher_model"] = rm if rm in VALID_MODELS else "deepseek-v4-flash"
+                cfg["polisher_model"] = _clean_model(rm)
             eff = data.get("polisher_effort", data.get("reply_effort", "high"))
             cfg["polisher_effort"] = eff if eff in VALID_EFFORTS else "high"
             try:
@@ -343,15 +468,94 @@ def _load_config() -> dict:
 config = _load_config()
 
 
+def _active_provider() -> dict:
+    """当前激活供应商（配置里的权威 record；无则返回深色塞默认）。"""
+    providers = config.get("providers") or []
+    if not providers:
+        return _deepseek_preset()
+    active = config.get("active_provider", "")
+    for p in providers:
+        if p["id"] == active:
+            return p
+    return providers[0]
+
+
+def active_provider() -> dict:
+    """对外接口：当前激活供应商（含派生字段 api_key/base_url）。"""
+    return _active_provider()
+
+
+def provider_by_id(pid: str) -> dict | None:
+    for p in (config.get("providers") or []):
+        if p["id"] == pid:
+            return p
+    return None
+
+
+def set_active_provider(pid: str) -> bool:
+    """切换激活供应商（必须存在于列表，审查约束）。返回是否成功。"""
+    if provider_by_id(pid) is None:
+        return False
+    config["active_provider"] = pid
+    _sync_derived()
+    return True
+
+
+def upsert_provider(p: dict) -> dict | None:
+    """新增/替换供应商（净化后入库）。清理后的记录不存在时返回 None。"""
+    c = _clean_provider(p)
+    if c is None:
+        return None
+    providers = config.setdefault("providers", [])
+    for i, old in enumerate(providers):
+        if old["id"] == c["id"]:
+            providers[i] = c
+            break
+    else:
+        providers.append(c)
+    if not config.get("active_provider") or provider_by_id(config["active_provider"]) is None:
+        config["active_provider"] = c["id"]
+    _sync_derived()
+    return c
+
+
+def remove_provider(pid: str) -> bool:
+    """删除供应商（至少保留一个；删除激活项则激活第一个）。"""
+    providers = config.get("providers") or []
+    if not any(p["id"] == pid for p in providers) or len(providers) <= 1:
+        return False
+    config["providers"] = [p for p in providers if p["id"] != pid]
+    if config.get("active_provider") == pid:
+        config["active_provider"] = config["providers"][0]["id"]
+    _sync_derived()
+    return True
+
+
+def _sync_derived():
+    """派生便捷字段 api_key/api_base = 激活供应商的值（不落盘）。"""
+    p = _active_provider()
+    config["api_key"] = p.get("api_key", "")
+    config["api_base"] = p.get("base_url", API_BASE)
+
+
+def _on_caps_probe(changed: dict):
+    """能力探测回调（api_client 遇 unknown param 剥离重试成功后调用）：
+    回写激活供应商 caps 并落盘（本地版单用户；服务器版 relay 由前端处理，服务端不回写）。"""
+    try:
+        p = _active_provider()
+        p.setdefault("caps", {}).update(changed)
+        save_config()
+    except Exception:
+        pass
+
+
 def save_config() -> None:
-    # 服务器版模型锁：落盘前再次强制 mimo-v2.5，防止任何路径把其它模型写进全局配置
-    if os.environ.get("FIREFLY_SERVER"):
-        for key in ("analyzer_model", "organizer_model", "polisher_model", "retriever_model"):
-            config[key] = "mimo-v2.5"
+    # 只落盘 providers 结构（containing api_key）、active_provider 与其它设置；
+    # 不写顶层 api_key/api_base（旧字段迁移后废除）
     CONFIG_FILE.write_text(
         json.dumps({
-            "api_key": config.get("api_key", ""),
-            "api_base": config.get("api_base", API_BASE),
+            "providers": config.get("providers") or [_deepseek_preset()],
+            "active_provider": config.get("active_provider", "deepseek"),
             "server_url": config.get("server_url", ""),
             "analyzer_model": config.get("analyzer_model", "deepseek-v4-flash"),
             "organizer_model": config.get("organizer_model", "deepseek-v4-flash"),
@@ -374,7 +578,7 @@ def save_config() -> None:
 
 
 def get_api_key() -> str:
-    """当前生效的 API Key：用户上下文（服务器版，用户自己的 Key）→ 配置 → 环境变量兜底。"""
+    """当前生效的 API Key：用户上下文（服务器版，用户自己的 Key）→ 激活供应商 → 环境变量兜底。"""
     ctx = _user_ctx.get()
     if ctx and ctx.get("api_key"):
         return ctx["api_key"]
@@ -402,7 +606,7 @@ def get_client():
     if mode == "relay":
         from modules.api_client import RelayClient
         base = (ctx.get("api_base") if ctx else None) or config.get("api_base", API_BASE)
-        if base not in (API_BASE, GO_BASE):
+        if not _valid_http_base(base):
             base = API_BASE
         return RelayClient(user_key=user_scope_key() or "local", api_base=base)
     key = get_api_key()
@@ -410,6 +614,9 @@ def get_client():
         return None
     from modules.api_client import _CompatClient
     base = (ctx.get("api_base") if ctx else None) or config.get("api_base", API_BASE)
-    if base not in (API_BASE, GO_BASE):
+    if not _valid_http_base(base):
         base = API_BASE
-    return _CompatClient(api_key=key, base_url=base, timeout=30.0)
+    # caps 随激活供应商（能力位分支：extra_body/多模态等按供应商开关）
+    caps = _active_provider().get("caps") or {}
+    return _CompatClient(api_key=key, base_url=base, timeout=30.0,
+                         caps=caps, on_caps_change=_on_caps_probe)

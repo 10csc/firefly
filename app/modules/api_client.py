@@ -49,12 +49,24 @@ def _ns(d: dict) -> SimpleNamespace:
     return out
 
 
+def _looks_unknown_param(detail: str) -> bool:
+    """判断 4xx 错误是否"未知参数"（OpenAI 兼容供应商拒绝 thinking/reasoning_effort 等
+    DeepSeek 私有参数时的典型文案：unknown parameter / unexpected parameter）。"""
+    low = detail.lower()
+    return ("unknown" in low or "unexpected parameter" in low
+            or "not a valid parameter" in low or "not supported" in low)
+
+
 class _Completions:
     def __init__(self, client: "_CompatClient"):
         self._client = client
 
     def create(self, *, model, messages, max_tokens=2000, temperature=None,
                extra_body=None, response_format=None):
+        caps = self._client._caps
+        # 能力位分支（A8）：仅 caps.thinking 的供应商发送 DeepSeek 私有参数
+        # （extra_body 的 thinking/reasoning_effort 等）；自定义供应商默认不发。
+        sent_extra = bool(extra_body) and caps.get("thinking", True)
         payload = {
             "model": model,
             "messages": messages,
@@ -64,17 +76,22 @@ class _Completions:
             payload["temperature"] = temperature
         if response_format is not None:
             payload["response_format"] = response_format
-        if extra_body:
+        if sent_extra:
             payload.update(extra_body)   # thinking / reasoning_effort 均为顶层参数
+        payload_no_extra = dict(payload)
+        if sent_extra:
+            for k in extra_body:
+                payload_no_extra.pop(k, None)
 
         last_error = None
-        for attempt in range(_MAX_RETRIES + 1):
+        stripped_extra = False   # 本次已剥离 extra_body（unknown-param 探针重试中）
+        for attempt in range(_MAX_RETRIES + 2):   # +1 次给能力探测重试
             try:
                 resp = requests.post(
                     self._client._base_url + "/chat/completions",
                     headers={"Authorization": f"Bearer {self._client._api_key}",
                              "Content-Type": "application/json"},
-                    json=payload,
+                    json=payload_no_extra if stripped_extra else payload,
                     timeout=self._client._timeout,
                 )
             except requests.RequestException as e:
@@ -92,6 +109,13 @@ class _Completions:
 
             if resp.status_code != 200:
                 detail = resp.text[:300]
+                # 能力探测：4xx「未知参数」→ 剥离 extra_body 重试一次并回写 caps
+                if (not stripped_extra and sent_extra and resp.status_code in (400, 422)
+                        and _looks_unknown_param(detail)):
+                    stripped_extra = True
+                    logger.warning("[API] 供应商拒绝私有参数（%s → %s），剥离 extra_body 重试并回写 caps.thinking=False",
+                                   resp.status_code, detail[:120])
+                    continue
                 # 错误码分类（前端人话提示）
                 _code = "unknown"
                 if resp.status_code == 401:
@@ -127,6 +151,14 @@ class _Completions:
                 logger.error("[API] 响应缺少 choices — model=%s", model)
                 raise last_error
 
+            # 探针成功：回写 caps.thinking=False（后续请求不再发私有参数）
+            if stripped_extra and caps.get("thinking", True):
+                caps["thinking"] = False
+                try:
+                    if self._client._on_caps_change:
+                        self._client._on_caps_change({"thinking": False})
+                except Exception:
+                    pass
             return self._build_response(data)
 
         # 不应到达此处
@@ -164,13 +196,21 @@ class _Chat:
 
 
 class _CompatClient:
-    """兼容 openai.OpenAI 的最小实现：chat.completions.create"""
+    """兼容 openai.OpenAI 的最小实现：chat.completions.create
+
+    A8：caps = 供应商能力位（thinking 决定是否发 extra_body 私有参数等）；
+    on_caps_change = 能力探测后回调（本地版回写 config.json，服务器 relay 由前端处理）。"""
 
     def __init__(self, api_key: str, base_url: str = "https://api.deepseek.com",
-                 timeout: float = 30.0):
+                 timeout: float = 30.0, caps: dict | None = None,
+                 on_caps_change=None):
         self._api_key = api_key
         self._base_url = base_url.rstrip("/")
         self._timeout = timeout
+        self._caps = {"thinking": True, "reasoning": True, "vision": True,
+                      "prompt_cache": True, "models_endpoint": True}
+        self._caps.update(caps or {})
+        self._on_caps_change = on_caps_change
         self.chat = _Chat(self)
 
 

@@ -44,7 +44,7 @@
 
 **原则**：
 - **thinking 默认 enabled**——不传参数就是思考模式。必须显式 `{"thinking":{"type":"disabled"}}` 才是 Non-think（官方文档 guides/thinking_mode）。
-- **思考模式下 temperature/top_p/presence_penalty/frequency_penalty 静默无效**（官方明确：不报错但无效果）。调温度必须先关思考。effort 传 low/medium 会被映射为 high。
+- **思考模式下 temperature/top_p/presence_penalty/frequency_penalty 静默无效**（官方明确：不报错但无效果）。调温度必须先关思考。effort 三档 low/high/max 直通（2026-08-13 起 low 是真实档位；`none` = 显式关闭思考）。
 - 默认用 Flash + Think High。当前简单测试中 Think High 比 Non-think 还省 token（思考让输出更精炼）。
 - Think Max 仅在提示词/工具大量堆叠后 Think High 不够用时启用。当前简单场景 Max 可能过度思考破坏结构化输出，不代表能力弱——是场景不够复杂。
 - Pro 仅在知识密集型任务（搜索、问答）或 Flash 明确不够用时启用。成本差 ~12 倍。

@@ -120,7 +120,10 @@ def set_key(h):
         h._json({"ok": False, "error": "服务器版请在设置面板填写 Key（仅存本机浏览器）"}, 403)
         return
     body = _read_json(h)
-    cfg.config["api_key"] = (body.get("api_key") or "").strip()
+    # A8：Key 写入激活供应商（providers 结构，不再写顶层字段）
+    _p = cfg.active_provider()
+    _p["api_key"] = (body.get("api_key") or "").strip()
+    cfg._sync_derived()
     cfg.save_config()
     h._json({"ok": bool(cfg.config["api_key"])})
 
@@ -129,13 +132,35 @@ def set_config(h):
     body = _read_json(h)
     # 服务器版：剥离 api_key 字段（Key 不落服务器全局配置；模型/主动性等全局参数照常）
     new_key = "" if _is_server() else (body.get("api_key") or "").strip()
+    is_proxy = (h.headers.get("X-API-Mode", "") or "").strip().lower() == "proxy"
+    # A8：模型名自由输入（官方英文名，无白名单）；仅服务器托管（proxy）模式锁 mimo-v2.5
     for key in ("analyzer_model", "organizer_model", "polisher_model", "retriever_model"):
         val = body.get(key, cfg.config[key])
-        # 服务器版模型锁：用户无论提交什么，模型字段只允许是 mimo-v2.5（忽略其它值）
-        if _is_server():
+        if _is_server() and is_proxy:
             cfg.config[key] = "mimo-v2.5"
-        elif val in cfg.VALID_MODELS:
-            cfg.config[key] = val
+        else:
+            cfg.config[key] = cfg._clean_model(val, cfg.config[key])
+    # 供应商管理（本地版：整表替换 + 激活切换；服务器版供应商配置在浏览器 localStorage，不走这里）
+    if not _is_server():
+        if "providers" in body:
+            validated = cfg.normalize_providers(body.get("providers"))
+            # 空 Key 视为「保留原 Key」（前端不回传全量 Key，只能看到 has_key 状态）
+            for p in validated:
+                if not p["api_key"]:
+                    old = cfg.provider_by_id(p["id"])
+                    if old:
+                        p["api_key"] = old.get("api_key", "")
+            if validated:
+                cfg.config["providers"] = validated
+        if "active_provider" in body:
+            cfg.set_active_provider(str(body.get("active_provider") or "").strip())
+        # 兼容旧接口：api_base → 当前激活供应商 base_url；api_key → 激活供应商 Key
+        if "api_base" in body:
+            _base = str(body.get("api_base") or "").strip().rstrip("/")
+            _p = cfg.active_provider()
+            if cfg._valid_http_base(_base):
+                _p["base_url"] = _base
+                cfg._sync_derived()
     for key in ("retriever_effort", "analyzer_effort", "polisher_effort", "organizer_effort"):
         val = body.get(key, cfg.config[key])
         if val in cfg.VALID_EFFORTS:
@@ -180,16 +205,15 @@ def set_config(h):
     # 隐藏式回复配置（独立开关，关前台概率式不影响隐藏式）
     if "hidden_reply_enabled" in body:
         cfg.config["hidden_reply_enabled"] = bool(body.get("hidden_reply_enabled"))
-    # 接口地址：仅允许官方 / OpenCode Go 两个已知端点
-    if "api_base" in body:
-        _base = str(body.get("api_base") or "").strip()
-        if _base in (cfg.API_BASE, cfg.GO_BASE):
-            cfg.config["api_base"] = _base
     if new_key:
-        cfg.config["api_key"] = new_key
+        # 本地版：Key 写入激活供应商（providers 结构）
+        _p = cfg.active_provider()
+        _p["api_key"] = new_key
+        cfg._sync_derived()
     cfg.save_config()
     h._json({
         "ok": bool(cfg.config["api_key"]),
+        "active_provider": cfg.config.get("active_provider", "deepseek"),
         "api_base": cfg.config.get("api_base", cfg.API_BASE),
         "analyzer_model": cfg.config["analyzer_model"],
         "organizer_model": cfg.config["organizer_model"],
@@ -1123,13 +1147,28 @@ def sync_download(h):
 
 
 def get_config(h):
-    key = cfg.config.get("api_key", "")
+    key = cfg.active_provider().get("api_key", "") or cfg.config.get("api_key", "")
     # 服务器版不返回 key_prefix：全局/env 兜底 Key 的前缀也不能向登录用户暴露
     key_prefix = "" if _is_server() else (key[:12] + "..." if key else "")
+    # 供应商列表：Key 只回 has_key + 前缀（不回全量），服务器版供应商配置在浏览器（localStorage）
+    providers = []
+    for p in (cfg.config.get("providers") or []):
+        pk = p.get("api_key", "")
+        providers.append({
+            "id": p["id"], "name": p.get("name", p["id"]),
+            "base_url": p.get("base_url", ""),
+            "models": p.get("models", []),
+            "caps": p.get("caps", {}),
+            "has_key": bool(pk) if not _is_server() else False,
+            "key_prefix": (pk[:12] + "...") if (pk and not _is_server()) else "",
+        })
     h._json({
         "platform": _platform_tag(),
         "has_key": bool(cfg.get_api_key()),
         "key_prefix": key_prefix,
+        "active_provider": cfg.config.get("active_provider", "deepseek"),
+        "providers": providers,
+        "suggested_providers": cfg.SUGGESTED_PROVIDERS,
         "api_base": cfg.config.get("api_base", cfg.API_BASE),
         "api_bases": [cfg.API_BASE, cfg.GO_BASE],
         "analyzer_model": cfg.config["analyzer_model"],
@@ -1148,7 +1187,8 @@ def get_config(h):
         "prob_reply_enabled": bool(cfg.config.get("prob_reply_enabled", True)),
         "prob_reply_value": cfg.config.get("prob_reply_value", 0.3),
         "hidden_reply_enabled": bool(cfg.config.get("hidden_reply_enabled", True)),
-        "valid_models": ["deepseek-v4-flash"] if _is_server() else list(cfg.VALID_MODELS),
+        "suggested_models": list(cfg.SUGGESTED_MODELS),
+        "valid_models": list(cfg.SUGGESTED_MODELS),
         "valid_efforts": list(cfg.VALID_EFFORTS),
     })
 
@@ -1158,12 +1198,42 @@ def get_metrics(h):
     h._json(collect())
 
 
-def get_balance(h):
-    # 查询 DeepSeek 账户余额（key 来源与 get_client 一致，兼容环境变量）
+def get_models(h):
+    """GET /models?provider=<id>：用该供应商 Key 请求其 /models 取官方模型清单（A8）。
+    本地版后端带 Key 转发；服务器版 relay 由前端直连（Key 在浏览器），本端点不起作用。"""
+    if _is_server():
+        h._json({"error": "服务器版模型清单由浏览器直连供应商获取"}, 403); return
+    qs = parse_qs(urlparse(h.path).query)
+    pid = (qs.get("provider", [""])[0] or "").strip()
+    p = cfg.provider_by_id(pid)
+    if p is None:
+        h._json({"error": "供应商不存在"}, 404); return
+    if not p.get("api_key"):
+        h._json({"error": "请先填写该供应商的 API Key"}, 400); return
     import urllib.request
     try:
         req = urllib.request.Request(
-            f"{cfg.API_BASE.replace('/v1','')}/user/balance",
+            p["base_url"].rstrip("/") + "/models",
+            headers={"Authorization": f"Bearer {p['api_key']}"},
+        )
+        with urllib.request.urlopen(req, timeout=15) as r:
+            data = json.loads(r.read())
+        ids = [str(m.get("id", "")) for m in (data.get("data") or []) if isinstance(m, dict)]
+        ids = [i for i in ids if i]
+        h._json({"ok": True, "provider": pid, "models": ids})
+    except Exception as e:
+        h._json({"error": f"获取模型列表失败: {e}"})
+
+
+def get_balance(h):
+    # 查询 DeepSeek 账户余额（仅 DeepSeek 官方端点与激活供应商 Key；其它供应商不支持）
+    import urllib.request
+    api_base = cfg.config.get("api_base", cfg.API_BASE)
+    if not api_base.startswith("https://api.deepseek.com"):
+        h._json({"error": "仅 DeepSeek 官方支持余额查询", "supported": False}); return
+    try:
+        req = urllib.request.Request(
+            f"{cfg.API_BASE.replace('/v1', '')}/user/balance",
             headers={"Authorization": f"Bearer {cfg.get_api_key()}"},
         )
         with urllib.request.urlopen(req, timeout=10) as r:
@@ -1740,6 +1810,7 @@ POST_ROUTES = {
 GET_ROUTES = {
     "/check-key": check_key,
     "/config": get_config,
+    "/models": get_models,
     "/chat-stage": get_chat_stage,
     "/metrics": get_metrics,
     "/balance": get_balance,
