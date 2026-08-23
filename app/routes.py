@@ -843,7 +843,8 @@ def rest(h):
         from modules.memory_manager import MemoryManager
         mm = MemoryManager(client, cfg.MODEL, mode=mode)
         full_history = session["context"].get_full()
-        result = mm.rest(full_history, session["context"].turn_count)
+        result = mm.rest(full_history, session["context"].turn_count,
+                         today=_resolve_today())
         # 休息成功后也更新手账
         if result.success:
             mm.update_journal(full_history[-100:])
@@ -854,6 +855,35 @@ def rest(h):
             session["memory_head"] = mm.load_head()
     h._json({"ok": result.success, "added": len(result.added_entries),
              "resolved": len(result.resolved_entries), "error": result.error})
+
+
+def get_time(h):
+    """GET /time：服务器时钟（YYYY-MM-DD + 时间戳）。
+    记忆整理等需要"今天"的场合用它做权威时钟（本地版经后端转发到认证服务器；
+    _resolve_today：服务器优先、不可达时本地时钟兜底）。"""
+    h._json({"ok": True, "date": time.strftime("%Y-%m-%d"),
+             "ts": int(time.time())})
+
+
+def _resolve_today() -> str:
+    """rest 等场景的"今天"：服务器时间优先，本地设备时钟兜底。
+    - 服务器版：进程就在业务服务器上，取本机时钟即服务器时间（无网络往返）；
+    - 本地版：请求认证服务器 /time（0.8s 超时），成功用服务器日期，失败用设备时钟
+      （离线宽限内 rest 仍可用）。"""
+    if _is_server():
+        return time.strftime("%Y-%m-%d")
+    import urllib.request
+    try:
+        req = urllib.request.Request(_auth_server_base() + "/time")
+        with urllib.request.urlopen(req, timeout=0.8) as r:
+            data = json.loads(r.read().decode("utf-8"))
+        d = str(data.get("date", "") or "").strip()
+        import re as _re
+        if _re.fullmatch(r"\d{4}-\d{2}-\d{2}", d):
+            return d
+    except Exception:
+        pass
+    return time.strftime("%Y-%m-%d")
 
 
 def add_sticker_route(h):
@@ -2594,6 +2624,7 @@ GET_ROUTES = {
     "/models": get_models,
     "/sync/manifest": sync_manifest,
     "/image": get_image,
+    "/time": get_time,
     "/auth/state": auth_state,
     "/chat-stage": get_chat_stage,
     "/metrics": get_metrics,

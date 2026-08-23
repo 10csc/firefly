@@ -52,6 +52,18 @@ def _journal_file(mode: str = DEFAULT_MODE) -> Path:
 _JOURNAL_LEGACY = ROOT / "knowledge" / "story" / "手账.md"
 
 
+def _verify_today(today) -> str:
+    """today 审查：合法 YYYY-MM-DD 字符串直接采用；非法/缺省 → 本机时钟（兜底）。
+    routes 层负责「服务器时间优先、本地兜底」的解析（见 routes._resolve_today）。"""
+    import re as _re
+    from datetime import datetime as _dt
+    if isinstance(today, str):
+        t = today.strip()
+        if _re.fullmatch(r"\d{4}-\d{2}-\d{2}", t):
+            return t
+    return _dt.now().strftime("%Y-%m-%d")
+
+
 def _migrate_legacy(mode: str = DEFAULT_MODE):
     """一次性迁移：旧位置（memory/data/）有文件且 {mode} 无 → 拷贝。
     之后只读写 {mode}，旧文件保留不删（防误删历史数据）。
@@ -104,10 +116,11 @@ _REST_PROMPT = """你正在整理流萤与开拓者的对话记忆。只输出 J
 - **只记录对话中真实发生的内容**：开拓者明确说过的话、双方实际达成的约定、真实发生的互动。
 - **不记录推断与脑补**：不把"对方可能喜欢""以后大概会"这类推测当事实；不把流萤自己的比喻、客气话、随口假设写成事实条目。
 - **对话里不存在的人、事、物、约定——一律不新增**。
+- **日期必须真实**：每条 added 的 date 取该对话内容发生时的时间（新对话每行开头 `[YYYY-MM-DD HH:MM]` 时间标记，或取"当前日期"）；格式 YYYY-MM-DD。**严禁照抄输出示例中的占位日期**（示例里的 <发生日期> 只是格式演示，不是真实值）。
 - 拿不准某条是不是真实发生的 → 不记。
 
 ## 输出（只输出一行 JSON）
-{{"new_head": "...", "resolved": [{{"type":"承诺","text":"..."}}], "added": [{{"type":"承诺","text":"...","date":"2026-07-02"}}]}}"""
+{{"new_head": "...", "resolved": [{{"type":"承诺","text":"..."}}], "added": [{{"type":"承诺","text":"...","date":"<发生日期>"}}]}}"""
 
 _JOURNAL_PROMPT = r"""你是流萤。你在整理自己的手账。以第一人称口吻，更新以下两栏。
 
@@ -169,12 +182,14 @@ class MemoryManager:
         self._idx_file.write_text(
             json.dumps({"last_integrated_turn": turn}, ensure_ascii=False), encoding="utf-8")
 
-    def rest(self, full_history: list, current_turn_count: int) -> RestResult:
+    def rest(self, full_history: list, current_turn_count: int, today: str | None = None) -> RestResult:
         """休息时整理。full_history = context_manager.get_full() 全量历史。
-        流程：审查 → 读旧记忆 → LLM 整理 → 验证 → 原子落盘 → 更新 index
+        today：整理日（YYYY-MM-DD，服务器时间优先/本地兜底由 routes 解析后传入）；
+        缺省用本机时钟。流程：审查 → 读旧记忆 → LLM 整理 → 验证 → 原子落盘 → 更新 index
         """
         global _REST_COUNT, _REST_ERRORS
         with _lock: _REST_COUNT += 1
+        today = _verify_today(today)
 
         # 1. 审查
         if not isinstance(full_history, list):
@@ -194,8 +209,9 @@ class MemoryManager:
 
         # 2. LLM 整理
         try:
-            raw = self._call_llm(old_head, old_tail, new_dialogue)
+            raw = self._call_llm(old_head, old_tail, new_dialogue, today)
             parsed = self._validate_output(raw)
+            parsed = self._sanitize_added_dates(parsed, today, new_dialogue)
         except OutputInvalid as e:
             logger.error("记忆整理 LLM 输出异常: %s", e)
             with _lock: _REST_ERRORS += 1
@@ -260,7 +276,8 @@ class MemoryManager:
     def _slice_new_dialogue(self, history: list, last_turn: int) -> str:
         """切片：第 last_turn 轮之后的历史转文本。
         按 user 消息数计轮次——历史中夹杂的 system 行为消息不影响切片位置。
-        """
+        每行带消息时间标记 `[YYYY-MM-DD HH:MM]`（记忆整理日期必须从真实消息时间取，
+        否则 LLM 只能猜测/照抄模板示例日期——2026-08-22 线上 bug 根因）。"""
         lines = []
         turn = 0
         for m in history:
@@ -269,13 +286,14 @@ class MemoryManager:
             if turn <= last_turn:
                 continue
             role = "开拓者" if m.get("role") == "user" else ("流萤" if m.get("role") == "assistant" else "（行为）")
-            lines.append(f"{role}: {m.get('content','')}")
+            ts = str(m.get("time") or "").strip()
+            prefix = f"[{ts}] " if ts else ""
+            lines.append(f"{prefix}{role}: {m.get('content','')}")
         return "\n".join(lines)
 
-    def _call_llm(self, old_head, old_tail, new_dialogue) -> str:
-        from datetime import datetime as _dt
+    def _call_llm(self, old_head, old_tail, new_dialogue, today: str) -> str:
         prompt = _REST_PROMPT.format(
-            today=_dt.now().strftime("%Y-%m-%d"),
+            today=today,
             old_head=old_head or "（无）",
             old_tail=old_tail or "（无）",
             new_dialogue=new_dialogue,
@@ -312,6 +330,50 @@ class MemoryManager:
             resolved: list
             added: list
         return Parsed(data["new_head"], data.get("resolved", []), data.get("added", []))
+
+    def _sanitize_added_dates(self, parsed, today: str, new_dialogue: str):
+        """日期校验兜底（2026-08-22 bug 修复的第二道防线）：
+        LLM 可能照抄模板示例日期（曾为 2026-07-02）或编造日期——凡不合规的 date
+        一律校正为今天（记录 warning）。合规：YYYY-MM-DD，且在
+        [对话最早时间 - 7 天, 今天] 区间内。"""
+        import re as _re
+        from datetime import datetime as _dt, timedelta as _td
+
+        def _ok(d: str) -> bool:
+            if not isinstance(d, str):
+                return False
+            if not _re.fullmatch(r"\d{4}-\d{2}-\d{2}", d.strip()):
+                return False
+            try:
+                dt = _dt.strptime(d.strip(), "%Y-%m-%d")
+            except ValueError:
+                return False
+            t_today = _dt.strptime(today, "%Y-%m-%d")
+            if dt > t_today + _td(days=1):           # 未来日期（含时差 1 天余量）→ 非法
+                return False
+            # 对话时间下界：取新对话中的最早 `[YYYY-MM-DD` 标记；无标记则放行
+            earliest = None
+            for mm in _re.finditer(r"\[(\d{4}-\d{2}-\d{2})\s", new_dialogue):
+                try:
+                    e = _dt.strptime(mm.group(1), "%Y-%m-%d")
+                    earliest = e if earliest is None or e < earliest else earliest
+                except ValueError:
+                    continue
+            if earliest is not None and dt < earliest - _td(days=7):
+                return False
+            return True
+
+        fixed = 0
+        for entry in parsed.added:
+            if not isinstance(entry, dict):
+                continue
+            d = entry.get("date")
+            if not _ok(d):
+                entry["date"] = today
+                fixed += 1
+        if fixed:
+            logger.warning("记忆整理：%d 条条目日期非法/照抄示例，已校正为 %s", fixed, today)
+        return parsed
 
     def _compose_memory_text(self, new_head, old_tail, parsed) -> str:
         """组装新 memory.md：新头部 + 处理后的尾部（resolved 标记完成 + added 追加）"""

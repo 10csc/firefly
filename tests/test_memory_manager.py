@@ -97,6 +97,62 @@ check("memory.md 含核心记忆头部", "核心记忆头部" in content)
 
 
 # ============================================================
+# 2.5 日期 bug 修复回归（2026-08-22）：模板示例日期不再硬编码
+# ============================================================
+print("\n=== 日期 bug 回归 ===")
+
+from modules import memory_manager as _mmmod
+check("D1 模板不再含示例日期 2026-07-02", "2026-07-02" not in _mmmod._REST_PROMPT)
+check("D2 模板含日期铁律与占位示例", "发生日期" in _mmmod._REST_PROMPT and "严禁照抄" in _mmmod._REST_PROMPT)
+
+# 新对话切片带时间标记
+mm_slice = MemoryManager(MockClient(), memory_file=_make_mem_path(), index_file=_make_idx_path())
+sliced = mm_slice._slice_new_dialogue([
+    {"role": "user", "content": "好", "time": "2026-08-22 10:00:00"},
+    {"role": "assistant", "content": "嗯", "time": "2026-08-22 10:00:05"},
+], 0)
+check("D3 新对话行含时间戳", "[2026-08-22 10:00:00] 开拓者: 好" in sliced)
+
+# LLM 照抄示例日期（如 2026-07-02）→ 校验兜底校正为 today
+today_cap = _mmmod._verify_today(None)
+mm_dates = MemoryManager(
+    MockClient([json.dumps({"new_head": "头部", "resolved": [], "added": [
+        {"type": "承诺", "text": "一起看星星", "date": "2026-07-02"},
+        {"type": "事件", "text": "拍合影", "date": today_cap},
+        {"type": "事件", "text": "无日期", "date": "2099-01-01"},
+    ]})]),
+    memory_file=_make_mem_path(), index_file=_make_idx_path(),
+)
+res = mm_dates.rest([
+    {"role": "user", "content": "今晚看星星", "time": "2026-08-21 21:00:00"},
+    {"role": "assistant", "content": "好呀", "time": "2026-08-21 21:00:05"},
+], 1, today=today_cap)
+dates = [e.get("date") for e in res.added_entries]
+check("D4 示例日期被校正为今天", dates[0] == today_cap)
+check("D5 合规日期保留", dates[1] == today_cap)
+check("D6 未来日期被校正", dates[2] == today_cap)
+
+# today 注入生效（LLM 视角的“当前日期”用注入值）
+captured = {}
+class CapClient(MockClient):
+    def __init__(self, resp):
+        super().__init__([resp])
+    def _wrap(self):
+        pass
+mm_today = MemoryManager(
+    MockClient([json.dumps({"new_head": "h", "resolved": [], "added": [
+        {"type": "事件", "text": "x", "date": "2026-08-22"}]})]),
+    memory_file=_make_mem_path(), index_file=_make_idx_path(),
+)
+# 注入 today=2026-08-22：日期合规（today±1 内视为合法？今天=2026-08-22 → 合规）
+res_t = mm_today.rest([
+    {"role": "user", "content": "x", "time": "2026-08-22 09:00:00"},
+    {"role": "assistant", "content": "y", "time": "2026-08-22 09:00:05"},
+], 1, today="2026-08-22")
+check("D7 注入 today 生效（日期保留）", res_t.added_entries[0].get("date") == "2026-08-22")
+
+
+# ============================================================
 # 3. 中断检测
 # ============================================================
 print("\n=== 中断检测 ===")
