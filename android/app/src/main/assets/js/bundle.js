@@ -2548,6 +2548,9 @@ if (imageBtn && imageFileInput) {
                 _batchRefreshTimer();
             }
         };
+        // PC/浏览器取消选图不触发 change（只发 cancel）→ _mediaBusy 永远为真、批次永不提交。
+        // 补 cancel 监听：取消/重开选择器都恢复计时（Kimi 复审 #2；安卓 WebView 取消同理）。
+        imageFileInput.addEventListener("cancel", () => { endMedia(false); });
         const f = imageFileInput.files && imageFileInput.files[0];
         imageFileInput.value = "";
         if (!f || S.waiting) { endMedia(false); return; }

@@ -5,6 +5,7 @@
 """
 
 import logging
+import time as _time
 from copy import deepcopy
 from dataclasses import dataclass
 
@@ -87,7 +88,9 @@ class ContextManager:
         if not isinstance(action_detail, str) or not action_detail.strip():
             raise InputRejected("action_detail 为空")
         content = f"[行为: {action_type.strip()}] {action_detail.strip()}"
-        self._history.append({"role": "system", "content": content})
+        # ts：记忆整理需真实消息时间（2026-08-22 日期 bug 根因：无时间戳 → LLM 猜/照抄示例）
+        self._history.append({"role": "system", "content": content,
+                              "time": _time.strftime("%Y-%m-%d %H:%M:%S")})
         logger.debug("add_action: %s", content)
 
     # ── 主入口 ──────────────────────────────────
@@ -105,8 +108,10 @@ class ContextManager:
             raise InputRejected("assistant_msg 为空字符串，拒绝存储")
 
         # 2. 模块处理
-        self._history.append({"role": "user", "content": user_msg})
-        self._history.append({"role": "assistant", "content": assistant_msg})
+        self._history.append({"role": "user", "content": user_msg,
+                              "time": _time.strftime("%Y-%m-%d %H:%M:%S")})
+        self._history.append({"role": "assistant", "content": assistant_msg,
+                              "time": _time.strftime("%Y-%m-%d %H:%M:%S")})
         logger.debug("add_turn: 轮次=%d, 累计消息=%d", self.turn_count, len(self._history))
 
         # 3. 验证阶段 —— 内部状态异常立即暴露
@@ -133,7 +138,8 @@ class ContextManager:
         if not assistant_msg.strip():
             raise InputRejected("assistant_msg 为空字符串，拒绝存储")
 
-        self._history.append({"role": "assistant", "content": assistant_msg, "proactive": True})
+        self._history.append({"role": "assistant", "content": assistant_msg, "proactive": True,
+                              "time": _time.strftime("%Y-%m-%d %H:%M:%S")})
         logger.debug("add_proactive_turn: 累计消息=%d", len(self._history))
 
         stats = self._compute_stats()

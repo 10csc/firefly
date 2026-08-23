@@ -337,7 +337,8 @@ def gate_open(enabled: bool, hard: int, soft: float, mode: str = DEFAULT_MODE,
 # ── 动机决策（轻量 LLM，Flash Non-think）───────────
 def _decide_motivation(client, memory_head: str, journal: str, environment: str,
                        recent_topics: str, mode: str = DEFAULT_MODE,
-                       allow_casual: bool = False, recent_said: str = "") -> dict:
+                       allow_casual: bool = False, recent_said: str = "",
+                       model: str = "deepseek-v4-flash-vision-exp") -> dict:
     """判断流萤现在该不该主动说话、为什么。返回 JSON dict。
 
     allow_casual=False（主动式）：严格动机——无真实来源就拒绝（避免打扰）。
@@ -448,7 +449,7 @@ user 消息里列出的"已说过话题"——禁止原样重复，但允许开�
 
     try:
         resp = client.chat.completions.create(
-            model="deepseek-v4-flash-vision-exp",
+            model=model,
             messages=[
                 {"role": "system", "content": system},
                 {"role": "user", "content": user_prompt},
@@ -518,6 +519,7 @@ def generate_proactive(session: dict, client, mode: str = DEFAULT_MODE,
         journal=load_journal(mode), environment=environment,
         recent_topics=recent_topics, mode=mode,
         allow_casual=allow_casual, recent_said=recent_said,
+        model=organizer_model,   # 动机决策=轻量 Non-think，跟随 organizer 配置（0.8.1 修 Kimi #5 硬编码）
     )
     if not decision.get("should_speak") or decision.get("reason_type") in ("none", ""):
         if not allow_casual:
