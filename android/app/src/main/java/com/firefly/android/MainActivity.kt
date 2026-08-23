@@ -29,6 +29,9 @@ import android.webkit.WebViewClient
 import android.widget.FrameLayout
 import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
+import androidx.activity.result.ActivityResultLauncher
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
@@ -47,6 +50,7 @@ class MainActivity : AppCompatActivity() {
     private var wakeLock: PowerManager.WakeLock? = null
     private var wifiLock: WifiManager.WifiLock? = null
     private var pendingFileCallback: ValueCallback<Array<Uri>>? = null   // 导入文件选择回调
+    private var activityResultLauncher: ActivityResultLauncher<PickVisualMediaRequest>? = null   // 系统照片选择器（Android 13+）
 
     companion object {
         private const val SERVER_URL = "http://127.0.0.1:8765"
@@ -54,6 +58,7 @@ class MainActivity : AppCompatActivity() {
         private const val READY_TIMEOUT_MS = 12_000L   // A7c：本地引擎启动探测窗口（超时自动回落服务器）
         private const val NOTIF_PERMISSION_REQUEST = 1001
         private const val FILE_CHOOSER_REQUEST = 1002
+        private const val MEDIA_PERMISSION_REQUEST = 1003   // 图片选择存储权限（Android 12-）
         private const val TAG = "Firefly"
 
         /** 服务器地址单点：读 assets/config.js（Kotlin 启动时读取做 URL 白名单/拦截注入） */
@@ -97,6 +102,15 @@ class MainActivity : AppCompatActivity() {
         // 回复保活：发送后切后台，AI 回复流程期间 CPU/WiFi 不休眠（JS Bridge 按需持锁）
         initWakeLock()
         initWifiLock()
+
+        // 系统照片选择器（Android 13+ PickVisualMedia）：免权限直进相册，回调喂回 WebView
+        activityResultLauncher = registerForActivityResult(
+            ActivityResultContracts.PickVisualMedia()
+        ) { uri ->
+            val cb = pendingFileCallback
+            pendingFileCallback = null
+            cb?.onReceiveValue(if (uri != null) arrayOf(uri) else arrayOf())
+        }
 
         // 返回键：聊天页 → 回首页；首页 → 双击退出
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
@@ -149,6 +163,18 @@ class MainActivity : AppCompatActivity() {
                     NOTIF_PERMISSION_REQUEST
                 )
             }
+        }
+    }
+
+    /** Android 12- 图片选择所需的存储权限（一次申请；拒绝则走 GET_CONTENT 无权限也能选图——SAF 兜底） */
+    private fun requestMediaPermissionIfNeeded() {
+        val perm = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            android.Manifest.permission.READ_EXTERNAL_STORAGE   // API 30-32
+        } else {
+            android.Manifest.permission.READ_EXTERNAL_STORAGE   // API 26-29
+        }
+        if (ContextCompat.checkSelfPermission(this, perm) != PackageManager.PERMISSION_GRANTED) {
+            ActivityCompat.requestPermissions(this, arrayOf(perm), MEDIA_PERMISSION_REQUEST)
         }
     }
 
@@ -441,22 +467,39 @@ class MainActivity : AppCompatActivity() {
                 }
             }
             webChromeClient = object : WebChromeClient() {
-                // 文件选择（数据导入 zip + A9 发图 image/*）：MME 用通配 + 扩展白名单双保险
+                // 文件选择（数据导入 zip + A9 发图 image/*）：
+                // - 发图（image/*）：Android 13+ 用系统照片选择器 PickVisualMedia（APP 内加载相册，
+                //   免运行时权限——MediaStore 授权的安全分享）；Android 12- 用 GET_CONTENT 兜底。
+                // - zip 导入：GET_CONTENT + 扩展白名单（保持原样）。
                 override fun onShowFileChooser(
                     webView: WebView?,
                     filePathCallback: ValueCallback<Array<Uri>>?,
                     fileChooserParams: FileChooserParams?
                 ): Boolean {
                     pendingFileCallback = filePathCallback
-                    val intent = Intent(Intent.ACTION_GET_CONTENT).apply {
-                        addCategory(Intent.CATEGORY_OPENABLE)
-                        type = "*/*"
-                        putExtra(Intent.EXTRA_MIME_TYPES, arrayOf(
-                            "application/zip", "image/png", "image/jpeg",
-                            "image/webp", "image/gif"))
-                        putExtra(Intent.EXTRA_ALLOW_MULTIPLE, false)
-                    }
                     try {
+                        val mimeTypes = fileChooserParams?.acceptTypes?.filter { it.isNotBlank() } ?: emptyList()
+                        val wantsImage = mimeTypes.isNotEmpty() && mimeTypes.any {
+                            it == "image/*" || it.startsWith("image/")
+                        }
+                        if (wantsImage && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                            // Android 13+ 系统照片选择器：直接进相册，免权限申请
+                            val picker = PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                            activityResultLauncher?.launch(picker)
+                            return true
+                        }
+                        // Android 12- 图片：先请求媒体读取权限（用户确认授权后走 GET_CONTENT）
+                        if (wantsImage && Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
+                            requestMediaPermissionIfNeeded()
+                        }
+                        val intent = Intent(Intent.ACTION_GET_CONTENT).apply {
+                            addCategory(Intent.CATEGORY_OPENABLE)
+                            type = "*/*"
+                            putExtra(Intent.EXTRA_MIME_TYPES, arrayOf(
+                                "application/zip", "image/png", "image/jpeg",
+                                "image/webp", "image/gif"))
+                            putExtra(Intent.EXTRA_ALLOW_MULTIPLE, false)
+                        }
                         startActivityForResult(Intent.createChooser(intent, "选择文件（zip 备份 / 图片）"), FILE_CHOOSER_REQUEST)
                     } catch (e: Exception) {
                         pendingFileCallback = null
@@ -465,21 +508,29 @@ class MainActivity : AppCompatActivity() {
                     return true
                 }
             }
-            // 数据导出下载：/export-data 返回 attachment → 下载到系统"下载"目录
-            setDownloadListener { url, _, _, mimeType, _ ->
+            // 数据导出下载：/export-data 返回 attachment → 下载到系统"下载"目录。
+            // 文件名取响应头 Content-Disposition（带模式+时间戳，多模式不互相覆盖）；
+            // 解析失败回退 firefly-backup.zip。
+            setDownloadListener { url, _, contentDisposition, mimeType, _ ->
                 try {
+                    var fname = "firefly-backup.zip"
+                    try {
+                        val m = Regex("filename=\"?([^\"]+)\"?").find(contentDisposition ?: "")
+                        if (m != null && m.groupValues[1].isNotBlank()) fname = m.groupValues[1]
+                    } catch (e: Exception) { /* 保持回退文件名 */ }
                     val req = DownloadManager.Request(Uri.parse(url)).apply {
                         setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
-                        setDestinationInExternalPublicDir(
-                            Environment.DIRECTORY_DOWNLOADS, "firefly-backup.zip")
+                        setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, fname)
                         setMimeType(mimeType ?: "application/zip")
                         addRequestHeader("Authorization", "")   // 本地后端无鉴权，占位
                     }
                     val dm = getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
                     dm.enqueue(req)
-                    Toast.makeText(this@MainActivity, "正在导出备份到下载目录…", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(this@MainActivity,
+                        "正在导出…完成后可在「文件管理 → 下载/$fname」找到",
+                        Toast.LENGTH_LONG).show()
                 } catch (e: Exception) {
-                    Toast.makeText(this@MainActivity, "导出失败，请检查存储权限", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(this@MainActivity, "导出失败，请检查存储权限", Toast.LENGTH_LONG).show()
                 }
             }
             addJavascriptInterface(WakeLockBridge(), "androidWakeLock")

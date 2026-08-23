@@ -33,7 +33,7 @@ async function _renderProactiveWithThink(data) {
     S.waiting = true;
     inputEl.disabled = true; sendBtn.disabled = true;
     const statusEl = document.querySelector("#header .status");
-    const defaultStatus = statusEl ? statusEl.textContent : "";
+    const defaultStatus = "会找到的，属于我的梦...";   // 固定简介（防快照污染）
     if (statusEl) statusEl.textContent = "对方正在输入...";
     const thinkMs = 2000 + Math.floor(Math.random() * 3000);
     await new Promise(r => setTimeout(r, thinkMs));

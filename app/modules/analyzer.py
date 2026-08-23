@@ -140,7 +140,7 @@ _ANALYZER_SYSTEMS = {
 
 # ── 分析器类 ──────────────────────────────────────
 class Analyzer:
-    def __init__(self, client, model: str = "deepseek-v4-flash", effort: str = "high",
+    def __init__(self, client, model: str = "deepseek-v4-flash-vision-exp", effort: str = "high",
                  mode: str = "story"):
         self._client = client
         self._model = model

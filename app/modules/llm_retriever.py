@@ -126,7 +126,7 @@ def get_counters() -> dict:
 
 # ── 子代理类 ──────────────────────────────────────
 class LlmRetriever:
-    def __init__(self, client, model: str = "deepseek-v4-flash",
+    def __init__(self, client, model: str = "deepseek-v4-flash-vision-exp",
                  temperature: float = 0.0, effort: str = "none", mode: str = DEFAULT_MODE):
         self._client = client
         self._model = model

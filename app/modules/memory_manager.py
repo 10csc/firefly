@@ -143,7 +143,7 @@ _JOURNAL_PROMPT = r"""你是流萤。你在整理自己的手账。以第一人�
 
 # ── 核心类 ────────────────────────────────────────
 class MemoryManager:
-    def __init__(self, client, model: str = "deepseek-v4-flash",
+    def __init__(self, client, model: str = "deepseek-v4-flash-vision-exp",
                  mode: str = DEFAULT_MODE,
                  memory_file: Path | None = None, index_file: Path | None = None):
         if client is None: raise InputRejected("client 不能为 None")
@@ -426,7 +426,7 @@ def get_counters() -> dict:
         return {"rest_count": _REST_COUNT, "rest_errors": _REST_ERRORS}
 
 
-def wake(client=None, model: str = "deepseek-v4-flash", mode: str = DEFAULT_MODE) -> str:
+def wake(client=None, model: str = "deepseek-v4-flash-vision-exp", mode: str = DEFAULT_MODE) -> str:
     """模块级起床入口：加载 {mode} 头部到会话。
 
     若 memory.md 不存在或为空，返回空字符串（首次启动、无记忆）。

@@ -404,11 +404,11 @@
                         <option value="proxy">服务器托管 API</option>
                     </select>
                     <div id="api-proxy-tip" style="display:none;color:var(--fg-accent);font-size:0.7em;line-height:1.7;margin-top:6px;padding:8px 10px;border:1px solid var(--gold-line);border-radius:8px;background:var(--gold-glow)">
-                        ⚠️ 使用服务器托管 API 时，开发者可能会收集对话数据，用于针对性优化 Agent 流程与提示词。
+                        ⚠️ 托管模式下，开发者可能会收集对话数据以优化 Agent 流程。
                     </div>
                 </div>
                 <div class="field" id="api-own-fields">
-                    <label id="key-label">API Key（存于本机浏览器，不会上传服务器）</label>
+                    <label id="key-label">API Key（仅存本机，不上传）</label>
                     <input id="key-input" type="password" placeholder="已设置，留空则保留原 Key">
                     <details style="font-size:0.8em;margin-top:8px;color:var(--fg-muted)">
                         <summary id="key-guide-toggle" style="cursor:pointer">第一次用？三步获取 Key</summary>
@@ -459,7 +459,7 @@
                         <input id="proactive-soft-slider" type="range" min="0" max="100" step="5" value="35">
                         <label style="margin-top:8px">空闲触发概率 <span id="prob-reply-value">10%</span></label>
                         <input id="prob-reply-slider" type="range" min="0" max="100" step="5" value="10">
-                        <div style="color:var(--fg-muted);font-size:0.7em;margin-top:2px">空闲主动每 10 分钟只判断一次；后台主动另有时段节奏（傍晚更活跃、深夜几乎不打扰）。</div>
+                        <div style="color:var(--fg-muted);font-size:0.7em;margin-top:2px">空闲主动：每 10 分钟判断一次；后台主动：傍晚更活跃，深夜基本不打扰。</div>
                     </div>
                 </details>
             </div>
@@ -498,7 +498,7 @@
                     <datalist id="model-suggest"></datalist>
                     <div class="field">
                         <label>① 检索器模型（知识检索）</label>
-                        <input id="retriever-model-input" list="model-suggest" placeholder="deepseek-v4-flash">
+                        <input id="retriever-model-input" list="model-suggest" placeholder="deepseek-v4-flash-vision-exp">
                         <label style="margin-top:8px">思考等级（默认无思考）</label>
                         <select id="retriever-effort-select">
                             <option value="none">无思考（推荐）</option>
@@ -511,7 +511,7 @@
                     </div>
                     <div class="field">
                         <label>② 分析器模型（意图 + 事实核查）</label>
-                        <input id="analyzer-model-input" list="model-suggest" placeholder="deepseek-v4-flash">
+                        <input id="analyzer-model-input" list="model-suggest" placeholder="deepseek-v4-flash-vision-exp">
                         <label style="margin-top:8px">思考等级（默认高）</label>
                         <select id="analyzer-effort-select">
                             <option value="none">无思考</option>
@@ -522,7 +522,7 @@
                     </div>
                     <div class="field">
                         <label>③ 回复器模型（生成短信）</label>
-                        <input id="polisher-model-input" list="model-suggest" placeholder="deepseek-v4-flash">
+                        <input id="polisher-model-input" list="model-suggest" placeholder="deepseek-v4-flash-vision-exp">
                         <label style="margin-top:8px">思考等级（默认高）</label>
                         <select id="polisher-effort-select">
                             <option value="none">无思考（温度才生效）</option>
@@ -533,7 +533,7 @@
                     </div>
                     <div class="field">
                         <label>④ 组织器模型（表情包 / 旁白）</label>
-                        <input id="organizer-model-input" list="model-suggest" placeholder="deepseek-v4-flash">
+                        <input id="organizer-model-input" list="model-suggest" placeholder="deepseek-v4-flash-vision-exp">
                         <label style="margin-top:8px">思考等级（剧情模式默认无思考；春日手信旁白固定思考）</label>
                         <select id="organizer-effort-select">
                             <option value="none">无思考（推荐）</option>
@@ -581,19 +581,19 @@
                         <button id="import-btn" type="button" onclick="importData()">导入备份（zip）</button>
                         <input id="import-file" type="file" accept=".zip,application/zip" style="display:none">
                     </div>
-                    <div style="color:var(--fg-muted);font-size:0.7em;margin-top:6px">备份含对话 / 记忆 / 手账 / 设定 / 压缩图片与表情包描述（不含 API Key）；导入会覆盖当前模式数据（导入前自动备份）</div>
+                    <div style="color:var(--fg-muted);font-size:0.7em;margin-top:6px">含对话/记忆/手账/设定/图片描述（不含 Key）。导入会覆盖当前模式数据（导入前自动备份）</div>
                     <div class="field" id="backup-field" style="margin-top:10px">
                         <label>本地备份</label>
                         <button id="backup-create-btn" type="button" onclick="createBackup()">新建备份</button>
                         <div id="backup-list" style="margin-top:8px"></div>
                     </div>
                     <div class="field" id="sync-now-field" style="margin-top:10px">
-                        <label>云端同步（登录后自动同步文字数据，可手动立即同步）</label>
+                        <label>云端同步（登录后自动同步，可立即同步）</label>
                         <button id="sync-now-btn" type="button" onclick="syncNow()">立即同步</button>
                         <div id="sync-now-msg" style="color:var(--fg-muted);font-size:0.7em;margin-top:6px"></div>
                     </div>
                     <div style="color:var(--fg-accent);font-size:0.7em;margin-top:8px;padding:8px 10px;border:1px solid var(--gold-line);border-radius:8px;background:var(--gold-glow)">
-                        🖼 <b>图片压缩后随消息同步</b>：服务器只存压缩图，原图不出设备；表情包仍只保存在本机。
+                        🖼 <b>图片说明</b>：服务器只存压缩图，原图不出设备；表情包仅存本机。
                     </div>
                 </div>
                 <div id="app-exit-row" style="display:none">
@@ -615,25 +615,23 @@
         <button onclick="closeNotice()">✕</button>
     </div>
     <div class="notice-body">
-        <p class="notice-tip">流萤是 AI 角色扮演应用（非真人），对话由大模型生成，请勿透露个人敏感信息。</p>
-        <h3>一、基础配置（首次使用必看）</h3>
-        <p>1. 在首页右上角点击 ⚙ 设置</p>
-        <p>2. 填入你的 DeepSeek API Key</p>
-        <p>3. 保存后即可开始与流萤对话</p>
-        <p class="notice-tip">Key 可在 platform.deepseek.com 申请，仅保存在本机，不会上传。</p>
-        <h3>二、关键功能</h3>
-        <p><b>开始聊天</b>：点击首页轮播图「剧情模式」进入对话；「春日手信」是流萤想象的普通学生生活，两种模式各自独立的记忆与手账。</p>
-        <p><b>双模式切换</b>：聊天页返回首页 → 点击另一张轮播图即可切换。两个模式的数据（历史/记忆/手账/主动性状态）完全隔离。</p>
-        <p><b>主动性（三种回复方式）</b>：⚙ 设置 →「主动性」面板：<b>主动式</b>=对话轮次间隙主动说话（每 N 轮 1 次机会）；<b>概率式</b>=应用内空闲时偶尔想起你；<b>隐藏式</b>=App 在后台时低频发消息（安卓端通过通知送达）。三种都按真实作息节奏触发——傍晚最活跃、深夜几乎不打扰。</p>
-        <p><b>让流萤休息</b>：☰ 菜单「让流萤休息」——她会把这段时间聊过的内容整理进记忆与手账。醒来后，她会记得你们的约定、你的偏好和重要的事。</p>
-        <p><b>撤回 / 清除</b>：☰ 菜单「撤回上一轮」删除最近一轮对话；「清除历史」清空全部。</p>
-        <p><b>表情包</b>：输入框右侧 😊 打开表情包面板，选择表情发送。</p>
-        <p><b>设定文件</b>：☰ 菜单「设定文件」包含三块——<b>用户记忆</b>（这段对话的过往摘要，休息时自动整理）、<b>用户设定</b>（补充剧情设定，与核心设定一起生效）、<b>流萤的手账</b>。</p>
-        <p><b>外观</b>：首页右上角 ☀️/🌙 切换暗色 / 亮色；⚙ 设置里可调界面大小（80%~130%）、模型与思考档位、检索器温度。</p>
-        <p><b>返回键</b>：聊天页按返回 → 回到首页；首页按返回 → 提示，双击退出。</p>
-        <h3>三、交流与反馈</h3>
-        <p>QQ交流群：<b>1097936258</b></p>
-        <p>反馈问题可点击首页左上角「反馈」按钮，或在 GitHub 提 Issue。</p>
+        <p class="notice-tip">流萤是 AI 角色扮演应用（非真人），请勿透露个人敏感信息。</p>
+        <h3>一、开始使用</h3>
+        <p>1. 首页右上角 ⚙ 设置 → 填入 DeepSeek API Key → 保存</p>
+        <p>2. 回到首页，点击轮播图「剧情模式」进入聊天</p>
+        <p class="notice-tip">Key 在 platform.deepseek.com 申请，仅存本机，不上传。</p>
+        <h3>二、两个模式</h3>
+        <p><b>剧情模式</b>：你们的主线故事；<b>春日手信</b>：流萤的普通学生日常。数据相互独立。</p>
+        <h3>三、常用功能</h3>
+        <p><b>主动消息</b>：⚙ 设置 →「主动消息」可关，聊天中/空闲时/后台均可，傍晚活跃、深夜安静。</p>
+        <p><b>让流萤休息</b>：☰ 菜单 →「让流萤休息」，把这段对话整理进记忆与手账。</p>
+        <p><b>撤回 / 清除</b>：☰ 菜单 →「撤回上一轮」或「清除历史」。</p>
+        <p><b>表情 / 图片</b>：输入框右侧 😊 表情包、🖼 发图（图片压缩后上传，原图不出设备）。</p>
+        <p><b>设定文件</b>：☰ 菜单 →「设定文件」，包含用户记忆（自动整理）、用户设定（你补充）、手账。</p>
+        <p><b>外观</b>：首页 ☀️/🌙 切换主题；⚙ 设置里可调界面大小。</p>
+        <p><b>返回</b>：聊天页返回 → 首页；首页返回 → 双击退出。</p>
+        <h3>四、交流与反馈</h3>
+        <p>QQ 群：<b>1097936258</b>；反馈：首页左上「反馈」或 GitHub Issue。</p>
     </div>
 </div>
 
@@ -663,13 +661,6 @@
     </div>
     <input type="file" id="image-file-input" accept="image/png,image/jpeg,image/webp,image/gif" style="display:none">
 </div>
-
-<!-- 底部导航（A5 档：安卓/窄屏三主视图直达；PC 宽屏自动隐藏） -->
-<nav id="bottom-tab">
-    <button class="bt-item" id="bt-chat" type="button"><span class="bt-ico">💬</span><span>聊天</span></button>
-    <button class="bt-item" id="bt-home" type="button"><span class="bt-ico">🏠</span><span>首页</span></button>
-    <button class="bt-item" id="bt-mine" type="button"><span class="bt-ico">👤</span><span>我的</span></button>
-</nav>
 
 <!-- 表情包面板 -->
 <div id="sticker-panel">
@@ -709,7 +700,7 @@
         <div class="menu-content active" id="tab-char">
             <div class="field">
                 <label>用户记忆 · 过往摘要</label>
-                <div class="field-tip">记录开拓者（你）的相关信息与重要事情；「让流萤休息」时会由流萤自动整理进来，也可手动修改。保存后下次对话生效。</div>
+                <div class="field-tip">流萤休息时自动整理你们的约定/偏好/重要事，也可手动改。保存后下次对话生效。</div>
                 <textarea id="user-memory-editor" style="height:180px"></textarea>
                 <div class="btn-row">
                     <button id="user-memory-reload" type="button">重新加载</button>
@@ -719,7 +710,7 @@
             </div>
             <div style="margin:14px 0;padding-top:14px;border-top:1px solid rgba(255,255,255,0.08)">
                 <label>用户设定 · 补充剧情设定（与核心设定一起加载）</label>
-                <div class="field-tip">你补充的剧情设定，与核心设定同等权威、每轮生效。格式：`[事实]` 长期成立 / `[经历]` 已发生 / `[若]` 触发条件 / `[原句]` 原话勿照搬（文件内有示例）。</div>
+                <div class="field-tip">你补充的设定，每轮按其权威加载。格式：`[事实]` 长期成立 / `[经历]` 已发生 / `[若]` 触发条件 / `[原句]` 原话勿照搬（文件内有示例）。</div>
                 <textarea id="user-setting-editor" style="height:180px"></textarea>
                 <div class="btn-row">
                     <button id="user-setting-reload" type="button">重新加载</button>
@@ -729,7 +720,7 @@
             </div>
             <div style="margin-top:14px;padding-top:14px;border-top:1px solid rgba(255,255,255,0.08)">
                 <label style="color:#e0d5c1;font-size:0.85em;margin-bottom:8px;display:block">流萤的手账</label>
-                <div class="field-tip" style="margin-bottom:8px">流萤视角的重要对话记录与未完成的约定；「让流萤休息」时会自动更新，也可手动修改。</div>
+                <div class="field-tip" style="margin-bottom:8px">流萤视角的重要对话与未完成的约定；休息时自动更新，也可手动改。</div>
                 <div class="btn-row" style="margin-bottom:8px">
                     <button id="journal-reload" style="flex:1">重新加载</button>
                     <button id="journal-save" style="flex:1">保存</button>

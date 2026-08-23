@@ -368,7 +368,7 @@ body {
     position: relative; flex: 1 1 auto; min-width: 0;
 }
 .input-wrap input {
-    width: 100%; padding: clamp(10px, 3vw, 12px) 46px clamp(10px, 3vw, 12px) clamp(12px, 4vw, 16px);
+    width: 100%; padding: clamp(10px, 3vw, 12px) 92px clamp(10px, 3vw, 12px) clamp(12px, 4vw, 16px);
     border-radius: 22px;
     border: 1px solid var(--border-mid);
     background: var(--ctrl-bg-2); color: var(--fg-main);
@@ -376,15 +376,18 @@ body {
 }
 .input-wrap input:focus { border-color: rgba(180,160,200,0.4); }
 .input-wrap input::placeholder { color: var(--border-hover); }
-#sticker-btn {
-    position: absolute; right: 6px; top: 50%; transform: translateY(-50%);
+/* 输入框内右侧悬浮圆钮：🖼 图片 + 😊 表情包（并排，微信式） */
+#image-btn, #sticker-btn {
+    position: absolute; top: 50%; transform: translateY(-50%);
     width: 34px; height: 34px; border-radius: 50%;
     border: none; background: transparent;
     font-size: 18px; cursor: pointer; line-height: 1;
     display: flex; align-items: center; justify-content: center;
     opacity: 0.75;
 }
-#sticker-btn:hover { opacity: 1; background: var(--ctrl-bg); }
+#sticker-btn { right: 6px; }
+#image-btn { right: 44px; }
+#image-btn:hover, #sticker-btn:hover { opacity: 1; background: var(--ctrl-bg); }
 #send-btn {
     padding: 8px clamp(12px, 4vw, 16px); border-radius: 8px;
     border: 1px solid var(--gold-line); background: var(--send-bg);
@@ -468,10 +471,16 @@ body {
 }
 .menu-header button { background:none; border:none; color:var(--fg-main); cursor:pointer; font-size:1.2em; }
 
-/* 菜单标签行：手机上一行 5 个（状态 tab 占位隐藏），不换行 */
+/* 菜单标签行：手机上一行 5 个（状态 tab 占位隐藏），不换行。
+   0.8.1：分组标题独占整行（grid-column: 1/-1），不再与按钮挤同格导致文字换行歪斜。 */
 .menu-tabs {
     display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 6px;
     padding: 10px clamp(12px, 4vw, 16px); border-bottom: 1px solid var(--ctrl-bg-2);
+}
+.menu-tabs .menu-group-title {
+    grid-column: 1 / -1;   /* 分组标题整行 */
+    padding: 8px 4px 2px; font-size: 0.68em; font-weight: 600;
+    color: var(--fg-muted); letter-spacing: 0.1em; text-align: left;
 }
 .menu-tab {
     padding: 8px 2px; border-radius: 8px; border: none; min-width: 0;
@@ -1114,18 +1123,6 @@ body.low-end #app { background: var(--panel-solid); }
     .pcs-head { padding-top: 28px; }
 }
 
-/* ═══ A5 入口收敛：底部导航（窄屏/安卓；PC 宽屏隐藏）+ 菜单分组标题 ═══ */
-#bottom-tab{display:flex;position:fixed;left:0;right:0;bottom:0;z-index:60;
-  background:rgba(18,20,32,.96);border-top:1px solid var(--border-mid);
-  padding:6px 4px calc(6px + env(safe-area-inset-bottom));backdrop-filter:blur(8px)}
-#bottom-tab .bt-item{flex:1;display:flex;flex-direction:column;align-items:center;gap:2px;
-  background:transparent;border:none;color:var(--fg-muted);font-size:0.72em;
-  padding:4px 0;border-radius:10px;cursor:pointer}
-#bottom-tab .bt-item.active{color:var(--fg-bright,#ffc46b)}
-#bottom-tab .bt-item .bt-ico{font-size:1.25em;line-height:1}
+/* ═══ 菜单分组标题（底部导航已于 0.8.1 移除：聊天页全屏只留输入栏） ═══ */
 .menu-group-title{padding:12px 12px 6px;font-size:0.68em;color:var(--fg-muted);
   letter-spacing:.06em;text-transform:uppercase}
-@media (min-width: 761px){#bottom-tab{display:none}}
-@media (max-width: 760px){#bottom-tab{display:flex}}
-@media (max-width: 760px){#app{padding-bottom:64px}}
-@media (max-width: 760px){#settings-panel{padding-bottom:70px}}

@@ -309,7 +309,7 @@ _POLISHER_SYSTEMS = {
 
 # ── 回复器类 ──────────────────────────────────────
 class Polisher:
-    def __init__(self, client, model: str = "deepseek-v4-flash",
+    def __init__(self, client, model: str = "deepseek-v4-flash-vision-exp",
                  effort: str = "high", temperature: float = 0.5, mode: str = "story"):
         self._client = client
         self._model = model

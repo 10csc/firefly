@@ -71,7 +71,7 @@ for name, v in versions.items():
 # 历史最大值 800（0.8.0 整合版曾发布装机）；2026-08-14 起版本号回退显示 0.7.2，
 # versionCode 不再按 versionName 映射（0.7.2 的 702 < 800 会导致无法覆盖安装），
 # 改为校验：versionCode > PREV_VERSION_CODE（发版后手动更新本常量）。
-PREV_VERSION_CODE = 800
+PREV_VERSION_CODE = 805   # 0.8.0 已发 805；0.8.1 用 806 严格递增
 if versions.get("android versionCode"):
     try:
         vc = int(versions["android versionCode"])

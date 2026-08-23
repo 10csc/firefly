@@ -145,7 +145,7 @@ def set_config(h):
             if key not in body:
                 continue
             if key.endswith("_model"):
-                overlay[key] = "mimo-v2.5" if is_proxy else cfg._clean_model(body[key], "deepseek-v4-flash")
+                overlay[key] = "mimo-v2.5" if is_proxy else cfg._clean_model(body[key], "deepseek-v4-flash-vision-exp")
             elif key.endswith("_temperature"):
                 try:
                     overlay[key] = max(0.0, min(2.0, float(body[key])))
@@ -425,6 +425,7 @@ def auth_state(h):
 #   前端切后台冻结不发 flush → 窗口 5 秒自然到期兜底处理（消息已实时在后端，不丢）。
 # key 含用户作用域：服务器版多用户各自独立窗口。
 _CHAT_WINDOW_SEC = 5.0
+_CHAT_WINDOW_MAX_MSGS = 10  # 0.8.1：单批连续消息合并上限（达到即提交，不无限合并）
 _CHAT_WINDOW_IDLE = 600.0   # 窗口无活动超时（秒）：防止 session 废弃后窗口残留撑内存
 _CHAT_WINDOW_MAX = 100      # 窗口字典硬上限：异常 session_id 可在无后续请求时残留，超限删最空闲的
 _CHAT_WINDOW_LOCK = threading.Lock()
@@ -657,7 +658,14 @@ def chat(h):
                 if q:
                     rec["quote"] = q
                 _append_msg("user", rec, mode=mode)
-                llm_parts.append(_compose_user_text(f"[图片：{desc or '（无描述）'}]", q))
+                if desc:
+                    # 有描述：流萤按描述理解（用户手填或 vision 生成）
+                    llm_parts.append(_compose_user_text(f"[图片：{desc}]", q))
+                else:
+                    # 无描述且后续识图不可用：如实告知看不见，不假装看见（人设铁律）
+                    llm_parts.append(_compose_user_text(
+                        "[开拓者发了一张图片，但你（流萤）看不到图片内容——"
+                        "如实回应：你已经发了图片吗？我怎么看不见呀；不要假装看到了]", q))
                 # 首轮识图（决策 12 全链路：本地 direct / proxy / relay 统一——
                 # 图片已落盘（服务器版=压缩图），由此读字节转 data URL 进 vision_urls；
                 # orchestrator 侧再按客户端能力+模型门控决定是否真的注入 blocks）
@@ -745,11 +753,12 @@ def chat(h):
         h._json({"queued": True})
         return
 
-    # 主请求：等待窗口结束（滑动 deadline；/chat/hint 重置延长，/chat/flush 立即结束）
+    # 主请求：等待窗口结束（滑动 deadline；/chat/hint 重置延长，/chat/flush 立即结束；
+    # /chat 自身达到 _CHAT_WINDOW_MAX_MSGS 上限也立即结束——0.8.1 连续消息最多合并 10 条）
     with win["cond"]:
         while True:
             remaining = win["deadline"] - time.time()
-            if remaining <= 0:
+            if remaining <= 0 or len(win["msgs"]) >= _CHAT_WINDOW_MAX_MSGS:
                 merged_msgs = list(win["msgs"])
                 win["msgs"] = []
                 vision_merge = list(win.get("vision") or [])
@@ -853,8 +862,15 @@ def rest(h):
             # 立即刷新当前会话的 memory_head：新头部随下一条消息生效，
             # 不再等进程重启 / 30 会话淘汰（真 bug 修复）
             session["memory_head"] = mm.load_head()
+    # skipped：无新对话可整理（LLM 未运行，added/resolved 均为 0——前端显示"没有新内容"而非"记忆已更新"）
+    skipped = bool(result.error) and result.success
     h._json({"ok": result.success, "added": len(result.added_entries),
-             "resolved": len(result.resolved_entries), "error": result.error})
+             "resolved": len(result.resolved_entries), "error": result.error,
+             "skipped": skipped,
+             # 0.8.1：文件级结果（弹窗文案用真实变化，LLM 的 added/resolved 数组可能为空
+             # 但头部/手账仍更新了——只报"新增0条"会误导用户）
+             "head_changed": bool(result.new_head.strip()),
+             "journal_updated": True})
 
 
 def get_time(h):
@@ -1047,7 +1063,7 @@ def setting_fix_message(h):
                                            append_conversation, load_pending,
                                            save_pending)
     client = cfg.get_client()
-    model = cfg.eff_cfg("polisher_model", "deepseek-v4-flash")
+    model = cfg.eff_cfg("polisher_model", "deepseek-v4-flash-vision-exp")
     effort = cfg.eff_cfg("polisher_effort", "high")
     with locked(mode):
         conversation = load_conversation(mode)
@@ -1103,7 +1119,7 @@ def setting_fix_start(h):
     from modules.setting_fix import run_proposal
     from modules.setting_fix_store import locked, load_conversation, save_pending
     client = cfg.get_client()
-    model = cfg.eff_cfg("polisher_model", "deepseek-v4-flash")
+    model = cfg.eff_cfg("polisher_model", "deepseek-v4-flash-vision-exp")
     effort = cfg.eff_cfg("polisher_effort", "high")
     with locked(mode):
         conversation = load_conversation(mode)

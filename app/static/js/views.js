@@ -3,26 +3,16 @@ import { S, messagesEl } from "./state.js";
 import { initAuth, showAuthModule, IS_SERVER } from "./api.js";
 import { showToast } from "./util.js";
 import { closeMenu, openSettings } from "./panels.js";
-import { loadHistory, renderMessages, scrollToBottom } from "./chat.js";
+import { loadHistory, renderMessages, scrollToBottom, resetBatchWindow } from "./chat.js";
 import { openFixView } from "./fix.js";
 import { initAssets } from "./relay.js";
 
-// ═══ A5 入口收敛：底部导航（窄屏/安卓三主视图；PC 宽屏自动隐藏）═══
+// ═══ 入口收敛（A5 底部导航已于 0.8.1 移除）：聊天页全屏只留输入栏，
+// 首页轮播图进入聊天、返回键/首页按钮回首页、设置走首页右上角 ⚙ / 汉堡菜单 ═══
 export function activateTab(tab) {
-    for (const [k, id] of Object.entries({chat: "bt-chat", home: "bt-home", mine: "bt-mine"})) {
-        const el = document.getElementById(id);
-        if (el) el.classList.toggle("active", k === tab);
-    }
+    // 兼容遗留调用（panels.js / 历史代码 window.btActivate）：导航已移除，空实现
 }
 window.btActivate = activateTab;
-for (const [k, fn] of [["chat", () => showChat()], ["home", () => showHome()],
-                       ["mine", () => openSettings()]]) {
-    const el = document.getElementById("bt-" + k);
-    if (el) el.addEventListener("click", () => {
-        try { fn(); } catch (e) {}
-        activateTab(k);
-    });
-}
 
 // ═══════════════════════════════════════════
 // 界面大小调节（消息/头像/气泡缩放，设置面板滑条）
@@ -168,11 +158,12 @@ export async function showChat() {
         _lastMode = CURRENT_MODE;
         _modeGen++;   // 模式代际递增：作废所有飞行中的异步渲染任务（防止串模式显示）
         initAssets(); // 模式切换：同步该模式资产（story/haruno 设定不同；未登录时静默失败）
-        // 未提交的提交窗口作废：旧模式的 flush/hint 计时器不跨模式触发（防串写历史）
+        // 未提交的提交窗口作废：旧模式的 flush/hint/批检查器不跨模式触发（防串写历史）
         clearTimeout(S._flushTimer);
         S._flushTimer = null;
         clearTimeout(S._hintTimer);
         S._hintTimer = null;
+        try { resetBatchWindow(); } catch (e) {}   // 0.8.1 批状态机作废（chat.js）
         messagesEl.innerHTML = "";
         S._hasMore = false;
         await loadHistory();   // 先加载历史（含已保存的开场）

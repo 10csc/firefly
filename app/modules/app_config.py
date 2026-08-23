@@ -162,11 +162,11 @@ PORT = 8765
 #   4. package/firefly.iss 的 AppVersion
 # 用 tools/check_version.py 一键校验四者一致；格式 x.y.z 纯数字点分，
 # 禁止 -beta/-rc 后缀（Gitee 无 prerelease 概念，后缀会污染 releases/latest）。
-APP_VERSION = "0.8.0"
+APP_VERSION = "0.8.1"
 API_BASE = "https://api.deepseek.com/v1"
 # OpenCode Go 兼容端点（OpenAI 兼容 chat/completions，模型 ID 与 DeepSeek 一致）
 GO_BASE = "https://opencode.ai/zen/go/v1"
-MODEL = "deepseek-v4-flash"
+MODEL = "deepseek-v4-flash-vision-exp"
 
 # ── 供应商（A8 多供应商；2026-08-21）────────────────
 # 结构：providers=[{id,name,base_url,api_key,models[],caps{}}] + active_provider=id
@@ -401,13 +401,13 @@ def _load_config() -> dict:
         "providers": [_deepseek_preset()],
         # 服务器地址（A7 认证/同步服务器）：默认公网 8787；开发/自建可改
         "auth_server_url": AUTH_SERVER_DEFAULT,
-        "analyzer_model": "deepseek-v4-flash",
-        "organizer_model": "deepseek-v4-flash", "polisher_model": "deepseek-v4-flash",
-        "retriever_model": "deepseek-v4-flash",
+        "analyzer_model": "deepseek-v4-flash-vision-exp",
+        "organizer_model": "deepseek-v4-flash-vision-exp", "polisher_model": "deepseek-v4-flash-vision-exp",
+        "retriever_model": "deepseek-v4-flash-vision-exp",
         "retriever_effort": "none", "analyzer_effort": "high",
         "polisher_effort": "high", "organizer_effort": "none",
         "retriever_temperature": 0.0, "polisher_temperature": 0.5,
-        "proactive_enabled": True, "proactive_hard": 6, "proactive_soft": 0.35,
+        "proactive_enabled": False, "proactive_hard": 6, "proactive_soft": 0.35,
         "prob_reply_enabled": True, "prob_reply_value": 0.10,
         "hidden_reply_enabled": True,
     }
@@ -444,14 +444,14 @@ def _load_config() -> dict:
             cfg["api_key"] = _p.get("api_key", "") if _p else ""
             cfg["api_base"] = _p.get("base_url", API_BASE) if _p else API_BASE
             for key in ("analyzer_model", "organizer_model", "polisher_model", "retriever_model"):
-                cfg[key] = _clean_model(data.get(key, "deepseek-v4-flash"))
+                cfg[key] = _clean_model(data.get(key, "deepseek-v4-flash-vision-exp"))
             _effort_defaults = {"retriever_effort": "none", "analyzer_effort": "high",
                                 "polisher_effort": "high", "organizer_effort": "none"}
             for key in _effort_defaults:
                 val = data.get(key, _effort_defaults[key])
                 cfg[key] = val if val in VALID_EFFORTS else _effort_defaults[key]
             if "reply_model" in data and "polisher_model" not in data:
-                rm = data.get("reply_model", "deepseek-v4-flash")
+                rm = data.get("reply_model", "deepseek-v4-flash-vision-exp")
                 cfg["polisher_model"] = _clean_model(rm)
             eff = data.get("polisher_effort", data.get("reply_effort", "high"))
             cfg["polisher_effort"] = eff if eff in VALID_EFFORTS else "high"
@@ -465,8 +465,8 @@ def _load_config() -> dict:
                 cfg["retriever_temperature"] = max(0.0, min(2.0, rt))
             except (TypeError, ValueError):
                 cfg["retriever_temperature"] = 0.0
-            # 主动性配置（缺省：开启 + 每 6 轮 1 次判断机会 + 35% 触发概率）
-            cfg["proactive_enabled"] = bool(data.get("proactive_enabled", True))
+            # 主动性配置（0.8.1 默认关闭：避免测试/安静场景被动打扰；用户可在设置中开启）
+            cfg["proactive_enabled"] = bool(data.get("proactive_enabled", False))
             try:
                 ph = int(data.get("proactive_hard", 6))
                 cfg["proactive_hard"] = max(1, min(10, ph))
@@ -601,17 +601,17 @@ def save_config() -> None:
             "providers": config.get("providers") or [_deepseek_preset()],
             "active_provider": config.get("active_provider", "deepseek"),
             "auth_server_url": config.get("auth_server_url", AUTH_SERVER_DEFAULT),
-            "analyzer_model": config.get("analyzer_model", "deepseek-v4-flash"),
-            "organizer_model": config.get("organizer_model", "deepseek-v4-flash"),
-            "polisher_model": config.get("polisher_model", "deepseek-v4-flash"),
-            "retriever_model": config.get("retriever_model", "deepseek-v4-flash"),
+            "analyzer_model": config.get("analyzer_model", "deepseek-v4-flash-vision-exp"),
+            "organizer_model": config.get("organizer_model", "deepseek-v4-flash-vision-exp"),
+            "polisher_model": config.get("polisher_model", "deepseek-v4-flash-vision-exp"),
+            "retriever_model": config.get("retriever_model", "deepseek-v4-flash-vision-exp"),
             "retriever_effort": config.get("retriever_effort", "none"),
             "analyzer_effort": config.get("analyzer_effort", "high"),
             "polisher_effort": config.get("polisher_effort", "high"),
             "organizer_effort": config.get("organizer_effort", "none"),
             "retriever_temperature": config.get("retriever_temperature", 0.0),
             "polisher_temperature": config.get("polisher_temperature", 0.5),
-            "proactive_enabled": bool(config.get("proactive_enabled", True)),
+            "proactive_enabled": bool(config.get("proactive_enabled", False)),
             "proactive_hard": max(1, min(10, int(config.get("proactive_hard", 6)))),
             "proactive_soft": max(0.0, min(1.0, float(config.get("proactive_soft", 0.35)))),
             "prob_reply_enabled": bool(config.get("prob_reply_enabled", True)),

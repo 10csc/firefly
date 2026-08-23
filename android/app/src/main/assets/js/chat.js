@@ -40,6 +40,21 @@ function _addAvatar(row, who) {    const img = document.createElement("img");
     row.insertBefore(img, row.firstChild);
 }
 
+/** 按 seq 插序：DOM 顺序 = 记录顺序（不管渲染先后）。
+ * 有 seq → 找到第一个 seq 更大的行，插它前面（同 seq 追加末尾）；无 seq → 追加。
+ * 修复：多批回复动画交错时表情包"堆积"错位——插序保证显示与记录一致。 */
+function _insertRow(row, seq) {
+    if (seq === null || seq === undefined) { messagesEl.appendChild(row); return; }
+    const rows = messagesEl.querySelectorAll(".msg-row[data-seq]");
+    let anchor = null;
+    for (const r of rows) {
+        const s = parseInt(r.dataset.seq, 10);
+        if (!isNaN(s) && s > seq) { anchor = r; break; }
+    }
+    if (anchor) messagesEl.insertBefore(row, anchor);
+    else messagesEl.appendChild(row);
+}
+
 function addTextMessage(text, who, prepend = false, seq = null, quote = null) {
     const row = document.createElement("div");
     row.className = "msg-row " + (who === "user" ? "user" : "firefly");
@@ -60,7 +75,7 @@ function addTextMessage(text, who, prepend = false, seq = null, quote = null) {
     }
     _addAvatar(row, who);
     if (prepend) { messagesEl.insertBefore(row, messagesEl.firstChild); }
-    else { messagesEl.appendChild(row); scrollToBottom(); }
+    else { _insertRow(row, seq); scrollToBottom(); }
     return row;
 }
 
@@ -127,7 +142,7 @@ async function addSticker(stickerPath, who, prepend = false, seq = null, label =
     }
     _addAvatar(row, who);
     if (prepend) { messagesEl.insertBefore(row, messagesEl.firstChild); }
-    else { messagesEl.appendChild(row); scrollToBottom(); }
+    else { _insertRow(row, seq); scrollToBottom(); }
     return row;
 }
 
@@ -653,17 +668,68 @@ function _pollStage(statusEl) {
     }, 2000);
 }
 
+// ═══════════════════════════════════════════
+// 提交窗口状态机（0.8.1 简化，两判定 + 上限）
+// 提交流程：消息入队（气泡上屏+写盘，不丢）→ 等待提交。
+// 提交条件（两个都满足）：
+//   ① 输入框为空（没在打下一句）
+//   ② 距最新一条消息 ≥ 5 秒（_lastMsgTs 每次发送重置，以最新消息为准）
+// 打字中（输入框有内容）→ 持续 hint 续期后端窗口（2s 节流），流萤继续等，绝不提交；
+// 合并上限：单批连续消息 ≥ _MAX_BATCH_MSGS 条 → 立即提交（即使输入框有内容）。
+// 与后端 _CHAT_WINDOW_MAX_MSGS=10 一致。
+// ═══════════════════════════════════════════
+const _MAX_BATCH_MSGS = 10;
+let _lastMsgTs = 0;              // 最新一条已发送消息的时间戳
+let _pendingBatch = 0;           // 本批已入队未提交条数
+let _mediaBusy = false;          // 媒体选择中（图片相册/表情面板）：暂停提交（长期等待）
+
+// 常驻检查器（页面级）：每 1 秒拍一次，只在有 pending 批时判定。
+// 简化语义：
+//   _pendingBatch === 0 → 无事可做，跳过；
+//   _mediaBusy（相册/表情面板打开）→ 与打字中同构：持续 hint 续期后端窗口，
+//     不提交（后端窗口是 5 秒滑动的，不续期照样到期——前端暂停 flush 不够，必须续期）；
+//   输入框有内容（打字）→ 续期后端窗口，不提交；
+//   距最新消息 ≥ 5 秒 → 提交（flush）。
+let _checkTimer = setInterval(() => {
+    if (_pendingBatch <= 0) return;
+    if (_pendingBatch >= _MAX_BATCH_MSGS) { _batchCommit(); return; }   // 合并上限 10 条
+    if (_mediaBusy) { _sendHint(); return; }                            // 媒体选择中：续期窗口+不提交
+    if (inputEl && inputEl.value.trim()) { _sendHint(); return; }       // 打字中：续期窗口
+    if (Date.now() - _lastMsgTs < 5000) return;                         // 距最新消息 <5 秒：继续等
+    _batchCommit();
+}, 1000);
+
+function _batchArmSubmit() {
+    _lastMsgTs = Date.now();
+    _pendingBatch++;
+}
+
+/** 媒体选择结束后：重新计时 5 秒（不增加批计数——未产生新消息）。 */
+function _batchRefreshTimer() {
+    _lastMsgTs = Date.now();
+}
+
+function _batchCommit() {
+    _pendingBatch = 0; _lastMsgTs = 0;
+    _sendFlush();
+}
+
+/** 模式切换/离开聊天页时调用：提交批立即作废（旧模式消息不跨模式提交）。timer 常驻不清。 */
+export function resetBatchWindow() {
+    _pendingBatch = 0; _lastMsgTs = 0; _mediaBusy = false;
+}
+
 /** 打字中：重置后端合并窗口（流萤继续等开拓者说完）。
- * 输入框仍有内容 → 持续定时重置（前端在且输入框有残留 = 用户在打字 → 永不提交）；
- * 输入框清空/切后台 → 停止发 hint，后端窗口自然到期兜底。 */
+ * 输入框仍有内容 → 持续定时重置（前端在且输入框有残留 = 用户在打字 → 永不提交）。 */
 function _sendHint() {
     fetch("/chat/hint", {
         method: "POST",
         headers: {"Content-Type": "application/json"},
         body: JSON.stringify({ session_id: SESSION_ID, mode: CURRENT_MODE }),
     }).catch(() => {});
-    // 输入框仍有残留（用户还在打字/未清空）→ 继续定时重置窗口
+    // 输入框仍有残留（用户还在打字/未清空）→ 继续定时重置窗口（2s 节流）
     if (inputEl && inputEl.value.trim()) {
+        clearTimeout(S._hintTimer);
         S._hintTimer = setTimeout(_sendHint, 2000);
     }
 }
@@ -694,7 +760,9 @@ const _CHAT_FETCH_TIMEOUT = 4 * 60 * 1000;   // 4 分钟（覆盖 4 阶段最长
 async function _chatSend(msgs) {
     _inflight++;
     const statusEl = document.querySelector("#header .status");
-    const defaultStatus = statusEl ? statusEl.textContent : "";
+    // 修复：不用"请求开始时的快照"恢复（快照可能已被 _sendFlush / 阶段轮询污染成
+    // "对方正在输入"/"正在理解你的话…"），统一恢复为流萤的个人简介默认文案。
+    const defaultStatus = "会找到的，属于我的梦...";
     const gen = _modeGen;   // 捕获发起时的模式代际
     // 后台保活（安卓 WebView JS Bridge）：回复流程（检索→分析→回复→调度）期间
     // 持 CPU/WiFi 锁，用户切后台/锁屏也能完成回复；引用计数归零才释放。
@@ -736,7 +804,10 @@ async function _chatSend(msgs) {
         if (window.androidWakeLock && _inflight === 1) { window.androidWakeLock.release(); }
         _inflight--;
         if (_inflight === 0) {
-            clearTimeout(S._flushTimer); S._flushTimer = null;   // 请求完成：提交计时器作废
+            // 请求完成（主请求带回回复 / 全部副请求结束）：批提交作废（timer 常驻不清）
+            _pendingBatch = 0; _lastMsgTs = 0;
+            clearTimeout(S._hintTimer); S._hintTimer = null;
+            clearTimeout(S._flushTimer); S._flushTimer = null;   // 兼容旧引用
             clearInterval(_stageTimer); _stageTimer = null;  // 阶段轮询结束
             if (statusEl) statusEl.textContent = defaultStatus;
             inputEl.focus();
@@ -753,15 +824,13 @@ async function send() {
     const q = _quoteTarget;
     addTextMessage(text, "user", false, null, q);
     inputEl.focus();
-    // 输入框清空 → 停止 hint 循环 + 重置 5 秒提交窗口（到期 flush 结束后端窗口）
+    // 0.8.1：进入提交窗口状态机（两判定+10条上限；窗口到期由 _batchCommit 触发 flush）
     clearTimeout(S._hintTimer);
-    clearTimeout(S._flushTimer);
-    S._flushTimer = setTimeout(_sendFlush, 5000);
-    // 3.6：提交窗口内（5s）用占位符提示"还能补话"，窗口到期由 _sendFlush 还原
-    inputEl.placeholder = "还可以继续说…";
+    inputEl.placeholder = "还可以继续说…";   // 3.6：提交窗口内提示"还能补话"
     const msg = {type: "text", content: text};
     if (q) msg.quote = q;   // 引用随消息提交（后端写盘 + LLM 上下文）
     _chatSend([msg]);   // 统一消息对象类型，立即发送
+    _batchArmSubmit();
     _clearQuote();
 }
 
@@ -772,13 +841,28 @@ async function send() {
 const imageBtn = document.getElementById("image-btn");
 const imageFileInput = document.getElementById("image-file-input");
 if (imageBtn && imageFileInput) {
-    imageBtn.addEventListener("click", () => { imageFileInput.value = ""; imageFileInput.click(); });
+    // 点击 🖼：进入媒体选择状态（暂停提交计时——相册选择是长期操作，
+    // 否则第一条消息会在选图中途被 5 秒窗口提前提交）
+    imageBtn.addEventListener("click", () => {
+        _mediaBusy = true;
+        imageFileInput.value = "";
+        imageFileInput.click();
+    });
     imageFileInput.addEventListener("change", async () => {
+        // 选择结束（无论成功/取消/失败）：恢复计时（重新 5 秒）
+        const endMedia = (arm = false) => {
+            _mediaBusy = false;
+            if (arm) {   // 成功发送：进入新批计数
+                _batchArmSubmit();
+            } else {     // 取消/失败：重新计时但不计入批数
+                _batchRefreshTimer();
+            }
+        };
         const f = imageFileInput.files && imageFileInput.files[0];
         imageFileInput.value = "";
-        if (!f || S.waiting) return;
-        if (!/^image\/(png|jpe?g|webp|gif)$/.test(f.type || "")) { _toast("仅支持 png/jpg/webp/gif 图片"); return; }
-        if (f.size > 10 * 1024 * 1024) { _toast("图片过大（上限 10MB）"); return; }
+        if (!f || S.waiting) { endMedia(false); return; }
+        if (!/^image\/(png|jpe?g|webp|gif)$/.test(f.type || "")) { _toast("仅支持 png/jpg/webp/gif 图片"); endMedia(false); return; }
+        if (f.size > 10 * 1024 * 1024) { _toast("图片过大（上限 10MB）"); endMedia(false); return; }
         // 发送前压缩（imgzip.js）：GIF/小图原样；任何失败降级原图不阻塞发送
         const {blob, ext} = await compressImage(f);
         let imgId = "", desc = "";
@@ -788,11 +872,11 @@ if (imageBtn && imageFileInput) {
             fd.append("mode", CURRENT_MODE);
             const resp = await fetch("/upload-image", {method: "POST", body: fd});
             const data = await resp.json();
-            if (!data.ok) { _toast("图片上传失败：" + (data.error || "")); return; }   // 配额满等错误直接透传后端文案
+            if (!data.ok) { _toast("图片上传失败：" + (data.error || "")); endMedia(false); return; }   // 配额满等错误直接透传后端文案
             imgId = data.img_id || "";
             desc = data.desc || "";
             if (data.need_desc) desc = "";
-        } catch (e) { _toast("网络错误，图片未发送"); return; }
+        } catch (e) { _toast("网络错误，图片未发送"); endMedia(false); return; }
         if (!desc) {
             // 描述缺失（vision 不支持/失败）：让用户填一句（可为空 → [图片] 占位）
             desc = (window.prompt("流萤还没有识图能力，这幅图是什么？（可留空）", "") || "").trim().slice(0, 300);
@@ -803,6 +887,7 @@ if (imageBtn && imageFileInput) {
         if (desc) msg.desc = desc;
         if (q) msg.quote = q;
         _chatSend([msg]);
+        endMedia(true);   // 0.8.1：图片与文字同批合并（两判定+10条上限）
         _clearQuote();
     });
 }
@@ -814,11 +899,18 @@ const stickerPanel = document.getElementById("sticker-panel");
 const stickerGrid = document.getElementById("sticker-grid");
 const stickerBtn = document.getElementById("sticker-btn");
 
+// 表情面板打开/关闭的提交计时管理（媒体选择中暂停提交）
+function _stickerPanelClose() {
+    stickerPanel.classList.remove("show");
+    if (_mediaBusy) { _mediaBusy = false; _batchRefreshTimer(); }   // 重新计时
+}
+
 stickerBtn.addEventListener("click", async () => {
     if (stickerPanel.classList.contains("show")) {
-        stickerPanel.classList.remove("show");
+        _stickerPanelClose();
         return;
     }
+    _mediaBusy = true;   // 面板打开期间暂停提交（长期等待用户选择）
     stickerPanel.classList.add("show");
     if (!stickerGrid.dataset.loaded) {
         try {
@@ -830,7 +922,8 @@ stickerBtn.addEventListener("click", async () => {
             stickerGrid.dataset.loaded = "1";
             stickerGrid.querySelectorAll("img").forEach(img => {
                 img.addEventListener("click", () => {
-                    stickerPanel.classList.remove("show");
+                    _mediaBusy = false;   // 选中即结束媒体状态（sendStickerMessage 内 _batchArmSubmit 重新计时）
+                    _stickerPanelClose();
                     sendStickerMessage(img.dataset.label, img.dataset.file);
                 });
             });
@@ -838,8 +931,8 @@ stickerBtn.addEventListener("click", async () => {
     }
 });
 // 点击聊天区关闭表情面板
-messagesEl.addEventListener("click", () => stickerPanel.classList.remove("show"));
-document.getElementById("sticker-panel-close").addEventListener("click", () => stickerPanel.classList.remove("show"));
+messagesEl.addEventListener("click", _stickerPanelClose);
+document.getElementById("sticker-panel-close").addEventListener("click", _stickerPanelClose);
 
 /** 发送表情包：作为一条消息立即发送（与文字同一窗口合并，不碰输入框内容） */
 function sendStickerMessage(label, file) {
@@ -847,11 +940,11 @@ function sendStickerMessage(label, file) {
     const q = _quoteTarget;
     if (file) addSticker(file, "user", false, null, label, q);   // 本地立即渲染表情图
     inputEl.focus();
-    clearTimeout(S._flushTimer);
-    S._flushTimer = setTimeout(_sendFlush, 5000);   // 表情入队 → 重置提交窗口
+    clearTimeout(S._hintTimer);
     const msg = {type: "sticker", label, file};
     if (q) msg.quote = q;
     _chatSend([msg]);
+    _batchArmSubmit();   // 0.8.1：表情与文字同批合并（两判定+10条上限）
     _clearQuote();
 }
 
@@ -859,18 +952,18 @@ sendBtn.addEventListener("click", send);
 inputEl.addEventListener("keydown", (e) => {
     if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
 });
-// 提交窗口控制（发送≠提交，窗口在后端）：
-// - 输入框有内容（打字中）→ 暂停 flush + 防抖 hint（后端重置窗口，流萤等开拓者说完）
-// - 输入框清空 → 重新 5 秒 flush 计时（到期结束后端窗口；切后台冻结则后端窗口兜底）
+// 提交窗口控制（0.8.1 简化，两判定+上限，见 _batchArmSubmit 注释）：
+// - 输入框有内容（打字中）→ 暂停提交 + hint 续期后端窗口（流萤继续等）
+// - 输入框清空 → 由 1s 检查器按「距最新消息 5 秒」判定提交
 inputEl.addEventListener("input", () => {
     clearTimeout(S._hintTimer);
     if (inputEl.value.trim()) {
         inputEl.placeholder = "说点什么…";   // 开始打字即还原提示（3.6）
-        clearTimeout(S._flushTimer);
-        S._flushTimer = null;   // 有未发送内容：暂停 flush，不提前结束后端窗口
-        S._hintTimer = setTimeout(_sendHint, 2000);   // 停顿 2 秒发 hint 重置后端窗口（持续打字则持续等待）
+        _sendHint();   // 立即续期一次 + 2s 节流循环
     } else {
-        S._flushTimer = setTimeout(_sendFlush, 5000);   // 清空：5 秒后提交
+        // 清空输入框：hint 停止（_sendHint 循环见框空即止），交给检查器按 5s 判定
+        clearTimeout(S._hintTimer);
+        S._hintTimer = null;
     }
 });
 
@@ -894,9 +987,22 @@ document.getElementById("menu-rest-btn").addEventListener("click", async () => {
             body: JSON.stringify({ session_id: SESSION_ID, mode: CURRENT_MODE }),
         });
         const data = await resp.json();
-        _showRestResult(data.ok
-            ? `流萤已休息。新增记忆 ${data.added} 条，解决 ${data.resolved} 条。下次见。`
-            : "整理出了点问题：" + (data.error || "未知"));
+        // 0.8.1：文案用真实变化——added/resolved 为 LLM 解析数组（可能为空但头部/手账已更新）
+        let msg = "";
+        if (data.ok) {
+            if (data.skipped) {
+                msg = "流萤已休息。这边没有新的对话内容需要整理，下次聊完再叫我吧。";
+            } else {
+                const parts = [];
+                if (data.added) parts.push(`新增记忆 ${data.added} 条`);
+                if (data.resolved) parts.push(`解决 ${data.resolved} 条`);
+                if (!parts.length && data.head_changed) parts.push("记忆已更新");
+                msg = `流萤已休息。${parts.join("，") || "记忆已更新"}。下次见。`;
+            }
+        } else {
+            msg = "整理出了点问题：" + (data.error || "未知");
+        }
+        _showRestResult(msg);
     } catch (e) {
         _showRestResult("信号不好，等会儿再试。");
     }

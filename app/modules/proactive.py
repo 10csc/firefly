@@ -448,7 +448,7 @@ user 消息里列出的"已说过话题"——禁止原样重复，但允许开�
 
     try:
         resp = client.chat.completions.create(
-            model="deepseek-v4-flash",
+            model="deepseek-v4-flash-vision-exp",
             messages=[
                 {"role": "system", "content": system},
                 {"role": "user", "content": user_prompt},
@@ -477,10 +477,10 @@ user 消息里列出的"已说过话题"——禁止原样重复，但允许开�
 
 # ── 生成（复用 polisher + organizer，跳过 analyzer）─
 def generate_proactive(session: dict, client, mode: str = DEFAULT_MODE,
-                       polisher_model: str = "deepseek-v4-flash",
+                       polisher_model: str = "deepseek-v4-flash-vision-exp",
                        polisher_effort: str = "high",
                        polisher_temperature: float = 0.5,
-                       organizer_model: str = "deepseek-v4-flash",
+                       organizer_model: str = "deepseek-v4-flash-vision-exp",
                        organizer_effort: str = "none",
                        memory_head: str = "",
                        use_reply_flow: bool = False,
@@ -738,10 +738,10 @@ def check_and_generate(session: dict, client, mode: str = DEFAULT_MODE,
                        enabled: bool = True, hard: int = 4, soft: float = 0.5,
                        prob_enabled: bool = True, prob_value: float = 0.3,
                        hidden: bool = False,
-                       polisher_model: str = "deepseek-v4-flash",
+                       polisher_model: str = "deepseek-v4-flash-vision-exp",
                        polisher_effort: str = "high",
                        polisher_temperature: float = 0.5,
-                       organizer_model: str = "deepseek-v4-flash",
+                       organizer_model: str = "deepseek-v4-flash-vision-exp",
                        organizer_effort: str = "none",
                        memory_head: str = "") -> ProactiveResult:
     """主动式 + 概率式 + 隐藏式统一入口。

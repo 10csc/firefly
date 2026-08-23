@@ -127,7 +127,7 @@ _NARRATION_SYSTEM = """你是流萤的故事演出助手。流萤刚发完一段
 
 # ── 组织器类 ──────────────────────────────────────
 class Organizer:
-    def __init__(self, client, model: str = "deepseek-v4-flash", effort: str = "none",
+    def __init__(self, client, model: str = "deepseek-v4-flash-vision-exp", effort: str = "none",
                  mode: str = "story"):
         self._client = client
         self._model = model

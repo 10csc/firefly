@@ -32,6 +32,7 @@ _DIRECT_REPLIES = {
     "input:empty":    ["嗯…怎么啦？想说什么就说吧"],
     "input:too_long": ["你说了好多…我慢慢看，等一下哦"],
     "api:error":      ["嗯…信号好像不太好，你等一下哦"],
+    "image:unseen":   ["你已经发了图片吗？我怎么看不见呀"],
 }
 
 
@@ -280,10 +281,10 @@ def handle_chat(
     user_input: str,
     session: dict,
     client,
-    analyzer_model: str = "deepseek-v4-flash",
-    organizer_model: str = "deepseek-v4-flash",
-    polisher_model: str = "deepseek-v4-flash",
-    retriever_model: str = "deepseek-v4-flash",
+    analyzer_model: str = "deepseek-v4-flash-vision-exp",
+    organizer_model: str = "deepseek-v4-flash-vision-exp",
+    polisher_model: str = "deepseek-v4-flash-vision-exp",
+    retriever_model: str = "deepseek-v4-flash-vision-exp",
     retriever_effort: str = "none",
     analyzer_effort: str = "high",
     polisher_effort: str = "high",

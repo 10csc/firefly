@@ -77,7 +77,7 @@ window.closeFeedback = closeFeedback;
 // ═══════════════════════════════════════════
 // 检查更新（GitHub 优先，失败自动降级 Gitee——国内网络 Gitee 更稳）
 // ═══════════════════════════════════════════
-const CURRENT_VERSION = "0.8.0";   // 与 android versionName / 安装器 AppVersion 保持一致
+const CURRENT_VERSION = "0.8.1";   // 与 android versionName / 安装器 AppVersion 保持一致
 // 设置面板版本号动态显示（单一版本源：CURRENT_VERSION；替代 index.html 硬编码文案）
 const curVersionEl = document.getElementById("current-version");
 if (curVersionEl) curVersionEl.textContent = "v" + CURRENT_VERSION;
@@ -537,10 +537,10 @@ async function loadConfig() {
         for (const [k, id] of Object.entries(ids)) el[k] = document.getElementById(id);
 
         const normEffort = v => (v === "low" ? "low" : v);
-        if (el.a) el.a.value = data.analyzer_model || "deepseek-v4-flash";
-        if (el.r) el.r.value = data.retriever_model || "deepseek-v4-flash";
-        if (el.o) el.o.value = data.organizer_model || "deepseek-v4-flash";
-        if (el.p) el.p.value = data.polisher_model || "deepseek-v4-flash";
+        if (el.a) el.a.value = data.analyzer_model || "deepseek-v4-flash-vision-exp";
+        if (el.r) el.r.value = data.retriever_model || "deepseek-v4-flash-vision-exp";
+        if (el.o) el.o.value = data.organizer_model || "deepseek-v4-flash-vision-exp";
+        if (el.p) el.p.value = data.polisher_model || "deepseek-v4-flash-vision-exp";
         if (el.re) el.re.value = normEffort(data.retriever_effort || "none");
         if (el.ae) el.ae.value = normEffort(data.analyzer_effort || "high");
         if (el.pe) el.pe.value = normEffort(data.polisher_effort || "high");
