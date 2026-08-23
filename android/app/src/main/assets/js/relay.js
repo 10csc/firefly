@@ -65,8 +65,20 @@ function fillPlaceholders(payload) {
 
 // A8 能力探测（服务器版）：供应商拒绝 DeepSeek 私有参数（thinking/reasoning_effort）时
 // 剥离后重试一次，并按结果缓存 caps 状态（后续 payload 直接剥离，避免每次探错）。
-function _loadNoThinking() {
-    try { return localStorage.getItem("firefly_no_thinking") === "1"; } catch (e) { return false; }
+// 缓存按供应商隔离：key = firefly_no_thinking_<base_url>（换供应商后重新探测，互不污染）；
+// 旧全局 key firefly_no_thinking 首次读取时迁移到当前供应商键并删除。
+function _noThinkingKey(apiBase) {
+    return "firefly_no_thinking_" + String(apiBase || "").replace(/\/+$/, "");
+}
+function _loadNoThinking(apiBase) {
+    try {
+        const old = localStorage.getItem("firefly_no_thinking");
+        if (old !== null) {
+            localStorage.setItem(_noThinkingKey(apiBase), old);
+            localStorage.removeItem("firefly_no_thinking");
+        }
+        return localStorage.getItem(_noThinkingKey(apiBase)) === "1";
+    } catch (e) { return false; }
 }
 
 function _stripThinking(payload) {
@@ -123,14 +135,14 @@ async function relayTick() {
         let ds;
         try {
             // 用户 Key 直连代发（DeepSeek 官方端点支持浏览器 CORS）；已知不支持的供应商先剥离私有参数
-            let directPayload = _loadNoThinking() ? _stripThinking(pending.payload) : pending.payload;
+            let directPayload = _loadNoThinking(apiBase) ? _stripThinking(pending.payload) : pending.payload;
             ds = await _serverFetch(apiBase + "/chat/completions", {
                 method: "POST",
                 headers: { "Content-Type": "application/json", "Authorization": "Bearer " + key },
                 body: JSON.stringify(directPayload),
             });
-            // 能力探测：4xx 未知参数 → 剥离后重试一次（成功后缓存，后续直接剥离）
-            if (!ds.ok && _loadNoThinking() === false) {
+            // 能力探测：4xx 未知参数 → 剥离后重试一次（成功后按该供应商缓存，后续直接剥离）
+            if (!ds.ok && _loadNoThinking(apiBase) === false) {
                 const errText = await ds.clone().text().catch(() => "");
                 if (_looksUnknownParam(errText)) {
                     const stripped = _stripThinking(pending.payload);
@@ -140,7 +152,7 @@ async function relayTick() {
                         body: JSON.stringify(stripped),
                     });
                     if (ds.ok) {
-                        try { localStorage.setItem("firefly_no_thinking", "1"); } catch (e) {}
+                        try { localStorage.setItem(_noThinkingKey(apiBase), "1"); } catch (e) {}
                     }
                 }
             }

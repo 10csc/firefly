@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """A9 图片消息测试：conversation image 校验/引用/hydrate、upload-image 落盘+desc（mock vision）、
-polisher 首轮 content blocks、vision desc 失败降级、get_image 字节服务"""
+polisher 首轮 content blocks、vision desc 失败降级、get_image 字节服务、
+服务器版新语义（落盘+用户隔离+配额拒绝，铁律修订：服务器只存压缩图）"""
 import base64
 import json
 import os
@@ -156,6 +157,51 @@ h2 = FakeH()
 h2.path = "/image?id=" + h.data["img_id"] + "&mode=story"
 routes.get_image(h2)
 check("D3 /image 服务字节", h2.status == 200)
+
+print("=== E. 服务器版图片（开放落盘 + 用户隔离 + 配额） ===")
+# 铁律修订：原图不出设备，服务器只存压缩图——服务器版同样落盘/服务，403/404 已移除
+os.environ["FIREFLY_SERVER"] = "1"
+_u7 = _tmp / "u7"
+_tok = cfg.set_user_context(user_dir=_u7)
+try:
+    # 配额极小（104 字节）：200 字节图片直接拒
+    os.environ["FIREFLY_IMAGE_QUOTA_MB"] = "0.0001"
+    hq = FakeH()
+    routes.parse_multipart = lambda hh, **kw: ({"mode": "story"},
+        {"file": {"filename": "big.png", "data": b"\x89PNG" + b"\x00" * 196}})
+    routes.upload_image(hq)
+    routes.parse_multipart = real_parse
+    check("E1 配额超限拒绝", hq.data.get("ok") is False and "图片空间已满" in hq.data.get("error", ""))
+    check("E2 超限未落盘", not list((_u7 / "story" / "images").glob("*.png")))
+
+    # 正常配额：落盘到该用户目录（与本地 USER_DIR 隔离）
+    os.environ["FIREFLY_IMAGE_QUOTA_MB"] = "10"
+    hs = FakeH()
+    routes.parse_multipart = fake_parse
+    with patch("modules.vision.describe_image", return_value="服务器描述"):
+        routes.upload_image(hs)
+    routes.parse_multipart = real_parse
+    check("E3 服务器版上传成功", hs.data.get("ok") and hs.data.get("server_side") is True)
+    check("E4 落盘在用户目录", len(list((_u7 / "story" / "images").glob("*.png"))) == 1)
+    check("E5 desc 已生成", hs.data.get("desc") == "服务器描述")
+
+    hs2 = FakeH()
+    hs2.path = "/image?id=" + hs.data["img_id"] + "&mode=story"
+    routes.get_image(hs2)
+    check("E6 服务器版 /image 服务字节", hs2.status == 200)
+    # 另一用户 ctx 下同 img_id 不可见（用户隔离）
+    _tok2 = cfg.set_user_context(user_dir=_tmp / "u8")
+    try:
+        hs3 = FakeH()
+        hs3.path = hs2.path
+        routes.get_image(hs3)
+        check("E7 跨用户取图 404", hs3.status == 404)
+    finally:
+        cfg.reset_user_context(_tok2)
+finally:
+    cfg.reset_user_context(_tok)
+    os.environ.pop("FIREFLY_SERVER", None)
+    os.environ.pop("FIREFLY_IMAGE_QUOTA_MB", None)
 
 print(f"\n统计: PASS={PASS} FAIL={FAIL}")
 sys.exit(0 if FAIL == 0 else 1)

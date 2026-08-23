@@ -19,7 +19,7 @@ JS_DIR = ROOT / "app" / "static" / "js"
 BUNDLE = JS_DIR / "bundle.js"
 
 # 拼接顺序 = 原 app.js 的章节顺序（单作用域，声明提升天然兼容，无循环导入问题）
-ORDER = ["state", "util", "api", "panels", "chat", "fix", "views", "proactive", "relay", "guide", "main"]
+ORDER = ["state", "util", "imgzip", "api", "panels", "chat", "fix", "views", "proactive", "relay", "guide", "main"]
 
 try:
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")

@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """A3 上游容错测试：分类重试（429/Jitter/Retry-After）、401 不重试、端点冷却、
-relay 心跳快速失败、relay 补重试、error_code 透传 /chat、配额失败不占额度"""
+relay 心跳快速失败、relay 补重试且不连坐端点冷却、error_code 透传 /chat、
+配额失败不占额度、单轮总预算 _deadline 硬顶（重试 sleep 前检查/截断）"""
 import os
 import sys
 import time
@@ -219,6 +220,64 @@ with patch("modules.api_client.requests.post", side_effect=AssertionError("不�
     except ApiError as e:
         check("G3 配额不足抛 quota_exhausted", e.code == "quota_exhausted")
 check("G4 配额不足不记账", counted["ok"] == 0 and counted["fail"] == 0)
+
+print("=== H. relay 失败不连坐端点冷却 ===")
+attempts_h = {"n": 0}
+
+
+def fake_submit_timeout(user_key, payload, api_base, timeout=120.0):
+    attempts_h["n"] += 1
+    raise ApiError("APP 代发超时", code="relay_timeout")
+
+
+rc_h = RelayClient("u-test3", "https://relay-nc.example/v1", timeout=5.0)
+try:
+    with patch("modules.api_client.relay_submit", side_effect=fake_submit_timeout):
+        rc_h.chat.completions.create(model="m", messages=[{"role": "user", "content": "hi"}])
+    check("H1 relay 重试耗尽抛错", False)
+except ApiError as e:
+    check("H1 relay 重试耗尽抛 relay_timeout", e.code == "relay_timeout")
+check("H2 relay 失败不写冷却表（多用户不连坐）", "https://relay-nc.example/v1" not in _COOLDOWNS)
+check("H3 relay 重试 2 次（总 3 次尝试）", attempts_h["n"] == 3)
+
+print("=== I. 单轮总预算：deadline 已过 → 首次失败即抛 timeout ===")
+import requests as _requests
+calls_i = {"n": 0}
+
+
+def fake_post_500_i(url, **kw):
+    calls_i["n"] += 1
+    return FakeResp(500, content="boom")
+
+
+ci = _CompatClient("k", "https://deadline.example/v1", caps={"thinking": False})
+ci._deadline = time.time() - 1   # 过去值：预算已耗尽
+try:
+    with patch("modules.api_client.requests.post", side_effect=fake_post_500_i):
+        ci.chat.completions.create(model="m", messages=[{"role": "user", "content": "hi"}])
+    check("I1 预算耗尽抛错", False)
+except ApiError as e:
+    check("I1 预算耗尽抛 code=timeout", e.code == "timeout")
+check("I2 不再重试（只尝试 1 次）", calls_i["n"] == 1)
+
+print("=== J. 单轮总预算：重试 delay 截断到 deadline（耗时不拖顶） ===")
+
+
+def fake_post_down(url, **kw):
+    raise _requests.ConnectionError("boom")
+
+
+cj = _CompatClient("k", "https://deadline2.example/v1", caps={"thinking": False})
+t0 = time.time()
+cj._deadline = t0 + 2.5   # 剩余可用 = deadline-2 ≈ 0.5s，jitter delay 应被截断/放弃
+try:
+    with patch("modules.api_client.requests.post", side_effect=fake_post_down):
+        cj.chat.completions.create(model="m", messages=[{"role": "user", "content": "hi"}])
+    check("J1 预算耗尽抛错", False)
+except ApiError as e:
+    check("J1 预算耗尽抛 code=timeout", e.code == "timeout")
+elapsed = time.time() - t0
+check("J2 总耗时不超 deadline+余量（%.2fs）" % elapsed, elapsed <= 2.5 + 1.5)
 
 print(f"\n统计: PASS={PASS} FAIL={FAIL}")
 sys.exit(0 if FAIL == 0 else 1)

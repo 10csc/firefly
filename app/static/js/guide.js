@@ -69,7 +69,7 @@ const DEEP_GUIDE_STEPS = [
       setup: () => { openSettings(); },
       done: () => _guideGroupOpen("model") },
     { el: '#settings-panel .set-head[data-group="system"]', title: "⑤ 点开「数据与系统」",
-      text: "请点「🛠 数据与系统」展开。\n\n更新、导出/导入 zip 备份都在这里；服务器版还能备份到账号。导入会覆盖当前模式数据，但导入前会自动备份。",
+      text: "请点「🛠 数据与系统」展开。\n\n更新、导出/导入 zip 备份都在这里，还能新建 / 恢复本地备份；登录后文字数据会自动同步到云端。导入会覆盖当前模式数据，但导入前会自动备份。",
       setup: () => { openSettings(); },
       done: () => _guideGroupOpen("system") },
     { el: "#menu-btn", title: "⑥ 到聊天页打开菜单",

@@ -22,6 +22,10 @@ logger = logging.getLogger(__name__)
 # ── 容错策略（A3：按本项目真实调用链设计，2026-08-21）────────────
 # 网络/5xx/429 → Full Jitter 重试（base=1s、cap=30s、最多 3 次）；401/400/402 不重试。
 # 连续失败 → 端点冷却 60s（期间快速失败走降级话术）；429 遵守 Retry-After。
+# relay 链路（APP 代发）失败不触发端点冷却：APP 离线/超时 ≠ 上游端点故障，
+#   服务器多用户共用同一 api_base，冷却会连坐无辜用户（入口冷却检查仍保留）。
+# 单轮总预算硬顶：orchestrator 在 client 上挂 _deadline，重试 sleep 前检查，
+#   已耗尽（或 delay 截断后 <=0）→ 立即抛 ApiError(code="timeout")，不再重试。
 _RETRY_BASE = 1.0        # Full Jitter 基准延迟（秒）
 _RETRY_CAP = 30.0        # 单次延迟上限（秒）
 _RETRY_MAX = 3           # 重试次数（总尝试 = 4）
@@ -77,6 +81,19 @@ def _retry_after_from(resp) -> float | None:
 def _retriable(code: str, status: int) -> bool:
     """哪些错误值得重试：网络不通 / 服务端 5xx / 429 限流 / 超时类。"""
     return code in ("network", "server_error", "rate_limit", "timeout")
+
+
+def _check_deadline(client) -> float | None:
+    """单轮总预算硬顶兜底（orchestrator._stage_timeout 把本轮 deadline 挂在 client._deadline）。
+    重试 sleep 前调用：已耗尽（now > deadline-2，留 2s 收尾余量）→ 抛 ApiError(code="timeout")；
+    否则返回剩余可用秒数（调用方据此截断 delay）。client 无 _deadline 属性 → 返回 None（不约束）。"""
+    deadline = getattr(client, "_deadline", None)
+    if deadline is None:
+        return None
+    remaining = deadline - 2.0 - time.time()
+    if remaining <= 0:
+        raise ApiError("单轮总预算已耗尽", code="timeout")
+    return remaining
 
 
 def error_code_of(e: Exception) -> str:
@@ -165,6 +182,11 @@ class _Completions:
                 if retry_count < _RETRY_MAX and not stripped_extra:
                     retry_count += 1
                     delay = _jitter_delay(retry_count - 1)
+                    remaining = _check_deadline(self._client)   # 总预算耗尽 → 抛 timeout
+                    if remaining is not None:
+                        delay = min(delay, remaining)   # sleep 不拖过单轮硬顶
+                        if delay <= 0:
+                            raise ApiError("单轮总预算已耗尽", code="timeout") from e
                     logger.warning("[API] 网络失败（重试 %d/%d，%.1fs 后）— model=%s %s: %s",
                                    retry_count, _RETRY_MAX, delay, model, type(e).__name__, e)
                     time.sleep(delay)
@@ -197,6 +219,11 @@ class _Completions:
                 if _retriable(_code, resp.status_code) and retry_count < _RETRY_MAX:
                     retry_count += 1
                     delay = _jitter_delay(retry_count - 1, _retry_after_from(resp))
+                    remaining = _check_deadline(self._client)   # 总预算耗尽 → 抛 timeout
+                    if remaining is not None:
+                        delay = min(delay, remaining)   # sleep 不拖过单轮硬顶
+                        if delay <= 0:
+                            raise ApiError("单轮总预算已耗尽", code="timeout")
                     logger.warning("[API] HTTP %d（重试 %d/%d，%.1fs 后）— model=%s",
                                    resp.status_code, retry_count, _RETRY_MAX, delay, model)
                     time.sleep(delay)
@@ -466,7 +493,9 @@ class _RelayCompletions:
             payload.update(extra_body)
         if _in_cooldown(self._client._api_base):
             raise ApiError("上游服务波动中（冷却期），请稍后再试", code="cooldown")
-        # A3：relay 链路补重试（现状零重试）——代发超时/网络类失败重试最多 2 次
+        # A3：relay 链路补重试——代发超时/网络类失败重试最多 2 次。
+        # relay 失败不触发端点冷却：APP 离线/超时 ≠ 上游端点故障，
+        # 服务器多用户共用同一 api_base，冷却会连坐无辜用户（入口冷却检查仍保留）。
         last_error = None
         for attempt in range(3):
             try:
@@ -475,10 +504,13 @@ class _RelayCompletions:
             except ApiError as e:
                 last_error = e
                 if e.code not in ("relay_timeout", "network") or attempt >= 2:
-                    if e.code in ("relay_timeout", "network"):
-                        _set_cooldown(self._client._api_base)
                     raise
                 delay = _jitter_delay(attempt)
+                remaining = _check_deadline(self._client)   # 总预算耗尽 → 抛 timeout
+                if remaining is not None:
+                    delay = min(delay, remaining)   # sleep 不拖过单轮硬顶
+                    if delay <= 0:
+                        raise ApiError("单轮总预算已耗尽", code="timeout") from e
                 logger.warning("[RELAY] 代发失败（%s，重试 %d/2，%.1fs 后）",
                                e.code, attempt + 1, delay)
                 time.sleep(delay)

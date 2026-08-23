@@ -9,6 +9,7 @@ server 拆分产物：server.py 只留 HTTP 骨架（分发/响应工具/启动�
 import json
 import logging
 import os
+import re
 import sys
 import threading
 import time
@@ -495,6 +496,36 @@ def _image_dir(mode: str):
     return d
 
 
+def _image_quota_bytes() -> int:
+    """每用户图片配额（字节）：环境变量 FIREFLY_IMAGE_QUOTA_MB，默认 200MB。非法值回退默认。"""
+    try:
+        mb = float(os.environ.get("FIREFLY_IMAGE_QUOTA_MB", "") or 200)
+        if mb <= 0:
+            mb = 200.0
+    except (TypeError, ValueError):
+        mb = 200.0
+    return int(mb * 1024 * 1024)
+
+
+def _image_used_bytes() -> int:
+    """当前用户所有模式 images/ 已用总字节（配额统计用；服务器版经 _user_ctx 自动隔离）。"""
+    total = 0
+    for m in cfg.MODES:
+        d = cfg.mode_root(m) / "images"
+        try:
+            if not d.is_dir():
+                continue
+            for fp in d.iterdir():
+                try:
+                    if fp.is_file():
+                        total += fp.stat().st_size
+                except OSError:
+                    continue
+        except OSError:
+            continue
+    return total
+
+
 def _load_image_data_url(mode: str, img_id: str) -> str | None:
     """本地版首轮识图：按 img_id 找本地文件 → data URL（A9；字节只内存，不落日志）。"""
     from modules.vision import to_data_url
@@ -512,11 +543,10 @@ def _load_image_data_url(mode: str, img_id: str) -> str | None:
 
 
 def upload_image(h):
-    """POST /upload-image（A9）：本地版接收图片字节 → 落盘 {mode}/images/ + desc 生成。
-    服务器版不做字节接收（铁律：图片不出设备）——403 提示（前端直接走 /chat 文字描述）。"""
-    if _is_server():
-        h._json({"ok": False, "error": "服务器版图片保存在本机（仅传输描述文字）"}, 403)
-        return
+    """POST /upload-image（A9）：接收压缩图字节 → 落盘 {mode}/images/ + desc 生成。
+    铁律修订：原图不出设备，服务器只存压缩图——服务器版同样落盘
+    （cfg.mode_root 经 _user_ctx 按用户目录隔离）。配额：每用户 FIREFLY_IMAGE_QUOTA_MB
+    （默认 200MB），统计该用户所有模式 images/ 总字节，超限拒绝。"""
     from modules.vision import to_data_url, describe_image
     import uuid as _uuid
     fields, files = parse_multipart(h, max_bytes=11 * 1024 * 1024)
@@ -532,12 +562,16 @@ def upload_image(h):
         h._json({"ok": False, "error": "仅支持 png/jpg/jpeg/webp/gif 图片格式"}); return
     if not isinstance(data, bytes) or len(data) > 10 * 1024 * 1024:
         h._json({"ok": False, "error": "图片过大（上限 10MB）"}); return
+    if _image_used_bytes() + len(data) > _image_quota_bytes():
+        h._json({"ok": False, "error": "图片空间已满，请在数据面板清理"}); return
     img_id = "img_" + _uuid.uuid4().hex[:12]
     fp = _image_dir(mode) / (img_id + ext)
     from modules.storage import atomic_write_bytes
     if not atomic_write_bytes(fp, data):
         h._json({"ok": False, "error": "图片保存失败"}); return
-    # desc 生成（vision 模型）：失败/不支持 → 空串（前端可让用户手填）
+    # desc 生成（vision 模型）：失败/不支持 → 空串（前端可让用户手填）。
+    # 对 QuotaClient/RelayClient 通用：describe_image 走 client.chat.completions.create，
+    # proxy 托管自动锁 vision 模型并记账。
     desc = ""
     client = cfg.get_client()
     try:
@@ -551,7 +585,7 @@ def upload_image(h):
     except Exception as e:
         logger.warning("图片描述生成跳过: %s", e)
     h._json({"ok": True, "img_id": img_id, "file": fp.name, "desc": desc,
-             "need_desc": not desc, "server_side": False})
+             "need_desc": not desc, "server_side": _is_server()})
 
 
 def chat(h):
@@ -624,8 +658,10 @@ def chat(h):
                     rec["quote"] = q
                 _append_msg("user", rec, mode=mode)
                 llm_parts.append(_compose_user_text(f"[图片：{desc or '（无描述）'}]", q))
-                # 首轮识图（仅本地版 direct 链路；服务器版图片不出设备→ desc 文本化）
-                if not _is_server() and len(vision_urls) < 4:
+                # 首轮识图（决策 12 全链路：本地 direct / proxy / relay 统一——
+                # 图片已落盘（服务器版=压缩图），由此读字节转 data URL 进 vision_urls；
+                # orchestrator 侧再按客户端能力+模型门控决定是否真的注入 blocks）
+                if len(vision_urls) < 4:
                     url = _load_image_data_url(mode, img_id)
                     if url:
                         vision_urls.append(url)
@@ -1131,16 +1167,20 @@ def undo(h):
         # 对话全部误判为"已整理过"而永远跳过（真 bug 修复）
         try:
             from modules.memory_manager import _index_file
+            from modules.conversation_store import count_user_turns
             fp = _index_file(mode)
             if fp.exists():
                 idx = json.loads(fp.read_text(encoding="utf-8"))
                 last_turn = int(idx.get("last_integrated_turn", 0))
-                cur_turn = session["context"].turn_count
+                # 以文件为准：重启后内存 context 只回灌近期轮次，
+                # session["context"].turn_count 小于真实进度会把游标误压低；
+                # 注意必须用用户轮数（与游标同口径），不可用消息总行数
+                cur_turn = count_user_turns(mode=mode)
                 if last_turn > cur_turn:
                     idx["last_integrated_turn"] = cur_turn
                     fp.write_text(json.dumps(idx, ensure_ascii=False), encoding="utf-8")
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("撤回后记忆游标回退失败: %s", e)
     # 以文件为准：重启后内存 context 为空但文件仍有历史，文件删成功就算成功
     if removed > 0 or result is not None:
         h._json({"ok": True, "removed_turn": 1, "files_removed": removed})
@@ -1228,22 +1268,26 @@ def get_chat_stage(h):
              "waited": round(get_stage_waited(session)) if stage else 0})
 
 
-def export_data(h):
-    """导出当前模式数据为 zip 备份（对话/记忆/手账/设定 + config.json[剥离 Key] +
-    表情包文字元数据[内容哈希，不含图片字节]——换机迁移用；媒体本体留本机，A1 范围）。
-    Content-Disposition: attachment 触发浏览器/WebView 下载。只读打包，不修改数据。"""
-    q = parse_qs(urlparse(h.path).query)
-    mode = (q.get("mode") or [DEFAULT_MODE])[0]
-    if mode not in cfg.MODES:
-        mode = DEFAULT_MODE
-    root = cfg.mode_root(mode)
+# 导出/备份打包排除的内部目录（同步冲突备份/设定纠错中间态，不是用户数据）
+_EXPORT_EXCLUDE_DIRS = {".sync_backups", ".setting_fix", ".sync_conflicts"}
+
+
+def _build_backup_zip(root: Path, mode: str) -> bytes:
+    """打包模式数据为 zip 字节：{mode} 根全量文件（排除内部目录；images/ 压缩图是
+    正式消息数据，进包）+ _config.json（剥离 Key）+ stickers-meta.json（表情包
+    文字元数据，图片本体不打包）。export_data 下载与 /backup/create 本地备份共用。
+    只读打包，不修改数据。"""
     import io
     import zipfile
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
         for fp in sorted(root.rglob("*")):
-            if fp.is_file():
-                zf.write(fp, fp.relative_to(root).as_posix())
+            if not fp.is_file():
+                continue
+            rel = fp.relative_to(root)
+            if any(part in _EXPORT_EXCLUDE_DIRS for part in rel.parts):
+                continue
+            zf.write(fp, rel.as_posix())
         # config.json：全量配置但剥离 API Key（换机迁移带上供应商/base 信息）
         try:
             import copy as _copy
@@ -1279,8 +1323,31 @@ def export_data(h):
                 zf.writestr("stickers-meta.json", json.dumps(meta, ensure_ascii=False, indent=1))
         except Exception:
             pass
-    data = buf.getvalue()
-    fname = f"firefly-backup-{mode}-{time.strftime('%Y%m%d-%H%M%S')}.zip"
+    return buf.getvalue()
+
+
+def export_data(h):
+    """导出当前模式数据为 zip 备份（对话/记忆/手账/设定/聊天图片 + config.json[剥离 Key] +
+    表情包文字元数据——换机迁移用）。打包逻辑见 _build_backup_zip。
+    带 name 参数时改为下载 backups/ 目录里已有的对应备份包（备份管理列表的「下载」）。
+    Content-Disposition: attachment 触发浏览器/WebView 下载。只读打包，不修改数据。"""
+    q = parse_qs(urlparse(h.path).query)
+    mode = (q.get("mode") or [DEFAULT_MODE])[0]
+    if mode not in cfg.MODES:
+        mode = DEFAULT_MODE
+    name = (q.get("name") or [""])[0]
+    if name:
+        # 下载既有备份包（名字校验与 /backup/* 同规则，防穿越）
+        name = _backup_name_ok(name)
+        fp = (_backup_dir(DEFAULT_MODE) / name) if name else None
+        if not fp or not fp.is_file():
+            h._json({"ok": False, "error": "非法或已不存在的备份名"}, 404)
+            return
+        data = fp.read_bytes()
+        fname = name
+    else:
+        data = _build_backup_zip(cfg.mode_root(mode), mode)
+        fname = f"firefly-backup-{mode}-{time.strftime('%Y%m%d-%H%M%S')}.zip"
     h.send_response(200)
     h.send_header("Content-Type", "application/zip")
     h.send_header("Content-Disposition", f'attachment; filename="{fname}"')
@@ -1289,14 +1356,14 @@ def export_data(h):
     h.wfile.write(data)
 
 
-# ══ 数据导入 / 账号备份（数据同步：本地导入 + 服务器云端备份）════
-# 导出复用 GET /export-data（zip 下载）；导入=multipart zip 覆盖；服务器版另有
-# /sync/upload（把导出的 zip 存账号）+ /sync/download（取回）——两端组合即"换机恢复"，
-# 不新写解压逻辑（服务器恢复 = /sync/download 拿 zip → 前端再 POST /import-data）。
+# ══ 数据导入 / 本地备份 ════
+# 导出复用 GET /export-data（zip 下载）；导入=multipart zip 覆盖（导入前自动备份 +
+# zip slip 防御，见 _import_zip_to_mode）。备份本地化：/backup/* 端点管理
+# {用户目录}/backups/（每模式留最近 _BACKUP_KEEP 份），手动云端备份（/sync/upload|download）已下线。
 _IMPORT_MAX_BYTES = 60 * 1024 * 1024          # zip 上传上限（含 multipart 开销）
 _IMPORT_MAX_FILE_BYTES = 20 * 1024 * 1024     # 包内单文件解压上限
 _IMPORT_MAX_TOTAL_BYTES = 100 * 1024 * 1024   # 包内解压总量上限
-_SYNC_KEEP = 3                                # 每模式保留最近备份份数
+_BACKUP_KEEP = 10                             # 每模式保留最近手动备份份数
 
 
 def _zip_safe_entries(zf) -> list[tuple[str, object]]:
@@ -1321,12 +1388,13 @@ def _zip_safe_entries(zf) -> list[tuple[str, object]]:
 
 
 def _backup_dir(mode: str) -> Path:
-    """账号/本机备份目录：{数据根}/backups/（与模式目录平级，不进导出循环）。"""
+    """本地备份目录：{用户数据根}/backups/（与模式目录平级，不进导出/同步循环）。
+    服务器版经 _user_ctx 自动按用户目录隔离。"""
     return cfg.mode_root(mode).parent / "backups"
 
 
 def _backup_current_mode(mode: str, prefix: str) -> None:
-    """把当前模式数据打成 zip 存到 backups/（导入前自动备份，防误操作）。空目录跳过。"""
+    """把当前模式数据打成 zip 存到 backups/（导入/恢复前自动备份，防误操作）。空目录跳过。"""
     root = cfg.mode_root(mode)
     if not any(root.rglob("*")):
         return
@@ -1340,8 +1408,9 @@ def _backup_current_mode(mode: str, prefix: str) -> None:
                 zf.write(f, f.relative_to(root).as_posix())
 
 
-def _import_zip_to_mode(data: bytes, mode: str) -> tuple[bool, str, int]:
-    """zip 数据覆盖导入到指定模式。返回 (ok, error, 文件数)。"""
+def _import_zip_to_mode(data: bytes, mode: str, backup_prefix: str = "auto") -> tuple[bool, str, int]:
+    """zip 数据覆盖导入到指定模式（导入前把当前模式备份到 backups/，前缀 backup_prefix）。
+    返回 (ok, error, 文件数)。"""
     import io as _io
     import zipfile as _zipfile
     import shutil as _sh
@@ -1358,7 +1427,7 @@ def _import_zip_to_mode(data: bytes, mode: str) -> tuple[bool, str, int]:
 
     # 覆盖式导入：先自动备份现有数据，再清空目标目录解压
     try:
-        _backup_current_mode(mode, "auto")
+        _backup_current_mode(mode, backup_prefix)
     except Exception:
         pass    # 备份失败不阻塞导入（导入包本身是用户拿来的数据源）
     root = cfg.mode_root(mode)
@@ -1387,7 +1456,7 @@ def _import_zip_to_mode(data: bytes, mode: str) -> tuple[bool, str, int]:
 
 def import_data(h):
     """导入 zip 备份（覆盖当前模式数据）。multipart：mode + file。
-    服务器版 = 「从账号恢复」的第二跳；本地版 = 文件导入（换机/恢复）。"""
+    换机/恢复用；导入前自动备份当前模式到 backups/（见 _import_zip_to_mode）。"""
     fields, files = parse_multipart(h, max_bytes=_IMPORT_MAX_BYTES)
     file_info = files.get("file")
     if not file_info:
@@ -1401,53 +1470,130 @@ def import_data(h):
     h._json({"ok": True, "files": n, "mode": mode})
 
 
-def sync_upload(h):
-    """整包备份：上传导出的 zip（账号云端备份，留 3 份；区别于 A1 增量同步 /sync/manifest|import|export）。"""
-    if not _is_server():
-        h._json({"ok": False, "error": "仅服务器版支持账号备份"}, 403); return
-    fields, files = parse_multipart(h, max_bytes=_IMPORT_MAX_BYTES)
-    file_info = files.get("file")
-    if not file_info:
-        h._json({"ok": False, "error": "缺少 zip 文件"}); return
-    mode = fields.get("mode", DEFAULT_MODE)
-    if mode not in cfg.MODES:
-        h._json({"ok": False, "error": "非法模式"}); return
-    data = file_info["data"]
-    if not data.startswith(b"PK"):
-        h._json({"ok": False, "error": "不是有效的 zip 备份文件"}); return
-    bdir = _backup_dir(mode)
-    bdir.mkdir(parents=True, exist_ok=True)
-    fp = bdir / f"sync-{mode}-{time.strftime('%Y%m%d-%H%M%S')}.zip"
-    fp.write_bytes(data)
-    # 每模式只留最近 _SYNC_KEEP 份
-    olds = sorted(bdir.glob(f"sync-{mode}-*.zip"), key=lambda p: p.stat().st_mtime, reverse=True)
-    for old in olds[_SYNC_KEEP:]:
-        try:
-            old.unlink()
-        except OSError:
-            pass
-    h._json({"ok": True, "mode": mode, "saved": fp.name})
+# ── 本地备份管理（/backup/*）：{用户目录}/backups/，每模式留最近 _BACKUP_KEEP 份 ──
+# 手动云端备份（/sync/upload|download）已下线：备份改本地目录管理，恢复复用导入链路。
+_BACKUP_NAME_RE = re.compile(r"^[a-z0-9_\-\.]+\.zip$")
 
 
-def sync_download(h):
-    """整包备份下载：最新一份 zip（区别于 A1 增量同步 /sync/export）。"""
-    if not _is_server():
-        h._json({"ok": False, "error": "仅服务器版支持账号备份"}, 403); return
-    mode = _query_mode(h)
+def _backup_name_ok(name) -> str:
+    """备份文件名审查：白名单字符 + .zip 结尾，拒绝 .. 与路径分隔符。合法返回名字，否则 ""。"""
+    name = str(name or "").strip()
+    if not name or len(name) > 120:
+        return ""
+    if not _BACKUP_NAME_RE.match(name) or ".." in name or "/" in name or "\\" in name:
+        return ""
+    return name
+
+
+def _backup_mode_of(name: str) -> str:
+    """从备份名解析模式（{mode}-{时间戳}.zip）；不含合法模式返回 ""。"""
+    m = name.split("-", 1)[0]
+    return m if m in cfg.MODES else ""
+
+
+def backup_create(h):
+    """POST /backup/create {mode}：打包该模式（与 /export-data 同逻辑，见 _build_backup_zip）
+    落 backups/{mode}-{yyyymmdd-HHMMSS}.zip，每模式保留最近 _BACKUP_KEEP 份（按名排序删旧）。"""
+    body = _read_json(h)
+    mode = _body_mode(body)
+    try:
+        data = _build_backup_zip(cfg.mode_root(mode), mode)
+    except Exception as e:
+        logger.warning("备份打包失败: %s", e)
+        h._json({"ok": False, "error": f"备份打包失败: {e}"}); return
     bdir = _backup_dir(mode)
-    if not bdir.exists():
-        h._json({"error": "账号还没有备份"}, 404); return
-    zips = sorted(bdir.glob(f"sync-{mode}-*.zip"), key=lambda p: p.stat().st_mtime, reverse=True)
-    if not zips:
-        h._json({"error": "账号还没有备份"}, 404); return
-    data = zips[0].read_bytes()
-    fname = zips[0].name
-    h.send_response(200)
-    h.send_header("Content-Type", "application/zip")
-    h.send_header("Content-Disposition", f'attachment; filename="{fname}"')
-    h.send_header("Content-Length", str(len(data)))
-    h.end_headers()
-    h.wfile.write(data)
+    fp = None
+    try:
+        bdir.mkdir(parents=True, exist_ok=True)
+        # 秒级时间戳同名碰撞（同一秒内重复创建）→ 追加 _N 后缀保证唯一
+        stem = f"{mode}-{time.strftime('%Y%m%d-%H%M%S')}"
+        name = f"{stem}.zip"
+        i = 1
+        while (bdir / name).exists():
+            i += 1
+            name = f"{stem}_{i}.zip"
+        fp = bdir / name
+        fp.write_bytes(data)
+        # 每模式只留最近 _BACKUP_KEEP 份（文件名 = 模式-时间戳，按名排序即时间序，删旧）。
+        # 刚写入的一份不参与淘汰：同秒连建时基底名会被淘汰再复用，不排除会自删
+        olds = sorted(p.name for p in bdir.glob(f"{mode}-*.zip") if p.name != name)
+        for old in olds[:max(len(olds) + 1 - _BACKUP_KEEP, 0)]:
+            try:
+                (bdir / old).unlink()
+            except OSError:
+                pass
+    except OSError as e:
+        logger.warning("备份写入失败: %s", e)
+        h._json({"ok": False, "error": f"备份写入失败: {e}"}); return
+    # 输出验证：落盘内容与打包字节一致才算成功
+    try:
+        if not fp.is_file() or fp.stat().st_size != len(data):
+            h._json({"ok": False, "error": "备份写入校验失败"}); return
+    except OSError:
+        h._json({"ok": False, "error": "备份写入校验失败"}); return
+    h._json({"ok": True, "name": name, "mode": mode, "size": len(data)})
+
+
+def backups_list(h):
+    """GET /backups → {ok, backups:[{name,mode,size,time}]}（新→旧）。
+    只列手动备份（{mode}-*.zip）；auto-/pre-restore- 自动备份不列入。"""
+    out = []
+    try:
+        bdir = _backup_dir(DEFAULT_MODE)
+        if bdir.exists():
+            for fp in sorted(bdir.glob("*.zip"), key=lambda p: p.name, reverse=True):
+                m = _backup_mode_of(fp.name)
+                if not m or not fp.name.startswith(f"{m}-"):
+                    continue
+                try:
+                    st = fp.stat()
+                except OSError:
+                    continue
+                out.append({"name": fp.name, "mode": m, "size": st.st_size,
+                            "time": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(st.st_mtime))})
+    except OSError as e:
+        logger.warning("备份列表读取失败: %s", e)
+    h._json({"ok": True, "backups": out})
+
+
+def backup_restore(h):
+    """POST /backup/restore {name}：恢复指定备份（覆盖该备份所属模式的数据）。
+    恢复前先对当前模式打一份 pre-restore 自动备份；解压校验复用 import-data 链路
+    （zip slip 防御/单文件与总量上限/覆盖后清缓存，见 _import_zip_to_mode）。"""
+    body = _read_json(h)
+    name = _backup_name_ok(body.get("name"))
+    if not name:
+        h._json({"ok": False, "error": "非法备份名"}); return
+    mode = _backup_mode_of(name)
+    if not mode:
+        h._json({"ok": False, "error": "备份名不含合法模式"}); return
+    fp = _backup_dir(mode) / name
+    if not fp.is_file():
+        h._json({"ok": False, "error": "备份不存在"}); return
+    try:
+        data = fp.read_bytes()
+    except OSError as e:
+        h._json({"ok": False, "error": f"备份读取失败: {e}"}); return
+    ok, err, n = _import_zip_to_mode(data, mode, backup_prefix="pre-restore")
+    if not ok:
+        h._json({"ok": False, "error": err}); return
+    h._json({"ok": True, "restored": name, "mode": mode, "files": n})
+
+
+def backup_delete(h):
+    """POST /backup/delete {name}：删除一份本地备份（含自动备份，按名审查后删除）。"""
+    body = _read_json(h)
+    name = _backup_name_ok(body.get("name"))
+    if not name:
+        h._json({"ok": False, "error": "非法备份名"}); return
+    fp = _backup_dir(DEFAULT_MODE) / name
+    if not fp.is_file():
+        h._json({"ok": False, "error": "备份不存在"}); return
+    try:
+        fp.unlink()
+    except OSError as e:
+        h._json({"ok": False, "error": f"删除失败: {e}"}); return
+    h._json({"ok": True, "deleted": name})
 
 
 # ══ A1 增量同步（文件级双向：三端同一套 Python，按用户上下文隔离）══
@@ -1456,7 +1602,8 @@ def sync_download(h):
 #   POST /sync/import  (multipart) → 服务器合并写入（append 行合并 / 文档新者胜，冲突备份）
 #   POST /sync/export  {"files"}   → 服务器侧差异文件 zip（客户端拉回合并）
 #   POST /sync/now                 → 本地后端编排：manifest → 对比 → 上传/拉取 → 本地落盘
-# 媒体不受影响：stickers/ images/ 不在清单（只同步文字元数据，见 sync_engine）。
+# images/ 压缩图是正式消息数据：blob 整份双向传输（不解码不合并，按首段目录判定）；
+# stickers/ 表情包二进制仍本地策略不进清单（只同步文字元数据，见 sync_engine）。
 
 
 def _sync_mode_root(mode: str):
@@ -1503,10 +1650,21 @@ def sync_import(h):
             if not isinstance(data, bytes):
                 data = bytes(data)
             fp = root / rel
+            if rel.parts[0] == "images":
+                # 图片二进制（blob，正式消息数据）：跳过 utf-8 解码与合并，
+                # 配额检查（同 upload_image）后原子落盘
+                if _image_used_bytes() + len(data) > _image_quota_bytes():
+                    skipped.append(f"{name}（图片空间已满）")
+                    continue
+                from modules.storage import atomic_write_bytes
+                if atomic_write_bytes(fp, data):
+                    applied.append(rel.as_posix())
+                else:
+                    skipped.append(f"{name}（写入失败）")
+                continue
             local_text = fp.read_text(encoding="utf-8") if fp.exists() else ""
             remote_text = data.decode("utf-8", errors="replace")
             st = fp.stat() if fp.exists() else None
-            local_mtime = st.st_mtime if st else 0.0
             remote_mtime = float(mtimes.get(rel.as_posix(), time.time()) or time.time())
             if rel.suffix == ".jsonl":
                 merged, cf = merge_jsonl(local_text, remote_text)
@@ -1530,7 +1688,7 @@ def sync_import(h):
                 conflicts.extend(cf)
             else:
                 # 文档类：新者胜。服务器已有且 mtime 更新 → 跳过（客户端应 pull 服务器版）
-                if st and (float(mtimes.get(rel.as_posix(), 0) or 0) < st.st_mtime):
+                if st and remote_mtime < st.st_mtime:
                     skipped.append(rel.as_posix() + "（服务器更新，客户端将拉取）")
                 elif remote_text != local_text:
                     if st:
@@ -1582,8 +1740,8 @@ def sync_export(h):
 def sync_now(h):
     """本地端编排（A1）：本地后端直连认证服务器完成一轮双向同步。
     触发时机：登录态冷启动 / 聊天页回前台 / 设置页手动按钮（W4 前端接线在 W7）。
-    媒体本地策略：stickers/images 不进清单；表情包元数据随 character 注册表？——
-    见 sync_engine 说明（当前迭代：对话/记忆/手账/设定/收藏/pipeline 文字类）。"""
+    范围：对话/记忆/手账/设定/收藏/pipeline 文字类 + images/ 压缩图（blob 整份，
+    上传 read_bytes / 拉取 write_bytes，不解码不合并）；stickers/ 表情包二进制不进清单。"""
     if _is_server():
         h._json({"error": "服务器版数据已在云端，无需本端点"}, 403); return
     import io
@@ -1683,8 +1841,14 @@ def sync_now(h):
                     rel = Path(name)
                     if rel.is_absolute() or ".." in rel.parts:
                         continue
-                    remote_text = zf.read(info).decode("utf-8", errors="replace")
                     fp = root / rel
+                    if rel.parts[0] == "images":
+                        # 图片二进制（blob，正式消息数据）：不解码不合并，整份落盘
+                        fp.parent.mkdir(parents=True, exist_ok=True)
+                        fp.write_bytes(zf.read(info))
+                        reports["downloaded"].append(name)
+                        continue
+                    remote_text = zf.read(info).decode("utf-8", errors="replace")
                     local_text = fp.read_text(encoding="utf-8") if fp.exists() else ""
                     if rel.suffix == ".jsonl":
                         merged, cf = merge_jsonl(local_text, remote_text)
@@ -1702,15 +1866,18 @@ def sync_now(h):
                             fp.write_text(merged, encoding="utf-8")
                             reports["merged"].append(name)
                     else:
+                        # 文档类：第 1 步抓的远端清单 mtime 与当前文件 mtime 比——
+                        # 远端更新才覆盖，否则本地更新保留（防旧远端回滚覆盖本地新内容）
                         st = fp.stat().st_mtime if fp.exists() else 0.0
-                        if str(name) in local and (local[str(name)].get("mtime", 0) or 0) > st + 0.05:
+                        remote_mtime = float((remote.get(str(name)) or {}).get("mtime", 0) or 0)
+                        if fp.exists() and remote_mtime <= st + 0.05:
                             reports["skipped"].append(name + "（本地更新，保留）")
                         elif remote_text != local_text:
                             if fp.exists():
                                 backup_file(fp, backups_dir, "pre")
                             fp.parent.mkdir(parents=True, exist_ok=True)
                             fp.write_text(remote_text, encoding="utf-8")
-                            reports["merged"].append(name)
+                            reports["downloaded"].append(name)
                 except Exception as e:
                     logger.warning("同步拉取落盘失败 %s: %s", name, e)
                     reports["skipped"].append(f"{name}（{e}）")
@@ -1718,11 +1885,8 @@ def sync_now(h):
 
 
 def get_image(h):
-    """GET /image?id=<img_id>（A9）：本地版图片字节服务（用户目录 images/，按 ext 给 MIME）。
-    服务器版 404——图片不出设备（该端由前端 IndexedDB 渲染）。"""
-    if _is_server():
-        h._json({"error": "服务器版图片保存在本机"}, 404)
-        return
+    """GET /image?id=<img_id>（A9）：图片字节服务（用户目录 {mode}/images/，按 ext 给 MIME）。
+    服务器版同样服务（铁律修订：服务器只存压缩图；cfg.mode_root 经 _user_ctx 按用户隔离）。"""
     qs = parse_qs(urlparse(h.path).query)
     img_id = (qs.get("id", [""])[0] or "").strip()[:200]
     if not img_id or ".." in img_id or "/" in img_id or "\\" in img_id:
@@ -2402,7 +2566,9 @@ POST_ROUTES = {
     "/relay/result": relay_result,
     "/relay/proxy": relay_proxy,
     "/import-data": import_data,
-    "/sync/upload": sync_upload,
+    "/backup/create": backup_create,
+    "/backup/restore": backup_restore,
+    "/backup/delete": backup_delete,
     "/sync/import": sync_import,
     "/sync/export": sync_export,
     "/sync/now": sync_now,
@@ -2441,7 +2607,7 @@ GET_ROUTES = {
     "/user-memory": get_user_memory,
     "/journal": get_journal,
     "/export-data": export_data,
-    "/sync/download": sync_download,
+    "/backups": backups_list,
     "/setting-fix/status": setting_fix_status,
     "/assets/index": assets_index,
     "/assets/raw": assets_raw,

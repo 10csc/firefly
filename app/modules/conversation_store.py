@@ -327,6 +327,28 @@ def get_total_count(mode: str = DEFAULT_MODE) -> int:
         return n
 
 
+def count_user_turns(mode: str = DEFAULT_MODE) -> int:
+    """返回用户轮数（只数 who=="user" 的行；与 memory_manager 的 last_integrated_turn
+    同口径——undo 游标回退用。不可用消息总行数，二者差约 2 倍）。"""
+    _migrate_legacy(mode)
+    fp = conv_file(mode)
+    if not fp.exists():
+        return 0
+    n = 0
+    with _lock:
+        with fp.open("r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    if json.loads(line).get("who") == "user":
+                        n += 1
+                except Exception:
+                    continue
+    return n
+
+
 def get_min_seq(mode: str = DEFAULT_MODE) -> int:
     """返回当前最小 seq（has_more 判断用）。无文件返回 1。"""
     _migrate_legacy(mode)

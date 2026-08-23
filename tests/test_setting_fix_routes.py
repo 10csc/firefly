@@ -122,7 +122,7 @@ finally:
     cfg.get_client = _store_client
     sf.run_proposal = _orig_proposal
 
-print("=== D. 数据导出包含 .setting_fix（不影响数据同步） ===")
+print("=== D. 数据导出排除 .setting_fix（内部中间态不进备份包） ===")
 fix_dir = cfg.mode_root("story") / ".setting_fix"
 fix_dir.mkdir(parents=True, exist_ok=True)
 (fix_dir / "conversation.jsonl").write_text("x", encoding="utf-8")
@@ -132,8 +132,8 @@ buf = h.wfile
 buf.seek(0)
 with zipfile.ZipFile(buf) as zf:
     names = zf.namelist()
-check("D1 导出 zip 含 .setting_fix/conversation.jsonl",
-      ".setting_fix/conversation.jsonl" in names)
+check("D1 导出 zip 不含 .setting_fix/conversation.jsonl",
+      ".setting_fix/conversation.jsonl" not in names)
 
 print(f"\n统计: PASS={PASS} FAIL={FAIL}")
 sys.exit(0 if FAIL == 0 else 1)

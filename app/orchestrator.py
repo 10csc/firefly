@@ -56,15 +56,25 @@ def _first_degraded_code(*outputs) -> str | None:
     return None
 
 
-def _caps_vision(client) -> bool:
-    """当前 client 的供应商是否支持视觉输入（caps.vision；QuotaClient/本地 client 有 _caps）。"""
+def _caps_vision(client, model: str = "") -> bool:
+    """当前 client 是否可注入图片 block（caps.vision；QuotaClient/本地 client 有 _caps）。
+    relay 链路追加模型门控：payload 模型名不含 vision 时不注入——BYOK 用户模型由
+    服务器配置，非视觉模型注入图片会被上游 400 拒绝、整轮降级（proxy 托管锁
+    mimo-v2.5 支持识图，不受此限）。"""
     try:
-        return bool(getattr(client, "_caps", {}).get("vision", True))
+        if not bool(getattr(client, "_caps", {}).get("vision", True)):
+            return False
+        if hasattr(client, "_user_key"):   # RelayClient 特征（无 _caps 属性）
+            return "vision" in (model or "").lower()
+        return True
     except Exception:
         return False
 
 
 # ── A3 超时预算：单轮硬顶 210s（与网关 600s / 前端 4 分钟对齐的收紧）──
+# 硬顶落实双保险：阶段入口 _stage_timeout 按 min(阶段预算, 剩余总预算) 设 client._timeout，
+# 并把 deadline 挂到 client._deadline；api_client 重试循环在每次 sleep 前也检查 _deadline
+# （耗尽或 delay 截断到 0 即抛 timeout），重试不再拖过单轮总预算。
 _TURN_BUDGET_SEC = 210.0
 _STAGE_TIMEOUT_THINK = 90.0    # 分析/回复（思考档）单阶段超时
 _STAGE_TIMEOUT_NON_THINK = 30.0  # 检索/组织（非思考）单阶段超时
@@ -72,6 +82,7 @@ _STAGE_TIMEOUT_NON_THINK = 30.0  # 检索/组织（非思考）单阶段超时
 
 def _stage_timeout(client, effort: str, deadline: float, stage: str) -> float:
     """按阶段设客户端超时（min(阶段预算, 剩余总预算)）；剩余不足 5s → 立即放弃本轮。
+    同时把 deadline 挂到 client._deadline，供 api_client 重试循环在 sleep 前检查硬顶。
     返回本阶段超时秒数。client 是 _CompatClient / RelayClient / QuotaClient 任意一种。"""
     now = time.time()
     remaining = deadline - now
@@ -82,6 +93,7 @@ def _stage_timeout(client, effort: str, deadline: float, stage: str) -> float:
     sec = min(max(budget, 5.0), max(remaining, 5.0))
     try:
         client._timeout = sec
+        client._deadline = deadline   # 自定义 client 无属性时静默跳过（不约束）
     except Exception:
         pass
     logger.info("[PIPELINE] %s 阶段超时预算 %.0fs（剩余 %.0fs）", stage, sec, remaining)
@@ -389,7 +401,7 @@ def handle_chat(
             recent_history=ctx.get_recent(15),
             memory_head=memory_head,
             environment=environment,
-            vision_images=(vision_images or []) if _caps_vision(client) else [],
+            vision_images=(vision_images or []) if _caps_vision(client, polisher_model) else [],
         ))
         _t2 = time.perf_counter()
         messages = list(polish_output.messages)

@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
 """A2 测试：storage 注册表/原子写/迁移一次性、per-user 覆盖（eff_cfg 优先级）、
-schema 版本化 + WAL、登录失败计数落库、服务器版 add-sticker 经过式（图片不落盘）"""
+schema 版本化 + WAL、登录失败计数落库、服务器版 add-sticker 经过式（图片不落盘）。
+注册表同步策略：images=blob（压缩图整文件可同步）、stickers=metadata（本体本地）、
+config/auth=exclude；is_syncable/is_blob 为同步链路唯一判定口。"""
 import json
 import os
 import sys
@@ -42,10 +44,18 @@ check("A1 对话=merge-jsonl", st.sync_policy("data/conversation.jsonl") == "mer
 check("A2 favorites=merge-favorites", st.sync_policy("data/favorites.json") == "merge-favorites")
 check("A3 memory 文档类 newest", st.sync_policy("data/memory.md") == "newest")
 check("A4 表情包=媒体+metadata", st.is_media("stickers/a.webp") and st.sync_policy("stickers/a.webp") == "metadata")
-check("A5 图片=媒体", st.is_media("images/pic.png"))
+check("A5 图片=媒体+blob 策略", st.is_media("images/pic.png") and st.sync_policy("images/pic.png") == "blob")
 check("A6 config=敏感+exclude", st.is_sensitive("config.json") and st.sync_policy("config.json") == "exclude")
 check("A7 手账 newest", st.sync_policy("journal/手账.md") == "newest")
 check("A8 纠错中间态 exclude", st.sync_policy(".setting_fix/pending.json") == "exclude")
+check("A9 images 可同步（blob 一层白名单）",
+      st.is_syncable("images/uuid.webp") and st.is_blob("images/uuid.webp"))
+check("A10 images 非法扩展/子目录不同步",
+      not st.is_syncable("images/x.bmp") and not st.is_syncable("images/sub/x.png"))
+check("A11 stickers 本体仍不同步（媒体本地策略不变）", not st.is_syncable("stickers/a.webp"))
+check("A12 config/auth 不可同步", not st.is_syncable("config.json") and not st.is_syncable("auth.json"))
+check("A13 未注册文字路径默认可同步（兼容现逻辑）", st.is_syncable("data/fav.json"))
+check("A14 文字类注册项可同步", st.is_syncable("data/conversation.jsonl") and not st.is_blob("data/conversation.jsonl"))
 
 print("=== B. 原子写 / 迁移一次性 / 路径审查 ===")
 fp = _tmp / "x.json"

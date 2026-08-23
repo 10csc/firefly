@@ -119,7 +119,9 @@ export function showHome() {
 }
 window.showHome = showHome;   // ESM 拆分后供 pc_nav.js（classic script）与内联 onclick 使用
 export async function showChat() {
-    // A7 登录前置（本地版）：未登录 → 回首页展开登录表单（本地后端离线时放行）
+    // A7 登录前置（本地版）：未登录 → 回首页展开登录表单（本地后端离线时放行）；
+    // 已登录但离线宽限外（offline_ok===false）→ 显式 POST /auth/verify 一次再定夺：
+    //   200 放行；401 回首页展开登录表单；网络/状态异常回首页提示联网验证。
     if (!IS_SERVER) {
         try {
             const st = await (await fetch("/auth/state")).json();
@@ -130,7 +132,28 @@ export async function showChat() {
                 try { showToast("请先登录（登录后本地数据可云端同步，Key 仍只存本机）"); } catch (e) {}
                 return;
             }
+            if (st.logged_in && st.offline_ok === false) {
+                let vResp = null;
+                try { vResp = await fetch("/auth/verify", {method: "POST"}); } catch (e) { vResp = null; }
+                if (vResp && vResp.status === 200) {
+                    // verify 通过：放行
+                } else if (vResp && vResp.status === 401) {
+                    showHome();
+                    showAuthModule();
+                    try { toggleAuthForms(); } catch (e) {}
+                    try { showToast("登录已过期，请重新登录"); } catch (e) {}
+                    return;
+                } else {
+                    // 网络异常/意外状态码：本地登录态无法联网核验
+                    showHome();
+                    showAuthModule();
+                    try { showToast("登录已过期，需联网验证一次"); } catch (e) {}
+                    return;
+                }
+            }
         } catch (e) { /* 本地后端未就绪：放行（聊天不依赖账号） */ }
+        // 进聊天页/模式切换成功后：补一次云端同步（不 await 不阻塞页面；节流期内自动跳过）
+        try { window.autoSyncNow && window.autoSyncNow(); } catch (e) {}
     }
     const fixView = document.getElementById("fix-view");    if (fixView) fixView.classList.remove("show");
     homeView.classList.remove("show");

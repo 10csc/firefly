@@ -1,6 +1,7 @@
 // 聊天核心：消息渲染 / 打字机 / 长按菜单 / 引用 / 发送 / 历史 / 休息撤回
 import { S, SESSION_ID, inputEl, messagesEl, sendBtn } from "./state.js";
-import { _toast, showToast, stickerSrc, idbSaveMedia, idbGetMedia } from "./util.js";
+import { _toast, escapeHtml, showToast, stickerSrc } from "./util.js";
+import { compressImage } from "./imgzip.js";
 import { API_BASE, IS_SERVER } from "./api.js";
 import { TB_AVATARS, closeMenu, openAvatarPicker, openMenu, openSettings, tbChoice } from "./panels.js";
 import { CURRENT_MODE, MODE_NAMES, _modeGen } from "./views.js";
@@ -130,8 +131,9 @@ async function addSticker(stickerPath, who, prepend = false, seq = null, label =
     return row;
 }
 
-/** A9 图片消息渲染：本地版向后端 /image/<img_id> 取图；服务器版图片本体在 IndexedDB（key=img_id），
- *  缺失 → 显示 desc 文字占位（图片字节不出设备，服务器只有描述）。 */
+/** A9 图片消息渲染：两端统一走后端 /image?id=&mode= 取字节（服务器版也上传落盘，IndexedDB 图片存储已退役）。
+ *  服务器版 <img> 标签带不了 Bearer：经鉴权 fetch 拿字节转 objectURL；本地版同源直接 <img src>。
+ *  缺失/失败 → 显示 desc 文字占位。 */
 async function addImage(msg, who, prepend = false, seq = null, quote = null) {
     const row = document.createElement("div");
     row.className = "msg-row " + (who === "user" ? "user" : "firefly") + " image-row";
@@ -140,11 +142,16 @@ async function addImage(msg, who, prepend = false, seq = null, quote = null) {
     const imgId = (msg.img_id || "").toString().slice(0, 200);
     const desc = (msg.desc || "").toString().slice(0, 300);
     let src = null;
-    if (IS_SERVER) {
-        const blob = await idbGetMedia(imgId);
-        if (blob) { try { src = URL.createObjectURL(blob); } catch (e) {} }
-    } else if (imgId) {
-        src = "/image?id=" + encodeURIComponent(imgId);
+    if (imgId) {
+        const url = "/image?id=" + encodeURIComponent(imgId) + "&mode=" + encodeURIComponent(CURRENT_MODE);
+        if (IS_SERVER) {
+            try {
+                const resp = await fetch(url);
+                if (resp.ok) { try { src = URL.createObjectURL(await resp.blob()); } catch (e) {} }
+            } catch (e) {}
+        } else {
+            src = url;
+        }
     }
     let content;
     if (src) {
@@ -509,44 +516,74 @@ function importData() {
 }
 window.importData = importData;
 
-/** 备份到账号（服务器模式专属）：导出 zip → 上传 /sync/upload。 */
-async function syncToAccount() {
-    if (!IS_SERVER) return;
-    _toast("正在备份到账号…");
-    try {
-        const resp = await fetch(`/export-data?mode=${encodeURIComponent(CURRENT_MODE)}`);
-        if (!resp.ok) { _toast("导出失败，无法备份"); return; }
-        const blob = await resp.blob();
-        const fd = new FormData();
-        fd.append("file", blob, `firefly-backup-${CURRENT_MODE}.zip`);
-        fd.append("mode", CURRENT_MODE);
-        const up = await fetch("/sync/upload", { method: "POST", body: fd });
-        const data = await up.json().catch(() => ({}));
-        if (up.ok && data.ok) _toast("已备份到账号（云端保留最近 3 份）");
-        else _toast("备份失败：" + (data.error || ""));
-    } catch (e) { _toast("备份失败，请检查网络"); }
+/** 本地备份管理（备份存后端 backups/ 目录；云端账号备份已下线，改由 /sync/now 增量同步）。
+ *  列表 / 新建 / 恢复 / 删除 / 下载；恢复与删除沿用 confirm 二次确认。 */
+function _fmtSize(n) {
+    n = Number(n) || 0;
+    if (n >= 1024 * 1024) return (n / 1024 / 1024).toFixed(1) + " MB";
+    if (n >= 1024) return (n / 1024).toFixed(1) + " KB";
+    return n + " B";
 }
-window.syncToAccount = syncToAccount;
 
-/** 从账号恢复（服务器模式专属）：下载最新云端备份 → 导入。 */
-async function restoreFromAccount() {
-    if (!IS_SERVER) return;
-    if (!confirm(`从账号恢复将覆盖当前「${MODE_NAMES[CURRENT_MODE] || CURRENT_MODE}」的全部数据（导入前会自动备份现有数据）。\n\n确定恢复吗？`)) return;
-    _toast("正在从账号恢复…");
+async function loadBackups() {
+    const list = document.getElementById("backup-list");
+    if (!list) return;
     try {
-        const resp = await fetch(`/sync/download?mode=${encodeURIComponent(CURRENT_MODE)}`);
-        if (!resp.ok) {
-            const d = await resp.json().catch(() => ({}));
-            _toast(d.error || "账号还没有备份");
+        const resp = await fetch("/backups");
+        const data = await resp.json();
+        const items = (data.backups || []).filter(b => !b.mode || b.mode === CURRENT_MODE);
+        if (!items.length) {
+            list.innerHTML = '<div style="color:var(--fg-muted);font-size:0.75em">还没有备份，点「新建备份」存一份</div>';
             return;
         }
-        const blob = await resp.blob();
-        const fd = new FormData();
-        fd.append("file", blob, `firefly-restore-${CURRENT_MODE}.zip`);
-        fd.append("mode", CURRENT_MODE);
-        const up = await fetch("/import-data", { method: "POST", body: fd });
-        const data = await up.json().catch(() => ({}));
-        if (up.ok && data.ok) {
+        list.innerHTML = items.map(b => `
+        <div class="backup-row" data-name="${escapeHtml(b.name)}" style="display:flex;align-items:center;gap:6px;padding:5px 0;border-bottom:1px solid rgba(255,255,255,0.06);font-size:0.75em">
+            <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escapeHtml(b.name)}">${escapeHtml(b.time || b.name)}</span>
+            <span style="color:var(--fg-muted);flex-shrink:0">${_fmtSize(b.size)}</span>
+            <button type="button" class="bk-restore">恢复</button>
+            <button type="button" class="bk-del">删除</button>
+            <button type="button" class="bk-download">下载</button>
+        </div>`).join("");
+        list.querySelectorAll(".backup-row").forEach(row => {
+            const name = row.dataset.name;
+            row.querySelector(".bk-restore").addEventListener("click", () => restoreBackup(name));
+            row.querySelector(".bk-del").addEventListener("click", () => deleteBackup(name));
+            row.querySelector(".bk-download").addEventListener("click", () => downloadBackup(name));
+        });
+    } catch (e) {
+        list.innerHTML = '<div style="color:#c66;font-size:0.75em">备份列表加载失败</div>';
+    }
+}
+window.loadBackups = loadBackups;
+
+async function createBackup() {
+    _toast("正在创建备份…");
+    try {
+        const resp = await fetch("/backup/create", {
+            method: "POST", headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({mode: CURRENT_MODE}),
+        });
+        const data = await resp.json().catch(() => ({}));
+        if (resp.ok && data.ok) {
+            _toast("备份已创建（" + _fmtSize(data.size) + "）");
+            loadBackups();
+        } else {
+            _toast("备份失败：" + (data.error || ""));
+        }
+    } catch (e) { _toast("备份失败，请检查网络"); }
+}
+window.createBackup = createBackup;
+
+async function restoreBackup(name) {
+    if (!confirm(`用备份「${name}」覆盖当前「${MODE_NAMES[CURRENT_MODE] || CURRENT_MODE}」的全部数据？\n\n确定恢复吗？`)) return;
+    _toast("正在恢复备份…");
+    try {
+        const resp = await fetch("/backup/restore", {
+            method: "POST", headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({name}),
+        });
+        const data = await resp.json().catch(() => ({}));
+        if (resp.ok && data.ok) {
             _toast("恢复成功，正在重新加载…");
             setTimeout(() => location.reload(), 800);
         } else {
@@ -554,7 +591,46 @@ async function restoreFromAccount() {
         }
     } catch (e) { _toast("恢复失败，请检查网络"); }
 }
-window.restoreFromAccount = restoreFromAccount;
+
+async function deleteBackup(name) {
+    if (!confirm(`删除备份「${name}」？此操作不可撤销。`)) return;
+    try {
+        const resp = await fetch("/backup/delete", {
+            method: "POST", headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({name}),
+        });
+        const data = await resp.json().catch(() => ({}));
+        if (resp.ok && data.ok) {
+            _toast("备份已删除");
+            loadBackups();
+        } else {
+            _toast("删除失败：" + (data.error || ""));
+        }
+    } catch (e) { _toast("删除失败，请检查网络"); }
+}
+
+/** 下载备份 zip（沿用导出通道 GET /export-data 的浏览器下载；带 name 时后端给对应备份包）。 */
+async function downloadBackup(name) {
+    const qs = `mode=${encodeURIComponent(CURRENT_MODE)}` + (name ? `&name=${encodeURIComponent(name)}` : "");
+    if (!IS_SERVER) {
+        window.location.href = `/export-data?${qs}`;
+        _toast("正在下载备份…");
+        return;
+    }
+    try {
+        const resp = await fetch(`/export-data?${qs}`);
+        if (!resp.ok) { _toast("下载失败，请稍后再试"); return; }
+        const blob = await resp.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = name || `firefly-backup-${CURRENT_MODE}.zip`;
+        document.body.appendChild(a);
+        a.click();
+        setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 1500);
+        _toast("已开始下载备份");
+    } catch (e) { _toast("下载失败，请检查网络"); }
+}
 
 /** 等待回复期间轮询流水线阶段（检索→分析→回复→表情包），把"对方正在输入…"换成具体阶段。
  *  仅在拿到 stage 时替换文本；请求结束由 _chatSend 的 finally 清除。
@@ -690,7 +766,8 @@ async function send() {
 }
 
 // ═══════════════════════════════════════════
-// 发图片（A9）：🖼 按钮 → 选图 → 上传/本地化 → 描述 → 发送 image 消息
+// 发图片（A9）：🖼 按钮 → 选图 → 压缩 → 上传落盘 → 描述 → 发送 image 消息
+// （图片链路统一：本地版/服务器版都走 /upload-image；服务器版请求由 fetch 包装器带登录 Bearer）
 // ═══════════════════════════════════════════
 const imageBtn = document.getElementById("image-btn");
 const imageFileInput = document.getElementById("image-file-input");
@@ -702,24 +779,20 @@ if (imageBtn && imageFileInput) {
         if (!f || S.waiting) return;
         if (!/^image\/(png|jpe?g|webp|gif)$/.test(f.type || "")) { _toast("仅支持 png/jpg/webp/gif 图片"); return; }
         if (f.size > 10 * 1024 * 1024) { _toast("图片过大（上限 10MB）"); return; }
+        // 发送前压缩（imgzip.js）：GIF/小图原样；任何失败降级原图不阻塞发送
+        const {blob, ext} = await compressImage(f);
         let imgId = "", desc = "";
-        if (IS_SERVER) {
-            // 服务器版铁律：图片字节只存本机（IndexedDB），服务器只收描述文字
-            imgId = "img_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
-            await idbSaveMedia(imgId, f);
-        } else {
-            try {
-                const fd = new FormData();
-                fd.append("file", f);
-                fd.append("mode", CURRENT_MODE);
-                const resp = await fetch("/upload-image", {method: "POST", body: fd});
-                const data = await resp.json();
-                if (!data.ok) { _toast("图片上传失败：" + (data.error || "")); return; }
-                imgId = data.img_id || "";
-                desc = data.desc || "";
-                if (data.need_desc) desc = "";
-            } catch (e) { _toast("网络错误，图片未发送"); return; }
-        }
+        try {
+            const fd = new FormData();
+            fd.append("file", blob, "upload." + ext);   // 压缩产物是匿名 Blob：补文件名让后端拿到正确扩展名
+            fd.append("mode", CURRENT_MODE);
+            const resp = await fetch("/upload-image", {method: "POST", body: fd});
+            const data = await resp.json();
+            if (!data.ok) { _toast("图片上传失败：" + (data.error || "")); return; }   // 配额满等错误直接透传后端文案
+            imgId = data.img_id || "";
+            desc = data.desc || "";
+            if (data.need_desc) desc = "";
+        } catch (e) { _toast("网络错误，图片未发送"); return; }
         if (!desc) {
             // 描述缺失（vision 不支持/失败）：让用户填一句（可为空 → [图片] 占位）
             desc = (window.prompt("流萤还没有识图能力，这幅图是什么？（可留空）", "") || "").trim().slice(0, 300);
@@ -889,6 +962,7 @@ function renderHistoryMessage(m, prepend=false) {
     }
     if (m.type==="sticker") addSticker(m.path, m.who, prepend, m.seq, m.label, m.quote);
     else if (m.type==="narration") addNarration(m.text, m.style, prepend, m.seq);
+    else if (m.type==="image") addImage(m, m.who, prepend, m.seq, m.quote);
     else addTextMessage(m.content, m.who, prepend, m.seq, m.quote);
 }
 export async function loadHistory(beforeSeq=null) {

@@ -116,6 +116,7 @@ export function initAuth() {
             if (meta) meta.textContent = d.offline_ok ? "已登录 · 云端同步就绪" : "登录已过期，请重新登录";
             if (loginEntry) loginEntry.style.display = "none";
             if (userEntry) userEntry.style.display = "flex";
+            try { window.autoSyncNow && window.autoSyncNow(); } catch (e) {}   // 登录态确认：补一次云端同步（10 分钟节流内自动跳过）
         } else {
             if (loginEntry) loginEntry.style.display = "flex";
             if (userEntry) userEntry.style.display = "none";

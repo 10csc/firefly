@@ -23,7 +23,7 @@
 | 信号量 | 主动性并发控制：REPLY（回复通道锁）/ ACTIVE（主动互斥）/ HIDDEN（隐藏式冷却） | app/modules/proactive.py | 服务器版按 (mode, 用户) 分键 |
 | 主动性 | 流萤主动找开拓者：主动式（轮次+概率）/ 概率式（空闲触发）/ 隐藏式（安卓后台） | app/modules/proactive.py、前端轮询 | |
 | 手账 | 流萤口吻的重要对话与约定记录 | user_data/{mode}/journal/手账.md | 休息时 LLM 更新 |
-| 记忆 | 跨会话记忆：休息时整理 memory.md（头部概括 + 尾部事实） | user_data/{mode}/data/memory.md、memory_manager.py | |
+| 记忆 | 窗口外旧对话的压缩存档：休息时整理 memory.md（头部概括 + 尾部事实） | user_data/{mode}/data/memory.md、memory_manager.py | |
 | version.json | 服务器版检查更新的单文件版本源 | server/version.json（运维放置） | 本地版仍走 GitHub/Gitee 双源 |
 | server_url | 遗留死配置：config.json 字段，无消费者 | app/modules/app_config.py | 待清理（服务器版用 Bearer token，不用此字段） |
 | X-API-Key 头 | 服务器版用户 Key 传递方式（浏览器 localStorage → 请求头 → 服务器内存用后即弃） | server/frontend/app.js、server/server_app.py | 服务器不落盘 |

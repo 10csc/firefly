@@ -6,7 +6,8 @@
   setting_fix_store / memory_manager 等处复用（消灭 3 处各自实现）；
 - **数据类型注册表 REGISTRY**：任何新数据类型 = 注册一行，声明
   位置/格式/是否媒体类/是否敏感/同步策略——导出、同步、备份链路的排除点都查这里
-  （A0 媒体本地策略的执行面：媒体类注册项自动不进传输清单，元数据随行）；
+  （A0 媒体本地策略的执行面：metadata 类媒体本体不进传输清单、元数据随行；
+  blob 类媒体（images/ 压缩图）作为不可变文件整份传输，见 `is_blob`/`is_syncable`）；
 - **一次性迁移**：`migrate_once`（目标缺则从旧源拷贝，幂等）收口
   「当前路径 + legacy 路径」重复模式。
 
@@ -83,7 +84,8 @@ def migrate_once(target: Path, legacy: Path | None) -> bool:
 # media=True：媒体类（A0 铁律——服务器只传输不保存图片本体，元数据随行）；
 # sensitive=True：敏感字段（导出/同步剥除，如 API Key）；
 # sync：同步策略——merge-jsonl（append 行合并）/ merge-favorites（并集）/ newest（mtime 新者胜）/
-#       metadata（媒体：只同步文字元数据）/ exclude（不进同步清单）。
+#       blob（不可变二进制：整文件上传/下载，不做内容合并，按 sha 去重）/
+#       metadata（媒体：只同步文字元数据，本体本地持有）/ exclude（不进同步清单）。
 REGISTRY: dict[str, dict] = {
     "conversation":    {"rel": "{mode}/data/conversation.jsonl", "format": "jsonl",
                         "media": False, "sensitive": False, "sync": "merge-jsonl",
@@ -108,8 +110,8 @@ REGISTRY: dict[str, dict] = {
                         "media": True, "sensitive": False, "sync": "metadata",
                         "note": "用户表情包：图片本体本地持有；注册表文字元数据（label/category/enabled/哈希）可同步"},
     "images":          {"rel": "{mode}/images/", "format": "binary+meta",
-                        "media": True, "sensitive": False, "sync": "metadata",
-                        "note": "聊天图片（A9）：图片本地持有，conversation 只存 img_id+desc"},
+                        "media": True, "sensitive": False, "sync": "blob",
+                        "note": "聊天图片（A9）：压缩图=正式消息数据，整文件双向同步（uuid 命名不可变，不合并）"},
     "config":          {"rel": "config.json", "format": "json", "media": False,
                         "sensitive": True, "sync": "exclude",
                         "note": "含 API Key（供应商配置）——导出剥离、不进同步"},
@@ -150,6 +152,38 @@ def sync_policy(relpath: str) -> str:
     if t:
         return t["spec"].get("sync", "exclude")
     return "exclude"
+
+
+# blob 类（images/ 压缩图）放行扩展名：只放行 {mode}/images/ 一层目录下的这些图片格式
+BLOB_IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".gif"}
+
+
+def is_blob(relpath: str) -> bool:
+    """是否不可变 blob 类（images/ 压缩图：整文件上传/下载，不做内容合并）。"""
+    return sync_policy(relpath) == "blob"
+
+
+def is_syncable(relpath: str) -> bool:
+    """是否可进入同步传输（以 REGISTRY 的 sync 策略为准，同步链路的唯一判定口）：
+    - exclude（config/auth/.setting_fix）→ 否；
+    - blob（images/ 压缩图）→ 仅放行 {mode}/images/ 一层目录、白名单扩展名（不递归子目录）；
+    - 媒体类本体（metadata，如 stickers/ 二进制）→ 否（A0 媒体本地策略不变）；
+    - 其余注册项（merge-jsonl/merge-favorites/newest）→ 是；
+    - 未注册路径 → 是（文字类由调用方按扩展名再筛，兼容现逻辑）。
+    """
+    rel = relpath.replace("\\", "/").lstrip("/")
+    t = get_type(rel)
+    if t is None:
+        return True
+    policy = t["spec"].get("sync", "exclude")
+    if policy == "exclude":
+        return False
+    if policy == "blob":
+        parts = rel.split("/")
+        top = t["spec"]["rel"].replace("{mode}/", "").replace("{mode}", "").strip("/").split("/")[0]
+        return (len(parts) == 2 and parts[0] == top
+                and Path(parts[-1]).suffix.lower() in BLOB_IMAGE_EXTS)
+    return not t["spec"].get("media", False)
 
 
 def file_sha256(fp: Path) -> str:

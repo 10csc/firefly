@@ -119,6 +119,80 @@ async function stickerSrc(file, isServer, apiBase) {
 }
 
 
+/* ── 来源：js/imgzip.js ── */
+// 图片压缩（发送前）：大图等比缩到单边 ≤1024 并重编码，控制上传/落盘体积。
+// compressImage(file) → Promise<{blob, ext, wasCompressed}>
+//   - GIF 原样返回（动帧过 canvas 会丢）；
+//   - 单边 ≤1024 且 ≤300KB 原样返回（够小不折腾）；
+//   - 否则 canvas 等比缩到单边 1024：JPEG / 无透明通道 PNG → image/jpeg q0.85；
+//     有透明通道的 PNG 保持 image/png（只缩放，不丢透明）。
+// 降级兜底：任何一步失败都原样返回 + console.warn（压缩是优化，不是发送门槛）。
+const IMGZIP_MAX_SIDE = 1024;
+const IMGZIP_SKIP_BYTES = 300 * 1024;
+
+/** 从 MIME/文件名推扩展名（压缩失败原样返回时用） */
+function _imgzipExt(file) {
+    const m = /^image\/(png|jpe?g|webp|gif)$/.exec((file && file.type) || "");
+    if (m) return m[1] === "jpeg" ? "jpg" : m[1];
+    const n = ((file && file.name) || "").split(".").pop().toLowerCase();
+    return /^[a-z0-9]{2,5}$/.test(n) ? n : "jpg";
+}
+
+/** 抽样检测画布是否含透明像素（每 16 像素采一个，够判透明 PNG） */
+function _imgzipHasAlpha(ctx, w, h) {
+    try {
+        const data = ctx.getImageData(0, 0, w, h).data;
+        for (let i = 3; i < data.length; i += 4 * 16) {
+            if (data[i] < 255) return true;
+        }
+    } catch (e) {}
+    return false;
+}
+
+async function compressImage(file) {
+    const fallback = { blob: file, ext: _imgzipExt(file), wasCompressed: false };
+    try {
+        if (!file || typeof createImageBitmap !== "function") return fallback;
+        if (file.type === "image/gif") return fallback;   // GIF 原样
+        const bmp = await createImageBitmap(file);
+        try {
+            const w = bmp.width, h = bmp.height;
+            if (!w || !h) return fallback;
+            const needResize = Math.max(w, h) > IMGZIP_MAX_SIDE;
+            if (!needResize && file.size <= IMGZIP_SKIP_BYTES) return fallback;
+            const scale = needResize ? IMGZIP_MAX_SIDE / Math.max(w, h) : 1;
+            const cw = Math.max(1, Math.round(w * scale));
+            const ch = Math.max(1, Math.round(h * scale));
+            const canvas = document.createElement("canvas");
+            canvas.width = cw;
+            canvas.height = ch;
+            const ctx = canvas.getContext("2d");
+            // 先画一次取 alpha：有透明才保留 png，否则转 jpeg 时白底重绘
+            ctx.drawImage(bmp, 0, 0, cw, ch);
+            const keepPng = file.type === "image/png" && _imgzipHasAlpha(ctx, cw, ch);
+            if (!keepPng) {
+                ctx.fillStyle = "#ffffff";
+                ctx.fillRect(0, 0, cw, ch);
+                ctx.drawImage(bmp, 0, 0, cw, ch);
+            }
+            const blob = await new Promise(res => {
+                if (keepPng) canvas.toBlob(res, "image/png");
+                else canvas.toBlob(res, "image/jpeg", 0.85);
+            });
+            // toBlob 为空/失败：原样返回（压缩失败不等于发送失败）
+            if (!blob) return fallback;
+            if (!needResize && !keepPng && blob.size >= file.size) return fallback;
+            return { blob, ext: keepPng ? "png" : "jpg", wasCompressed: true };
+        } finally {
+            try { bmp.close(); } catch (e) {}
+        }
+    } catch (e) {
+        console.warn("compressImage 压缩失败，原样返回", e);
+        return fallback;
+    }
+}
+
+
 /* ── 来源：js/api.js ── */
 // 双模式与请求封装：FIREFLY_MODE / fetch 鉴权注入 / 登录与注册表单
 
@@ -236,6 +310,7 @@ function initAuth() {
             if (meta) meta.textContent = d.offline_ok ? "已登录 · 云端同步就绪" : "登录已过期，请重新登录";
             if (loginEntry) loginEntry.style.display = "none";
             if (userEntry) userEntry.style.display = "flex";
+            try { window.autoSyncNow && window.autoSyncNow(); } catch (e) {}   // 登录态确认：补一次云端同步（10 分钟节流内自动跳过）
         } else {
             if (loginEntry) loginEntry.style.display = "flex";
             if (userEntry) userEntry.style.display = "none";
@@ -466,6 +541,7 @@ const settingsPanel = document.getElementById("settings-panel");
 function openSettings() {
     settingsPanel.classList.add("show");
     loadConfig();
+    try { window.loadBackups && window.loadBackups(); } catch (e) {}   // 本地备份列表（chat.js 注册）
     try { window.btActivate && window.btActivate("mine"); } catch (e) {}
 }
 function closeSettings() { settingsPanel.classList.remove("show"); }
@@ -1002,8 +1078,6 @@ async function loadConfig() {
             applyApiSource(IS_SERVER && localSrc === "proxy");
         }
         if (srcField) srcField.style.display = IS_SERVER ? "" : "none";
-        const syncFields = _$("sync-fields");
-        if (syncFields) syncFields.style.display = IS_SERVER ? "" : "none";
         // A5：增量同步（本地版登录后可用；服务器版数据天然在云端）
         const syncNowField = _$("sync-now-field");
         if (syncNowField) syncNowField.style.display = IS_SERVER ? "none" : "";
@@ -1137,26 +1211,91 @@ _$("key-save")?.addEventListener("click", () => saveConfigNow(true));
 // ═══════════════════════════════════════════
 // 状态 tab（数值状态系统已下线，接回后再渲染条）
 // ═══════════════════════════════════════════
-/** A1 增量同步（W4 编排端点）：登录后把本地文字数据与云端账号双向合并 */
-window.syncNow = async function () {
+/** A1 增量同步（W4 编排端点 /sync/now）：登录后把本地文字数据与云端账号双向合并。
+ *  window.autoSyncNow(force)：仅本地版 + 已登录（/auth/state 确认）才发起；
+ *  force=false 时 10 分钟节流（localStorage 时间戳），force=true（手动「立即同步」）跳过节流。
+ *  进行中显示非阻塞状态条「正在同步…」；完成 toast 计数；冲突橙色警告；失败 toast 原因。
+ *  挂接点：登录态确认（api.js initAuth）/ 进聊天页与模式切换（views.js showChat）/ 回前台（下方 visibilitychange）。 */
+const _SYNC_THROTTLE_MS = 10 * 60 * 1000;
+let _syncing = false;
+let _syncPill = null;
+let _warnToastTimer = null;
+
+function _syncPillShow(text) {
+    if (!_syncPill) {
+        _syncPill = document.createElement("div");
+        _syncPill.style.cssText = "position:fixed;bottom:14px;left:50%;transform:translateX(-50%);z-index:998;background:rgba(28,30,46,.96);color:#e8e0d0;border:1px solid rgba(255,196,107,.45);border-radius:10px;padding:7px 14px;font-size:0.75em;box-shadow:0 6px 22px rgba(0,0,0,.45);pointer-events:none;display:none";
+        document.body.appendChild(_syncPill);
+    }
+    _syncPill.textContent = text;
+    _syncPill.style.display = "block";
+}
+function _syncPillHide() { if (_syncPill) _syncPill.style.display = "none"; }
+
+/** 橙色警告 toast（样式沿用 _toast 浮层，边框改橙）：冲突备份等需要用户注意但非阻断的提醒 */
+function _warnToast(msg) {
+    let t = document.getElementById("app-warn-toast");
+    if (!t) {
+        t = document.createElement("div");
+        t.id = "app-warn-toast";
+        t.style.cssText = "position:fixed;top:56px;left:50%;transform:translateX(-50%);z-index:999;background:rgba(46,34,22,.97);color:#ffd9b0;border:1px solid rgba(255,150,80,.65);border-radius:10px;padding:9px 16px;font-size:0.8em;max-width:86vw;text-align:center;box-shadow:0 6px 22px rgba(0,0,0,.45);pointer-events:none;display:none";
+        document.body.appendChild(t);
+    }
+    t.textContent = msg;
+    t.style.display = "block";
+    clearTimeout(_warnToastTimer);
+    _warnToastTimer = setTimeout(() => { t.style.display = "none"; }, 4000);
+}
+
+window.autoSyncNow = async function (force) {
+    if (IS_SERVER) return;   // 服务器版数据天然在云端，无需同步
+    if (_syncing) return;    // 并发护栏：上一次同步还在飞
+    if (!force) {
+        let last = 0;
+        try { last = parseInt(localStorage.getItem("firefly_last_sync") || "0", 10) || 0; } catch (e) {}
+        if (Date.now() - last < _SYNC_THROTTLE_MS) return;   // 节流期内静默跳过
+    }
+    try {
+        const st = await (await fetch("/auth/state")).json();
+        if (!st.logged_in || st.offline_ok === false) return;   // 未登录/登录已过期：静默跳过
+    } catch (e) { return; }   // 本地后端未就绪：静默
+    _syncing = true;
+    try { localStorage.setItem("firefly_last_sync", String(Date.now())); } catch (e) {}
     const msg = document.getElementById("sync-now-msg");
     if (msg) msg.textContent = "同步中…";
+    _syncPillShow("正在同步…");
     try {
         const r = await fetch("/sync/now", {
             method: "POST",
             headers: {"Content-Type": "application/json"},
             body: JSON.stringify({mode: CURRENT_MODE}),
         });
-        const d = await r.json();
-        if (msg) {
-            msg.textContent = d.ok
-                ? `✓ 已同步：上传 ${(d.uploaded || []).length}，拉取合并 ${(d.merged || []).length}，冲突 ${d.conflicts || 0}（见 .sync_backups）`
-                : "同步未完成：" + (d.error || "请先登录账号");
+        const d = await r.json().catch(() => ({}));
+        if (d.ok) {
+            const text = `同步完成：上传 ${(d.uploaded || []).length} · 下载 ${(d.downloaded || []).length} · 合并 ${(d.merged || []).length}`;
+            const conflicts = d.conflicts || 0;
+            if (msg) msg.textContent = "✓ " + text + (conflicts ? `，冲突 ${conflicts}（见 .sync_backups）` : "");
+            showToast(text);
+            if (conflicts > 0) _warnToast(`${conflicts} 处冲突已各自备份`);
+        } else {
+            const err = "同步未完成：" + (d.error || "请先登录账号");
+            if (msg) msg.textContent = err;
+            showToast(err);
         }
     } catch (e) {
         if (msg) msg.textContent = "网络错误，稍后再试";
+        showToast("同步失败：网络错误，稍后再试");
+    } finally {
+        _syncPillHide();
+        _syncing = false;
     }
 };
+window.syncNow = function () { window.autoSyncNow(true); };   // 手动「立即同步」：强制不节流
+
+// 回前台补一次同步（节流期内自动跳过，不打扰）
+document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") window.autoSyncNow();
+});
 function loadStateTab() {
     const list = document.getElementById("state-list");
     if (list) {
@@ -1682,8 +1821,9 @@ async function addSticker(stickerPath, who, prepend = false, seq = null, label =
     return row;
 }
 
-/** A9 图片消息渲染：本地版向后端 /image/<img_id> 取图；服务器版图片本体在 IndexedDB（key=img_id），
- *  缺失 → 显示 desc 文字占位（图片字节不出设备，服务器只有描述）。 */
+/** A9 图片消息渲染：两端统一走后端 /image?id=&mode= 取字节（服务器版也上传落盘，IndexedDB 图片存储已退役）。
+ *  服务器版 <img> 标签带不了 Bearer：经鉴权 fetch 拿字节转 objectURL；本地版同源直接 <img src>。
+ *  缺失/失败 → 显示 desc 文字占位。 */
 async function addImage(msg, who, prepend = false, seq = null, quote = null) {
     const row = document.createElement("div");
     row.className = "msg-row " + (who === "user" ? "user" : "firefly") + " image-row";
@@ -1692,11 +1832,16 @@ async function addImage(msg, who, prepend = false, seq = null, quote = null) {
     const imgId = (msg.img_id || "").toString().slice(0, 200);
     const desc = (msg.desc || "").toString().slice(0, 300);
     let src = null;
-    if (IS_SERVER) {
-        const blob = await idbGetMedia(imgId);
-        if (blob) { try { src = URL.createObjectURL(blob); } catch (e) {} }
-    } else if (imgId) {
-        src = "/image?id=" + encodeURIComponent(imgId);
+    if (imgId) {
+        const url = "/image?id=" + encodeURIComponent(imgId) + "&mode=" + encodeURIComponent(CURRENT_MODE);
+        if (IS_SERVER) {
+            try {
+                const resp = await fetch(url);
+                if (resp.ok) { try { src = URL.createObjectURL(await resp.blob()); } catch (e) {} }
+            } catch (e) {}
+        } else {
+            src = url;
+        }
     }
     let content;
     if (src) {
@@ -2061,44 +2206,74 @@ function importData() {
 }
 window.importData = importData;
 
-/** 备份到账号（服务器模式专属）：导出 zip → 上传 /sync/upload。 */
-async function syncToAccount() {
-    if (!IS_SERVER) return;
-    _toast("正在备份到账号…");
-    try {
-        const resp = await fetch(`/export-data?mode=${encodeURIComponent(CURRENT_MODE)}`);
-        if (!resp.ok) { _toast("导出失败，无法备份"); return; }
-        const blob = await resp.blob();
-        const fd = new FormData();
-        fd.append("file", blob, `firefly-backup-${CURRENT_MODE}.zip`);
-        fd.append("mode", CURRENT_MODE);
-        const up = await fetch("/sync/upload", { method: "POST", body: fd });
-        const data = await up.json().catch(() => ({}));
-        if (up.ok && data.ok) _toast("已备份到账号（云端保留最近 3 份）");
-        else _toast("备份失败：" + (data.error || ""));
-    } catch (e) { _toast("备份失败，请检查网络"); }
+/** 本地备份管理（备份存后端 backups/ 目录；云端账号备份已下线，改由 /sync/now 增量同步）。
+ *  列表 / 新建 / 恢复 / 删除 / 下载；恢复与删除沿用 confirm 二次确认。 */
+function _fmtSize(n) {
+    n = Number(n) || 0;
+    if (n >= 1024 * 1024) return (n / 1024 / 1024).toFixed(1) + " MB";
+    if (n >= 1024) return (n / 1024).toFixed(1) + " KB";
+    return n + " B";
 }
-window.syncToAccount = syncToAccount;
 
-/** 从账号恢复（服务器模式专属）：下载最新云端备份 → 导入。 */
-async function restoreFromAccount() {
-    if (!IS_SERVER) return;
-    if (!confirm(`从账号恢复将覆盖当前「${MODE_NAMES[CURRENT_MODE] || CURRENT_MODE}」的全部数据（导入前会自动备份现有数据）。\n\n确定恢复吗？`)) return;
-    _toast("正在从账号恢复…");
+async function loadBackups() {
+    const list = document.getElementById("backup-list");
+    if (!list) return;
     try {
-        const resp = await fetch(`/sync/download?mode=${encodeURIComponent(CURRENT_MODE)}`);
-        if (!resp.ok) {
-            const d = await resp.json().catch(() => ({}));
-            _toast(d.error || "账号还没有备份");
+        const resp = await fetch("/backups");
+        const data = await resp.json();
+        const items = (data.backups || []).filter(b => !b.mode || b.mode === CURRENT_MODE);
+        if (!items.length) {
+            list.innerHTML = '<div style="color:var(--fg-muted);font-size:0.75em">还没有备份，点「新建备份」存一份</div>';
             return;
         }
-        const blob = await resp.blob();
-        const fd = new FormData();
-        fd.append("file", blob, `firefly-restore-${CURRENT_MODE}.zip`);
-        fd.append("mode", CURRENT_MODE);
-        const up = await fetch("/import-data", { method: "POST", body: fd });
-        const data = await up.json().catch(() => ({}));
-        if (up.ok && data.ok) {
+        list.innerHTML = items.map(b => `
+        <div class="backup-row" data-name="${escapeHtml(b.name)}" style="display:flex;align-items:center;gap:6px;padding:5px 0;border-bottom:1px solid rgba(255,255,255,0.06);font-size:0.75em">
+            <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escapeHtml(b.name)}">${escapeHtml(b.time || b.name)}</span>
+            <span style="color:var(--fg-muted);flex-shrink:0">${_fmtSize(b.size)}</span>
+            <button type="button" class="bk-restore">恢复</button>
+            <button type="button" class="bk-del">删除</button>
+            <button type="button" class="bk-download">下载</button>
+        </div>`).join("");
+        list.querySelectorAll(".backup-row").forEach(row => {
+            const name = row.dataset.name;
+            row.querySelector(".bk-restore").addEventListener("click", () => restoreBackup(name));
+            row.querySelector(".bk-del").addEventListener("click", () => deleteBackup(name));
+            row.querySelector(".bk-download").addEventListener("click", () => downloadBackup(name));
+        });
+    } catch (e) {
+        list.innerHTML = '<div style="color:#c66;font-size:0.75em">备份列表加载失败</div>';
+    }
+}
+window.loadBackups = loadBackups;
+
+async function createBackup() {
+    _toast("正在创建备份…");
+    try {
+        const resp = await fetch("/backup/create", {
+            method: "POST", headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({mode: CURRENT_MODE}),
+        });
+        const data = await resp.json().catch(() => ({}));
+        if (resp.ok && data.ok) {
+            _toast("备份已创建（" + _fmtSize(data.size) + "）");
+            loadBackups();
+        } else {
+            _toast("备份失败：" + (data.error || ""));
+        }
+    } catch (e) { _toast("备份失败，请检查网络"); }
+}
+window.createBackup = createBackup;
+
+async function restoreBackup(name) {
+    if (!confirm(`用备份「${name}」覆盖当前「${MODE_NAMES[CURRENT_MODE] || CURRENT_MODE}」的全部数据？\n\n确定恢复吗？`)) return;
+    _toast("正在恢复备份…");
+    try {
+        const resp = await fetch("/backup/restore", {
+            method: "POST", headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({name}),
+        });
+        const data = await resp.json().catch(() => ({}));
+        if (resp.ok && data.ok) {
             _toast("恢复成功，正在重新加载…");
             setTimeout(() => location.reload(), 800);
         } else {
@@ -2106,7 +2281,46 @@ async function restoreFromAccount() {
         }
     } catch (e) { _toast("恢复失败，请检查网络"); }
 }
-window.restoreFromAccount = restoreFromAccount;
+
+async function deleteBackup(name) {
+    if (!confirm(`删除备份「${name}」？此操作不可撤销。`)) return;
+    try {
+        const resp = await fetch("/backup/delete", {
+            method: "POST", headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({name}),
+        });
+        const data = await resp.json().catch(() => ({}));
+        if (resp.ok && data.ok) {
+            _toast("备份已删除");
+            loadBackups();
+        } else {
+            _toast("删除失败：" + (data.error || ""));
+        }
+    } catch (e) { _toast("删除失败，请检查网络"); }
+}
+
+/** 下载备份 zip（沿用导出通道 GET /export-data 的浏览器下载；带 name 时后端给对应备份包）。 */
+async function downloadBackup(name) {
+    const qs = `mode=${encodeURIComponent(CURRENT_MODE)}` + (name ? `&name=${encodeURIComponent(name)}` : "");
+    if (!IS_SERVER) {
+        window.location.href = `/export-data?${qs}`;
+        _toast("正在下载备份…");
+        return;
+    }
+    try {
+        const resp = await fetch(`/export-data?${qs}`);
+        if (!resp.ok) { _toast("下载失败，请稍后再试"); return; }
+        const blob = await resp.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = name || `firefly-backup-${CURRENT_MODE}.zip`;
+        document.body.appendChild(a);
+        a.click();
+        setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 1500);
+        _toast("已开始下载备份");
+    } catch (e) { _toast("下载失败，请检查网络"); }
+}
 
 /** 等待回复期间轮询流水线阶段（检索→分析→回复→表情包），把"对方正在输入…"换成具体阶段。
  *  仅在拿到 stage 时替换文本；请求结束由 _chatSend 的 finally 清除。
@@ -2242,7 +2456,8 @@ async function send() {
 }
 
 // ═══════════════════════════════════════════
-// 发图片（A9）：🖼 按钮 → 选图 → 上传/本地化 → 描述 → 发送 image 消息
+// 发图片（A9）：🖼 按钮 → 选图 → 压缩 → 上传落盘 → 描述 → 发送 image 消息
+// （图片链路统一：本地版/服务器版都走 /upload-image；服务器版请求由 fetch 包装器带登录 Bearer）
 // ═══════════════════════════════════════════
 const imageBtn = document.getElementById("image-btn");
 const imageFileInput = document.getElementById("image-file-input");
@@ -2254,24 +2469,20 @@ if (imageBtn && imageFileInput) {
         if (!f || S.waiting) return;
         if (!/^image\/(png|jpe?g|webp|gif)$/.test(f.type || "")) { _toast("仅支持 png/jpg/webp/gif 图片"); return; }
         if (f.size > 10 * 1024 * 1024) { _toast("图片过大（上限 10MB）"); return; }
+        // 发送前压缩（imgzip.js）：GIF/小图原样；任何失败降级原图不阻塞发送
+        const {blob, ext} = await compressImage(f);
         let imgId = "", desc = "";
-        if (IS_SERVER) {
-            // 服务器版铁律：图片字节只存本机（IndexedDB），服务器只收描述文字
-            imgId = "img_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
-            await idbSaveMedia(imgId, f);
-        } else {
-            try {
-                const fd = new FormData();
-                fd.append("file", f);
-                fd.append("mode", CURRENT_MODE);
-                const resp = await fetch("/upload-image", {method: "POST", body: fd});
-                const data = await resp.json();
-                if (!data.ok) { _toast("图片上传失败：" + (data.error || "")); return; }
-                imgId = data.img_id || "";
-                desc = data.desc || "";
-                if (data.need_desc) desc = "";
-            } catch (e) { _toast("网络错误，图片未发送"); return; }
-        }
+        try {
+            const fd = new FormData();
+            fd.append("file", blob, "upload." + ext);   // 压缩产物是匿名 Blob：补文件名让后端拿到正确扩展名
+            fd.append("mode", CURRENT_MODE);
+            const resp = await fetch("/upload-image", {method: "POST", body: fd});
+            const data = await resp.json();
+            if (!data.ok) { _toast("图片上传失败：" + (data.error || "")); return; }   // 配额满等错误直接透传后端文案
+            imgId = data.img_id || "";
+            desc = data.desc || "";
+            if (data.need_desc) desc = "";
+        } catch (e) { _toast("网络错误，图片未发送"); return; }
         if (!desc) {
             // 描述缺失（vision 不支持/失败）：让用户填一句（可为空 → [图片] 占位）
             desc = (window.prompt("流萤还没有识图能力，这幅图是什么？（可留空）", "") || "").trim().slice(0, 300);
@@ -2441,6 +2652,7 @@ function renderHistoryMessage(m, prepend=false) {
     }
     if (m.type==="sticker") addSticker(m.path, m.who, prepend, m.seq, m.label, m.quote);
     else if (m.type==="narration") addNarration(m.text, m.style, prepend, m.seq);
+    else if (m.type==="image") addImage(m, m.who, prepend, m.seq, m.quote);
     else addTextMessage(m.content, m.who, prepend, m.seq, m.quote);
 }
 async function loadHistory(beforeSeq=null) {
@@ -2990,7 +3202,9 @@ function showHome() {
 }
 window.showHome = showHome;   // ESM 拆分后供 pc_nav.js（classic script）与内联 onclick 使用
 async function showChat() {
-    // A7 登录前置（本地版）：未登录 → 回首页展开登录表单（本地后端离线时放行）
+    // A7 登录前置（本地版）：未登录 → 回首页展开登录表单（本地后端离线时放行）；
+    // 已登录但离线宽限外（offline_ok===false）→ 显式 POST /auth/verify 一次再定夺：
+    //   200 放行；401 回首页展开登录表单；网络/状态异常回首页提示联网验证。
     if (!IS_SERVER) {
         try {
             const st = await (await fetch("/auth/state")).json();
@@ -3001,7 +3215,28 @@ async function showChat() {
                 try { showToast("请先登录（登录后本地数据可云端同步，Key 仍只存本机）"); } catch (e) {}
                 return;
             }
+            if (st.logged_in && st.offline_ok === false) {
+                let vResp = null;
+                try { vResp = await fetch("/auth/verify", {method: "POST"}); } catch (e) { vResp = null; }
+                if (vResp && vResp.status === 200) {
+                    // verify 通过：放行
+                } else if (vResp && vResp.status === 401) {
+                    showHome();
+                    showAuthModule();
+                    try { toggleAuthForms(); } catch (e) {}
+                    try { showToast("登录已过期，请重新登录"); } catch (e) {}
+                    return;
+                } else {
+                    // 网络异常/意外状态码：本地登录态无法联网核验
+                    showHome();
+                    showAuthModule();
+                    try { showToast("登录已过期，需联网验证一次"); } catch (e) {}
+                    return;
+                }
+            }
         } catch (e) { /* 本地后端未就绪：放行（聊天不依赖账号） */ }
+        // 进聊天页/模式切换成功后：补一次云端同步（不 await 不阻塞页面；节流期内自动跳过）
+        try { window.autoSyncNow && window.autoSyncNow(); } catch (e) {}
     }
     const fixView = document.getElementById("fix-view");    if (fixView) fixView.classList.remove("show");
     homeView.classList.remove("show");
@@ -3347,8 +3582,20 @@ function fillPlaceholders(payload) {
 
 // A8 能力探测（服务器版）：供应商拒绝 DeepSeek 私有参数（thinking/reasoning_effort）时
 // 剥离后重试一次，并按结果缓存 caps 状态（后续 payload 直接剥离，避免每次探错）。
-function _loadNoThinking() {
-    try { return localStorage.getItem("firefly_no_thinking") === "1"; } catch (e) { return false; }
+// 缓存按供应商隔离：key = firefly_no_thinking_<base_url>（换供应商后重新探测，互不污染）；
+// 旧全局 key firefly_no_thinking 首次读取时迁移到当前供应商键并删除。
+function _noThinkingKey(apiBase) {
+    return "firefly_no_thinking_" + String(apiBase || "").replace(/\/+$/, "");
+}
+function _loadNoThinking(apiBase) {
+    try {
+        const old = localStorage.getItem("firefly_no_thinking");
+        if (old !== null) {
+            localStorage.setItem(_noThinkingKey(apiBase), old);
+            localStorage.removeItem("firefly_no_thinking");
+        }
+        return localStorage.getItem(_noThinkingKey(apiBase)) === "1";
+    } catch (e) { return false; }
 }
 
 function _stripThinking(payload) {
@@ -3405,14 +3652,14 @@ async function relayTick() {
         let ds;
         try {
             // 用户 Key 直连代发（DeepSeek 官方端点支持浏览器 CORS）；已知不支持的供应商先剥离私有参数
-            let directPayload = _loadNoThinking() ? _stripThinking(pending.payload) : pending.payload;
+            let directPayload = _loadNoThinking(apiBase) ? _stripThinking(pending.payload) : pending.payload;
             ds = await _serverFetch(apiBase + "/chat/completions", {
                 method: "POST",
                 headers: { "Content-Type": "application/json", "Authorization": "Bearer " + key },
                 body: JSON.stringify(directPayload),
             });
-            // 能力探测：4xx 未知参数 → 剥离后重试一次（成功后缓存，后续直接剥离）
-            if (!ds.ok && _loadNoThinking() === false) {
+            // 能力探测：4xx 未知参数 → 剥离后重试一次（成功后按该供应商缓存，后续直接剥离）
+            if (!ds.ok && _loadNoThinking(apiBase) === false) {
                 const errText = await ds.clone().text().catch(() => "");
                 if (_looksUnknownParam(errText)) {
                     const stripped = _stripThinking(pending.payload);
@@ -3422,7 +3669,7 @@ async function relayTick() {
                         body: JSON.stringify(stripped),
                     });
                     if (ds.ok) {
-                        try { localStorage.setItem("firefly_no_thinking", "1"); } catch (e) {}
+                        try { localStorage.setItem(_noThinkingKey(apiBase), "1"); } catch (e) {}
                     }
                 }
             }
@@ -3528,7 +3775,7 @@ const DEEP_GUIDE_STEPS = [
       setup: () => { openSettings(); },
       done: () => _guideGroupOpen("model") },
     { el: '#settings-panel .set-head[data-group="system"]', title: "⑤ 点开「数据与系统」",
-      text: "请点「🛠 数据与系统」展开。\n\n更新、导出/导入 zip 备份都在这里；服务器版还能备份到账号。导入会覆盖当前模式数据，但导入前会自动备份。",
+      text: "请点「🛠 数据与系统」展开。\n\n更新、导出/导入 zip 备份都在这里，还能新建 / 恢复本地备份；登录后文字数据会自动同步到云端。导入会覆盖当前模式数据，但导入前会自动备份。",
       setup: () => { openSettings(); },
       done: () => _guideGroupOpen("system") },
     { el: "#menu-btn", title: "⑥ 到聊天页打开菜单",

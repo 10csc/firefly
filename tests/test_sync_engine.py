@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
-"""A1 同步引擎测试：清单范围（媒体排除）、append 行合并（seq 去重）、收藏并集、
-计划对比（上传/下载/合并）、文档新者胜、中断恢复（重复执行幂等）"""
+"""A1 同步引擎测试：清单范围（注册表策略：媒体本体排除、images blob 放行）、
+append 行合并（seq 去重 + 确定性重排 → 双端收敛）、收藏并集、计划对比（上传/下载/合并）、
+文档新者胜、blob 异 sha 不合并、中断恢复（重复执行幂等）"""
+import hashlib
 import json
 import sys
 import tempfile
@@ -31,7 +33,7 @@ def check(desc, cond):
         print(f"  X {desc}")
 
 
-print("=== A. 清单范围（仅文字类；媒体/内部目录排除） ===")
+print("=== A. 清单范围（文字类 + images blob；媒体本体/内部目录排除） ===")
 root = _tmp / "story"
 (root / "data").mkdir(parents=True)
 (root / "stickers").mkdir()
@@ -47,16 +49,17 @@ root = _tmp / "story"
 (root / "data" / "fav.json").write_text("[]", encoding="utf-8")
 m = se.scan_manifest(root)
 check("A1 清单含 jsonl/md", "data/conversation.jsonl" in m and "memory.md" in m)
-check("A2 媒体目录排除（stickers/images）", "stickers/a.webp" not in m and "images/pic.png" not in m)
+check("A2 stickers 媒体本体排除（本地策略不变）", "stickers/a.webp" not in m)
+check("A2b images 压缩图入清单（blob 可同步）", "images/pic.png" in m)
 check("A3 内部目录排除（.setting_fix）", ".setting_fix/manifest.json" not in m)
 check("A4 其它文字文件包含", "data/fav.json" in m)
 
-print("=== B. append 行级合并（seq 去重保序） ===")
+print("=== B. append 行级合并（seq 去重 + 确定性重排） ===")
 local = '{"seq":1,"who":"user","content":"你好"}\n{"seq":2,"who":"firefly"}\n'
 remote = '{"seq":2,"who":"firefly"}\n{"seq":3,"who":"user","content":"吃了吗"}\n'
 merged, cf = se.merge_jsonl(local, remote)
 lines = [json.loads(x) for x in merged.strip().split("\n")]
-check("B1 顺序=本地前+远端新增后", [l["seq"] for l in lines] == [1, 2, 3])
+check("B1 合并后按 seq 确定性升序", [l["seq"] for l in lines] == [1, 2, 3])
 check("B2 重复行已去重", len(lines) == 3)
 merged2, cf2 = se.merge_jsonl(merged, remote)
 check("B3 幂等（重复合并不重复追加）", merged2 == merged and len(cf2) == 0)
@@ -111,6 +114,56 @@ print("=== G. 路径审查（同步范围） ===")
 check("G1 绝对路径拒绝", se.in_sync_scope(Path("/etc/passwd"), root) is False)
 check("G2 越界路径拒绝", se.in_sync_scope(Path("../x.md"), root) is False)
 check("G3 正常路径通过", se.in_sync_scope(Path("data/conversation.jsonl"), root) is True)
+
+print("=== H. 双端发散收敛（conversation 风格：有 seq） ===")
+# 两端从同一基础各自追加不同行，交换 local/remote 各合并一次，结果必须字节相等
+base = '{"seq":1,"who":"user","content":"早"}\n{"seq":2,"who":"firefly","content":"早呀"}\n'
+a_side = base + '{"seq":4,"who":"user","content":"PC 端追加"}\n'
+b_side = base + '{"seq":3,"who":"firefly","content":"安卓端追加"}\n'
+m_ab, _ = se.merge_jsonl(a_side, b_side)
+m_ba, _ = se.merge_jsonl(b_side, a_side)
+check("H1 两端各自合并字节完全相等", m_ab == m_ba)
+check("H2 sha256 收敛（不再重复全量重传）",
+      hashlib.sha256(m_ab.encode("utf-8")).hexdigest() == hashlib.sha256(m_ba.encode("utf-8")).hexdigest())
+check("H3 合并结果按 seq 升序", [json.loads(x)["seq"] for x in m_ab.strip().split("\n")] == [1, 2, 3, 4])
+scrambled = '{"seq":4,"who":"user","content":"PC 端追加"}\n' + base  # 本地历史行序不同
+m_sc, _ = se.merge_jsonl(scrambled, b_side)
+check("H4 输入行序不同仍收敛到同一字节序", m_sc == m_ab)
+
+print("=== I. 双端发散收敛（pipeline/proactive 风格：无 seq，有 _ts/time） ===")
+p_base = '{"time": "2026-08-11 14:00:00", "mode": "haruno", "user_input": "第一条"}\n'
+p_a = p_base + '{"_ts": 1786445000.0, "time": "2026-08-11 18:45:00", "turn": 9}\n'
+p_b = p_base + '{"_ts": 1786444000.0, "time": "2026-08-11 18:30:00", "turn": 6}\n'
+p_ab, _ = se.merge_jsonl(p_a, p_b)
+p_ba, _ = se.merge_jsonl(p_b, p_a)
+check("I1 _ts 行两端合并字节相等", p_ab == p_ba)
+ts_order = [json.loads(x).get("_ts") for x in p_ab.strip().split("\n") if "_ts" in x]
+check("I2 _ts 行按时间戳升序", ts_order == sorted(ts_order) == [1786444000.0, 1786445000.0])
+# 纯 time 字符串行（无 _ts）
+t_a = '{"time": "2026-08-11 10:00:00", "ev": "a"}\n{"time": "2026-08-11 12:00:00", "ev": "c"}\n'
+t_b = '{"time": "2026-08-11 10:00:00", "ev": "a"}\n{"time": "2026-08-11 11:00:00", "ev": "b"}\n'
+t_ab, _ = se.merge_jsonl(t_a, t_b)
+t_ba, _ = se.merge_jsonl(t_b, t_a)
+check("I3 time 字符串行两端合并字节相等", t_ab == t_ba)
+check("I4 time 行按字符串升序",
+      [json.loads(x)["ev"] for x in t_ab.strip().split("\n")] == ["a", "b", "c"])
+check("I5 幂等（重复合并不再变化）", se.merge_jsonl(p_ab, p_b)[0] == p_ab)
+
+print("=== J. images 纳入范围（blob）/ stickers 仍排除 ===")
+check("J1 images 图片进范围", se.in_sync_scope(Path("images/uuid.png"), root) is True)
+check("J2 stickers 仍排除", se.in_sync_scope(Path("stickers/a.webp"), root) is False)
+check("J3 非法扩展拒绝（.bmp）", se.in_sync_scope(Path("images/x.bmp"), root) is False)
+check("J4 子目录递归拒绝", se.in_sync_scope(Path("images/sub/x.png"), root) is False)
+check("J5 白名单扩展全放行",
+      all(se.in_sync_scope(Path(f"images/x{e}"), root) for e in (".jpg", ".jpeg", ".png", ".webp", ".gif")))
+check("J6 无扩展/非图文件拒绝", se.in_sync_scope(Path("images/readme.md"), root) is False
+      and se.in_sync_scope(Path("images/noext"), root) is False)
+
+print("=== K. blob 不合并（异 sha 保留本地 + 返回不变） ===")
+k_out, k_cf, k_chg = se.apply_merge_file(root, "images/uuid.png", b"local-bytes", b"remote-bytes", 100, 200)
+check("K1 异 sha 保留本地 + 不变", k_out == b"local-bytes" and k_cf == [] and k_chg is False)
+k_out2, _, k_chg2 = se.apply_merge_file(root, "images/uuid.png", b"same-bytes", b"same-bytes", 100, 200)
+check("K2 同 sha 跳过", k_out2 == b"same-bytes" and k_chg2 is False)
 
 print(f"\n统计: PASS={PASS} FAIL={FAIL}")
 sys.exit(0 if FAIL == 0 else 1)
