@@ -1,6 +1,6 @@
 // 面板族：菜单抽屉 / 设置 / 反馈 / 检查更新 / 配置管理 / 收藏 / 日志 / 表情包管理
 import { S } from "./state.js";
-import { _esc, escapeHtml, showToast, stickerSrc, idbSaveMedia } from "./util.js";
+import { _esc, escapeHtml, showToast, stickerSrc, idbSaveMedia, getLocalApiKey } from "./util.js";
 import { IS_SERVER, applyApiSource } from "./api.js";
 import { CURRENT_MODE } from "./views.js";
 
@@ -573,8 +573,13 @@ async function loadConfig() {
             _providers = _providersLS();
             _activeId = (() => { try { return localStorage.getItem(ACTIVE_PROVIDER_LS_KEY) || ""; } catch (e) { return ""; } })();
             if (!_providers.length) {
+                // 服务器模式首次初始化：继承 legacy 字段（firefly_api_key/api_base——
+                // 旧版/升级前直接存这里），避免升级后首个会话把已有 Key 当“未设置”丢一次
+                const legacyKey = getLocalApiKey();
+                const legacyBase = (() => { try { return localStorage.getItem("firefly_api_base") || ""; } catch (e) { return ""; } })();
                 _providers = [{ id: "deepseek", name: "DeepSeek",
-                                base_url: "https://api.deepseek.com/v1", api_key: "", models: [], caps: {} }];
+                                base_url: legacyBase || "https://api.deepseek.com/v1",
+                                api_key: legacyKey || "", models: [], caps: {} }];
                 _activeId = "deepseek";
                 _setProvidersLS(_providers, _activeId);
             }
@@ -611,7 +616,7 @@ async function loadConfig() {
             const pA = _activeProviderObject();
             const providerLabel = pA ? pA.name : "DeepSeek";
             if (IS_SERVER) {
-                const localKey = (() => { try { return localStorage.getItem("firefly_api_key") || ""; } catch (e) { return ""; } })();
+                const localKey = getLocalApiKey();
                 el.m.textContent = localKey ? "Key 已设置（仅存本机浏览器）" : "尚未设置 API Key（不会上传服务器）";
                 if (keyLabel) keyLabel.textContent = "API Key（存于本机浏览器，不会上传服务器）";
             } else {
@@ -623,7 +628,7 @@ async function loadConfig() {
         }
         if (el.k) {
             if (IS_SERVER) {
-                const localKey = (() => { try { return localStorage.getItem("firefly_api_key") || ""; } catch (e) { return ""; } })();
+                const localKey = getLocalApiKey();
                 el.k.placeholder = localKey ? "已设置，留空则保留" : "sk-...";
             } else {
                 const pA = _activeProviderObject();

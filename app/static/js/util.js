@@ -35,6 +35,22 @@ export function _esc(s) {
         .replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
 }
 
+// ═══ 本机 API Key 单点读取（服务器模式）═══
+// 正式存储：firefly_providers（W1 多供应商，key 在 active 供应商的 api_key 字段）；
+// 遗留兜底：firefly_api_key（旧版直接存此处 + W1 后的兼容镜像字段）。
+// providers 优先是为了防「兼容镜像字段被覆写为空、但主存储还有 key」的偶发丢失
+// （用户反馈：服务器模式偶发每轮对话要求重新设置 Key）。
+export function getLocalApiKey() {
+    try {
+        const list = JSON.parse(localStorage.getItem("firefly_providers") || "[]");
+        const arr = Array.isArray(list) ? list : [];
+        const active = localStorage.getItem("firefly_active_provider") || "";
+        const p = arr.find(x => x && x.id === active) || arr[0] || null;
+        if (p && p.api_key) return p.api_key;
+    } catch (e) { /* 解析失败走 legacy 兜底 */ }
+    try { return localStorage.getItem("firefly_api_key") || ""; } catch (e) { return ""; }
+}
+
 // ═══ 媒体本地存储（A2：服务器只传输不保存图片；本体存 WebView IndexedDB）═══
 // 键 = 内容 sha256（服务器返回的 local:<sha256>.<ext> 引用）；Blob 存取。
 let _idbPromise = null;

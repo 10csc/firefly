@@ -62,6 +62,22 @@ function _esc(s) {
         .replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
 }
 
+// ═══ 本机 API Key 单点读取（服务器模式）═══
+// 正式存储：firefly_providers（W1 多供应商，key 在 active 供应商的 api_key 字段）；
+// 遗留兜底：firefly_api_key（旧版直接存此处 + W1 后的兼容镜像字段）。
+// providers 优先是为了防「兼容镜像字段被覆写为空、但主存储还有 key」的偶发丢失
+// （用户反馈：服务器模式偶发每轮对话要求重新设置 Key）。
+function getLocalApiKey() {
+    try {
+        const list = JSON.parse(localStorage.getItem("firefly_providers") || "[]");
+        const arr = Array.isArray(list) ? list : [];
+        const active = localStorage.getItem("firefly_active_provider") || "";
+        const p = arr.find(x => x && x.id === active) || arr[0] || null;
+        if (p && p.api_key) return p.api_key;
+    } catch (e) { /* 解析失败走 legacy 兜底 */ }
+    try { return localStorage.getItem("firefly_api_key") || ""; } catch (e) { return ""; }
+}
+
 // ═══ 媒体本地存储（A2：服务器只传输不保存图片；本体存 WebView IndexedDB）═══
 // 键 = 内容 sha256（服务器返回的 local:<sha256>.<ext> 引用）；Blob 存取。
 let _idbPromise = null;
@@ -221,7 +237,7 @@ window.fetch = function (url, opts) {
     if (!IS_SERVER) return _serverFetch(url, opts);
     opts = opts || {};
     const headers = new Headers(opts.headers || {});
-    let k = ""; try { k = localStorage.getItem("firefly_api_key") || ""; } catch (e) {}
+    let k = getLocalApiKey();   // 单点读取：providers 优先 + legacy 兜底（防偶发“每轮需重设 Key”）
     let b = ""; try { b = localStorage.getItem("firefly_api_base") || ""; } catch (e) {}
     let src = ""; try { src = localStorage.getItem("firefly_api_source") || ""; } catch (e) {}
     if (src === "proxy") {
@@ -272,6 +288,9 @@ function showAuthModule() {
 }
 function initAuth() {
     initAuthForms();          // 内联登录/注册/重置表单接线（幂等；本地模式走后端 /auth/* 代理）
+    // PC 服务器云端版入口：仅本地版 PC（无安卓壳）显示；安卓由壳自动回落、服务器网页自身不需要
+    const serverWebEl = document.getElementById("server-web-entry");
+    if (serverWebEl) serverWebEl.style.display = (!IS_SERVER && !window.androidWakeLock) ? "" : "none";
     const loginEntry = document.getElementById("auth-login-entry");
     const userEntry = document.getElementById("auth-user-entry");
     if (IS_SERVER) {
@@ -324,6 +343,14 @@ function logout() {
     location.reload();
 }
 window.logout = logout;   // 内联 onclick（账号卡片「退出登录」）
+
+// PC 服务器云端版入口：新标签打开云端网页主界面（config.js 单点地址只存纯 host——
+// 安卓壳 loadServerBase 解析第一个 URL，必须无路径；主界面路径在此拼）
+function openServerWeb() {
+    const base = String(window.FIREFLY_SERVER_WEB || "http://101.200.14.126:8787").replace(/\/+$/, "");
+    window.open(base + "/index.html", "_blank", "noopener");
+}
+window.openServerWeb = openServerWeb;
 
 // ═══ 内联登录/注册/重置表单（0.8.0：单页完成，不跳转 login.html）═══
 function toggleAuthForms() {
@@ -1054,8 +1081,13 @@ async function loadConfig() {
             _providers = _providersLS();
             _activeId = (() => { try { return localStorage.getItem(ACTIVE_PROVIDER_LS_KEY) || ""; } catch (e) { return ""; } })();
             if (!_providers.length) {
+                // 服务器模式首次初始化：继承 legacy 字段（firefly_api_key/api_base——
+                // 旧版/升级前直接存这里），避免升级后首个会话把已有 Key 当“未设置”丢一次
+                const legacyKey = getLocalApiKey();
+                const legacyBase = (() => { try { return localStorage.getItem("firefly_api_base") || ""; } catch (e) { return ""; } })();
                 _providers = [{ id: "deepseek", name: "DeepSeek",
-                                base_url: "https://api.deepseek.com/v1", api_key: "", models: [], caps: {} }];
+                                base_url: legacyBase || "https://api.deepseek.com/v1",
+                                api_key: legacyKey || "", models: [], caps: {} }];
                 _activeId = "deepseek";
                 _setProvidersLS(_providers, _activeId);
             }
@@ -1092,7 +1124,7 @@ async function loadConfig() {
             const pA = _activeProviderObject();
             const providerLabel = pA ? pA.name : "DeepSeek";
             if (IS_SERVER) {
-                const localKey = (() => { try { return localStorage.getItem("firefly_api_key") || ""; } catch (e) { return ""; } })();
+                const localKey = getLocalApiKey();
                 el.m.textContent = localKey ? "Key 已设置（仅存本机浏览器）" : "尚未设置 API Key（不会上传服务器）";
                 if (keyLabel) keyLabel.textContent = "API Key（存于本机浏览器，不会上传服务器）";
             } else {
@@ -1104,7 +1136,7 @@ async function loadConfig() {
         }
         if (el.k) {
             if (IS_SERVER) {
-                const localKey = (() => { try { return localStorage.getItem("firefly_api_key") || ""; } catch (e) { return ""; } })();
+                const localKey = getLocalApiKey();
                 el.k.placeholder = localKey ? "已设置，留空则保留" : "sk-...";
             } else {
                 const pA = _activeProviderObject();
@@ -3734,7 +3766,7 @@ async function relayTick() {
     _relayBusy = true;
     try {
         const apiBase = pending.api_base || "https://api.deepseek.com/v1";
-        const key = (() => { try { return localStorage.getItem("firefly_api_key") || ""; } catch (e) { return ""; } })();
+        const key = getLocalApiKey();   // 单点读取：providers 优先 + legacy 兜底
         if (!key) throw new Error("no key");
         fillPlaceholders(pending.payload);
         // 中转降级：服务器用本请求 X-API-Key 头代发（Key 内存即弃不落盘），

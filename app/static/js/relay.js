@@ -1,6 +1,7 @@
 // 服务器版 relay 引擎与资产本地化
 import { API_BASE, IS_SERVER, _serverFetch } from "./api.js";
 import { CURRENT_MODE } from "./views.js";
+import { getLocalApiKey } from "./util.js";
 
 // ═══════════════════════════════════════
 // 后端代理（relay）— 服务器不持有用户 Key 的完整链路
@@ -117,7 +118,7 @@ async function relayTick() {
     _relayBusy = true;
     try {
         const apiBase = pending.api_base || "https://api.deepseek.com/v1";
-        const key = (() => { try { return localStorage.getItem("firefly_api_key") || ""; } catch (e) { return ""; } })();
+        const key = getLocalApiKey();   // 单点读取：providers 优先 + legacy 兜底
         if (!key) throw new Error("no key");
         fillPlaceholders(pending.payload);
         // 中转降级：服务器用本请求 X-API-Key 头代发（Key 内存即弃不落盘），

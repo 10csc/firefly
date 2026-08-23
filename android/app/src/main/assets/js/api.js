@@ -1,5 +1,5 @@
 // 双模式与请求封装：FIREFLY_MODE / fetch 鉴权注入 / 登录与注册表单
-import { showToast } from "./util.js";
+import { showToast, getLocalApiKey } from "./util.js";
 import { initAssets } from "./relay.js";
 
 // ═══════════════════════════════════════════
@@ -27,7 +27,7 @@ window.fetch = function (url, opts) {
     if (!IS_SERVER) return _serverFetch(url, opts);
     opts = opts || {};
     const headers = new Headers(opts.headers || {});
-    let k = ""; try { k = localStorage.getItem("firefly_api_key") || ""; } catch (e) {}
+    let k = getLocalApiKey();   // 单点读取：providers 优先 + legacy 兜底（防偶发“每轮需重设 Key”）
     let b = ""; try { b = localStorage.getItem("firefly_api_base") || ""; } catch (e) {}
     let src = ""; try { src = localStorage.getItem("firefly_api_source") || ""; } catch (e) {}
     if (src === "proxy") {
@@ -78,6 +78,9 @@ export function showAuthModule() {
 }
 export function initAuth() {
     initAuthForms();          // 内联登录/注册/重置表单接线（幂等；本地模式走后端 /auth/* 代理）
+    // PC 服务器云端版入口：仅本地版 PC（无安卓壳）显示；安卓由壳自动回落、服务器网页自身不需要
+    const serverWebEl = document.getElementById("server-web-entry");
+    if (serverWebEl) serverWebEl.style.display = (!IS_SERVER && !window.androidWakeLock) ? "" : "none";
     const loginEntry = document.getElementById("auth-login-entry");
     const userEntry = document.getElementById("auth-user-entry");
     if (IS_SERVER) {
@@ -130,6 +133,14 @@ function logout() {
     location.reload();
 }
 window.logout = logout;   // 内联 onclick（账号卡片「退出登录」）
+
+// PC 服务器云端版入口：新标签打开云端网页主界面（config.js 单点地址只存纯 host——
+// 安卓壳 loadServerBase 解析第一个 URL，必须无路径；主界面路径在此拼）
+function openServerWeb() {
+    const base = String(window.FIREFLY_SERVER_WEB || "http://101.200.14.126:8787").replace(/\/+$/, "");
+    window.open(base + "/index.html", "_blank", "noopener");
+}
+window.openServerWeb = openServerWeb;
 
 // ═══ 内联登录/注册/重置表单（0.8.0：单页完成，不跳转 login.html）═══
 function toggleAuthForms() {
