@@ -1,0 +1,1398 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>流萤 Firefly · 项目架构全景图 v0.8.1</title>
+<style>
+/* ============================================================
+   流萤 Firefly · 架构可视化
+   深夜星空 #0a0e1a + 萤火 #d9f24f/#ffd97a + 晚霞渐变 #e8a0bf→#c084fc→#fb923c
+   ============================================================ */
+:root{
+  --bg0:#060911;
+  --bg1:#0a0e1a;
+  --bg2:#0e1526;
+  --panel:rgba(17,23,43,.66);
+  --panel-solid:#11172b;
+  --panel-hi:rgba(26,34,60,.72);
+  --line:rgba(217,242,79,.13);
+  --line-soft:rgba(148,163,205,.12);
+  --line-violet:rgba(192,132,252,.18);
+  --fire:#d9f24f;
+  --warm:#ffd97a;
+  --pink:#e8a0bf;
+  --violet:#c084fc;
+  --orange:#fb923c;
+  --cyan:#7dd3fc;
+  --ink:#e9edf7;
+  --dim:#9aa7c4;
+  --faint:#5f6c8c;
+  --kai:"STKaiti","KaiTi","Kaiti SC","STSong","SimSun",serif;
+  --body:"Microsoft YaHei UI","Microsoft YaHei","PingFang SC","Noto Sans CJK SC",sans-serif;
+  --mono:Consolas,"JetBrains Mono","Cascadia Code","Cascadia Mono","Courier New",monospace;
+  --nav-w:236px;
+  --radius:14px;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+html{scroll-behavior:smooth;scroll-padding-top:28px}
+body{
+  background:var(--bg1);
+  color:var(--ink);
+  font-family:var(--body);
+  font-size:15px;
+  line-height:1.75;
+  overflow-x:hidden;
+  -webkit-font-smoothing:antialiased;
+}
+/* 夜空底色：多层径向渐变叠加 */
+body::before{
+  content:"";position:fixed;inset:0;z-index:-3;pointer-events:none;
+  background:
+    radial-gradient(1100px 620px at 82% -8%, rgba(192,132,252,.10), transparent 62%),
+    radial-gradient(900px 560px at 8% 12%, rgba(232,160,191,.07), transparent 60%),
+    radial-gradient(1000px 700px at 50% 115%, rgba(251,146,60,.06), transparent 60%),
+    radial-gradient(700px 480px at 95% 60%, rgba(217,242,79,.045), transparent 65%),
+    linear-gradient(180deg,#070a13 0%, #0a0e1a 34%, #0b1020 70%, #080b15 100%);
+}
+#sky{position:fixed;inset:0;z-index:-2;pointer-events:none}
+/* 细颗粒噪点，防纯色发闷 */
+body::after{
+  content:"";position:fixed;inset:0;z-index:60;pointer-events:none;opacity:.5;
+  background-image:radial-gradient(rgba(255,255,255,.028) 1px, transparent 1px);
+  background-size:3px 3px;mix-blend-mode:overlay;
+}
+::selection{background:rgba(217,242,79,.28);color:#fff}
+::-webkit-scrollbar{width:10px;height:10px}
+::-webkit-scrollbar-track{background:#080b15}
+::-webkit-scrollbar-thumb{background:#232d4d;border-radius:6px;border:2px solid #080b15}
+::-webkit-scrollbar-thumb:hover{background:#35426300;background:#354263}
+
+/* ---------------- 左侧粘性导航 ---------------- */
+#nav{
+  position:fixed;left:0;top:0;bottom:0;width:var(--nav-w);z-index:50;
+  background:rgba(8,11,21,.78);
+  backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
+  border-right:1px solid var(--line-soft);
+  display:flex;flex-direction:column;
+  padding:26px 0 18px;
+}
+#nav .brand{padding:0 22px 18px;border-bottom:1px solid var(--line-soft)}
+#nav .brand .t{font-family:var(--kai);font-size:23px;letter-spacing:2px;
+  background:linear-gradient(100deg,var(--warm),var(--pink) 55%,var(--violet));
+  -webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
+#nav .brand .v{font-family:var(--mono);font-size:11px;color:var(--faint);margin-top:5px;letter-spacing:1px}
+#nav .brand .v b{color:var(--fire);font-weight:600}
+#nav ul{list-style:none;overflow-y:auto;flex:1;padding:14px 12px;scrollbar-width:thin}
+#nav ul::-webkit-scrollbar{width:4px}
+#nav a{
+  display:flex;align-items:baseline;gap:9px;text-decoration:none;color:var(--dim);
+  font-size:13.5px;padding:7px 11px;border-radius:9px;border:1px solid transparent;
+  transition:all .22s ease;line-height:1.4;
+}
+#nav a .no{font-family:var(--mono);font-size:10.5px;color:var(--faint);transition:color .22s}
+#nav a:hover{color:var(--ink);background:rgba(217,242,79,.05)}
+#nav a.active{
+  color:var(--warm);background:rgba(217,242,79,.07);
+  border-color:rgba(217,242,79,.22);
+  box-shadow:inset 0 0 18px rgba(217,242,79,.05), 0 0 14px -6px rgba(217,242,79,.4);
+}
+#nav a.active .no{color:var(--fire)}
+#nav .foot{padding:12px 22px 0;border-top:1px solid var(--line-soft);
+  font-family:var(--mono);font-size:10px;color:var(--faint);line-height:1.8}
+#nav .foot .dot{display:inline-block;width:6px;height:6px;border-radius:50%;
+  background:var(--fire);box-shadow:0 0 8px var(--fire);margin-right:6px;
+  animation:blink 2.6s ease-in-out infinite}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:.25}}
+
+/* ---------------- 主区 ---------------- */
+main{margin-left:var(--nav-w);padding:0 clamp(22px,4.5vw,64px) 90px}
+section{padding:84px 0 26px;max-width:1240px}
+.sec-head{margin-bottom:38px;position:relative}
+.sec-head .idx{
+  font-family:var(--mono);font-size:12px;color:var(--fire);letter-spacing:3px;
+  display:flex;align-items:center;gap:12px;margin-bottom:10px}
+.sec-head .idx::after{content:"";height:1px;width:74px;
+  background:linear-gradient(90deg,rgba(217,242,79,.6),transparent)}
+.sec-head h2{
+  font-family:var(--kai);font-size:clamp(26px,3.1vw,37px);font-weight:700;letter-spacing:2px;
+  background:linear-gradient(105deg,#fdf6d8 8%,var(--warm) 32%,var(--pink) 62%,var(--violet) 95%);
+  -webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;
+  display:inline-block}
+.sec-head p.sub{color:var(--dim);margin-top:10px;max-width:820px;font-size:14px}
+.sec-head p.sub code{font-family:var(--mono);font-size:12.5px;color:var(--warm);
+  background:rgba(255,217,122,.07);padding:1px 6px;border-radius:5px;border:1px solid rgba(255,217,122,.14)}
+
+/* 滚动渐显 */
+.reveal{opacity:0;transform:translateY(26px);transition:opacity .8s cubic-bezier(.22,.8,.3,1),transform .8s cubic-bezier(.22,.8,.3,1)}
+.reveal.in{opacity:1;transform:none}
+.reveal.d1{transition-delay:.08s}.reveal.d2{transition-delay:.16s}.reveal.d3{transition-delay:.24s}
+
+/* ---------------- 通用卡片 ---------------- */
+.card{
+  background:var(--panel);border:1px solid var(--line-soft);border-radius:var(--radius);
+  backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);
+  padding:22px 24px;position:relative;overflow:hidden;
+  transition:transform .3s ease,border-color .3s ease,box-shadow .3s ease;
+}
+.card::before{content:"";position:absolute;inset:0 0 auto 0;height:1px;
+  background:linear-gradient(90deg,transparent,rgba(217,242,79,.5),rgba(192,132,252,.4),transparent);
+  opacity:.55}
+.card:hover{transform:translateY(-3px);border-color:rgba(217,242,79,.3);
+  box-shadow:0 14px 40px -18px rgba(0,0,0,.8),0 0 26px -10px rgba(217,242,79,.35)}
+.card h3{font-size:16px;font-weight:700;letter-spacing:.5px;margin-bottom:12px;
+  display:flex;align-items:center;gap:9px;color:#f2f5fc}
+.card h3 .ico{color:var(--fire);font-family:var(--mono);font-size:13px}
+.card h4{font-size:13.5px;color:var(--warm);margin:14px 0 6px;font-weight:600}
+.card p{color:var(--dim);font-size:13.5px}
+.card p+p{margin-top:6px}
+.card code{font-family:var(--mono);font-size:12px;color:var(--warm);
+  background:rgba(255,217,122,.06);padding:1px 5px;border-radius:4px;border:1px solid rgba(255,217,122,.12)}
+.card ul{list-style:none;margin-top:6px}
+.card ul li{color:var(--dim);font-size:13.5px;padding:3px 0 3px 18px;position:relative}
+.card ul li::before{content:"✦";position:absolute;left:0;top:3px;color:var(--fire);
+  font-size:10px;text-shadow:0 0 8px rgba(217,242,79,.8)}
+.card ul li b{color:var(--ink);font-weight:600}
+.grid{display:grid;gap:18px}
+.g2{grid-template-columns:repeat(2,minmax(0,1fr))}
+.g3{grid-template-columns:repeat(3,minmax(0,1fr))}
+.g4{grid-template-columns:repeat(4,minmax(0,1fr))}
+
+/* 徽章 */
+.badges{display:flex;flex-wrap:wrap;gap:9px}
+.badge{
+  font-family:var(--mono);font-size:11.5px;letter-spacing:.4px;color:var(--dim);
+  border:1px solid var(--line-soft);border-radius:99px;padding:5px 13px;
+  background:rgba(14,21,38,.6);transition:all .25s ease;white-space:nowrap}
+.badge:hover{color:var(--fire);border-color:rgba(217,242,79,.4);
+  box-shadow:0 0 14px -4px rgba(217,242,79,.5);transform:translateY(-1px)}
+.badge b{color:var(--warm);font-weight:600}
+.badge.hot{color:var(--warm);border-color:rgba(255,217,122,.35);
+  background:rgba(255,217,122,.06)}
+
+/* 统计条 */
+.stats{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:14px;margin-top:34px}
+.stat{
+  text-align:center;padding:18px 8px 14px;border-radius:12px;
+  background:var(--panel);border:1px solid var(--line-soft);position:relative;overflow:hidden;
+  transition:all .3s ease}
+.stat:hover{border-color:rgba(217,242,79,.35);transform:translateY(-2px)}
+.stat .n{font-family:var(--mono);font-size:27px;font-weight:700;
+  background:linear-gradient(120deg,var(--fire),var(--warm));
+  -webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;
+  text-shadow:0 0 24px rgba(217,242,79,.15)}
+.stat .l{font-size:11.5px;color:var(--faint);margin-top:3px;letter-spacing:1px}
+
+/* ---------------- Hero ---------------- */
+#hero{min-height:92vh;display:flex;flex-direction:column;justify-content:center;
+  padding-top:60px;position:relative}
+#hero .eyebrow{font-family:var(--mono);font-size:12.5px;color:var(--fire);
+  letter-spacing:4px;margin-bottom:22px;display:flex;align-items:center;gap:14px}
+#hero .eyebrow::before{content:"";width:44px;height:1px;
+  background:linear-gradient(90deg,var(--fire),transparent)}
+#hero h1{
+  font-family:var(--kai);font-weight:700;letter-spacing:4px;
+  font-size:clamp(52px,7.2vw,96px);line-height:1.12;
+  background:linear-gradient(115deg,#fffbe8 5%,var(--warm) 30%,var(--pink) 58%,var(--violet) 82%,var(--orange) 105%);
+  -webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;
+  filter:drop-shadow(0 0 34px rgba(232,160,191,.22));
+}
+#hero h1 .en{display:block;font-family:var(--mono);font-size:clamp(15px,1.7vw,21px);
+  letter-spacing:12px;margin-top:14px;-webkit-text-fill-color:var(--faint);filter:none;font-weight:400}
+#hero .tagline{margin-top:26px;max-width:760px;color:var(--dim);font-size:16px}
+#hero .tagline b{color:var(--warm);font-weight:600}
+#hero .tagline code{font-family:var(--mono);font-size:13px;color:var(--fire);
+  background:rgba(217,242,79,.06);padding:1px 7px;border-radius:5px;border:1px solid rgba(217,242,79,.16)}
+#hero .badges{margin-top:30px;max-width:860px}
+#hero .scrollhint{margin-top:56px;font-family:var(--mono);font-size:11px;color:var(--faint);
+  letter-spacing:2px;display:flex;align-items:center;gap:12px}
+#hero .scrollhint .beam{width:1px;height:44px;overflow:hidden;background:rgba(217,242,79,.15);position:relative}
+#hero .scrollhint .beam::after{content:"";position:absolute;left:0;top:-40%;width:1px;height:40%;
+  background:var(--fire);box-shadow:0 0 8px var(--fire);animation:beam 2.2s ease-in-out infinite}
+@keyframes beam{to{top:110%}}
+
+/* ---------------- SVG 拓扑 ---------------- */
+.svg-wrap{background:var(--panel);border:1px solid var(--line-soft);border-radius:var(--radius);
+  padding:18px;overflow-x:auto;backdrop-filter:blur(10px)}
+.svg-wrap svg{min-width:1080px;width:100%;height:auto;display:block}
+.tnode rect{fill:rgba(16,22,42,.92);stroke:rgba(148,163,205,.3);stroke-width:1;
+  transition:all .25s ease}
+.tnode text{font-family:var(--body);fill:var(--ink)}
+.tnode .tt{font-size:14px;font-weight:700}
+.tnode .ts{font-family:var(--mono);font-size:10.5px;fill:var(--dim)}
+.tnode:hover rect{stroke:var(--fire);filter:drop-shadow(0 0 10px rgba(217,242,79,.55))}
+.tnode:hover .tt{fill:var(--warm)}
+.tnode.core rect{stroke:rgba(217,242,79,.45);fill:rgba(24,30,16,.55)}
+.tnode.win rect{stroke:rgba(125,211,252,.4)}
+.tnode.and rect{stroke:rgba(217,242,79,.4)}
+.tnode.srv rect{stroke:rgba(232,160,191,.42)}
+.edge{fill:none;stroke:rgba(154,167,196,.42);stroke-width:1.4}
+.edge.dash{stroke-dasharray:6 5;stroke:rgba(251,146,60,.55)}
+.edge.core-edge{stroke:rgba(217,242,79,.5);stroke-dasharray:3 4}
+.edge-label{font-family:var(--mono);font-size:10px;fill:var(--faint)}
+.legend{display:flex;flex-wrap:wrap;gap:16px;margin-top:14px;font-family:var(--mono);
+  font-size:11px;color:var(--faint)}
+.legend span{display:inline-flex;align-items:center;gap:7px}
+.legend i{width:18px;height:2px;display:inline-block;border-radius:2px}
+
+/* ---------------- 流水线 ---------------- */
+.pipe-flow{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:44px 46px;padding:10px 2px 18px}
+.pstep{
+  position:relative;
+  background:var(--panel);border:1px solid var(--line-soft);border-radius:12px;
+  padding:16px 15px 14px;cursor:pointer;transition:all .28s ease}
+.pstep::after{
+  content:"⟶";position:absolute;right:-37px;top:50%;transform:translateY(-50%);
+  color:var(--fire);font-size:19px;text-shadow:0 0 12px rgba(217,242,79,.7);opacity:.75}
+.pstep:nth-child(4n)::after{display:none}
+@media(max-width:1100px){
+  .pipe-flow{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .pstep:nth-child(2n)::after{display:none}
+}
+@media(max-width:640px){
+  .pipe-flow{grid-template-columns:1fr}
+  .pstep::after{display:none !important}
+}
+.pstep .pn{font-family:var(--mono);font-size:10px;color:var(--fire);letter-spacing:2px}
+.pstep h4{font-size:14.5px;margin:5px 0 6px;color:var(--ink);font-weight:700}
+.pstep p{font-size:12px;color:var(--dim);line-height:1.6}
+.pstep:hover,.pstep.sel{border-color:rgba(217,242,79,.45);transform:translateY(-4px);
+  box-shadow:0 12px 30px -14px rgba(0,0,0,.85),0 0 22px -8px rgba(217,242,79,.45)}
+.pstep.sel{background:var(--panel-hi)}
+.pstep.warn .pn{color:var(--orange)}
+.pstep.warn:hover,.pstep.warn.sel{border-color:rgba(251,146,60,.5);
+  box-shadow:0 12px 30px -14px rgba(0,0,0,.85),0 0 22px -8px rgba(251,146,60,.5)}
+.pipe-detail{
+  border:1px solid rgba(217,242,79,.25);border-radius:var(--radius);
+  background:linear-gradient(160deg,rgba(20,27,50,.85),rgba(14,19,36,.85));
+  padding:24px 28px;min-height:150px;position:relative;overflow:hidden;
+  backdrop-filter:blur(12px)}
+.pipe-detail::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;
+  background:linear-gradient(180deg,var(--fire),var(--violet));box-shadow:0 0 14px rgba(217,242,79,.6)}
+.pipe-detail h4{font-family:var(--kai);font-size:19px;color:var(--warm);letter-spacing:1px;margin-bottom:8px}
+.pipe-detail .pd-body{color:var(--dim);font-size:13.5px}
+.pipe-detail .pd-body code{font-family:var(--mono);font-size:12px;color:var(--fire);
+  background:rgba(217,242,79,.07);padding:1px 6px;border-radius:4px;border:1px solid rgba(217,242,79,.15)}
+.pipe-detail .pd-body b{color:var(--ink)}
+.pipe-detail ul{list-style:none;margin-top:8px;columns:2;column-gap:34px}
+.pipe-detail ul li{padding:3px 0 3px 16px;position:relative;break-inside:avoid;font-size:13px;color:var(--dim)}
+.pipe-detail ul li::before{content:"·";position:absolute;left:2px;color:var(--fire);font-weight:700}
+.pipe-hint{font-family:var(--mono);font-size:11px;color:var(--faint);margin:2px 0 14px;letter-spacing:1px}
+
+/* ---------------- 模块矩阵 ---------------- */
+.mx-tools{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:18px}
+.mx-search{
+  flex:1;min-width:220px;display:flex;align-items:center;gap:9px;
+  background:rgba(10,14,26,.8);border:1px solid var(--line-soft);border-radius:10px;padding:9px 14px;
+  transition:border-color .25s}
+.mx-search:focus-within{border-color:rgba(217,242,79,.45);box-shadow:0 0 16px -6px rgba(217,242,79,.5)}
+.mx-search input{flex:1;background:none;border:none;outline:none;color:var(--ink);
+  font-family:var(--mono);font-size:13px}
+.mx-search input::placeholder{color:var(--faint)}
+.mx-search .k{font-family:var(--mono);font-size:10px;color:var(--faint)}
+.mx-filters{display:flex;flex-wrap:wrap;gap:7px}
+.mx-f{
+  font-family:var(--mono);font-size:11.5px;color:var(--dim);cursor:pointer;
+  border:1px solid var(--line-soft);border-radius:99px;padding:5px 13px;background:rgba(14,21,38,.5);
+  transition:all .22s}
+.mx-f:hover{color:var(--ink);border-color:rgba(217,242,79,.35)}
+.mx-f.on{color:#0a0e1a;background:var(--fire);border-color:var(--fire);font-weight:700;
+  box-shadow:0 0 16px -4px rgba(217,242,79,.7)}
+.mx-tablewrap{border:1px solid var(--line-soft);border-radius:var(--radius);overflow:hidden;
+  background:var(--panel);backdrop-filter:blur(10px)}
+.mx-scroll{max-height:640px;overflow:auto}
+table.mx{width:100%;border-collapse:collapse;font-size:13px}
+table.mx thead th{
+  position:sticky;top:0;z-index:2;background:#131a30;text-align:left;
+  font-family:var(--mono);font-size:11px;letter-spacing:1.5px;color:var(--fire);
+  padding:11px 14px;border-bottom:1px solid rgba(217,242,79,.25);white-space:nowrap}
+table.mx td{padding:9px 14px;border-bottom:1px solid rgba(148,163,205,.08);vertical-align:top}
+table.mx tbody tr{transition:background .18s}
+table.mx tbody tr:hover{background:rgba(217,242,79,.05)}
+table.mx td.m{font-family:var(--mono);font-size:12.5px;color:var(--warm);white-space:nowrap}
+table.mx td.lc{font-family:var(--mono);font-size:12px;color:var(--cyan);white-space:nowrap;text-align:right}
+table.mx td.d{color:var(--dim);font-size:12.5px;line-height:1.6}
+table.mx td .mode{font-family:var(--mono);font-size:10.5px;padding:2px 8px;border-radius:99px;white-space:nowrap}
+.mode.think{color:var(--violet);border:1px solid rgba(192,132,252,.4);background:rgba(192,132,252,.07)}
+.mode.nothink{color:var(--cyan);border:1px solid rgba(125,211,252,.35);background:rgba(125,211,252,.06)}
+.mode.none{color:var(--faint);border:1px solid rgba(148,163,205,.25)}
+.mode.multi{color:var(--orange);border:1px solid rgba(251,146,60,.4);background:rgba(251,146,60,.06)}
+.mx-empty{padding:26px;text-align:center;color:var(--faint);font-family:var(--mono);font-size:12px;display:none}
+.subhead{
+  font-family:var(--mono);font-size:12px;letter-spacing:2px;color:var(--warm);
+  margin:34px 0 12px;display:flex;align-items:center;gap:12px}
+.subhead::after{content:"";flex:1;height:1px;
+  background:linear-gradient(90deg,rgba(255,217,122,.35),transparent)}
+.subhead b{color:var(--fire)}
+
+/* ---------------- 前端条形图 ---------------- */
+.fbar-row{display:grid;grid-template-columns:150px 1fr 64px;gap:12px;align-items:center;
+  padding:4.5px 8px;border-radius:7px;transition:background .18s;font-size:12.5px}
+.fbar-row:hover{background:rgba(217,242,79,.05)}
+.fbar-row .fm{font-family:var(--mono);color:var(--warm);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.fbar-row .fb{height:9px;background:rgba(148,163,205,.1);border-radius:99px;overflow:hidden}
+.fbar-row .fb i{display:block;height:100%;width:0;border-radius:99px;
+  background:linear-gradient(90deg,var(--violet),var(--pink),var(--orange));
+  box-shadow:0 0 10px rgba(232,160,191,.5);transition:width 1s cubic-bezier(.22,.8,.3,1)}
+.fbar-row .fl{font-family:var(--mono);font-size:11.5px;color:var(--cyan);text-align:right}
+.fbar-row.big .fb i{background:linear-gradient(90deg,var(--fire),var(--warm));box-shadow:0 0 12px rgba(217,242,79,.6)}
+.fbar-row.big .fm{color:var(--fire);font-weight:700}
+
+/* ---------------- 时间线/列表 ---------------- */
+.flow-list{list-style:none;position:relative;padding-left:26px}
+.flow-list::before{content:"";position:absolute;left:7px;top:8px;bottom:8px;width:1px;
+  background:linear-gradient(180deg,var(--fire),var(--pink),var(--violet))}
+.flow-list li{position:relative;padding:9px 0;color:var(--dim);font-size:13.5px}
+.flow-list li::before{content:"";position:absolute;left:-23px;top:17px;width:9px;height:9px;border-radius:50%;
+  background:var(--bg1);border:2px solid var(--fire);box-shadow:0 0 10px rgba(217,242,79,.7)}
+.flow-list li b{color:var(--ink)}
+.flow-list li code{font-family:var(--mono);font-size:12px;color:var(--warm);
+  background:rgba(255,217,122,.06);padding:1px 5px;border-radius:4px}
+
+/* 风险条目 */
+.risk{border-left:3px solid var(--orange);background:rgba(251,146,60,.05);
+  padding:12px 16px;border-radius:0 10px 10px 0;margin-bottom:10px}
+.risk h5{font-size:13.5px;color:var(--orange);margin-bottom:3px;font-weight:700}
+.risk p{font-size:12.5px;color:var(--dim)}
+.risk code{font-family:var(--mono);font-size:11.5px;color:var(--warm)}
+.ok-line{border-left:3px solid var(--fire);background:rgba(217,242,79,.045);
+  padding:10px 16px;border-radius:0 10px 10px 0;margin-bottom:9px;font-size:13px;color:var(--dim)}
+.ok-line b{color:var(--fire);font-family:var(--mono);font-size:11.5px;margin-right:8px;letter-spacing:1px}
+.ok-line code{font-family:var(--mono);font-size:11.5px;color:var(--warm)}
+
+/* 端口模型 */
+.ports{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+.port{text-align:center;padding:18px 12px;border-radius:12px;border:1px solid var(--line-soft);
+  background:rgba(12,17,32,.7);transition:all .28s}
+.port:hover{transform:translateY(-3px)}
+.port .p{font-family:var(--mono);font-size:24px;font-weight:700}
+.port .n{font-size:12px;color:var(--dim);margin-top:4px}
+.port .s{font-family:var(--mono);font-size:10px;margin-top:8px;display:inline-block;
+  padding:2px 10px;border-radius:99px;letter-spacing:1px}
+.port.pub .p{color:var(--pink)}.port.pub:hover{border-color:rgba(232,160,191,.5);box-shadow:0 0 22px -8px rgba(232,160,191,.5)}
+.port.pub .s{color:var(--pink);border:1px solid rgba(232,160,191,.4)}
+.port.loop .p{color:var(--fire)}.port.loop:hover{border-color:rgba(217,242,79,.5);box-shadow:0 0 22px -8px rgba(217,242,79,.5)}
+.port.loop .s{color:var(--fire);border:1px solid rgba(217,242,79,.4)}
+.port.ssh .p{color:var(--violet)}.port.ssh:hover{border-color:rgba(192,132,252,.5);box-shadow:0 0 22px -8px rgba(192,132,252,.5)}
+.port.ssh .s{color:var(--violet);border:1px solid rgba(192,132,252,.4)}
+
+/* 数据目录树 */
+.tree{font-family:var(--mono);font-size:12.5px;line-height:1.9;color:var(--dim);
+  background:rgba(8,12,24,.75);border:1px solid var(--line-soft);border-radius:12px;
+  padding:20px 24px;overflow-x:auto;white-space:pre}
+.tree .dir{color:var(--warm);font-weight:700}
+.tree .cm{color:var(--faint)}
+.tree .hl{color:var(--fire)}
+.tree .pk{color:var(--pink)}
+
+/* 发布链 */
+.chain{display:flex;align-items:stretch;gap:0;flex-wrap:wrap}
+.chain .cstep{flex:1;min-width:150px;background:var(--panel);border:1px solid var(--line-soft);
+  border-radius:12px;padding:15px 16px;position:relative;margin:0 14px 14px 0;transition:all .28s}
+.chain .cstep:hover{border-color:rgba(217,242,79,.4);transform:translateY(-3px)}
+.chain .cstep .ct{font-family:var(--mono);font-size:12.5px;color:var(--warm);font-weight:700}
+.chain .cstep p{font-size:12px;color:var(--dim);margin-top:5px;line-height:1.6}
+
+/* 双栏说明 */
+.kv{display:grid;grid-template-columns:132px 1fr;gap:7px 14px;font-size:13px;margin-top:8px}
+.kv dt{font-family:var(--mono);font-size:11.5px;color:var(--faint);padding-top:2px;letter-spacing:.5px}
+.kv dd{color:var(--dim)}
+.kv dd code{font-family:var(--mono);font-size:11.5px;color:var(--warm);
+  background:rgba(255,217,122,.06);padding:0 5px;border-radius:4px}
+.kv dd b{color:var(--ink)}
+
+/* 页脚 */
+footer{margin-left:var(--nav-w);padding:44px clamp(22px,4.5vw,64px) 60px;
+  border-top:1px solid var(--line-soft);text-align:center}
+footer .f1{font-family:var(--kai);font-size:19px;letter-spacing:3px;
+  background:linear-gradient(100deg,var(--warm),var(--pink),var(--violet));
+  -webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
+footer .f2{font-family:var(--mono);font-size:11px;color:var(--faint);margin-top:10px;letter-spacing:1px}
+
+/* 回到顶部 */
+#top{position:fixed;right:26px;bottom:26px;z-index:55;width:42px;height:42px;border-radius:50%;
+  border:1px solid rgba(217,242,79,.4);background:rgba(10,14,26,.85);color:var(--fire);
+  font-size:17px;cursor:pointer;opacity:0;pointer-events:none;transition:all .3s;
+  box-shadow:0 0 18px -4px rgba(217,242,79,.5)}
+#top.show{opacity:1;pointer-events:auto}
+#top:hover{background:var(--fire);color:#0a0e1a}
+
+/* 响应式 */
+@media(max-width:1180px){
+  #nav{transform:translateX(-100%);transition:transform .3s}
+  #nav.open{transform:none;box-shadow:30px 0 80px rgba(0,0,0,.6)}
+  main,footer{margin-left:0}
+  #burger{position:fixed;left:16px;top:14px;z-index:56;width:40px;height:40px;border-radius:10px;
+    border:1px solid var(--line-soft);background:rgba(10,14,26,.9);color:var(--fire);
+    font-size:17px;cursor:pointer;display:flex;align-items:center;justify-content:center}
+  main{padding-top:46px}
+}
+@media(min-width:1181px){#burger{display:none}}
+@media(max-width:900px){
+  .g3,.g4{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .stats{grid-template-columns:repeat(3,minmax(0,1fr))}
+  .ports{grid-template-columns:1fr}
+  .pipe-detail ul{columns:1}
+}
+@media(max-width:600px){
+  .g2,.g3,.g4{grid-template-columns:1fr}
+  .stats{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .kv{grid-template-columns:1fr}
+  .kv dt{padding-top:8px}
+}
+@media(prefers-reduced-motion:reduce){
+  *,*::before,*::after{animation-duration:.01ms !important;transition-duration:.01ms !important}
+  html{scroll-behavior:auto}
+}
+</style>
+</head>
+<body>
+<canvas id="sky"></canvas>
+<button id="burger" aria-label="菜单">☰</button>
+
+<nav id="nav">
+  <div class="brand">
+    <div class="t">流萤 Firefly</div>
+    <div class="v">ARCHITECTURE <b>v0.8.1</b></div>
+  </div>
+  <ul id="navlist">
+    <li><a href="#hero"><span class="no">00</span>序章 · 总览</a></li>
+    <li><a href="#topology"><span class="no">01</span>三端架构拓扑</a></li>
+    <li><a href="#pipeline"><span class="no">02</span>对话流水线</a></li>
+    <li><a href="#modules"><span class="no">03</span>后端模块矩阵</a></li>
+    <li><a href="#frontend"><span class="no">04</span>前端体系</a></li>
+    <li><a href="#server"><span class="no">05</span>服务器版</a></li>
+    <li><a href="#android"><span class="no">06</span>安卓封装</a></li>
+    <li><a href="#data"><span class="no">07</span>数据层</a></li>
+    <li><a href="#release"><span class="no">08</span>打包与发布链</a></li>
+    <li><a href="#security"><span class="no">09</span>安全体系</a></li>
+    <li><a href="#debt"><span class="no">10</span>技术债</a></li>
+  </ul>
+  <div class="foot"><span class="dot"></span>离线自包含 · 零外部请求<br>崩坏：星穹铁道同人作品</div>
+</nav>
+
+<main>
+<!-- ==================== 00 HERO ==================== -->
+<section id="hero">
+  <div class="eyebrow reveal in">PROJECT ATLAS · 个人开发者 · 多轮 AI 协作构建</div>
+  <h1 class="reveal in">流萤 Firefly<span class="en">F I R E F L Y &nbsp; A G E N T</span></h1>
+  <p class="tagline reveal in d1">
+    一个<b>独立运行</b>的《崩坏：星穹铁道》角色扮演聊天 Agent —— 以 <b>DeepSeek API</b> 为后端、
+    <b>LLM 子代理</b>做知识检索，<b>不依附任何框架</b>。同一份 Python 核心跑在
+    Windows 桌面、安卓 WebView 与阿里云服务器三端。
+  </p>
+  <div class="badges reveal in d2">
+    <span class="badge hot">版本 <b>0.8.1</b></span>
+    <span class="badge">Python <b>3.12</b></span>
+    <span class="badge">纯标准库 <b>http.server</b></span>
+    <span class="badge">无 Web 框架</span>
+    <span class="badge">Chaquopy <b>17</b> 安卓内嵌 Python</span>
+    <span class="badge">SQLite</span>
+    <span class="badge">纯静态前端 <b>ESM → bundle</b></span>
+    <span class="badge">DeepSeek API</span>
+  </div>
+  <div class="stats reveal in d3">
+    <div class="stat"><div class="n" data-count="3">0</div><div class="l">运行端</div></div>
+    <div class="stat"><div class="n" data-count="24">0</div><div class="l">后端模块</div></div>
+    <div class="stat"><div class="n" data-count="69">0</div><div class="l">HTTP 端点</div></div>
+    <div class="stat"><div class="n" data-count="19">0</div><div class="l">前端 ESM 模块</div></div>
+    <div class="stat"><div class="n" data-count="58">0</div><div class="l">知识库文档</div></div>
+    <div class="stat"><div class="n" data-count="98.7" data-suffix="%">0</div><div class="l">检索缓存命中率</div></div>
+  </div>
+  <div class="scrollhint reveal in d3"><span class="beam"></span>向下滚动 · 进入萤火深处</div>
+</section>
+
+<!-- ==================== 01 三端架构拓扑 ==================== -->
+<section id="topology">
+  <div class="sec-head reveal">
+    <div class="idx">01 / TOPOLOGY</div>
+    <h2>三端架构拓扑</h2>
+    <p class="sub">同一份 <code>app/</code> 业务核心，三种运行形态。Windows 与安卓把后端打在本地、只绑回环；
+      服务器版在 8787 网关之上复用全部路由，按用户隔离。悬停节点查看高亮。</p>
+  </div>
+
+  <div class="svg-wrap reveal d1">
+    <svg viewBox="0 0 1240 800" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="三端架构拓扑图">
+      <defs>
+        <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0,0 L10,5 L0,10 z" fill="#9aa7c4"></path>
+        </marker>
+        <marker id="arrF" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0,0 L10,5 L0,10 z" fill="#d9f24f"></path>
+        </marker>
+        <marker id="arrO" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0,0 L10,5 L0,10 z" fill="#fb923c"></path>
+        </marker>
+      </defs>
+
+      <!-- 列标题 -->
+      <text x="200" y="46" text-anchor="middle" font-size="17" font-weight="700" fill="#7dd3fc" font-family="STKaiti,KaiTi,SimSun,serif" letter-spacing="3">Windows 本地版</text>
+      <text x="620" y="46" text-anchor="middle" font-size="17" font-weight="700" fill="#d9f24f" font-family="STKaiti,KaiTi,SimSun,serif" letter-spacing="3">安卓双模式 APP</text>
+      <text x="1020" y="46" text-anchor="middle" font-weight="700" fill="#e8a0bf" font-family="STKaiti,KaiTi,SimSun,serif" letter-spacing="3" font-size="17">服务器版 · 阿里云</text>
+      <text x="1020" y="68" text-anchor="middle" font-size="10.5" fill="#5f6c8c" font-family="Consolas,monospace">101.200.14.126 · 多用户</text>
+
+      <!-- Windows 列 -->
+      <g class="tnode win">
+        <rect x="80" y="100" width="240" height="74" rx="12"></rect>
+        <text class="tt" x="200" y="128" text-anchor="middle">PyInstaller 打包</text>
+        <text class="ts" x="200" y="149" text-anchor="middle">firefly.spec · one-folder</text>
+        <text class="ts" x="200" y="164" text-anchor="middle">排除 torch / numpy 重库</text>
+      </g>
+      <g class="tnode win">
+        <rect x="80" y="222" width="240" height="74" rx="12"></rect>
+        <text class="tt" x="200" y="250" text-anchor="middle">firefly.exe</text>
+        <text class="ts" x="200" y="271" text-anchor="middle">server.py 193 行 · 多开检测</text>
+        <text class="ts" x="200" y="286" text-anchor="middle">优雅关闭 · 只绑回环</text>
+      </g>
+      <g class="tnode win">
+        <rect x="80" y="344" width="240" height="80" rx="12"></rect>
+        <text class="tt" x="200" y="372" text-anchor="middle">浏览器 127.0.0.1:8765</text>
+        <text class="ts" x="200" y="393" text-anchor="middle">只绑本机回环</text>
+        <text class="ts" x="200" y="408" text-anchor="middle">防局域网盗 Key</text>
+      </g>
+
+      <!-- 安卓列 -->
+      <g class="tnode and">
+        <rect x="470" y="100" width="300" height="80" rx="12"></rect>
+        <text class="tt" x="620" y="127" text-anchor="middle">Chaquopy 17 内嵌 Python 3.12</text>
+        <text class="ts" x="620" y="148" text-anchor="middle">跑同一份 app/ 后端代码</text>
+        <text class="ts" x="620" y="163" text-anchor="middle">versionCode 806 · minSdk 26 / targetSdk 35</text>
+      </g>
+      <g class="tnode and">
+        <rect x="470" y="228" width="300" height="64" rx="12"></rect>
+        <text class="tt" x="620" y="254" text-anchor="middle">WebView → 127.0.0.1:8765</text>
+        <text class="ts" x="620" y="274" text-anchor="middle">arm64-v8a + x86_64 双 ABI</text>
+      </g>
+      <g class="tnode and">
+        <rect x="440" y="344" width="168" height="86" rx="12"></rect>
+        <text class="tt" x="524" y="370" text-anchor="middle" font-size="12.5">本地模式</text>
+        <text class="ts" x="524" y="390" text-anchor="middle">内嵌引擎直连</text>
+        <text class="ts" x="524" y="405" text-anchor="middle">用户自带 Key</text>
+      </g>
+      <g class="tnode and">
+        <rect x="632" y="344" width="176" height="86" rx="12"></rect>
+        <text class="tt" x="720" y="370" text-anchor="middle" font-size="12.5">服务器模式</text>
+        <text class="ts" x="720" y="390" text-anchor="middle">file:// 打包资产</text>
+        <text class="ts" x="720" y="405" text-anchor="middle">云 API · 12s 超时回落</text>
+      </g>
+
+      <!-- 服务器列 -->
+      <g class="tnode srv">
+        <rect x="880" y="96" width="280" height="92" rx="12"></rect>
+        <text class="tt" x="1020" y="120" text-anchor="middle">:8787 download_server.py</text>
+        <text class="ts" x="1020" y="140" text-anchor="middle">公网唯一入口 · 740 行</text>
+        <text class="ts" x="1020" y="155" text-anchor="middle">下载页 / Gitee resolve 直链 / 白名单下载</text>
+        <text class="ts" x="1020" y="170" text-anchor="middle">300 次/分限流 · 全站反代 · 16MB body 帽</text>
+      </g>
+      <g class="tnode srv">
+        <rect x="880" y="238" width="280" height="86" rx="12"></rect>
+        <text class="tt" x="1020" y="262" text-anchor="middle">:8765 server_app.py（仅回环）</text>
+        <text class="ts" x="1020" y="282" text-anchor="middle">651 行 · 认证 + contextvars 每用户隔离</text>
+        <text class="ts" x="1020" y="297" text-anchor="middle">业务 100% 复用 app/ 路由</text>
+      </g>
+      <g class="tnode srv">
+        <rect x="880" y="374" width="280" height="66" rx="12"></rect>
+        <text class="tt" x="1020" y="398" text-anchor="middle">:8766 管理后台（仅回环）</text>
+        <text class="ts" x="1020" y="418" text-anchor="middle">SSH 隧道 + X-Admin-Token 双因子</text>
+      </g>
+
+      <!-- 共享核心 -->
+      <g class="tnode core">
+        <rect x="240" y="560" width="760" height="104" rx="14"></rect>
+        <text class="tt" x="620" y="592" text-anchor="middle" font-size="16" fill="#d9f24f">共享核心 · 三端复用同一份代码</text>
+        <text class="ts" x="620" y="616" text-anchor="middle" font-size="11.5" fill="#9aa7c4">app/modules/ 24 个模块　+　app/routes*.py 9 个路由文件（45 POST + 24 GET）　+　orchestrator.py 513 行</text>
+        <text class="ts" x="620" y="636" text-anchor="middle" fill="#5f6c8c">纯标准库 http.server · 无 Web 框架 · SQLite</text>
+      </g>
+
+      <!-- 边：Windows -->
+      <path class="edge" d="M200 174 L200 218" marker-end="url(#arr)"></path>
+      <path class="edge" d="M200 296 L200 340" marker-end="url(#arr)"></path>
+      <path class="edge core-edge" d="M200 424 L200 620 L236 620" marker-end="url(#arrF)"></path>
+
+      <!-- 边：安卓 -->
+      <path class="edge" d="M620 180 L620 224" marker-end="url(#arr)"></path>
+      <path class="edge" d="M560 292 L540 340" marker-end="url(#arr)"></path>
+      <path class="edge dash" d="M690 292 L716 340" marker-end="url(#arrO)"></path>
+      <path class="edge core-edge" d="M524 430 L524 556" marker-end="url(#arrF)"></path>
+      <text class="edge-label" x="742" y="320" fill="#fb923c">启动探测 12s 超时自动回落</text>
+
+      <!-- 边：服务器 -->
+      <path class="edge" d="M1020 188 L1020 234" marker-end="url(#arr)"></path>
+      <path class="edge" d="M1100 324 L1100 370" marker-end="url(#arr)"></path>
+      <path class="edge core-edge" d="M940 324 L940 556" marker-end="url(#arrF)"></path>
+      <text class="edge-label" x="1032" y="222">反代至本机回环</text>
+      <text class="edge-label" x="1112" y="352">SSH 隧道访问</text>
+
+      <!-- 安卓服务器模式 → 云 -->
+      <path class="edge dash" d="M808 388 L876 160" marker-end="url(#arrO)"></path>
+      <text class="edge-label" x="818" y="260" fill="#fb923c">云 API</text>
+    </svg>
+    <div class="legend">
+      <span><i style="background:#9aa7c4"></i>调用 / 数据流</span>
+      <span><i style="background:#d9f24f"></i>复用共享核心 app/</span>
+      <span><i style="background:#fb923c"></i>回落 / 降级路径</span>
+      <span style="color:#9aa7c4">公网只暴露 22(SSH) + 8787；8765 / 8766 仅回环</span>
+    </div>
+  </div>
+
+  <div class="grid g3" style="margin-top:18px">
+    <div class="card reveal d1">
+      <h3><span class="ico">[win]</span>桌面版要点</h3>
+      <ul>
+        <li><b>server.py 193 行</b>：入口，多开检测 + 优雅关闭 + 只绑回环网卡</li>
+        <li>浏览器打开 <code>127.0.0.1:8765</code> 即完整应用，无需安装依赖</li>
+        <li>PyInstaller <b>one-folder</b> 产物 → Inno Setup 静默升级安装包</li>
+      </ul>
+    </div>
+    <div class="card reveal d2">
+      <h3><span class="ico">[android]</span>安卓双模式</h3>
+      <ul>
+        <li>Chaquopy 把 <b>Python 3.12 解释器和 app/ 一起打进 APK</b></li>
+        <li>WebView 加载本机 8765；启动 <b>12 秒探测</b>失败自动切服务器模式</li>
+        <li>服务器模式：<code>file://</code> 打包资产 + 云端 API，断网可浏览界面</li>
+      </ul>
+    </div>
+    <div class="card reveal d3">
+      <h3><span class="ico">[server]</span>服务器版要点</h3>
+      <ul>
+        <li>8787 网关做下载站与全站反代，<b>300 次/分/IP 限流</b></li>
+        <li>8765 业务层用 <code>contextvars</code> 实现每用户数据隔离</li>
+        <li>8766 管理后台仅回环，SSH 隧道 + <code>X-Admin-Token</code> 双因子进入</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- ==================== 02 对话流水线 ==================== -->
+<section id="pipeline">
+  <div class="sec-head reveal">
+    <div class="idx">02 / PIPELINE</div>
+    <h2>对话流水线</h2>
+    <p class="sub">单轮 <code>210s</code> 硬顶 + 分阶段超时预算（30/90s），任何 LLM 异常统一降级为「嗯…信号不太好」，
+      错误码透传前端 toast。悬停或点选任意步骤查看细节。</p>
+  </div>
+
+  <div class="pipe-hint reveal">HOVER / CLICK 每个节点 ↓</div>
+  <div class="pipe-flow reveal d1" id="pipeFlow">
+    <div class="pstep" data-p="0">
+      <div class="pn">IN</div><h4>用户消息</h4>
+      <p>前端 5 秒滑动合并窗口，防安卓切后台丢消息</p>
+    </div>
+    <div class="pstep warn" data-p="1">
+      <div class="pn">GUARD</div><h4>前置审查</h4>
+      <p>空消息 / &gt;2000 字直接降级，不调 LLM</p>
+    </div>
+    <div class="pstep" data-p="2">
+      <div class="pn">⓪ RETRIEVE</div><h4>检索器 LlmRetriever</h4>
+      <p>知识库 58 文件整库注入 → LLM 压缩摘要</p>
+    </div>
+    <div class="pstep" data-p="3">
+      <div class="pn">① ANALYZE</div><h4>分析器 Analyzer</h4>
+      <p>意图 / 事实核查 / 摘要 · Flash + Think High</p>
+    </div>
+    <div class="pstep" data-p="4">
+      <div class="pn">② POLISH</div><h4>回复器 Polisher</h4>
+      <p>全权生成 [MSG] 分条短信 ≤6 条 · Think High</p>
+    </div>
+    <div class="pstep" data-p="5">
+      <div class="pn">③ ORGANIZE</div><h4>组织器 Organizer</h4>
+      <p>表情包调度 / 旁白演出 JSON · temp0.3</p>
+    </div>
+    <div class="pstep" data-p="6">
+      <div class="pn">MERGE</div><h4>旁白合并</h4>
+      <p>haruno 模式旁白与短信流汇合</p>
+    </div>
+    <div class="pstep" data-p="7">
+      <div class="pn">OUT</div><h4>写盘 + 观测</h4>
+      <p>conversation.jsonl + pipeline.jsonl（8MB 轮转）</p>
+    </div>
+  </div>
+
+  <div class="pipe-detail reveal d2" id="pipeDetail">
+    <h4 id="pdTitle">悬停任意节点</h4>
+    <div class="pd-body" id="pdBody">这里会显示该阶段的输入、模型配置、降级策略与耗时预算。</div>
+  </div>
+
+  <div class="grid g2" style="margin-top:18px">
+    <div class="card reveal d1">
+      <h3><span class="ico">[tx]</span>前端发送侧：5 秒滑动合并窗口</h3>
+      <ul>
+        <li>连续输入在 <b>5 秒滑动窗口</b>内合并为一条发送，贴近真人聊天节奏</li>
+        <li><code>/chat/hint</code> 续窗：窗口期内来了新消息则延长等待</li>
+        <li><code>/chat/flush</code> 立即发：用户停止输入即冲刷队列</li>
+        <li>设计动机：<b>防安卓切后台丢消息</b>，请求发出前消息不落单</li>
+      </ul>
+    </div>
+    <div class="card reveal d2">
+      <h3><span class="ico">[rx]</span>骨架可靠性设计</h3>
+      <ul>
+        <li>单轮 <b>210s 硬顶</b>，阶段预算 <b>30s / 90s</b> 分级掐断</li>
+        <li>错误码透传至前端 <b>toast</b>，用户能看懂是哪一步挂了</li>
+        <li>任何 LLM 异常统一降级为角色化回复：<b>「嗯…信号不太好」</b></li>
+        <li>全链路 <code>pipeline.jsonl</code> 观测日志，<b>8MB 轮转</b>防爆盘</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- ==================== 03 后端模块矩阵 ==================== -->
+<section id="modules">
+  <div class="sec-head reveal">
+    <div class="idx">03 / MODULES</div>
+    <h2>后端模块矩阵</h2>
+    <p class="sub"><code>app/modules/</code> 下 24 个模块 + 9 个路由文件 + 2 个入口基建。
+      支持关键词检索与分组过滤；行数为约值，随版本微调。</p>
+  </div>
+
+  <div class="mx-tools reveal d1">
+    <div class="mx-search">
+      <span style="color:var(--fire)">⌕</span>
+      <input id="mxSearch" type="text" placeholder="搜索模块 / 职责关键词… 如 token、同步、表情包">
+      <span class="k">FILTER</span>
+    </div>
+    <div class="mx-filters" id="mxFilters">
+      <button class="mx-f on" data-g="all">全部</button>
+      <button class="mx-f" data-g="core">核心链路</button>
+      <button class="mx-f" data-g="infra">基础设施</button>
+      <button class="mx-f" data-g="proactive">主动消息</button>
+      <button class="mx-f" data-g="store">存储与同步</button>
+      <button class="mx-f" data-g="fix">设定纠错</button>
+      <button class="mx-f" data-g="route">路由层</button>
+    </div>
+  </div>
+
+  <div class="subhead reveal d1">app/modules/ · <b>24 个模块</b></div>
+  <div class="mx-tablewrap reveal d1">
+    <div class="mx-scroll">
+      <table class="mx">
+        <thead><tr><th>模块</th><th style="text-align:right">行数</th><th>职责</th><th>LLM 模式</th></tr></thead>
+        <tbody id="mxBody"></tbody>
+      </table>
+      <div class="mx-empty" id="mxEmpty">— 没有匹配的模块 —</div>
+    </div>
+  </div>
+
+  <div class="subhead reveal">路由层 · <b>9 个文件 · 45 POST + 24 GET</b></div>
+  <div class="mx-tablewrap reveal">
+    <div class="mx-scroll" style="max-height:420px">
+      <table class="mx">
+        <thead><tr><th>路由文件</th><th style="text-align:right">行数</th><th>职责</th><th>端点域</th></tr></thead>
+        <tbody>
+          <tr data-g="route"><td class="m">routes.py</td><td class="lc">750</td><td class="d">聊天主链路 + 聚合编排，对话入口</td><td class="d"><span class="mode think">chat</span></td></tr>
+          <tr data-g="route"><td class="m">routes_common.py</td><td class="lc">215</td><td class="d">共享状态 / 工具函数 / 图片辅助</td><td class="d"><span class="mode none">util</span></td></tr>
+          <tr data-g="route"><td class="m">routes_auth.py</td><td class="lc">111</td><td class="d">A7 认证代理，7 端点动态注册（服务器版启用）</td><td class="d"><span class="mode multi">auth ×7</span></td></tr>
+          <tr data-g="route"><td class="m">routes_config.py</td><td class="lc">304</td><td class="d">配置读写 / 供应商管理 / 模型列表 / 余额查询</td><td class="d"><span class="mode none">config</span></td></tr>
+          <tr data-g="route"><td class="m">routes_assets.py</td><td class="lc">354</td><td class="d">表情包 / 角色文件 / 图片上传 / 资产 / 收藏</td><td class="d"><span class="mode none">assets</span></td></tr>
+          <tr data-g="route"><td class="m">routes_fix.py</td><td class="lc">193</td><td class="d">设定纠错 7 端点（提案 / 通过 / 回滚）</td><td class="d"><span class="mode multi">fix ×7</span></td></tr>
+          <tr data-g="route"><td class="m">routes_data.py</td><td class="lc">642</td><td class="d">导出 / 导入 / 备份 ×4 / 同步 ×4</td><td class="d"><span class="mode none">data ×8+</span></td></tr>
+          <tr data-g="route"><td class="m">routes_update.py</td><td class="lc">199</td><td class="d">双源检查更新（GitHub+Gitee）+ 加固下载</td><td class="d"><span class="mode none">update</span></td></tr>
+          <tr data-g="route"><td class="m">routes_relay.py</td><td class="lc">89</td><td class="d">relay pending / result / proxy（APP 代发链路）</td><td class="d"><span class="mode none">relay</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="grid g2" style="margin-top:18px">
+    <div class="card reveal d1">
+      <h3><span class="ico">[entry]</span>入口与基建</h3>
+      <dl class="kv">
+        <dt>server.py · 193</dt><dd>桌面版入口：<b>多开检测</b>、优雅关闭、只绑回环网卡</dd>
+        <dt>shared_http.py · 108</dt><dd><code>ResponseMixin</code> 响应工具 + CORS 策略</dd>
+        <dt>orchestrator.py · 513</dt><dd>流水线<b>总调度</b>：审查 → 检索 → 分析 → 回复 → 组织 → 落盘</dd>
+      </dl>
+    </div>
+    <div class="card reveal d2">
+      <h3><span class="ico">[mode]</span>LLM 模式图例</h3>
+      <dl class="kv">
+        <dt><span class="mode think">Think High</span></dt><dd>深度思考高档位——分析器 / 回复器使用，质量优先</dd>
+        <dt><span class="mode nothink">Non-think</span></dt><dd>关闭思考——检索器 temp0、组织器 temp0.3 json_object，稳定优先</dd>
+        <dt><span class="mode none">无 LLM</span></dt><dd>纯本地逻辑：存储 / 同步 / 配置 / 静态资源</dd>
+      </dl>
+    </div>
+  </div>
+</section>
+
+<!-- ==================== 04 前端体系 ==================== -->
+<section id="frontend">
+  <div class="sec-head reveal">
+    <div class="idx">04 / FRONTEND</div>
+    <h2>前端体系</h2>
+    <p class="sub">唯一源 <code>app/static/</code>：index.html 928 行 + style.css 1128 行 + config.js 双模式单点 +
+      19 个 ESM 模块。构建期拼成单 bundle，同步到服务器与安卓资产，三道门禁把关。</p>
+  </div>
+
+  <div class="chain reveal d1" style="margin-bottom:8px">
+    <div class="cstep"><div class="ct">app/static/ · 唯一源</div><p>19 个 ESM 模块 + index.html + style.css + config.js（双模式单点开关）</p></div>
+    <div class="cstep"><div class="ct">build_frontend_bundle.py</div><p>按 ORDER 顺序拼成单作用域 <b>bundle.js 4144 行</b>——绕开安卓 file:// 下 WebView 拦 ESM 的限制</p></div>
+    <div class="cstep"><div class="ct">sync_frontends.py</div><p>同步到 <code>server/frontend/</code> 与 <code>android assets</code>；服务器另有 login.html 459 / admin.html 532 两件独有</p></div>
+    <div class="cstep"><div class="ct">三道门禁</div><p><code>bundle --check</code> · <code>sync --check</code> · <code>check_version</code>（7 处版本号一致校验）</p></div>
+  </div>
+
+  <div class="grid g2">
+    <div class="card reveal d1">
+      <h3><span class="ico">[esm]</span>19 个 ESM 模块 · 行数分布</h3>
+      <div id="fbars"></div>
+      <p style="margin-top:10px;font-size:12px;color:var(--faint)">拼接产物 <b style="color:var(--fire)">bundle.js 4144 行</b>（单作用域，防 ESM 被 WebView 拦截）</p>
+    </div>
+    <div class="card reveal d2">
+      <h3><span class="ico">[mode]</span>双模式分支</h3>
+      <dl class="kv">
+        <dt>IS_SERVER</dt><dd>全前端共 <b>34 处</b>双模式分支判断，集中在 api / sync / panels</dd>
+        <dt>本地模式</dt><dd>直连 <code>127.0.0.1:8765</code>，用户自带 Key，数据全在本机</dd>
+        <dt>服务器模式</dt><dd>登录态 + relay 代发 + 托管额度，界面同源但走云端</dd>
+        <dt>config.js</dt><dd>双模式<b>单点开关</b>：安卓启动时被 MainActivity 拦截注入 <code>FIREFLY_MODE</code></dd>
+      </dl>
+      <h4>服务器网页端独有页面</h4>
+      <ul>
+        <li><code>login.html</code> <b>459 行</b>：QQ 邮箱验证码登录 / 注册</li>
+        <li><code>admin.html</code> <b>532 行</b>：管理台界面（走 SSH 隧道访问）</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- ==================== 05 服务器版 ==================== -->
+<section id="server">
+  <div class="sec-head reveal">
+    <div class="idx">05 / SERVER</div>
+    <h2>服务器版细节</h2>
+    <p class="sub">阿里云 <code>101.200.14.126</code> 上的多用户形态：四层认证门槛、relay 代发、托管额度池、
+      攻击哨兵与每日备份。公网面被压到最小。</p>
+  </div>
+
+  <div class="grid g2">
+    <div class="card reveal d1">
+      <h3><span class="ico">[auth]</span>认证四门槛</h3>
+      <ol class="flow-list">
+        <li><b>QQ 邮箱验证码</b>：5 分钟有效、一次性使用</li>
+        <li><b>QQ 群邀请</b>：群成员资格校验，圈住同好用户</li>
+        <li><b>install_id 一安装一号</b>：设备指纹绑定，防小号批发</li>
+        <li><b>IP 限流</b>：登录接口独立限频，失败 5 次锁 15 分钟（计数落库 + 写路径自愈清理）</li>
+      </ol>
+      <h4>凭据与令牌</h4>
+      <ul>
+        <li>密码 <b>scrypt</b> 哈希；token <b>30 天滚动续期</b></li>
+        <li>token 以 <b>sha256 哈希落库</b>（v2 迁移透明完成），库泄不泄令牌</li>
+      </ul>
+    </div>
+    <div class="card reveal d2">
+      <h3><span class="ico">[relay]</span>relay 代发机制</h3>
+      <ol class="flow-list">
+        <li>浏览器 <b>1s 轮询</b> <code>/relay/pending</code> 取待发请求</li>
+        <li>用户 Key <b>本地直连</b> DeepSeek 代发，Key 不出本机</li>
+        <li>结果回传 <code>/relay/result</code>；CORS 失败时降级 <code>/relay/proxy</code> 由服务器代发</li>
+        <li>proxy 路径下 Key <b>内存即弃、不落盘</b></li>
+      </ol>
+      <h4>托管额度池 QuotaClient</h4>
+      <ul>
+        <li>运行时锁 <code>mimo-v2.5</code> 模型，全站<b>日池 5000 次</b></li>
+        <li>成功才记账；失败记 <code>proxy_usage_failed</code>，不吞用户额度</li>
+      </ul>
+    </div>
+    <div class="card reveal d1">
+      <h3><span class="ico">[admin]</span>管理台与运维</h3>
+      <ul>
+        <li>管理台：用户列表 / 封禁 / 额度调整 / 下载统计 / 最近请求</li>
+        <li><code>_harden/</code> 本机一键管理后台套件：<b>SSH 隧道 + 令牌注入代理</b></li>
+        <li><code>attack_watch.sh</code> 服务器端<b>每分钟</b>扫描访问日志</li>
+        <li>本地 <code>attack_sentinel.py</code>：SSH 收诊断 → DeepSeek 分析 → 弹窗 + 安全日报；高危触发 <code>.shrink</code> 收缩注册</li>
+        <li>每日 <b>3:00 cron 备份</b>，保留最近 <b>7 份</b></li>
+      </ul>
+    </div>
+    <div class="card reveal d2">
+      <h3><span class="ico">[port]</span>端口模型</h3>
+      <div class="ports">
+        <div class="port pub"><div class="p">8787</div><div class="n">公网唯一入口<br>download_server.py</div><span class="s">PUBLIC</span></div>
+        <div class="port loop"><div class="p">8765</div><div class="n">业务层 server_app.py<br>仅回环，反代后方可达</div><span class="s">LOOPBACK</span></div>
+        <div class="port ssh"><div class="p">8766</div><div class="n">管理后台<br>仅回环 + SSH 隧道</div><span class="s">SSH TUNNEL</span></div>
+      </div>
+      <p style="margin-top:12px;font-size:12.5px">公网只开 <code>22</code>（SSH）与 <code>8787</code>；业务与管理面全部收敛到回环。</p>
+    </div>
+  </div>
+</section>
+
+<!-- ==================== 06 安卓封装 ==================== -->
+<section id="android">
+  <div class="sec-head reveal">
+    <div class="idx">06 / ANDROID</div>
+    <h2>安卓封装</h2>
+    <p class="sub">Kotlin 壳 + Chaquopy 内嵌 Python。本地模式跑真后端，服务器模式纯前端资产上云；
+      前后台保活与主动消息由前台服务兜底。</p>
+  </div>
+
+  <div class="grid g2">
+    <div class="card reveal d1">
+      <h3><span class="ico">[kt]</span>MainActivity.kt · ~585 行</h3>
+      <ul>
+        <li><b>内嵌引擎启动</b>：Chaquopy 拉起 app/ 后端，绑 127.0.0.1:8765</li>
+        <li><b>12s 探测回落</b>：引擎未就绪自动切服务器模式，不卡启动页</li>
+        <li>拦截 <code>config.js</code> 请求，注入 <code>FIREFLY_MODE</code> 运行时模式</li>
+        <li>WebView <b>URL 白名单</b>，外链一律系统浏览器打开</li>
+        <li>文件选择 / 下载导出 / <b>WakeLock 桥</b></li>
+        <li>电池优化引导，含 <b>OPPO 专属</b>路径（ColorOS 后台冻结）</li>
+      </ul>
+    </div>
+    <div class="card reveal d2">
+      <h3><span class="ico">[svc]</span>KeepAliveService.kt · 188 行</h3>
+      <ul>
+        <li>前台服务 <code>START_STICKY</code>，被杀了系统拉回</li>
+        <li>随机 <b>10–30 分钟</b>定时触发主动消息检查（拟人不确定性）</li>
+        <li>本地模式：Chaquopy 直调 <code>backdoor_proactive_check</code></li>
+        <li>服务器模式：<code>evaluateJavascript</code> 调页面内 <code>__serverProactive()</code></li>
+      </ul>
+      <h4>两个 JS 桥</h4>
+      <ul>
+        <li><code>androidWakeLock</code>：前端按需持锁，长回复不断流</li>
+        <li><code>FireflyJs.notify</code>：后台时系统通知栏推送角色消息</li>
+      </ul>
+    </div>
+    <div class="card reveal d1" style="grid-column:1/-1">
+      <h3><span class="ico">[gradle]</span>Gradle 构建管线</h3>
+      <div class="chain">
+        <div class="cstep"><div class="ct">syncBackend</div><p>把 <code>app/</code> + <code>knowledge/</code> + <code>database/</code> 拷入 <code>python/backend</code>，供 Chaquopy 打包</p></div>
+        <div class="cstep"><div class="ct">syncFrontendAssets</div><p>bundle.js + 静态资产拷入安卓 assets（file:// 离线可用）</p></div>
+        <div class="cstep"><div class="ct">assembleRelease</div><p>versionCode <b>806</b> · minSdk <b>26</b> / targetSdk <b>35</b> · arm64-v8a + x86_64</p></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ==================== 07 数据层 ==================== -->
+<section id="data">
+  <div class="sec-head reveal">
+    <div class="idx">07 / DATA</div>
+    <h2>数据层</h2>
+    <p class="sub">知识检索层、人工查证语料、运行时用户数据与人设资产四块分离。
+      检索只读压缩版，原文仅供人工核对。</p>
+  </div>
+
+  <div class="grid g2">
+    <div class="card reveal d1">
+      <h3><span class="ico">[dir]</span>目录地图</h3>
+      <div class="tree"><span class="dir">knowledge/</span>            <span class="cm"># 检索扫描层 · 58 个 md</span>
+  ├─ aeons-and-paths.md   <span class="cm">星神与命途</span>
+  ├─ factions/            <span class="cm">15 个势力档案</span>
+  ├─ regions.md           <span class="cm">地区设定</span>
+  ├─ timeline.md          <span class="cm">编年时间线</span>
+  └─ story/ 剧本/         <span class="cm">剧本 1.0 – 4.2 版本全覆盖</span>
+
+<span class="dir">database/</span>            <span class="cm"># 74 个文件 · 仅人工查证</span>
+  ├─ wiki/                <span class="cm">百科原文</span>
+  ├─ dialogues/           <span class="cm">游戏对话原文</span>
+  └─ dialogues_compiled/  <span class="hl">LLM 压缩版 · 参与检索</span>
+
+<span class="dir">user_data/</span>           <span class="cm"># 运行时（每用户隔离）</span>
+  ├─ config.json          <span class="cm">多供应商 providers 配置</span>
+  ├─ conversation.jsonl   <span class="cm">会话流水</span>
+  ├─ memory.md            <span class="cm">长期记忆</span>
+  ├─ 手账 / images / favorites/
+  └─ backups/             <span class="cm">每模式留 10 份</span>
+
+<span class="dir">app/assets/character/</span>
+  ├─ story/               <span class="pk">短信模式人设</span>
+  └─ haruno/              <span class="pk">旁白演出模式人设</span></div>
+    </div>
+    <div class="card reveal d2">
+      <h3><span class="ico">[persona]</span>人设资产结构</h3>
+      <p>每套人设四件套，检索与生成时按模式选用：</p>
+      <dl class="kv">
+        <dt>core.md</dt><dd>核心设定，带时态标记：<b>[事实]</b> 恒真 / <b>[经历]</b> 已发生 / <b>[若]</b> 假设推演，防模型时态穿帮</dd>
+        <dt>identity.md</dt><dd>身份卡：姓名、来历、与玩家的关系定位</dd>
+        <dt>sms_samples.md</dt><dd>短信语料样本，锚定语气与分条习惯</dd>
+        <dt>用户设定.md</dt><dd>对玩家角色的设定约束，越界即纠</dd>
+      </dl>
+      <h4>流转方式</h4>
+      <ul>
+        <li><code>llm_retriever</code> 把 knowledge/ 58 文件整库注入 system 前缀交给 LLM 压缩摘要</li>
+        <li>缓存命中率约 <b>98.7%</b>；haruno 模式跳过检索</li>
+        <li><code>database/dialogues_compiled/</code> 的 LLM 压缩版才进检索，原文不进 prompt</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- ==================== 08 打包与发布链 ==================== -->
+<section id="release">
+  <div class="sec-head reveal">
+    <div class="idx">08 / RELEASE</div>
+    <h2>打包与发布链</h2>
+    <p class="sub">双平台桌面安装包 + 安卓 APK，双仓 Release 加服务器兜底。
+      铁律：<b style="color:var(--orange)">提交 ≠ 发版，无明确指示不动版本号</b>。</p>
+  </div>
+
+  <div class="chain reveal d1">
+    <div class="cstep"><div class="ct">PyInstaller · firefly.spec</div><p>one-folder 模式，显式排除 torch / numpy 等重库，控制体积</p></div>
+    <div class="cstep"><div class="ct">dist/firefly</div><p>绿色目录产物，可直接运行验收</p></div>
+    <div class="cstep"><div class="ct">Inno Setup · firefly.iss</div><p><code>CloseApplications</code> 静默升级，老版本自动关闭替换</p></div>
+    <div class="cstep"><div class="ct">firefly-setup.exe</div><p>Windows 安装包 · 资产名不带版本号</p></div>
+  </div>
+  <div class="chain reveal d2">
+    <div class="cstep"><div class="ct">Gradle assembleRelease</div><p>firefly.apk · versionCode 806 递增，必须大于上一版</p></div>
+    <div class="cstep"><div class="ct">双平台 Release</div><p>GitHub + Gitee 同步发版，资产名稳定不带版本号（直链不变）</p></div>
+    <div class="cstep"><div class="ct">服务器兜底</div><p><code>/opt/firefly-downloads</code> 留存副本，下载优先级：Gitee 直链 → 服务器兜底</p></div>
+    <div class="cstep"><div class="ct">check_version.py</div><p>7 处版本号一致校验 + versionCode 单调递增检查，不过不发版</p></div>
+  </div>
+
+  <div class="grid g2" style="margin-top:6px">
+    <div class="card reveal d1">
+      <h3><span class="ico">[rule]</span>版本铁律</h3>
+      <ul>
+        <li><b>提交 ≠ 发版</b>：代码合入不触发任何版本动作</li>
+        <li>无明确指示<b>不动版本号</b>，versionCode 只能递增</li>
+        <li>发版前 <code>check_version.py</code> 七处一致校验必须全绿</li>
+      </ul>
+    </div>
+    <div class="card reveal d2">
+      <h3><span class="ico">[dl]</span>用户侧下载路径</h3>
+      <ul>
+        <li>下载页由 <code>download_server.py</code> 承载（8787 公网口）</li>
+        <li>优先 <b>Gitee resolve 直链</b>（国内速度），失败回落服务器副本</li>
+        <li>下载走<b>白名单文件名</b>，防止路径穿越任意读文件</li>
+        <li>下载接口独立 <b>300 次/分</b> 限流 + 16MB body 帽</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- ==================== 09 安全体系 ==================== -->
+<section id="security">
+  <div class="sec-head reveal">
+    <div class="idx">09 / SECURITY</div>
+    <h2>安全体系</h2>
+    <p class="sub">2026-08-25 集中安全加固（已部署上线）。下面同时诚实列出<b style="color:var(--orange)">遗留风险</b>——
+      知道缺口在哪，比假装没有缺口重要。</p>
+  </div>
+
+  <div class="grid g2">
+    <div class="card reveal d1">
+      <h3><span class="ico">[done]</span>已加固 · 2026-08-25</h3>
+      <div class="ok-line"><b>GATEWAY</b>16MB body 帽，411 / 400 / 413 三段精细拒绝</div>
+      <div class="ok-line"><b>SSRF</b>relay 双层拦截 <code>is_public_endpoint</code>：DNS 全记录公网校验 + 300s 缓存</div>
+      <div class="ok-line"><b>SESSION</b>sessions token sha256 哈希化落库，v2 迁移对用户透明</div>
+      <div class="ok-line"><b>ASSET</b>img_id 白名单校验，<code>compare_digest</code> 时序安全比较</div>
+      <div class="ok-line"><b>AUTH</b>登录失败计数落库，写路径自愈清理过期记录</div>
+      <div class="ok-line"><b>ADMIN</b>AdminHandler 请求体 64KB 帽</div>
+      <div class="ok-line"><b>ANDROID</b><code>allowBackup=false</code>，防 adb 备份拖库</div>
+      <div class="ok-line"><b>PARSE</b>手写 multipart 解析拒绝畸形头（10MB 帽）</div>
+    </div>
+    <div class="card reveal d2">
+      <h3><span class="ico">[risk]</span>遗留风险 · 诚实清单</h3>
+      <div class="risk"><h5>明文 HTTP 全链路</h5><p>HTTPS 等待域名决策；目前靠回环 + token 哈希缓解，公网段仍是明文。</p></div>
+      <div class="risk"><h5>quota_api_proxy 字段未启用</h5><p>只有全站日池 5000 次，缺单账号防刷维度。</p></div>
+      <div class="risk"><h5>_SESSION_MAX = 30 全局帽</h5><p>会话总数硬顶，多用户增长后需要重新审视。</p></div>
+      <div class="risk"><h5>限流表自愈破绽</h5><p>限流表超 5000 IP 时整体清零，极端情况下给攻击者一个重置窗口。</p></div>
+      <div class="risk"><h5>审计日志内存态</h5><p>内存 deque 300 条，重启即清零，取证窗口短。</p></div>
+      <div class="risk"><h5>server/ 不入 git</h5><p>只走 scp + 本地副本，无版本历史，回滚靠备份。</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- ==================== 10 技术债 ==================== -->
+<section id="debt">
+  <div class="sec-head reveal">
+    <div class="idx">10 / DEBT</div>
+    <h2>技术债 · 已清理与剩余</h2>
+    <p class="sub">本轮重构把四个超大文件拆开、清掉死代码；剩下的天花板都是<b>有意为之的取舍</b>。</p>
+  </div>
+
+  <div class="grid g2">
+    <div class="card reveal d1">
+      <h3><span class="ico">[clean]</span>本次已清理</h3>
+      <dl class="kv">
+        <dt>routes</dt><dd>2680 行 → <b>750 + 8 个专题文件</b></dd>
+        <dt>proactive</dt><dd>1009 行 → <b>337 facade + 2 个实现模块</b></dd>
+        <dt>panels.js</dt><dd>1218 行 → <b>498 + 3 个拆分模块</b></dd>
+        <dt>chat.js</dt><dd>1098 行 → <b>574 + 3 个拆分模块</b></dd>
+        <dt>死代码</dt><dd>清除 <b>21 项</b>（未使用函数 / 陈旧分支）</dd>
+        <dt>文档</dt><dd>清除幽灵文档引用（指向已不存在文件的链接）</dd>
+      </dl>
+    </div>
+    <div class="card reveal d2">
+      <h3><span class="ico">[ceil]</span>剩余已知天花板</h3>
+      <ul>
+        <li><b>推送靠轮询</b>：浏览器 1s 轮询 relay——FCM 评估后<b>明确不做</b>（接入成本与隐私取舍）</li>
+        <li><b>OPPO ColorOS 后台冻结</b>：系统级限制，只能靠用户设置引导缓解</li>
+        <li><b>OpenCode Go 端点不支持 CORS</b>：浏览器无法直连，只能 relay / proxy 中转</li>
+        <li><b>迁移层只加不减</b>：有意保留全部历史迁移，服务老用户无损升级</li>
+      </ul>
+    </div>
+  </div>
+</section>
+</main>
+
+<footer>
+  <div class="f1">愿此行，终抵群星</div>
+  <div class="f2">流萤 Firefly v0.8.1 · 架构全景 · 单文件离线自包含 · 数据截至 2026-08-28</div>
+</footer>
+
+<button id="top" title="回到顶部">↑</button>
+
+<script>
+/* ============================================================
+   流萤 Firefly · 架构页交互（全部内联，零外部请求）
+   ============================================================ */
+(function(){
+"use strict";
+var RM = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+/* 平铺模式（?flat=1）：整页展开、关闭平滑滚动与 hero 高度，
+   供整页截图 / 打印导出使用 */
+var FLAT = /[?&]flat=1/.test(location.search);
+if(FLAT){
+  document.documentElement.style.scrollBehavior = "auto";
+  var heroEl = document.getElementById("hero");
+  if(heroEl){ heroEl.style.minHeight = "0"; heroEl.style.paddingTop = "40px"; }
+  document.querySelectorAll(".reveal").forEach(function(el){ el.classList.add("in"); });
+  document.querySelectorAll(".mx-scroll").forEach(function(el){ el.style.maxHeight = "none"; });
+}
+
+/* ---------- 萤火 + 星空画布 ---------- */
+(function(){
+  var cv = document.getElementById("sky");
+  var ctx = cv.getContext("2d");
+  var W, H, stars = [], flies = [], DPR = Math.min(window.devicePixelRatio||1, 2);
+  var COLORS = ["217,242,79","255,217,122","255,217,122"]; // 萤火黄绿 / 暖黄
+  function resize(){
+    W = window.innerWidth; H = window.innerHeight;
+    cv.width = W*DPR; cv.height = H*DPR;
+    cv.style.width = W+"px"; cv.style.height = H+"px";
+    ctx.setTransform(DPR,0,0,DPR,0,0);
+    seed();
+  }
+  function seed(){
+    var i;
+    stars = [];
+    var ns = Math.min(200, Math.floor(W*H/9000));
+    for(i=0;i<ns;i++) stars.push({
+      x:Math.random()*W, y:Math.random()*H,
+      r:Math.random()*1.1+0.3, p:Math.random()*Math.PI*2,
+      s:0.4+Math.random()*0.8
+    });
+    flies = [];
+    var nf = RM ? 0 : Math.min(46, Math.floor(W/30));
+    for(i=0;i<nf;i++) flies.push({
+      x:Math.random()*W, y:Math.random()*H,
+      vx:(Math.random()-0.5)*0.16, vy:(Math.random()-0.5)*0.12,
+      r:Math.random()*1.5+1.1, p:Math.random()*Math.PI*2,
+      sp:0.35+Math.random()*0.5, c:COLORS[i%COLORS.length],
+      ax:Math.random()*Math.PI*2
+    });
+  }
+  function frame(t){
+    ctx.clearRect(0,0,W,H);
+    var i, s, f, a;
+    /* 星：轻微闪烁 */
+    for(i=0;i<stars.length;i++){
+      s = stars[i];
+      a = 0.25 + 0.35*(0.5+0.5*Math.sin(t*0.0004*s.s + s.p));
+      ctx.fillStyle = "rgba(220,230,255,"+a.toFixed(3)+")";
+      ctx.beginPath(); ctx.arc(s.x, s.y, s.r, 0, 6.2832); ctx.fill();
+    }
+    /* 萤火：漂移 + 呼吸发光 */
+    for(i=0;i<flies.length;i++){
+      f = flies[i];
+      f.ax += (Math.random()-0.5)*0.06;
+      f.x += f.vx + Math.cos(f.ax)*0.12;
+      f.y += f.vy + Math.sin(f.ax*0.7)*0.09;
+      if(f.x<-20) f.x = W+20; if(f.x>W+20) f.x = -20;
+      if(f.y<-20) f.y = H+20; if(f.y>H+20) f.y = -20;
+      var pulse = 0.5+0.5*Math.sin(t*0.001*f.sp + f.p);
+      a = 0.12 + 0.75*Math.pow(pulse, 2.2);
+      var g = ctx.createRadialGradient(f.x,f.y,0,f.x,f.y,f.r*7);
+      g.addColorStop(0,"rgba("+f.c+","+(a*0.9).toFixed(3)+")");
+      g.addColorStop(0.35,"rgba("+f.c+","+(a*0.28).toFixed(3)+")");
+      g.addColorStop(1,"rgba("+f.c+",0)");
+      ctx.fillStyle = g;
+      ctx.beginPath(); ctx.arc(f.x,f.y,f.r*7,0,6.2832); ctx.fill();
+      ctx.fillStyle = "rgba(255,255,240,"+(a).toFixed(3)+")";
+      ctx.beginPath(); ctx.arc(f.x,f.y,f.r,0,6.2832); ctx.fill();
+    }
+    requestAnimationFrame(frame);
+  }
+  resize();
+  window.addEventListener("resize", resize);
+  if(!RM) requestAnimationFrame(frame);
+  else { // 静态星空
+    ctx.clearRect(0,0,W,H);
+    for(var i=0;i<stars.length;i++){var s=stars[i];
+      ctx.fillStyle="rgba(220,230,255,0.4)";
+      ctx.beginPath();ctx.arc(s.x,s.y,s.r,0,6.2832);ctx.fill();}
+  }
+})();
+
+/* ---------- 滚动渐显 ---------- */
+(function(){
+  var io = new IntersectionObserver(function(es){
+    es.forEach(function(e){ if(e.isIntersecting){ e.target.classList.add("in"); io.unobserve(e.target);} });
+  },{threshold:0.08, rootMargin:"0px 0px -4% 0px"});
+  document.querySelectorAll(".reveal").forEach(function(el){ io.observe(el); });
+})();
+
+/* ---------- 数字滚动 ---------- */
+(function(){
+  var els = document.querySelectorAll(".stat .n");
+  var io = new IntersectionObserver(function(es){
+    es.forEach(function(e){
+      if(!e.isIntersecting) return; io.unobserve(e.target);
+      var el = e.target, target = parseFloat(el.getAttribute("data-count"));
+      var suf = el.getAttribute("data-suffix")||"";
+      var dec = (String(target).indexOf(".")>=0)?1:0;
+      var t0 = performance.now(), dur = RM?1:1400;
+      (function tick(t){
+        var k = Math.min(1,(t-t0)/dur); k = 1-Math.pow(1-k,3);
+        el.textContent = (target*k).toFixed(dec) + suf;
+        if(k<1) requestAnimationFrame(tick); else el.textContent = target.toFixed(dec)+suf;
+      })(t0);
+    });
+  },{threshold:0.4});
+  els.forEach(function(el){ io.observe(el); });
+})();
+
+/* ---------- 导航高亮 + 汉堡 ---------- */
+(function(){
+  var links = Array.prototype.slice.call(document.querySelectorAll("#navlist a"));
+  var map = {};
+  links.forEach(function(a){ map[a.getAttribute("href").slice(1)] = a; });
+  var io = new IntersectionObserver(function(es){
+    es.forEach(function(e){
+      if(e.isIntersecting){
+        links.forEach(function(a){ a.classList.remove("active"); });
+        var a = map[e.target.id]; if(a) a.classList.add("active");
+      }
+    });
+  },{rootMargin:"-30% 0px -55% 0px"});
+  document.querySelectorAll("section[id]").forEach(function(s){ io.observe(s); });
+  var nav = document.getElementById("nav");
+  document.getElementById("burger").addEventListener("click", function(){ nav.classList.toggle("open"); });
+  links.forEach(function(a){ a.addEventListener("click", function(){ nav.classList.remove("open"); }); });
+})();
+
+/* ---------- 回到顶部 ---------- */
+(function(){
+  var b = document.getElementById("top");
+  window.addEventListener("scroll", function(){
+    b.classList.toggle("show", window.scrollY > 700);
+  },{passive:true});
+  b.addEventListener("click", function(){ window.scrollTo({top:0, behavior: RM?"auto":"smooth"}); });
+})();
+
+/* ---------- 对话流水线交互 ---------- */
+(function(){
+  var DATA = [
+    {t:"IN · 用户消息", b:"<p>前端维护 <b>5 秒滑动合并窗口</b>：窗口期内的连续输入被合并成一条发出，贴近真人聊天节奏。</p><ul><li><code>/chat/hint</code> —— 续窗：窗口内又来新消息，顺延等待</li><li><code>/chat/flush</code> —— 立即发：判定输入结束，冲刷队列</li><li>设计动机：防安卓切后台时消息丢在半截</li></ul>"},
+    {t:"GUARD · 前置审查", b:"<p>第一道闸门，<b>完全不调 LLM</b>，纯本地规则：</p><ul><li>空消息 → 直接降级</li><li>长度 <code>&gt;2000 字</code> → 直接降级</li><li>挡掉粘贴作文与误触，保住 token 预算</li></ul>"},
+    {t:"⓪ RETRIEVE · 检索器 LlmRetriever", b:"<p><code>llm_retriever.py</code> 226 行，Non-think <code>temp0</code>。先注入环境时段句，再把<b>知识库 58 个文件整库注入 system 前缀</b>，让 LLM 子代理压缩出本轮所需摘要。</p><ul><li>缓存命中率约 <code>~98.7%</code>（整库前缀可被供应商缓存）</li><li>haruno 旁白模式<b>跳过检索</b></li><li>检索失败<b>不阻塞</b>主链路，空摘要继续走</li></ul>"},
+    {t:"① ANALYZE · 分析器 Analyzer", b:"<p><code>analyzer.py</code> 287 行，Flash + <b>Think High</b>。</p><ul><li>意图识别：用户在闲聊 / 走剧情 / 问设定</li><li>事实核查：对照检索摘要，防模型张口就来</li><li>上下文摘要：给回复器一份精炼的舞台简报</li></ul>"},
+    {t:"② POLISH · 回复器 Polisher", b:"<p><code>polisher.py</code> 491 行，<b>方案 B：全权生成</b>，Think High，<code>temp 0.5</code>。</p><ul><li>输出 <code>[MSG]</code> 分条短信，单轮 <b>≤6 条</b></li><li>可携带识图结果（vision 模块先对图片做客观描述）</li><li>人设资产四件套在此注入：core / identity / sms_samples / 用户设定</li></ul>"},
+    {t:"③ ORGANIZE · 组织器 Organizer", b:"<p><code>organizer.py</code> 358 行，Non-think <code>temp 0.3</code> + <code>json_object</code> 约束输出。</p><ul><li>story 模式：调度表情包 label（sticker_picker 注册表匹配）</li><li>haruno 模式：产出旁白演出 JSON（场景 / 动作 / 情绪）</li></ul>"},
+    {t:"MERGE · 旁白合并", b:"<p>把组织器的旁白与回复器的短信流按序合并成最终时间线。</p><ul><li>story 模式：短信 + 表情包气泡</li><li>haruno 模式：旁白段落与台词交错演出</li></ul>"},
+    {t:"OUT · 写盘 + 观测", b:"<p>落盘与可观测性在最后一步统一完成：</p><ul><li><code>conversation.jsonl</code> —— 会话流水持久化</li><li><code>pipeline.jsonl</code> —— 全链路观测日志，<b>8MB 轮转</b></li><li>单轮 <b>210s 硬顶</b> + 分阶段预算 <code>30/90s</code></li><li>错误码透传前端 toast；任何 LLM 异常降级「嗯…信号不太好」</li></ul>"}
+  ];
+  var steps = document.querySelectorAll(".pstep");
+  var pdT = document.getElementById("pdTitle"), pdB = document.getElementById("pdBody");
+  function show(i){
+    pdT.textContent = DATA[i].t;
+    pdB.innerHTML = DATA[i].b;
+    steps.forEach(function(s){ s.classList.toggle("sel", s.getAttribute("data-p")==String(i)); });
+  }
+  steps.forEach(function(s){
+    var i = s.getAttribute("data-p");
+    s.addEventListener("mouseenter", function(){ show(i); });
+    s.addEventListener("click", function(){ show(i); });
+    s.addEventListener("focus", function(){ show(i); });
+    s.setAttribute("tabindex","0");
+  });
+  show(2); /* 默认展开检索器——最有特色的一步 */
+})();
+
+/* ---------- 后端模块矩阵 ---------- */
+(function(){
+  var MODS = [
+    ["app_config","~660","配置唯一源；多供应商 providers；contextvars 用户隔离；get_client 三模式工厂","infra","none"],
+    ["api_client","597","OpenAI 兼容客户端：_CompatClient 直连 / RelayClient APP 代发 / QuotaClient 托管配额；重试 + 冷却 + SSRF 防护 is_public_endpoint","infra","multi"],
+    ["llm_base","298","LLM 共享基建：设定手账加载 / JSON 提取 / token 统计","core","none"],
+    ["llm_retriever","226","LLM 子代理检索：58 文件整库注入 system 前缀 → 压缩摘要，缓存命中率 ~98.7%","core","nothink"],
+    ["analyzer","287","意图识别 / 事实核查 / 上下文摘要（Flash + Think High）","core","think"],
+    ["polisher","491","回复器：方案 B 全权生成 [MSG] 分条短信 ≤6 条，Think High temp0.5","core","think"],
+    ["organizer","358","组织器：表情包 label 调度 / 旁白演出 JSON（Non-think temp0.3 json_object）","core","nothink"],
+    ["proactive","337","主动消息 facade：三通道编排 + backdoor 安卓入口","proactive","multi"],
+    ["proactive_gate","459","信号量 REPLY / ACTIVE / HIDDEN；三通道门控；忽视计数；proactive_log","proactive","none"],
+    ["proactive_gen","307","动机决策 LLM + 复用 polisher 生成主动消息","proactive","think"],
+    ["memory_manager","449","长期记忆：rest 时整理 / wake 时加载，原子写","store","none"],
+    ["context_manager","~250","会话上下文窗口管理 / token 估算","core","none"],
+    ["conversation_store","468","conversation.jsonl 持久化 / 分页 / 撤回 / 回灌","store","none"],
+    ["setting_fix","565","设定纠错：对齐 + 提案 + 静态校验，只提案不生效","fix","think"],
+    ["setting_fix_store","381","纠错数据：pending / manifest / audit / 备份 / 回滚","fix","none"],
+    ["storage","215","统一原子写 + REGISTRY 数据类型注册表 + 迁移","store","none"],
+    ["sync_engine","255","文件级双向同步纯函数：清单比对 / jsonl 行合并 / 文档新者胜","store","none"],
+    ["auth_store","113","本地登录态 auth.json，30 天离线宽限","infra","none"],
+    ["favorite_store","144","收藏快照，300 条上限","store","none"],
+    ["vision","80","图片压缩 → vision 模型客观描述，供回复器引用","core","think"],
+    ["metrics","35","计数器聚合（内存态）","infra","none"],
+    ["multipart","78","手写 multipart 解析，10MB 帽，拒绝畸形头","infra","none"],
+    ["app/tools/sticker_picker.py","417","表情包注册表 + label 匹配","infra","none"]
+  ];
+  var MODE = {
+    think:'<span class="mode think">Think High</span>',
+    nothink:'<span class="mode nothink">Non-think</span>',
+    none:'<span class="mode none">无 LLM</span>',
+    multi:'<span class="mode multi">多模式</span>'
+  };
+  var body = document.getElementById("mxBody");
+  var empty = document.getElementById("mxEmpty");
+  var rows = MODS.map(function(m){
+    var tr = document.createElement("tr");
+    tr.setAttribute("data-g", m[3]);
+    tr.innerHTML = '<td class="m">'+m[0]+'</td><td class="lc">'+m[1]+'</td><td class="d">'+m[2]+'</td><td class="d">'+MODE[m[4]]+'</td>';
+    body.appendChild(tr);
+    return {el:tr, text:(m[0]+" "+m[2]).toLowerCase(), g:m[3]};
+  });
+  var q = "", g = "all";
+  function apply(){
+    var shown = 0;
+    rows.forEach(function(r){
+      var ok = (g==="all" || r.g===g) && (!q || r.text.indexOf(q)>=0);
+      r.el.style.display = ok ? "" : "none";
+      if(ok) shown++;
+    });
+    empty.style.display = shown ? "none" : "block";
+  }
+  document.getElementById("mxSearch").addEventListener("input", function(){
+    q = this.value.trim().toLowerCase(); apply();
+  });
+  document.getElementById("mxFilters").addEventListener("click", function(e){
+    var b = e.target.closest(".mx-f"); if(!b) return;
+    document.querySelectorAll(".mx-f").forEach(function(x){ x.classList.remove("on"); });
+    b.classList.add("on"); g = b.getAttribute("data-g"); apply();
+  });
+})();
+
+/* ---------- 前端模块行数条形图 ---------- */
+(function(){
+  var MODS = [
+    ["state",18],["util",108],["imgzip",71],["api",299],["panels",498],
+    ["settings",507],["update",138],["sync",90],["chat",574],["chat_render",285],
+    ["chat_media",125],["chat_history",132],["fix",409],["views",322],
+    ["proactive",102],["relay",191],["guide",252],["main",33],["pc_nav",71]
+  ];
+  MODS.sort(function(a,b){ return b[1]-a[1]; });
+  var max = MODS[0][1];
+  var box = document.getElementById("fbars");
+  MODS.forEach(function(m){
+    var row = document.createElement("div");
+    row.className = "fbar-row" + (m[1]>=490 ? " big" : "");
+    row.innerHTML = '<span class="fm">'+m[0]+'.js</span><span class="fb"><i data-w="'+(m[1]/max*100).toFixed(1)+'"></i></span><span class="fl">'+m[1]+'</span>';
+    box.appendChild(row);
+  });
+  var io = new IntersectionObserver(function(es){
+    es.forEach(function(e){
+      if(!e.isIntersecting) return; io.unobserve(e.target);
+      e.target.querySelectorAll(".fb i").forEach(function(i){ i.style.width = i.getAttribute("data-w")+"%"; });
+    });
+  },{threshold:0.25});
+  io.observe(box);
+})();
+})();
+</script>
+</body>
+</html>
