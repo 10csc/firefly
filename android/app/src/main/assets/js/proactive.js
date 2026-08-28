@@ -1,6 +1,7 @@
 // 主动性轮询与后台主动消息
 import { S, SESSION_ID, inputEl, sendBtn } from "./state.js";
-import { _inflight, renderMessages } from "./chat.js";
+import { _inflight } from "./chat.js";
+import { renderMessages } from "./chat_render.js";
 import { CURRENT_MODE, _modeGen, appView } from "./views.js";
 
 // ═══════════════════════════════════════════

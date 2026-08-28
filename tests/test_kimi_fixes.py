@@ -56,7 +56,7 @@ check("C5 切片含时间戳前缀", "[2026-08-23 11:00:00]" in txt)
 check("C6 已整理轮不出现", "第一条" not in txt)
 
 print("=== #2 图片 cancel 监听存在 ===")
-js = (ROOT / "app/static/js/chat.js").read_text(encoding="utf-8")
+js = (ROOT / "app/static/js/chat_media.js").read_text(encoding="utf-8")
 check("C7 cancel 监听已加", 'addEventListener("cancel"' in js)
 
 print("=== #3 server_app /time 公开（免登录）===")

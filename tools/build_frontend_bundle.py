@@ -19,7 +19,12 @@ JS_DIR = ROOT / "app" / "static" / "js"
 BUNDLE = JS_DIR / "bundle.js"
 
 # 拼接顺序 = 原 app.js 的章节顺序（单作用域，声明提升天然兼容，无循环导入问题）
-ORDER = ["state", "util", "imgzip", "api", "panels", "chat", "fix", "views", "proactive", "relay", "guide", "main"]
+# 0.9.1 拆分：panels→panels/settings/update/sync，chat→chat_render/chat/chat_media/chat_history；
+# 各模块顶层只注册事件（跨模块引用全部发生在事件/函数调用期），家族内顺序无 TDZ 约束
+ORDER = ["state", "util", "imgzip", "api",
+         "panels", "settings", "update", "sync",
+         "chat_render", "chat", "chat_media", "chat_history",
+         "fix", "views", "proactive", "relay", "guide", "main"]
 
 try:
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")

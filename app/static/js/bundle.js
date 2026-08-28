@@ -510,7 +510,7 @@ function initAuthForms() {
 
 
 /* ── 来源：js/panels.js ── */
-// 面板族：菜单抽屉 / 设置 / 反馈 / 检查更新 / 配置管理 / 收藏 / 日志 / 表情包管理
+// 面板族：菜单抽屉 / 各面板开关壳 / 头像选择 / 状态 / 收藏 / 请求记录 / 流程日志 / 用户记忆 / 设定文件 / 手账 / 表情包管理
 
 // 开拓者头像
 const TB_AVATARS = { 穹: "开拓者_穹.png", 星: "开拓者_星.png" };
@@ -582,140 +582,6 @@ function closeFeedback() { feedbackPanel.classList.remove("show"); }
 window.openFeedback = openFeedback;
 window.closeFeedback = closeFeedback;
 
-// ═══════════════════════════════════════════
-// 检查更新（GitHub 优先，失败自动降级 Gitee——国内网络 Gitee 更稳）
-// ═══════════════════════════════════════════
-const CURRENT_VERSION = "0.8.1";   // 与 android versionName / 安装器 AppVersion 保持一致
-// 设置面板版本号动态显示（单一版本源：CURRENT_VERSION；替代 index.html 硬编码文案）
-const curVersionEl = document.getElementById("current-version");
-if (curVersionEl) curVersionEl.textContent = "v" + CURRENT_VERSION;
-const UPDATE_SOURCES = [
-    { api: "https://api.github.com/repos/10csc/firefly/releases/latest", html: "https://github.com/10csc/firefly/releases" },
-    { api: "https://gitee.com/api/v5/repos/cpt-asymmetry/firefly/releases/latest", html: "https://gitee.com/cpt-asymmetry/firefly/releases" },
-];
-// 公共下载页：APK 主通道走 Gitee，微信/QQ 等不支持 blob 下载的内置浏览器会自动走服务器直连（正确 MIME）
-const DOWNLOAD_PAGE_URL = "http://101.200.14.126:8787/download/";
-function compareVersions(a, b) {
-    const pa = String(a).split(".").map(n => parseInt(n) || 0);
-    const pb = String(b).split(".").map(n => parseInt(n) || 0);
-    for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
-        const d = (pa[i] || 0) - (pb[i] || 0);
-        if (d !== 0) return d;
-    }
-    return 0;
-}
-// 资产匹配：PC 装包 exe / 安卓 apk（Gitee 资产名可能带前缀，模糊匹配）
-function _matchAsset(assets, re) {
-    if (!Array.isArray(assets)) return "";
-    for (const a of assets) {
-        const n = String(a.name || a.browser_download_url || "");
-        if (re.test(n)) return a.browser_download_url || n;
-    }
-    return "";
-}
-async function checkUpdate() {
-    const msg = document.getElementById("update-msg");
-    if (!msg) return;
-    msg.textContent = "检查中…";
-    if (IS_SERVER) {
-        // 服务器模式：检查更新读服务器 version.json（由服务器管理员维护），不走 GitHub/Gitee
-        try {
-            const resp = await fetch("/version.json", {cache: "no-store"});
-            const d = await resp.json();
-            const latest = String(d.tag || "").replace(/^v/i, "");
-            const cur = String(CURRENT_VERSION);
-            if (!latest) throw new Error("no tag");
-            if (compareVersions(latest, cur) > 0) {
-                msg.innerHTML = `发现新版本 <b style="color:var(--fg-accent)">${escapeHtml(latest)}</b>（当前 ${escapeHtml(cur)}）<br>新版本由服务器管理员发布`;
-            } else {
-                msg.textContent = `已是最新版本 ${cur} ✓`;
-            }
-        } catch (e) {
-            msg.textContent = "检查失败（服务器 version.json 不可达）";
-        }
-        return;
-    }
-    // 本地模式：优先走本地后端（权威版本源 + 自动下载能力），失败退回纯前端双源检测
-    try {
-        const lr = await fetch("/check-update", {cache: "no-store"});
-        if (lr.ok) {
-            const d = await lr.json();
-            if (!d.ok) throw new Error(d.error || "check fail");
-            const latest = String(d.tag || "").replace(/^v/i, "");
-            const cur = String(d.current || CURRENT_VERSION);
-            if (!latest) throw new Error("no tag");
-            const isAndroid = /Android/i.test(navigator.userAgent) && !/Windows|Mac|Linux/i.test(navigator.userAgent);
-            if (compareVersions(latest, cur) > 0) {
-                msg.innerHTML = `发现新版本 <b style="color:var(--fg-accent)">${escapeHtml(latest)}</b>（当前 ${escapeHtml(cur)}）<br>` +
-                    `<button id="auto-update-btn" style="margin-top:6px;padding:4px 12px;border-radius:6px;border:none;background:var(--fg-accent);color:#fff;cursor:pointer">自动更新</button>` +
-                    ` ｜ <a href="${escapeHtml(d.html_url || "#")}" target="_blank" rel="noopener" style="color:var(--fg-muted)">发行说明</a>`;
-                const btn = document.getElementById("auto-update-btn");
-                if (btn) btn.addEventListener("click", () => autoUpdate(isAndroid));
-            } else {
-                msg.textContent = `已是最新版本 ${cur} ✓`;
-            }
-            return;
-        }
-    } catch (e) { /* 降级到前端直连 */ }
-    // 前端直连双源（后端接口不可用时）
-    for (const src of UPDATE_SOURCES) {
-        try {
-            const resp = await fetch(src.api, {cache: "no-store"});
-            if (!resp.ok) throw new Error("HTTP " + resp.status);
-            const data = await resp.json();
-            const latest = String(data.tag_name || "").replace(/^v/i, "");
-            if (!latest) throw new Error("no tag");
-            const isAndroid = /Android/i.test(navigator.userAgent) && !/Windows|Mac|Linux/i.test(navigator.userAgent);
-            const exeUrl = _matchAsset(data.assets, /\.exe$/i);
-            const apkUrl = _matchAsset(data.assets, /\.apk$/i);
-            const dlUrl = isAndroid ? (apkUrl || src.html) : (exeUrl || src.html);
-            if (compareVersions(latest, CURRENT_VERSION) > 0) {
-                msg.innerHTML = `发现新版本 <b style="color:var(--fg-accent)">${escapeHtml(latest)}</b>（当前 ${escapeHtml(CURRENT_VERSION)}）<br>` +
-                    `<a href="${escapeHtml(dlUrl || "#")}" target="_blank" rel="noopener" style="color:var(--fg-bright)">下载安装包</a>` +
-                    ` ｜ <a href="${escapeHtml(src.html || "#")}" target="_blank" rel="noopener" style="color:var(--fg-muted)">发行说明</a>`;
-            } else {
-                msg.textContent = `已是最新版本 ${CURRENT_VERSION} ✓`;
-            }
-            return;
-        } catch (e) {
-            msg.textContent = "检查失败（网络或仓库不可达）";
-        }
-    }
-}
-// 检查更新按钮接线（设置面板版本区；修复前该按钮无任何事件绑定，点击无反应）
-const checkUpdateBtn = document.getElementById("check-update-btn");
-if (checkUpdateBtn) checkUpdateBtn.addEventListener("click", checkUpdate);
-
-// 自动更新：后端下载安装包 → PC 静默安装并重启；安卓引导系统安装器
-async function autoUpdate(isAndroid) {
-    const msg = document.getElementById("update-msg");
-    if (!msg) return;
-    msg.textContent = "下载中…（约 30-60 秒，请勿关闭应用）";
-    try {
-        const resp = await fetch("/update-download", {
-            method: "POST",
-            headers: {"Content-Type": "application/json"},
-            body: JSON.stringify({kind: isAndroid ? "apk" : "exe"}),
-        });
-        const data = await resp.json();
-        if (!data.ok) { msg.textContent = "下载失败：" + (data.error || ""); return; }
-        if (isAndroid) {
-            // WebView 无法直接用 file:// 装 APK：跳系统浏览器打开公共下载页
-            // （下载页自动分流：标准浏览器走 Gitee，微信/QQ 等走服务器直连正确 MIME）
-            msg.innerHTML = `下载完成 → 请从 <a href="${DOWNLOAD_PAGE_URL}" target="_blank" rel="noopener" style="color:var(--fg-bright)">下载页</a> 下载 APK 安装（系统限制需手动确认；如从 Gitee 页下载变成 .zip，把文件名改回 firefly.apk 即可）`;
-            return;
-        }
-        if (data.installing) {
-            msg.textContent = "下载完成，安装程序即将启动…应用会自动关闭，请稍候。";
-            setTimeout(() => { location.href = "about:blank"; }, 1500);
-        } else {
-            msg.innerHTML = `下载完成 → <a href="file://${data.path}" target="_blank" rel="noopener" style="color:var(--fg-bright)">点击运行安装</a>`;
-        }
-    } catch (e) {
-        msg.textContent = "自动更新失败：" + e;
-    }
-}
-
 // 点击 drawer 背景（非内容区域）也关闭菜单
 menuDrawer.addEventListener("click", (e) => {
     if (e.target === menuDrawer) closeMenu();
@@ -736,6 +602,412 @@ document.querySelectorAll(".menu-tab").forEach(btn => {
         if (btn.dataset.tab === "pipeline") loadPipeline();
     });
 });
+
+// ═══════════════════════════════════════════
+// 状态 tab（数值状态系统已下线，接回后再渲染条）
+// ═══════════════════════════════════════════
+
+function loadStateTab() {
+    const list = document.getElementById("state-list");
+    if (list) {
+        list.innerHTML = '<div style="color:#8a8a8a;line-height:1.6">状态系统尚未接入。<br>当前流水线：检索 → 分析 → 回复 → 表情包。</div>';
+    }
+}
+
+// ═══════════════════════════════════════════
+// 请求记录
+// ═══════════════════════════════════════════
+// ═══════════════════════════════════════════
+// 收藏（长按消息 → 收藏；菜单 → 收藏 查看）
+// ═══════════════════════════════════════════
+async function loadFavorites() {
+    const list = document.getElementById("fav-list");
+    const count = document.getElementById("fav-count");
+    if (!list) return;
+    try {
+        const resp = await fetch(`/favorites?mode=${encodeURIComponent(CURRENT_MODE)}`);
+        const data = await resp.json();
+        const items = Array.isArray(data.items) ? data.items : [];
+        if (count) count.textContent = `收藏 ${items.length} 条`;
+        if (!items.length) {
+            list.innerHTML = `<div class="fav-empty">还没有收藏。<br>在聊天页长按一条消息，点「收藏」即可保存到这里。</div>`;
+            return;
+        }
+        list.innerHTML = items.map(f => {
+            const body = f.type === "sticker"
+                ? "[表情包：" + escapeHtml(f.label || "") + "]"
+                : f.type === "narration"
+                    ? escapeHtml(f.text || "")
+                    : escapeHtml(f.content || "");
+            const who = f.who === "user" ? "我" : "流萤";
+            return `<div class="fav-item">
+                <div class="fav-head"><span class="fav-who">${who}</span><span class="fav-time">${escapeHtml((f.time || "").slice(5, 16))}</span></div>
+                <div class="fav-body">${body}</div>
+                <button class="fav-del" type="button" data-id="${escapeHtml(String(f.id))}">删除</button>
+            </div>`;
+        }).join("");
+        list.querySelectorAll(".fav-del").forEach(btn => {
+            btn.addEventListener("click", async () => {
+                try {
+                    const resp = await fetch("/favorites/delete", {
+                        method: "POST",
+                        headers: {"Content-Type": "application/json"},
+                        body: JSON.stringify({mode: CURRENT_MODE, id: btn.dataset.id}),
+                    });
+                    const d = await resp.json();
+                    if (d.ok) loadFavorites();
+                    else showToast("删除失败：" + (d.error || ""));
+                } catch (e) { showToast("删除失败，请重试"); }
+            });
+        });
+    } catch (e) {
+        if (count) count.textContent = "读取失败";
+        list.innerHTML = `<div class="fav-empty">收藏读取失败（服务器模式需先登录；本地后端未就绪时也会这样）</div>`;
+    }
+}
+window.loadFavorites = loadFavorites;
+
+async function loadRequestLog() {
+    const list = document.getElementById("log-list");
+    const countEl = document.getElementById("log-count");
+    if (!list) return;
+    try {
+        const resp = await fetch("/requests");
+        const data = await resp.json();
+        if (countEl) {
+            const totalCost = (data.requests || []).reduce((s, r) => s + (Number(r.cost_cny) || 0), 0);
+            countEl.textContent = totalCost > 0
+                ? `共 ${data.count} 次请求 · 累计约 ¥${totalCost.toFixed(3)}`
+                : `共 ${data.count} 次请求`;
+        }
+        const rows = (data.requests || []).slice().reverse();
+        if (rows.length === 0) {
+            list.innerHTML = '<div style="color:#8a8a8a;padding:10px">暂无记录</div>';
+            return;
+        }
+        list.innerHTML = rows.map(r => `
+        <div style="display:flex;align-items:center;gap:4px;padding:5px 0;border-bottom:1px solid rgba(255,255,255,0.06);font-size:0.8em;color:#c8d0e0">
+            <span style="flex-shrink:0;width:50px;color:#8a8a8a">${r.time || "?"}</span>
+            <span style="flex-shrink:0;width:64px">${r.module}</span>
+            <span style="flex-shrink:0;width:52px">${r.model || "?"}</span>
+            <span style="flex-shrink:0;width:22px;text-align:center">${r.success ? '<span style="color:#6c8">✓</span>' : '<span style="color:#c66">✗</span>'}</span>
+            <span style="flex:1;text-align:right">${r.total_tokens || 0}</span>
+            <span style="flex-shrink:0;width:70px;text-align:right;color:#8a8a8a">¥${(r.cost_cny || 0).toFixed(6)}</span>
+        </div>`).join("");
+    } catch (e) {
+        list.innerHTML = '<div style="color:#c66;padding:10px">加载失败</div>';
+    }
+}
+window.loadRequestLog = loadRequestLog;
+
+// ═══════════════════════════════════════════
+// 流程日志：每轮各阶段的输入/输出/思考过程
+// ═══════════════════════════════════════════
+
+function _stageBlock(title, elapsed, fields) {
+    const rows = fields
+        .filter(([, v]) => v != null && String(v).trim() !== "")
+        .map(([k, v]) => {
+            const body = _esc(typeof v === "string" ? v : JSON.stringify(v, null, 1));
+            if (k === "思考过程") {
+                return `<details style="margin:2px 0"><summary style="cursor:pointer;color:#8a8a8a">思考过程（点开）</summary><pre style="white-space:pre-wrap;word-break:break-all;color:#8a8a8a;margin:4px 0;font-size:0.95em">${body}</pre></details>`;
+            }
+            return `<div style="margin:2px 0"><span style="color:#8a8a8a">${k}:</span> <span style="white-space:pre-wrap;word-break:break-all">${body}</span></div>`;
+        }).join("");
+    return `<details open style="margin:4px 0;padding:4px 8px;background:rgba(255,255,255,0.03);border-radius:6px">
+        <summary style="cursor:pointer;color:#c8d0e0">${title}${elapsed != null ? ` <span style="color:#8a8a8a;font-size:0.85em">${elapsed}s</span>` : ""}</summary>
+        <div style="padding:4px 0 2px">${rows}</div></details>`;
+}
+
+async function loadPipeline() {
+    const list = document.getElementById("pipeline-list");
+    const countEl = document.getElementById("pipeline-count");
+    if (!list) return;
+    try {
+        const resp = await fetch(`/pipeline?mode=${CURRENT_MODE}`);
+        const data = await resp.json();
+        if (countEl) countEl.textContent = `最近 ${data.count} 轮`;
+        const rows = (data.pipeline || []).slice().reverse();
+        if (rows.length === 0) {
+            list.innerHTML = '<div style="color:#8a8a8a;padding:10px">暂无记录（本次启动后还没聊过）</div>';
+            return;
+        }
+        list.innerHTML = rows.map(p => {
+            let inner = "";
+            if (p.error) {
+                inner = `<div style="color:#c66;padding:4px 0">流水线异常: ${_esc(p.error)}</div>`;
+            } else {
+                const a = p.analyzer || {}, o = p.organizer || {}, po = p.polisher || {}, rt = p.retriever || {};
+                inner =
+                    _stageBlock("⓪ 知识检索", rt.elapsed, [
+                        ["摘要", rt.knowledge],
+                    ]) +
+                    _stageBlock("① 分析器", a.elapsed, [
+                        ["意图", a.intent],
+                        ["事实核查", (a.fact_check || []).length ? a.fact_check : ""],
+                        ["摘要", a.summary],
+                        ["原始输出", a.raw_json],
+                        ["思考过程", a.reasoning],
+                    ]) +
+                    _stageBlock("② 回复器", po.elapsed, [
+                        ["原始输出", po.raw],
+                        ["思考过程", po.reasoning],
+                    ]) +
+                    _stageBlock("③ 工具调度（表情包）", o.elapsed, [
+                        ["选图", o.sticker_label || "（不发）"],
+                        ["原始输出", o.raw],
+                        ["思考过程", o.reasoning],
+                    ]);
+            }
+            return `<div style="margin-bottom:14px;padding:8px;border:1px solid rgba(255,255,255,0.08);border-radius:8px;font-size:0.8em;color:#c8d0e0">
+                <div style="margin-bottom:4px"><span style="color:#8a8a8a">${p.time || "?"}</span> 开拓者: <span style="color:#e0d5c1">${_esc(p.user_input)}</span>${p.hint ? ` <span style="color:#8a8a8a">(hint:${p.hint})</span>` : ""}</div>
+                ${inner}
+            </div>`;
+        }).join("");
+    } catch (e) {
+        list.innerHTML = '<div style="color:#c66;padding:10px">加载失败</div>';
+    }
+}
+window.loadPipeline = loadPipeline;
+
+// ═══════════════════════════════════════════
+// 用户记忆（= memory.md，休息时自动整理的过往摘要）/ 用户设定（补充设定）
+// ═══════════════════════════════════════════
+async function loadUserMemory() {
+    const editor = document.getElementById("user-memory-editor");
+    const msg = document.getElementById("user-memory-msg");
+    if (!editor) return;
+    try {
+        const resp = await fetch(`/user-memory?mode=${CURRENT_MODE}`);
+        const data = await resp.json();
+        editor.value = data.content || "";
+        if (msg) msg.textContent = data.content ? `${data.content.length} 字` : "空";
+    } catch (e) { if (msg) msg.textContent = "加载失败"; }
+}
+
+document.getElementById("user-memory-save").addEventListener("click", async () => {
+    const editor = document.getElementById("user-memory-editor");
+    const msg = document.getElementById("user-memory-msg");
+    msg.textContent = "保存中…";
+    try {
+        const resp = await fetch("/save-user-memory", {
+            method: "POST", headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({content: editor.value, mode: CURRENT_MODE}),
+        });
+        const data = await resp.json();
+        msg.textContent = data.ok ? "✓ 已保存（下次对话生效）" : "失败：" + (data.error || "未知");
+    } catch (e) { msg.textContent = "网络错误"; }
+});
+document.getElementById("user-memory-reload").addEventListener("click", loadUserMemory);
+
+// 用户设定（补充剧情设定）
+async function loadCharFiles() {
+    const msg = document.getElementById("char-file-msg");
+    try {
+        const resp = await fetch(`/character-files?mode=${CURRENT_MODE}`);
+        const data = await resp.json();
+        const byName = {};
+        (data.files || []).forEach(f => { byName[f.name] = f.content; });
+        const us = document.getElementById("user-setting-editor");
+        if (us) us.value = byName["用户设定.md"] || "";   // ?? 为 ES2020（Chrome 80+），安卓 8.0 WebView 解析期 SyntaxError 全站失效，改用 ||（此处语义等价）
+        if (msg) msg.textContent = "已加载";
+    } catch (e) { if (msg) msg.textContent = "加载失败"; }
+}
+
+async function saveUserFile(filename, editorId, msgEl) {
+    const editor = document.getElementById(editorId);
+    const msg = document.getElementById(msgEl);
+    if (!editor) return;
+    msg.textContent = "保存中…";
+    try {
+        const resp = await fetch("/character-file-update", {
+            method: "POST", headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({filename, content: editor.value, mode: CURRENT_MODE}),
+        });
+        const data = await resp.json();
+        msg.textContent = data.ok ? "✓ 已保存" : "失败：" + (data.error || "未知");
+    } catch (e) { msg.textContent = "网络错误"; }
+}
+
+document.getElementById("user-setting-save").addEventListener("click", () => saveUserFile("用户设定.md", "user-setting-editor", "char-file-msg"));
+document.getElementById("user-setting-reload").addEventListener("click", loadCharFiles);
+
+// 手账
+async function loadJournal() {
+    const editor = document.getElementById("journal-editor");
+    const msg = document.getElementById("journal-msg");
+    try {
+        const resp = await fetch(`/journal?mode=${CURRENT_MODE}`);
+        const data = await resp.json();
+        if (editor) editor.value = data.content || "";
+        msg.textContent = data.content ? `${data.content.length} 字` : "空";
+    } catch (e) { if (msg) msg.textContent = "加载失败"; }
+}
+document.getElementById("journal-reload").addEventListener("click", loadJournal);
+document.getElementById("journal-save").addEventListener("click", async () => {
+    const content = document.getElementById("journal-editor").value;
+    const msg = document.getElementById("journal-msg");
+    msg.textContent = "保存中…";
+    try {
+        const resp = await fetch("/save-journal", {
+            method: "POST", headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({content, mode: CURRENT_MODE}),
+        });
+        const data = await resp.json();
+        msg.textContent = data.ok ? `✓ 已保存（${content.length} 字）` : "失败";
+    } catch (e) { msg.textContent = "网络错误"; }
+});
+
+// ═══════════════════════════════════════════
+// 表情包管理
+// ═══════════════════════════════════════════
+const stickerAddBtn = document.getElementById("sticker-add-btn");
+const stickerAddForm = document.getElementById("sticker-add-form");
+if (stickerAddBtn) stickerAddBtn.addEventListener("click", () => {
+    stickerAddForm.style.display = stickerAddForm.style.display === "none" ? "flex" : "none";
+});
+
+document.getElementById("sticker-submit").addEventListener("click", async () => {
+    const file = document.getElementById("sticker-file").files[0];
+    const category = document.getElementById("sticker-category").value;
+    const label = document.getElementById("sticker-label").value.trim();
+    const msg = document.getElementById("sticker-add-msg");
+    if (!file) { msg.textContent = "请先选择图片"; return; }
+    if (!label) { msg.textContent = "请填写含义描述"; return; }
+    const fd = new FormData(); fd.append("file", file); fd.append("category", category); fd.append("label", label);
+    try {
+        const resp = await fetch("/add-sticker", { method: "POST", body: fd });
+        const data = await resp.json();
+        if (data.ok) {
+            // A2 媒体本地策略（服务器版）：图片本体存本机 IndexedDB（key=内容哈希），
+            // 服务器只保留文字元数据（label/category/哈希）；上传后立即本地化
+            if (data.local && data.file && file instanceof Blob) {
+                await idbSaveMedia(String(data.file).slice("local:".length), file);
+                msg.textContent = "已添加：" + data.label + "（图片仅存本机）";
+            } else {
+                msg.textContent = "已添加：" + data.label;
+            }
+            document.getElementById("sticker-file").value = "";
+            document.getElementById("sticker-label").value = "";
+            loadStickerList();
+        } else msg.textContent = "失败：" + (data.error || "未知");
+    } catch(e) { msg.textContent = "网络错误"; }
+});
+
+document.getElementById("sticker-manage-btn").addEventListener("click", () => {
+    const panel = document.getElementById("sticker-manage-panel");
+    panel.style.display = panel.style.display === "none" ? "flex" : "none";
+    if (panel.style.display !== "none") loadStickerList();
+});
+
+async function loadStickerList() {
+    const msg = document.getElementById("sticker-manage-msg");
+    const list = document.getElementById("sticker-list");
+    msg.textContent = "加载中…";
+    try {
+        const resp = await fetch("/stickers");
+        const data = await resp.json();
+        const stickers = data.stickers || [];
+        msg.textContent = `共 ${stickers.length} 个`;
+        // A2：缩略图异步解析（local: 引用 → IndexedDB；无图显示占位块）
+        const rows = await Promise.all(stickers.map(async s => {
+            const src = await stickerSrc(s.file, IS_SERVER, API_BASE);
+            const thumb = src
+                ? `<img class="stk-thumb" src="${escapeHtml(src)}" loading="lazy" onerror="this.style.opacity=0.2">`
+                : `<div class="stk-thumb" style="display:flex;align-items:center;justify-content:center;opacity:0.35;font-size:0.6em">无图</div>`;
+            return `
+        <div class="sticker-row" data-id="${escapeHtml(s.id)}">
+            <div class="stk-head">
+                ${thumb}
+                <button class="stk-toggle ${s.enabled ? "on" : ""}" data-on="${s.enabled ? "1" : ""}" ${(s.editable || s.is_default) ? "" : "disabled"}>${s.enabled ? "启用中" : "已停用"}</button>
+            </div>
+            <div class="stk-main">
+                <select class="stk-cat-sel" ${(s.editable || s.is_default) ? "" : "disabled"}>
+                    <option value="可爱" ${s.category==="可爱"?"selected":""}>可爱</option>
+                    <option value="帅气" ${s.category==="帅气"?"selected":""}>帅气</option>
+                </select>
+                <input class="stk-label-input" type="text" value="${escapeHtml(s.label)}" maxlength="120" ${(s.editable || s.is_default) ? "" : "readonly"}>
+                <div class="stk-actions">
+                    <button class="stk-save" disabled>保存</button>
+                    <button class="stk-del" ${(s.is_default || !s.editable) ? "disabled" : ""}>删</button>
+                </div>
+            </div>
+        </div>`;
+        }));
+        list.innerHTML = rows.join("");
+        list.querySelectorAll(".sticker-row").forEach(row => {
+            const id = row.dataset.id;
+            const inp = row.querySelector(".stk-label-input");
+            const cat = row.querySelector(".stk-cat-sel");
+            const save = row.querySelector(".stk-save");
+            const del = row.querySelector(".stk-del");
+            const toggle = row.querySelector(".stk-toggle");
+            const origLabel = inp.value;
+            const origCat = cat.value;
+
+            function checkChanged() {
+                save.disabled = (inp.value.trim() === origLabel && cat.value === origCat) || (!inp.value.trim() && !cat.value);
+            }
+            inp.addEventListener("input", checkChanged);
+            cat.addEventListener("change", checkChanged);
+
+            toggle.addEventListener("click", async () => {
+                const next = toggle.dataset.on !== "1";
+                toggle.disabled = true;
+                try {
+                    const r = await fetch("/sticker-update", {
+                        method:"POST",
+                        headers:{"Content-Type":"application/json"},
+                        body:JSON.stringify({id, enabled: next}),
+                    });
+                    const d = await r.json();
+                    if (d.ok) {
+                        toggle.dataset.on = next ? "1" : "";
+                        toggle.classList.toggle("on", next);
+                        toggle.textContent = next ? "启用中" : "已停用";
+                        msg.textContent = next ? "已启用：" + d.label : "已停用：" + d.label;
+                    }
+                } catch(e) {}
+                toggle.disabled = false;
+            });
+
+            save.addEventListener("click", async () => {
+                const label = inp.value.trim();
+                const category = cat.value;
+                try {
+                    const r = await fetch("/sticker-update", {
+                        method:"POST",
+                        headers:{"Content-Type":"application/json"},
+                        body:JSON.stringify({id, label: label || undefined, category}),
+                    });
+                    const d = await r.json();
+                    if (d.ok) {
+                        inp.value = d.label;
+                        cat.value = d.category;
+                        save.textContent="已存"; save.disabled=true;
+                        msg.textContent="已更新："+d.label;
+                    }
+                } catch(e) {}
+            });
+            del.addEventListener("click", async () => {
+                if (!confirm("确认删除？")) return;
+                try {
+                    await fetch("/sticker-delete", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({id}) });
+                    row.remove();
+                } catch(e) {}
+            });
+        });
+    } catch(e) { msg.textContent = "加载失败"; }
+}
+
+// ═══════════════════════════════════════════
+// 运行模式切换（A7c 已删除）：本地优先 + 后端失败自动回落服务器——无手动切换入口。
+// 保留此注释防止旧代码/测试引用复活。
+// ═══════════════════════════════════════════
+
+
+/* ── 来源：js/settings.js ── */
+// 设置面板配置：供应商与模型管理 / 主动性预设 / 配置加载（loadConfig）与自动保存（_scheduleAutoSave）
 
 // ═══════════════════════════════════════════
 // 配置管理
@@ -1240,9 +1512,149 @@ if (apiSourceSel) {
 
 _$("key-save")?.addEventListener("click", () => saveConfigNow(true));
 
+
+/* ── 来源：js/update.js ── */
+// 检查更新（GitHub 优先，失败自动降级 Gitee）与自动更新下载
+// 注意：CURRENT_VERSION 是前端版本号单一来源，tools/check_version.py 校验本文件（及 server/frontend 同步副本）
+
 // ═══════════════════════════════════════════
-// 状态 tab（数值状态系统已下线，接回后再渲染条）
+// 检查更新（GitHub 优先，失败自动降级 Gitee——国内网络 Gitee 更稳）
 // ═══════════════════════════════════════════
+const CURRENT_VERSION = "0.8.1";   // 与 android versionName / 安装器 AppVersion 保持一致
+// 设置面板版本号动态显示（单一版本源：CURRENT_VERSION；替代 index.html 硬编码文案）
+const curVersionEl = document.getElementById("current-version");
+if (curVersionEl) curVersionEl.textContent = "v" + CURRENT_VERSION;
+const UPDATE_SOURCES = [
+    { api: "https://api.github.com/repos/10csc/firefly/releases/latest", html: "https://github.com/10csc/firefly/releases" },
+    { api: "https://gitee.com/api/v5/repos/cpt-asymmetry/firefly/releases/latest", html: "https://gitee.com/cpt-asymmetry/firefly/releases" },
+];
+// 公共下载页：APK 主通道走 Gitee，微信/QQ 等不支持 blob 下载的内置浏览器会自动走服务器直连（正确 MIME）
+const DOWNLOAD_PAGE_URL = "http://101.200.14.126:8787/download/";
+function compareVersions(a, b) {
+    const pa = String(a).split(".").map(n => parseInt(n) || 0);
+    const pb = String(b).split(".").map(n => parseInt(n) || 0);
+    for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+        const d = (pa[i] || 0) - (pb[i] || 0);
+        if (d !== 0) return d;
+    }
+    return 0;
+}
+// 资产匹配：PC 装包 exe / 安卓 apk（Gitee 资产名可能带前缀，模糊匹配）
+function _matchAsset(assets, re) {
+    if (!Array.isArray(assets)) return "";
+    for (const a of assets) {
+        const n = String(a.name || a.browser_download_url || "");
+        if (re.test(n)) return a.browser_download_url || n;
+    }
+    return "";
+}
+async function checkUpdate() {
+    const msg = document.getElementById("update-msg");
+    if (!msg) return;
+    msg.textContent = "检查中…";
+    if (IS_SERVER) {
+        // 服务器模式：检查更新读服务器 version.json（由服务器管理员维护），不走 GitHub/Gitee
+        try {
+            const resp = await fetch("/version.json", {cache: "no-store"});
+            const d = await resp.json();
+            const latest = String(d.tag || "").replace(/^v/i, "");
+            const cur = String(CURRENT_VERSION);
+            if (!latest) throw new Error("no tag");
+            if (compareVersions(latest, cur) > 0) {
+                msg.innerHTML = `发现新版本 <b style="color:var(--fg-accent)">${escapeHtml(latest)}</b>（当前 ${escapeHtml(cur)}）<br>新版本由服务器管理员发布`;
+            } else {
+                msg.textContent = `已是最新版本 ${cur} ✓`;
+            }
+        } catch (e) {
+            msg.textContent = "检查失败（服务器 version.json 不可达）";
+        }
+        return;
+    }
+    // 本地模式：优先走本地后端（权威版本源 + 自动下载能力），失败退回纯前端双源检测
+    try {
+        const lr = await fetch("/check-update", {cache: "no-store"});
+        if (lr.ok) {
+            const d = await lr.json();
+            if (!d.ok) throw new Error(d.error || "check fail");
+            const latest = String(d.tag || "").replace(/^v/i, "");
+            const cur = String(d.current || CURRENT_VERSION);
+            if (!latest) throw new Error("no tag");
+            const isAndroid = /Android/i.test(navigator.userAgent) && !/Windows|Mac|Linux/i.test(navigator.userAgent);
+            if (compareVersions(latest, cur) > 0) {
+                msg.innerHTML = `发现新版本 <b style="color:var(--fg-accent)">${escapeHtml(latest)}</b>（当前 ${escapeHtml(cur)}）<br>` +
+                    `<button id="auto-update-btn" style="margin-top:6px;padding:4px 12px;border-radius:6px;border:none;background:var(--fg-accent);color:#fff;cursor:pointer">自动更新</button>` +
+                    ` ｜ <a href="${escapeHtml(d.html_url || "#")}" target="_blank" rel="noopener" style="color:var(--fg-muted)">发行说明</a>`;
+                const btn = document.getElementById("auto-update-btn");
+                if (btn) btn.addEventListener("click", () => autoUpdate(isAndroid));
+            } else {
+                msg.textContent = `已是最新版本 ${cur} ✓`;
+            }
+            return;
+        }
+    } catch (e) { /* 降级到前端直连 */ }
+    // 前端直连双源（后端接口不可用时）
+    for (const src of UPDATE_SOURCES) {
+        try {
+            const resp = await fetch(src.api, {cache: "no-store"});
+            if (!resp.ok) throw new Error("HTTP " + resp.status);
+            const data = await resp.json();
+            const latest = String(data.tag_name || "").replace(/^v/i, "");
+            if (!latest) throw new Error("no tag");
+            const isAndroid = /Android/i.test(navigator.userAgent) && !/Windows|Mac|Linux/i.test(navigator.userAgent);
+            const exeUrl = _matchAsset(data.assets, /\.exe$/i);
+            const apkUrl = _matchAsset(data.assets, /\.apk$/i);
+            const dlUrl = isAndroid ? (apkUrl || src.html) : (exeUrl || src.html);
+            if (compareVersions(latest, CURRENT_VERSION) > 0) {
+                msg.innerHTML = `发现新版本 <b style="color:var(--fg-accent)">${escapeHtml(latest)}</b>（当前 ${escapeHtml(CURRENT_VERSION)}）<br>` +
+                    `<a href="${escapeHtml(dlUrl || "#")}" target="_blank" rel="noopener" style="color:var(--fg-bright)">下载安装包</a>` +
+                    ` ｜ <a href="${escapeHtml(src.html || "#")}" target="_blank" rel="noopener" style="color:var(--fg-muted)">发行说明</a>`;
+            } else {
+                msg.textContent = `已是最新版本 ${CURRENT_VERSION} ✓`;
+            }
+            return;
+        } catch (e) {
+            msg.textContent = "检查失败（网络或仓库不可达）";
+        }
+    }
+}
+// 检查更新按钮接线（设置面板版本区；修复前该按钮无任何事件绑定，点击无反应）
+const checkUpdateBtn = document.getElementById("check-update-btn");
+if (checkUpdateBtn) checkUpdateBtn.addEventListener("click", checkUpdate);
+
+// 自动更新：后端下载安装包 → PC 静默安装并重启；安卓引导系统安装器
+async function autoUpdate(isAndroid) {
+    const msg = document.getElementById("update-msg");
+    if (!msg) return;
+    msg.textContent = "下载中…（约 30-60 秒，请勿关闭应用）";
+    try {
+        const resp = await fetch("/update-download", {
+            method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({kind: isAndroid ? "apk" : "exe"}),
+        });
+        const data = await resp.json();
+        if (!data.ok) { msg.textContent = "下载失败：" + (data.error || ""); return; }
+        if (isAndroid) {
+            // WebView 无法直接用 file:// 装 APK：跳系统浏览器打开公共下载页
+            // （下载页自动分流：标准浏览器走 Gitee，微信/QQ 等走服务器直连正确 MIME）
+            msg.innerHTML = `下载完成 → 请从 <a href="${DOWNLOAD_PAGE_URL}" target="_blank" rel="noopener" style="color:var(--fg-bright)">下载页</a> 下载 APK 安装（系统限制需手动确认；如从 Gitee 页下载变成 .zip，把文件名改回 firefly.apk 即可）`;
+            return;
+        }
+        if (data.installing) {
+            msg.textContent = "下载完成，安装程序即将启动…应用会自动关闭，请稍候。";
+            setTimeout(() => { location.href = "about:blank"; }, 1500);
+        } else {
+            msg.innerHTML = `下载完成 → <a href="file://${data.path}" target="_blank" rel="noopener" style="color:var(--fg-bright)">点击运行安装</a>`;
+        }
+    } catch (e) {
+        msg.textContent = "自动更新失败：" + e;
+    }
+}
+
+
+/* ── 来源：js/sync.js ── */
+// 增量同步 UI（/sync/now）：进度条 / 冲突警告 toast / 10 分钟节流 / 回前台补同步
+
 /** A1 增量同步（W4 编排端点 /sync/now）：登录后把本地文字数据与云端账号双向合并。
  *  window.autoSyncNow(force)：仅本地版 + 已登录（/auth/state 确认）才发起；
  *  force=false 时 10 分钟节流（localStorage 时间戳），force=true（手动「立即同步」）跳过节流。
@@ -1328,406 +1740,10 @@ window.syncNow = function () { window.autoSyncNow(true); };   // 手动「立即
 document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "visible") window.autoSyncNow();
 });
-function loadStateTab() {
-    const list = document.getElementById("state-list");
-    if (list) {
-        list.innerHTML = '<div style="color:#8a8a8a;line-height:1.6">状态系统尚未接入。<br>当前流水线：检索 → 分析 → 回复 → 表情包。</div>';
-    }
-}
-
-// ═══════════════════════════════════════════
-// 请求记录
-// ═══════════════════════════════════════════
-// ═══════════════════════════════════════════
-// 收藏（长按消息 → 收藏；菜单 → 收藏 查看）
-// ═══════════════════════════════════════════
-async function loadFavorites() {
-    const list = document.getElementById("fav-list");
-    const count = document.getElementById("fav-count");
-    if (!list) return;
-    try {
-        const resp = await fetch(`/favorites?mode=${encodeURIComponent(CURRENT_MODE)}`);
-        const data = await resp.json();
-        const items = Array.isArray(data.items) ? data.items : [];
-        if (count) count.textContent = `收藏 ${items.length} 条`;
-        if (!items.length) {
-            list.innerHTML = `<div class="fav-empty">还没有收藏。<br>在聊天页长按一条消息，点「收藏」即可保存到这里。</div>`;
-            return;
-        }
-        list.innerHTML = items.map(f => {
-            const body = f.type === "sticker"
-                ? "[表情包：" + escapeHtml(f.label || "") + "]"
-                : f.type === "narration"
-                    ? escapeHtml(f.text || "")
-                    : escapeHtml(f.content || "");
-            const who = f.who === "user" ? "我" : "流萤";
-            return `<div class="fav-item">
-                <div class="fav-head"><span class="fav-who">${who}</span><span class="fav-time">${escapeHtml((f.time || "").slice(5, 16))}</span></div>
-                <div class="fav-body">${body}</div>
-                <button class="fav-del" type="button" data-id="${escapeHtml(String(f.id))}">删除</button>
-            </div>`;
-        }).join("");
-        list.querySelectorAll(".fav-del").forEach(btn => {
-            btn.addEventListener("click", async () => {
-                try {
-                    const resp = await fetch("/favorites/delete", {
-                        method: "POST",
-                        headers: {"Content-Type": "application/json"},
-                        body: JSON.stringify({mode: CURRENT_MODE, id: btn.dataset.id}),
-                    });
-                    const d = await resp.json();
-                    if (d.ok) loadFavorites();
-                    else showToast("删除失败：" + (d.error || ""));
-                } catch (e) { showToast("删除失败，请重试"); }
-            });
-        });
-    } catch (e) {
-        if (count) count.textContent = "读取失败";
-        list.innerHTML = `<div class="fav-empty">收藏读取失败（服务器模式需先登录；本地后端未就绪时也会这样）</div>`;
-    }
-}
-window.loadFavorites = loadFavorites;
-
-async function loadRequestLog() {
-    const list = document.getElementById("log-list");
-    const countEl = document.getElementById("log-count");
-    if (!list) return;
-    try {
-        const resp = await fetch("/requests");
-        const data = await resp.json();
-        if (countEl) {
-            const totalCost = (data.requests || []).reduce((s, r) => s + (Number(r.cost_cny) || 0), 0);
-            countEl.textContent = totalCost > 0
-                ? `共 ${data.count} 次请求 · 累计约 ¥${totalCost.toFixed(3)}`
-                : `共 ${data.count} 次请求`;
-        }
-        const rows = (data.requests || []).slice().reverse();
-        if (rows.length === 0) {
-            list.innerHTML = '<div style="color:#8a8a8a;padding:10px">暂无记录</div>';
-            return;
-        }
-        list.innerHTML = rows.map(r => `
-        <div style="display:flex;align-items:center;gap:4px;padding:5px 0;border-bottom:1px solid rgba(255,255,255,0.06);font-size:0.8em;color:#c8d0e0">
-            <span style="flex-shrink:0;width:50px;color:#8a8a8a">${r.time || "?"}</span>
-            <span style="flex-shrink:0;width:64px">${r.module}</span>
-            <span style="flex-shrink:0;width:52px">${r.model || "?"}</span>
-            <span style="flex-shrink:0;width:22px;text-align:center">${r.success ? '<span style="color:#6c8">✓</span>' : '<span style="color:#c66">✗</span>'}</span>
-            <span style="flex:1;text-align:right">${r.total_tokens || 0}</span>
-            <span style="flex-shrink:0;width:70px;text-align:right;color:#8a8a8a">¥${(r.cost_cny || 0).toFixed(6)}</span>
-        </div>`).join("");
-    } catch (e) {
-        list.innerHTML = '<div style="color:#c66;padding:10px">加载失败</div>';
-    }
-}
-window.loadRequestLog = loadRequestLog;
-
-// ═══════════════════════════════════════════
-// 流程日志：每轮各阶段的输入/输出/思考过程
-// ═══════════════════════════════════════════
-
-function _stageBlock(title, elapsed, fields) {
-    const rows = fields
-        .filter(([, v]) => v != null && String(v).trim() !== "")
-        .map(([k, v]) => {
-            const body = _esc(typeof v === "string" ? v : JSON.stringify(v, null, 1));
-            if (k === "思考过程") {
-                return `<details style="margin:2px 0"><summary style="cursor:pointer;color:#8a8a8a">思考过程（点开）</summary><pre style="white-space:pre-wrap;word-break:break-all;color:#8a8a8a;margin:4px 0;font-size:0.95em">${body}</pre></details>`;
-            }
-            return `<div style="margin:2px 0"><span style="color:#8a8a8a">${k}:</span> <span style="white-space:pre-wrap;word-break:break-all">${body}</span></div>`;
-        }).join("");
-    return `<details open style="margin:4px 0;padding:4px 8px;background:rgba(255,255,255,0.03);border-radius:6px">
-        <summary style="cursor:pointer;color:#c8d0e0">${title}${elapsed != null ? ` <span style="color:#8a8a8a;font-size:0.85em">${elapsed}s</span>` : ""}</summary>
-        <div style="padding:4px 0 2px">${rows}</div></details>`;
-}
-
-async function loadPipeline() {
-    const list = document.getElementById("pipeline-list");
-    const countEl = document.getElementById("pipeline-count");
-    if (!list) return;
-    try {
-        const resp = await fetch(`/pipeline?mode=${CURRENT_MODE}`);
-        const data = await resp.json();
-        if (countEl) countEl.textContent = `最近 ${data.count} 轮`;
-        const rows = (data.pipeline || []).slice().reverse();
-        if (rows.length === 0) {
-            list.innerHTML = '<div style="color:#8a8a8a;padding:10px">暂无记录（本次启动后还没聊过）</div>';
-            return;
-        }
-        list.innerHTML = rows.map(p => {
-            let inner = "";
-            if (p.error) {
-                inner = `<div style="color:#c66;padding:4px 0">流水线异常: ${_esc(p.error)}</div>`;
-            } else {
-                const a = p.analyzer || {}, o = p.organizer || {}, po = p.polisher || {}, rt = p.retriever || {};
-                inner =
-                    _stageBlock("⓪ 知识检索", rt.elapsed, [
-                        ["摘要", rt.knowledge],
-                    ]) +
-                    _stageBlock("① 分析器", a.elapsed, [
-                        ["意图", a.intent],
-                        ["事实核查", (a.fact_check || []).length ? a.fact_check : ""],
-                        ["摘要", a.summary],
-                        ["原始输出", a.raw_json],
-                        ["思考过程", a.reasoning],
-                    ]) +
-                    _stageBlock("② 回复器", po.elapsed, [
-                        ["原始输出", po.raw],
-                        ["思考过程", po.reasoning],
-                    ]) +
-                    _stageBlock("③ 工具调度（表情包）", o.elapsed, [
-                        ["选图", o.sticker_label || "（不发）"],
-                        ["原始输出", o.raw],
-                        ["思考过程", o.reasoning],
-                    ]);
-            }
-            return `<div style="margin-bottom:14px;padding:8px;border:1px solid rgba(255,255,255,0.08);border-radius:8px;font-size:0.8em;color:#c8d0e0">
-                <div style="margin-bottom:4px"><span style="color:#8a8a8a">${p.time || "?"}</span> 开拓者: <span style="color:#e0d5c1">${_esc(p.user_input)}</span>${p.hint ? ` <span style="color:#8a8a8a">(hint:${p.hint})</span>` : ""}</div>
-                ${inner}
-            </div>`;
-        }).join("");
-    } catch (e) {
-        list.innerHTML = '<div style="color:#c66;padding:10px">加载失败</div>';
-    }
-}
-window.loadPipeline = loadPipeline;
-// ═══════════════════════════════════════════
-// 用户记忆（= memory.md，休息时自动整理的过往摘要）/ 用户设定（补充设定）
-// ═══════════════════════════════════════════
-async function loadUserMemory() {
-    const editor = document.getElementById("user-memory-editor");
-    const msg = document.getElementById("user-memory-msg");
-    if (!editor) return;
-    try {
-        const resp = await fetch(`/user-memory?mode=${CURRENT_MODE}`);
-        const data = await resp.json();
-        editor.value = data.content || "";
-        if (msg) msg.textContent = data.content ? `${data.content.length} 字` : "空";
-    } catch (e) { if (msg) msg.textContent = "加载失败"; }
-}
-
-document.getElementById("user-memory-save").addEventListener("click", async () => {
-    const editor = document.getElementById("user-memory-editor");
-    const msg = document.getElementById("user-memory-msg");
-    msg.textContent = "保存中…";
-    try {
-        const resp = await fetch("/save-user-memory", {
-            method: "POST", headers: {"Content-Type": "application/json"},
-            body: JSON.stringify({content: editor.value, mode: CURRENT_MODE}),
-        });
-        const data = await resp.json();
-        msg.textContent = data.ok ? "✓ 已保存（下次对话生效）" : "失败：" + (data.error || "未知");
-    } catch (e) { msg.textContent = "网络错误"; }
-});
-document.getElementById("user-memory-reload").addEventListener("click", loadUserMemory);
-
-// 用户设定（补充剧情设定）
-async function loadCharFiles() {
-    const msg = document.getElementById("char-file-msg");
-    try {
-        const resp = await fetch(`/character-files?mode=${CURRENT_MODE}`);
-        const data = await resp.json();
-        const byName = {};
-        (data.files || []).forEach(f => { byName[f.name] = f.content; });
-        const us = document.getElementById("user-setting-editor");
-        if (us) us.value = byName["用户设定.md"] || "";   // ?? 为 ES2020（Chrome 80+），安卓 8.0 WebView 解析期 SyntaxError 全站失效，改用 ||（此处语义等价）
-        if (msg) msg.textContent = "已加载";
-    } catch (e) { if (msg) msg.textContent = "加载失败"; }
-}
-
-async function saveUserFile(filename, editorId, msgEl) {
-    const editor = document.getElementById(editorId);
-    const msg = document.getElementById(msgEl);
-    if (!editor) return;
-    msg.textContent = "保存中…";
-    try {
-        const resp = await fetch("/character-file-update", {
-            method: "POST", headers: {"Content-Type": "application/json"},
-            body: JSON.stringify({filename, content: editor.value, mode: CURRENT_MODE}),
-        });
-        const data = await resp.json();
-        msg.textContent = data.ok ? "✓ 已保存" : "失败：" + (data.error || "未知");
-    } catch (e) { msg.textContent = "网络错误"; }
-}
-
-document.getElementById("user-setting-save").addEventListener("click", () => saveUserFile("用户设定.md", "user-setting-editor", "char-file-msg"));
-document.getElementById("user-setting-reload").addEventListener("click", loadCharFiles);
-
-// 手账
-async function loadJournal() {
-    const editor = document.getElementById("journal-editor");
-    const msg = document.getElementById("journal-msg");
-    try {
-        const resp = await fetch(`/journal?mode=${CURRENT_MODE}`);
-        const data = await resp.json();
-        if (editor) editor.value = data.content || "";
-        msg.textContent = data.content ? `${data.content.length} 字` : "空";
-    } catch (e) { if (msg) msg.textContent = "加载失败"; }
-}
-document.getElementById("journal-reload").addEventListener("click", loadJournal);
-document.getElementById("journal-save").addEventListener("click", async () => {
-    const content = document.getElementById("journal-editor").value;
-    const msg = document.getElementById("journal-msg");
-    msg.textContent = "保存中…";
-    try {
-        const resp = await fetch("/save-journal", {
-            method: "POST", headers: {"Content-Type": "application/json"},
-            body: JSON.stringify({content, mode: CURRENT_MODE}),
-        });
-        const data = await resp.json();
-        msg.textContent = data.ok ? `✓ 已保存（${content.length} 字）` : "失败";
-    } catch (e) { msg.textContent = "网络错误"; }
-});
-
-// ═══════════════════════════════════════════
-// 表情包管理
-// ═══════════════════════════════════════════
-const stickerAddBtn = document.getElementById("sticker-add-btn");
-const stickerAddForm = document.getElementById("sticker-add-form");
-if (stickerAddBtn) stickerAddBtn.addEventListener("click", () => {
-    stickerAddForm.style.display = stickerAddForm.style.display === "none" ? "flex" : "none";
-});
-
-document.getElementById("sticker-submit").addEventListener("click", async () => {
-    const file = document.getElementById("sticker-file").files[0];
-    const category = document.getElementById("sticker-category").value;
-    const label = document.getElementById("sticker-label").value.trim();
-    const msg = document.getElementById("sticker-add-msg");
-    if (!file) { msg.textContent = "请先选择图片"; return; }
-    if (!label) { msg.textContent = "请填写含义描述"; return; }
-    const fd = new FormData(); fd.append("file", file); fd.append("category", category); fd.append("label", label);
-    try {
-        const resp = await fetch("/add-sticker", { method: "POST", body: fd });
-        const data = await resp.json();
-        if (data.ok) {
-            // A2 媒体本地策略（服务器版）：图片本体存本机 IndexedDB（key=内容哈希），
-            // 服务器只保留文字元数据（label/category/哈希）；上传后立即本地化
-            if (data.local && data.file && file instanceof Blob) {
-                await idbSaveMedia(String(data.file).slice("local:".length), file);
-                msg.textContent = "已添加：" + data.label + "（图片仅存本机）";
-            } else {
-                msg.textContent = "已添加：" + data.label;
-            }
-            document.getElementById("sticker-file").value = "";
-            document.getElementById("sticker-label").value = "";
-            loadStickerList();
-        } else msg.textContent = "失败：" + (data.error || "未知");
-    } catch(e) { msg.textContent = "网络错误"; }
-});
-
-document.getElementById("sticker-manage-btn").addEventListener("click", () => {
-    const panel = document.getElementById("sticker-manage-panel");
-    panel.style.display = panel.style.display === "none" ? "flex" : "none";
-    if (panel.style.display !== "none") loadStickerList();
-});
-
-async function loadStickerList() {
-    const msg = document.getElementById("sticker-manage-msg");
-    const list = document.getElementById("sticker-list");
-    msg.textContent = "加载中…";
-    try {
-        const resp = await fetch("/stickers");
-        const data = await resp.json();
-        const stickers = data.stickers || [];
-        msg.textContent = `共 ${stickers.length} 个`;
-        // A2：缩略图异步解析（local: 引用 → IndexedDB；无图显示占位块）
-        const rows = await Promise.all(stickers.map(async s => {
-            const src = await stickerSrc(s.file, IS_SERVER, API_BASE);
-            const thumb = src
-                ? `<img class="stk-thumb" src="${escapeHtml(src)}" loading="lazy" onerror="this.style.opacity=0.2">`
-                : `<div class="stk-thumb" style="display:flex;align-items:center;justify-content:center;opacity:0.35;font-size:0.6em">无图</div>`;
-            return `
-        <div class="sticker-row" data-id="${escapeHtml(s.id)}">
-            <div class="stk-head">
-                ${thumb}
-                <button class="stk-toggle ${s.enabled ? "on" : ""}" data-on="${s.enabled ? "1" : ""}" ${(s.editable || s.is_default) ? "" : "disabled"}>${s.enabled ? "启用中" : "已停用"}</button>
-            </div>
-            <div class="stk-main">
-                <select class="stk-cat-sel" ${(s.editable || s.is_default) ? "" : "disabled"}>
-                    <option value="可爱" ${s.category==="可爱"?"selected":""}>可爱</option>
-                    <option value="帅气" ${s.category==="帅气"?"selected":""}>帅气</option>
-                </select>
-                <input class="stk-label-input" type="text" value="${escapeHtml(s.label)}" maxlength="120" ${(s.editable || s.is_default) ? "" : "readonly"}>
-                <div class="stk-actions">
-                    <button class="stk-save" disabled>保存</button>
-                    <button class="stk-del" ${(s.is_default || !s.editable) ? "disabled" : ""}>删</button>
-                </div>
-            </div>
-        </div>`;
-        }));
-        list.innerHTML = rows.join("");
-        list.querySelectorAll(".sticker-row").forEach(row => {
-            const id = row.dataset.id;
-            const inp = row.querySelector(".stk-label-input");
-            const cat = row.querySelector(".stk-cat-sel");
-            const save = row.querySelector(".stk-save");
-            const del = row.querySelector(".stk-del");
-            const toggle = row.querySelector(".stk-toggle");
-            const origLabel = inp.value;
-            const origCat = cat.value;
-
-            function checkChanged() {
-                save.disabled = (inp.value.trim() === origLabel && cat.value === origCat) || (!inp.value.trim() && !cat.value);
-            }
-            inp.addEventListener("input", checkChanged);
-            cat.addEventListener("change", checkChanged);
-
-            toggle.addEventListener("click", async () => {
-                const next = toggle.dataset.on !== "1";
-                toggle.disabled = true;
-                try {
-                    const r = await fetch("/sticker-update", {
-                        method:"POST",
-                        headers:{"Content-Type":"application/json"},
-                        body:JSON.stringify({id, enabled: next}),
-                    });
-                    const d = await r.json();
-                    if (d.ok) {
-                        toggle.dataset.on = next ? "1" : "";
-                        toggle.classList.toggle("on", next);
-                        toggle.textContent = next ? "启用中" : "已停用";
-                        msg.textContent = next ? "已启用：" + d.label : "已停用：" + d.label;
-                    }
-                } catch(e) {}
-                toggle.disabled = false;
-            });
-
-            save.addEventListener("click", async () => {
-                const label = inp.value.trim();
-                const category = cat.value;
-                try {
-                    const r = await fetch("/sticker-update", {
-                        method:"POST",
-                        headers:{"Content-Type":"application/json"},
-                        body:JSON.stringify({id, label: label || undefined, category}),
-                    });
-                    const d = await r.json();
-                    if (d.ok) {
-                        inp.value = d.label;
-                        cat.value = d.category;
-                        save.textContent="已存"; save.disabled=true;
-                        msg.textContent="已更新："+d.label;
-                    }
-                } catch(e) {}
-            });
-            del.addEventListener("click", async () => {
-                if (!confirm("确认删除？")) return;
-                try {
-                    await fetch("/sticker-delete", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({id}) });
-                    row.remove();
-                } catch(e) {}
-            });
-        });
-    } catch(e) { msg.textContent = "加载失败"; }
-}
-
-// ═══════════════════════════════════════════
-// 运行模式切换（A7c 已删除）：本地优先 + 后端失败自动回落服务器——无手动切换入口。
-// 保留此注释防止旧代码/测试引用复活。
-// ═══════════════════════════════════════════
 
 
-/* ── 来源：js/chat.js ── */
-// 聊天核心：消息渲染 / 打字机 / 长按菜单 / 引用 / 发送 / 历史 / 休息撤回
+/* ── 来源：js/chat_render.js ── */
+// 聊天渲染：消息行（文本/表情包/图片/旁白）/ 引用小卡片 / 时间分割 / 打字机占位 / 逐条渲染动画
 
 // 消息渲染
 // ═══════════════════════════════════════════
@@ -1951,6 +1967,67 @@ function addNarration(text, style, prepend = false, seq = null) {
     return row;
 }
 
+function addTimeDivider(timeStr) {
+    const div = document.createElement("div");
+    div.className = "time-divider";
+    div.textContent = timeStr;
+    messagesEl.appendChild(div);
+}
+
+/** 消息加载占位：三个流水灯圆点（0.5~1s 后替换为真实内容） */
+function addTypingBubble(who) {
+    const row = document.createElement("div");
+    row.className = "msg-row " + (who === "user" ? "user" : "firefly");
+    const bubble = document.createElement("div");
+    bubble.className = "bubble typing-bubble";
+    bubble.innerHTML = "<span></span><span></span><span></span>";
+    row.appendChild(bubble);
+    _addAvatar(row, who);
+    messagesEl.appendChild(row);
+    scrollToBottom();
+    return row;
+}
+
+function renderMessages(messages, who, data) {
+    if (!messages || messages.length === 0) return;
+    S._lastRenderTs = Date.now();   // 渲染时间戳（供主动性轮询门控；原二次包装已合并进来）
+    const gen = _modeGen;   // 捕获渲染启动时的模式代际
+    S._rendering = true;   // 渲染动画开始：防主动轮询中途插入乱序
+    // 时间标注：取第一条消息的时间，放居中分割线
+    const ts = messages[0].time ? messages[0].time.slice(11, 16) : new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
+    addTimeDivider(ts);
+    // 逐条消息加载：先显示三圆点占位，再替换为真实内容（消息含文本与表情包）
+    // 加载时长按字数 0.7~1.5s（表情包按最短 0.7s）；消息之间留 0.5s 空白模拟游戏节奏
+    let seq = 0;
+    const showNext = () => {
+        if (gen !== _modeGen) { S._rendering = false; return; }   // 模式已切换：丢弃剩余动画
+        if (seq >= messages.length) {
+            S._rendering = false;   // 渲染动画完成
+            return;
+        }
+        const msg = messages[seq++];
+        const chars = (msg.content || msg.text || "").length;
+        const loadMs = Math.min(1500, Math.max(700, 700 + chars * 25));
+        const typingRow = addTypingBubble(who);
+        setTimeout(() => {
+            if (gen !== _modeGen) { typingRow.remove(); S._rendering = false; return; }
+            typingRow.remove();
+            if (msg.type === "sticker") addSticker(msg.path, who);
+            else if (msg.type === "narration") addNarration(msg.text, msg.style);
+            else if (msg.type === "image") addImage(msg, who);
+            else addTextMessage(msg.content, who);
+            setTimeout(showNext, 500);   // 消息间隔：0.5s 空白
+        }, loadMs);
+    };
+    showNext();
+}
+
+// 消息渲染后记录时间（renderMessages 内调用；0.9.0 起已合并进函数本体，保留此注释防回归）
+
+
+/* ── 来源：js/chat.js ── */
+// 聊天核心：长按菜单 / 引用 / 发送四阶段 / 提交窗口状态机 / 数据备份导入导出
+
 // ═══════════════════════════════════════════
 // 长按消息菜单（QQ 式）：引用 / 收藏
 // ═══════════════════════════════════════════
@@ -2116,63 +2193,6 @@ function _clearQuote() {
 }
 document.getElementById("quote-cancel")?.addEventListener("click", _clearQuote);
 
-function addTimeDivider(timeStr) {
-    const div = document.createElement("div");
-    div.className = "time-divider";
-    div.textContent = timeStr;
-    messagesEl.appendChild(div);
-}
-
-/** 消息加载占位：三个流水灯圆点（0.5~1s 后替换为真实内容） */
-function addTypingBubble(who) {
-    const row = document.createElement("div");
-    row.className = "msg-row " + (who === "user" ? "user" : "firefly");
-    const bubble = document.createElement("div");
-    bubble.className = "bubble typing-bubble";
-    bubble.innerHTML = "<span></span><span></span><span></span>";
-    row.appendChild(bubble);
-    _addAvatar(row, who);
-    messagesEl.appendChild(row);
-    scrollToBottom();
-    return row;
-}
-
-function renderMessages(messages, who, data) {
-    if (!messages || messages.length === 0) return;
-    S._lastRenderTs = Date.now();   // 渲染时间戳（供主动性轮询门控；原二次包装已合并进来）
-    const gen = _modeGen;   // 捕获渲染启动时的模式代际
-    S._rendering = true;   // 渲染动画开始：防主动轮询中途插入乱序
-    // 时间标注：取第一条消息的时间，放居中分割线
-    const ts = messages[0].time ? messages[0].time.slice(11, 16) : new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
-    addTimeDivider(ts);
-    // 逐条消息加载：先显示三圆点占位，再替换为真实内容（消息含文本与表情包）
-    // 加载时长按字数 0.7~1.5s（表情包按最短 0.7s）；消息之间留 0.5s 空白模拟游戏节奏
-    let seq = 0;
-    const showNext = () => {
-        if (gen !== _modeGen) { S._rendering = false; return; }   // 模式已切换：丢弃剩余动画
-        if (seq >= messages.length) {
-            S._rendering = false;   // 渲染动画完成
-            return;
-        }
-        const msg = messages[seq++];
-        const chars = (msg.content || msg.text || "").length;
-        const loadMs = Math.min(1500, Math.max(700, 700 + chars * 25));
-        const typingRow = addTypingBubble(who);
-        setTimeout(() => {
-            if (gen !== _modeGen) { typingRow.remove(); S._rendering = false; return; }
-            typingRow.remove();
-            if (msg.type === "sticker") addSticker(msg.path, who);
-            else if (msg.type === "narration") addNarration(msg.text, msg.style);
-            else if (msg.type === "image") addImage(msg, who);
-            else addTextMessage(msg.content, who);
-            setTimeout(showNext, 500);   // 消息间隔：0.5s 空白
-        }, loadMs);
-    };
-    showNext();
-}
-
-// 消息渲染后记录时间（renderMessages 内调用；0.9.0 起已合并进函数本体，保留此注释防回归）
-
 // ═══════════════════════════════════════════
 // 发送消息 — 四阶段模型：输入 → 发送 → 提交 → 回复
 //   输入：打字（内容只在输入框，不触发队列）
@@ -2198,7 +2218,6 @@ const ERROR_TIPS = {
     quota_exhausted: "今日服务器托管额度已用完，可在设置中切换为自带 Key 模式",
     unknown: "出了点问题，请稍后再试",
 };
-
 
 /** 导出当前模式数据备份（zip）。
  *  local：window.location.href（PC 浏览器直接下载 / 安卓壳 DownloadListener 接管下载目录）；
@@ -2556,6 +2575,29 @@ async function send() {
     _clearQuote();
 }
 
+sendBtn.addEventListener("click", send);
+inputEl.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
+});
+// 提交窗口控制（0.8.1 简化，两判定+上限，见 _batchArmSubmit 注释）：
+// - 输入框有内容（打字中）→ 暂停提交 + hint 续期后端窗口（流萤继续等）
+// - 输入框清空 → 由 1s 检查器按「距最新消息 5 秒」判定提交
+inputEl.addEventListener("input", () => {
+    clearTimeout(S._hintTimer);
+    if (inputEl.value.trim()) {
+        inputEl.placeholder = "说点什么…";   // 开始打字即还原提示（3.6）
+        _sendHint();   // 立即续期一次 + 2s 节流循环
+    } else {
+        // 清空输入框：hint 停止（_sendHint 循环见框空即止），交给检查器按 5s 判定
+        clearTimeout(S._hintTimer);
+        S._hintTimer = null;
+    }
+});
+
+
+/* ── 来源：js/chat_media.js ── */
+// 聊天媒体：发图片（选图/压缩/上传/描述）/ 表情包面板与发送
+
 // ═══════════════════════════════════════════
 // 发图片（A9）：🖼 按钮 → 选图 → 压缩 → 上传落盘 → 描述 → 发送 image 消息
 // （图片链路统一：本地版/服务器版都走 /upload-image；服务器版请求由 fetch 包装器带登录 Bearer）
@@ -2673,24 +2715,9 @@ function sendStickerMessage(label, file) {
     _clearQuote();
 }
 
-sendBtn.addEventListener("click", send);
-inputEl.addEventListener("keydown", (e) => {
-    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
-});
-// 提交窗口控制（0.8.1 简化，两判定+上限，见 _batchArmSubmit 注释）：
-// - 输入框有内容（打字中）→ 暂停提交 + hint 续期后端窗口（流萤继续等）
-// - 输入框清空 → 由 1s 检查器按「距最新消息 5 秒」判定提交
-inputEl.addEventListener("input", () => {
-    clearTimeout(S._hintTimer);
-    if (inputEl.value.trim()) {
-        inputEl.placeholder = "说点什么…";   // 开始打字即还原提示（3.6）
-        _sendHint();   // 立即续期一次 + 2s 节流循环
-    } else {
-        // 清空输入框：hint 停止（_sendHint 循环见框空即止），交给检查器按 5s 判定
-        clearTimeout(S._hintTimer);
-        S._hintTimer = null;
-    }
-});
+
+/* ── 来源：js/chat_history.js ── */
+// 聊天历史：历史加载（滚动翻页）/ 休息 / 清除 / 撤回
 
 // ═══════════════════════════════════════════
 // 休息 / 清除 / 撤回

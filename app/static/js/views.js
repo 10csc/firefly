@@ -3,7 +3,9 @@ import { S, messagesEl } from "./state.js";
 import { initAuth, showAuthModule, IS_SERVER } from "./api.js";
 import { showToast } from "./util.js";
 import { closeMenu, openSettings } from "./panels.js";
-import { loadHistory, renderMessages, scrollToBottom, resetBatchWindow } from "./chat.js";
+import { renderMessages, scrollToBottom } from "./chat_render.js";
+import { resetBatchWindow } from "./chat.js";
+import { loadHistory } from "./chat_history.js";
 import { openFixView } from "./fix.js";
 import { initAssets } from "./relay.js";
 
