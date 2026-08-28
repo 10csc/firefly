@@ -33,7 +33,7 @@ android/app/src/main/python/backend/
 
 # ── 外来资料（搜索下载，禁止入库）──
 docs/搜索资料结果/
-docs/前端/截图/
+docs/设计/前端/截图/
 downloads/
 firefly_backup_*.bundle
 firefly_keystore_backup_*/

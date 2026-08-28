@@ -24,5 +24,5 @@
 ## 注意事项
 
 - 前端唯一源是 `app/static/`，改前端后必须跑 `python tools/sync_frontends.py`（app/static → server/frontend + 安卓 assets），验收跑 `--check`。
-- AndroidManifest `usesCleartextTraffic=true`（服务器走 http 公网 8787）；Manifest 标签属性列表中间禁止插入 XML 注释（历史事故，见 docs/问题清单与待办.md）。
+- AndroidManifest `usesCleartextTraffic=true`（服务器走 http 公网 8787）；Manifest 标签属性列表中间禁止插入 XML 注释（2026-08-13 事故：注释曾把 application 标签截断导致主题失效、ActionBar 外露）。
 - 后台回复推送走 KeepAliveService（轮询通道），不依赖 FCM。
