@@ -527,9 +527,19 @@ def _image_used_bytes() -> int:
     return total
 
 
+# img_id 白名单：合法值由 upload_image 生成（img_ + 12 位 hex）。严格白名单而非黑名单
+# （.. / 分隔符），因为 glob pattern 还存在其它危险形态：绝对路径 pattern
+# （C:/x、UNC）会让 Path.glob 抛未捕获的 NotImplementedError 打断整个 chat 请求；
+# * / [ 等 glob 通配符会意外匹配多文件。安全审查 2026-08-25：pathlib 的 .. 是字面量
+# 匹配（实测 3.12 不可穿越），但校验缺失仍违反模块铁律且对未来 Python 行为变化脆弱。
+_IMG_ID_RE = re.compile(r"[A-Za-z0-9_-]{1,64}")
+
+
 def _load_image_data_url(mode: str, img_id: str) -> str | None:
     """本地版首轮识图：按 img_id 找本地文件 → data URL（A9；字节只内存，不落日志）。"""
     from modules.vision import to_data_url
+    if not _IMG_ID_RE.fullmatch(img_id or ""):
+        return None
     d = _image_dir(mode)
     candidates = sorted(d.glob(img_id + ".*"))
     for fp in candidates:
@@ -1935,7 +1945,7 @@ def get_image(h):
     服务器版同样服务（铁律修订：服务器只存压缩图；cfg.mode_root 经 _user_ctx 按用户隔离）。"""
     qs = parse_qs(urlparse(h.path).query)
     img_id = (qs.get("id", [""])[0] or "").strip()[:200]
-    if not img_id or ".." in img_id or "/" in img_id or "\\" in img_id:
+    if not _IMG_ID_RE.fullmatch(img_id):   # 与 _load_image_data_url 同一白名单（安全审查 2026-08-25）
         h._json({"error": "非法图片 id"}, 400)
         return
     mode = (qs.get("mode", [DEFAULT_MODE])[0] or DEFAULT_MODE)
@@ -2500,6 +2510,14 @@ def relay_proxy(h):
         q = _relay_queues.get(user_key) or []
         item = next((i for i in q if i["call_id"] == call_id), None)
         api_base = (item or {}).get("api_base", cfg.API_BASE)
+    # SSRF 纵深防御（安全审查 2026-08-25）：入队侧拦截（server_app X-API-Base 校验）
+    # 之外，代发前再验一次公网——防其它入队路径绕过或队列残留的脏 base。
+    # 服务器以自身身份向该地址发请求，内网地址一律不发。
+    from modules.api_client import is_public_endpoint
+    if not is_public_endpoint(api_base):
+        logger.warning("[SSRF-GUARD] relay_proxy 拒绝非公网 api_base: %s", api_base[:120])
+        h._json({"ok": False, "error": "接口地址不被允许"}, 403)
+        return
     try:
         import requests as _requests
         resp = _requests.post(api_base.rstrip("/") + "/chat/completions",

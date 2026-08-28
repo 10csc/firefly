@@ -27,7 +27,10 @@ def parse_multipart(handler, max_bytes: int = 10 * 1024 * 1024):
     if not boundary:
         return {}, {}
 
-    length = int(handler.headers.get("Content-Length", 0))
+    try:
+        length = int(handler.headers.get("Content-Length", 0))
+    except (TypeError, ValueError):
+        return {}, {}   # 畸形 Content-Length 头（非数字）安全拒绝（安全审查 2026-08-25）
     # 上传大小上限：防大文件撑爆内存/磁盘（默认 10MB；调用方可按端点放宽容许）
     if length <= 0 or length > max_bytes:
         return {}, {}

@@ -48,7 +48,16 @@ def _run(body):
     h.headers = {"Content-Type": "application/json"}
     h._json = lambda d, status=200: setattr(h, "_resp", d)
     t1 = threading.Thread(target=lambda: routes.chat(h)); t1.start()
-    time.sleep(0.2)
+    # 等待合并窗口注册（2026-08-25 修 flaky：原硬编码 sleep(0.2) 在冷启动/高负载下
+    # 主请求尚未走到窗口注册段，flush 落空 → 主请求等满 5s 窗口、join(4) 超时假失败；
+    # 改为轮询 active 窗口出现再 flush，最多 3s）
+    _deadline = time.time() + 3.0
+    while time.time() < _deadline:
+        with routes._CHAT_WINDOW_LOCK:
+            _registered = any(w.get("active") for w in routes._CHAT_WINDOWS.values())
+        if _registered:
+            break
+        time.sleep(0.05)
     h2 = type("H", (), {})(); h2.headers = {"Content-Type": "application/json"}
     h2._json = lambda d, status=200: setattr(h2, "_r", d)
     with patch("routes._read_json", return_value={"session_id": "s1", "mode": "story"}):

@@ -39,6 +39,70 @@ _COOLDOWNS: dict[str, float] = {}
 _COOLDOWN_LOCK = threading.Lock()
 
 
+# ── SSRF 防护（安全审查 2026-08-25）─────────────────────
+# 服务器版 relay 链路：X-API-Base 由登录用户提供，服务器会在 /relay/proxy
+# 中转时代其向该地址发请求并把响应 JSON 回传——若放任内网地址
+# （127.0.0.1 / 10.x / 192.168.x / 169.254.169.254 云元数据等），
+# 服务器就成了"内网探测代理"。is_public_endpoint 供两处调用：
+#   ① server_app._setup_user_context（X-API-Base 入口拦截，治本）
+#   ② routes.relay_proxy（出队取 base 后二次校验，纵深防御）
+_EP_CHECK_TTL = 300.0
+_EP_CHECK_CACHE: dict[str, tuple[bool, float]] = {}
+_EP_CHECK_LOCK = threading.Lock()
+
+
+def _ip_public(ip: str) -> bool:
+    """单个 IP 是否公网单播地址（私网/环回/链路本地/组播/保留/CGNAT/未指定均 False）。"""
+    import ipaddress
+    try:
+        obj = ipaddress.ip_address(ip)
+    except ValueError:
+        return False
+    if obj.version == 6:
+        mapped = obj.ipv4_mapped   # ::ffff:a.b.c.d 按 IPv4 规则判
+        if mapped is not None:
+            obj = mapped
+    if obj.version == 4 and obj in ipaddress.ip_network("100.64.0.0/10"):
+        return False               # CGNAT（Python 部分版本 is_private 不含，显式补）
+    return not (obj.is_private or obj.is_loopback or obj.is_link_local
+                or obj.is_multicast or obj.is_reserved or obj.is_unspecified)
+
+
+def is_public_endpoint(base_url: str) -> bool:
+    """base_url 是否指向公网（防 SSRF）。格式非法 / 主机不可解析 / 任一解析记录
+    非公网 → False。结果按 host 缓存（TTL 300s）——relay 模式前端 1s 轮询
+    每次都带 X-API-Base，不能每请求做 DNS。DNS 失败 = False（请求本身也到不了）。"""
+    import socket
+    from urllib.parse import urlsplit
+    try:
+        parts = urlsplit(base_url or "")
+        host = (parts.hostname or "").strip().lower()
+        if not host or parts.scheme not in ("http", "https"):
+            return False
+        if host == "localhost" or host.endswith(".localhost") or host.endswith(".local"):
+            return False
+        now = time.time()
+        with _EP_CHECK_LOCK:
+            hit = _EP_CHECK_CACHE.get(host)
+            if hit and now - hit[1] < _EP_CHECK_TTL:
+                return hit[0]
+        import ipaddress
+        try:
+            ipaddress.ip_address(host)   # IP 字面量（IPv6 括号已被 urlsplit 剥离）
+            ips = [host]
+        except ValueError:
+            infos = socket.getaddrinfo(host, None)
+            ips = [i[4][0] for i in infos]
+        ok = bool(ips) and all(_ip_public(ip) for ip in ips)
+        with _EP_CHECK_LOCK:
+            if len(_EP_CHECK_CACHE) > 1000:   # 缓存体积防护（正常供应商数 << 1000）
+                _EP_CHECK_CACHE.clear()
+            _EP_CHECK_CACHE[host] = (ok, now)
+        return ok
+    except Exception:
+        return False
+
+
 def _endpoint_key(base_url: str) -> str:
     return base_url.rstrip("/")
 

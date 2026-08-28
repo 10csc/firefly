@@ -17,9 +17,12 @@
     <!-- 忽略电池优化：后台回复流程防进程冻结（OPPO/ColorOS 会冻结后台进程，即使前台服务） -->
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
+    <!-- 安全审查 2026-08-25：allowBackup 改 false——user_data 含 API Key（config.json）与
+         登录凭证（auth.json），自动云备份会经 adb/厂商通道把密钥带出设备；项目自带
+         导出/同步链路，无需系统级备份（教训：禁止在 application 标签属性间插注释） -->
     <application
         android:name="com.chaquo.python.android.PyApplication"
-        android:allowBackup="true"
+        android:allowBackup="false"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:label="流萤"
