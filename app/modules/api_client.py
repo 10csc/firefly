@@ -31,7 +31,6 @@ _RETRY_CAP = 30.0        # 单次延迟上限（秒）
 _RETRY_MAX = 3           # 重试次数（总尝试 = 4）
 _RETRY_AFTER_CAP = 60.0  # Retry-After 上限（秒）
 _COOLDOWN_SEC = 60.0     # 端点冷却时长（连续失败后）
-_RETRY_DELAY = 2.0       # 兼容旧常量（旧 1 次重试延迟；新逻辑不再使用，保留防外部引用）
 _MAX_RETRIES = _RETRY_MAX
 
 # 端点冷却表：base_url -> 冷却截止时间戳（进程级）

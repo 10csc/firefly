@@ -5,7 +5,7 @@
 | 名词 | 定义 | 范围 | 备注 |
 |------|------|------|------|
 | 本地版 | PC（PyInstaller）+ 安卓（Chaquopy）独立运行形态，用户设备本机跑 Python | app/、android/ | 代码主线的原始形态 |
-| 服务器版 | 云服务器多用户形态：后端在服务器，用户自带 Key，前端打包进 APK（file:// 加载 + 跨域 API） | server/（server_app.py、frontend/）、android_server/ | 复用 app/modules + app/routes，入口独立 |
+| 服务器版 | 云服务器多用户形态：后端在服务器，用户自带 Key，前端打包进 APK（file:// 加载 + 跨域 API） | server/（server_app.py、frontend/）、android/（服务器模式，与本地模式同壳双模式） | 复用 app/modules + app/routes，入口独立 |
 | contextvars 用户上下文 | 每请求线程的用户数据作用域（user_dir/api_key/api_base），Flask 同款模式 | app/modules/app_config.py：set_user_context/reset_user_context/user_scope_key | 本地版不设置时行为零变化 |
 | 匿名 UUID | ~~用户浏览器生成的匿名标识（localStorage firefly_uid），请求带 X-User-Id 头~~ | 已删除（2026-08-12 重构） | 废弃：认证改为 Bearer token，数据按 user_id 隔离 |
 | 安装隐藏代码 | install_id：客户端首次启动本地生成的 `inst-`+32hex，一个安装一个，注册一次一用（防不重装重复注册） | server/auth.py `_valid_install_id`、login.html `getInstallId()`、db.users.install_id | 2026-08-13 加固：生成改用 crypto.getRandomValues（密码学随机），格式不变 |
@@ -31,7 +31,7 @@
 | 优雅关闭 | 多开检测时旧实例保存文件后退出（os._exit） | app/shared_http.py shutdown_server | /shutdown 仅本机来源可触发 |
 | relay 后端代理 | 服务器构建 LLM 请求入队（资产占位符化），APP 轮询取件→本地填充→用户 Key 直连代发→回传 | api_client.py、routes.py、前端 relayTick | 2026-08-13 补前端引擎 |
 | 中转降级 | 直连被 CORS 拦截（GO 端点不支持浏览器跨域）时服务器用 X-API-Key 头代发：Key 内存即弃；call_id 须匹配队列中真实 pending 项（非开放代理） | routes.py relay_proxy、api_client.py relay_has | |
-| 后台主动（服务器版） | KeepAliveService 前台服务定时触发页面 __serverProactive()，hidden_reply_enabled 门控 + FireflyJs 桥通知（仅后台） | android_server KeepAliveService/MainActivity、app.js | 复刻本地版隐藏式语义 |
+| 后台主动（服务器版） | KeepAliveService 前台服务定时触发页面 __serverProactive()，hidden_reply_enabled 门控 + FireflyJs 桥通知（仅后台） | android/ KeepAliveService/MainActivity、app/static/js/proactive.js | 复刻本地版隐藏式语义 |
 | 设定纠错助手 | 替代旧 👍/👎 反馈：用户在首页描述问题 → AI 多轮对齐（聊天+选择题）→ 生成六文件修改清单 → 用户点「应用」才原子写入，可回滚 | app/modules/setting_fix.py、setting_fix_store.py、routes `/setting-fix/*`、独立全屏页 `#fix-view`（首页 `#fix-module` 入口） | 六文件=core/identity/sms_samples/用户设定/memory/手账；不新建文件 |
 | 对齐 Agent / 提案 Agent | 设定纠错助手的两阶段：对齐只提问不复述修改；提案生成 pending 修改清单 | setting_fix.run_alignment / run_proposal | 默认 Flash + Think High |
 | .setting_fix/ | 每模式设定修正持久化目录：conversation.jsonl、pending.json、manifest/audit、backups/vN | setting_fix_store.py | 随 /export-data 导出，不影响数据同步 |

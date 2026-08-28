@@ -151,13 +151,12 @@ else:
 
 # 前端静态文件：开发时 app/static/，frozen 时 _internal/static/（BASE_DIR 两者皆指向）
 STATIC_DIR = BASE_DIR / "static"
-ASSETS_DIR = ROOT / "assets"
 
 PORT = 8765
 # ── 版本号（唯一权威源）──────────────────────────
 # 发版铁律：改这里必须同步改 4 处：
 #   1. 本文件 APP_VERSION
-#   2. app/static/js/panels.js 的 CURRENT_VERSION（0.9.0 起 app.js 已拆分为 js/ 模块）
+#   2. app/static/js/update.js 的 CURRENT_VERSION（0.9.0 起 app.js 已拆分为 js/ 模块）
 #   3. android/app/build.gradle.kts 的 versionName
 #   4. package/firefly.iss 的 AppVersion
 # 用 tools/check_version.py 一键校验四者一致；格式 x.y.z 纯数字点分，
@@ -186,8 +185,6 @@ SUGGESTED_PROVIDERS = [
 ]
 # 模型名：官方英文名（UI 下拉建议用 deepseek 官方清单；不再用「快速/更强」中文档位）
 SUGGESTED_MODELS = ["deepseek-v4-flash", "deepseek-v4-pro", "deepseek-v4-flash-vision-exp"]
-# 兼容别名（旧代码/测试仍引用 VALID_MODELS；模型校验已改为自由输入，见 _clean_model）
-VALID_MODELS = tuple(SUGGESTED_MODELS)
 VALID_EFFORTS = ("none", "low", "high", "max")
 
 _MODEL_MAX_LEN = 100
@@ -247,6 +244,9 @@ def _deepseek_preset(api_key: str = "", base_url: str = API_BASE) -> dict:
     return p
 
 
+_CONFIG_BAK_KEEP = 5   # 供应商迁移备份 config.json.bak-* 保留份数（防反复迁移刷爆磁盘）
+
+
 def _migrate_legacy_providers(data: dict) -> dict:
     """旧结构（顶层 api_key/api_base）→ providers。返回 {providers, active_provider} 或 None。
     迁移前备份 config.json；迁移后旧字段不再读取/落盘。幂等：新结构存在则不迁。"""
@@ -258,6 +258,14 @@ def _migrate_legacy_providers(data: dict) -> dict:
         _bak = CONFIG_FILE.with_name(CONFIG_FILE.name + ".bak-" + time.strftime("%Y%m%d-%H%M%S"))
         _bak.write_bytes(CONFIG_FILE.read_bytes())
         logger.info("多供应商迁移：已备份旧配置 -> %s", _bak.name)
+        # 保留策略：只留最新 _CONFIG_BAK_KEEP 份（文件名时间戳序，按名排序删旧）；
+        # 失败静默——清理失败不影响迁移主流程
+        try:
+            _baks = sorted(CONFIG_FILE.parent.glob(CONFIG_FILE.name + ".bak-*"))
+            for _old in _baks[:max(len(_baks) - _CONFIG_BAK_KEEP, 0)]:
+                _old.unlink(missing_ok=True)
+        except OSError:
+            pass
     except OSError:
         pass
     old_key = str(data.get("api_key", "") or "").strip()
@@ -314,11 +322,7 @@ def mode_journal_dir(mode: str = DEFAULT_MODE) -> Path:
 
 def bundled_character_dir(mode: str = DEFAULT_MODE) -> Path:
     """bundled 默认设定目录：{BASE_DIR}/assets/character/{mode}/（只读，退回路径）。
-
-    注意用 BASE_DIR 而非 ASSETS_DIR（ROOT/assets）：
-    - 开发：app/assets/character/；安卓：backend/app/assets/character/；frozen：_internal/assets/character/
-    - ASSETS_DIR 公式在安卓/开发下指向不存在的 backend/assets、仓库根/assets，历史遗留错误
-    """
+    开发：app/assets/character/；安卓：backend/app/assets/character/；frozen：_internal/assets/character/"""
     return BASE_DIR / "assets" / "character" / mode
 
 
@@ -422,7 +426,6 @@ def _load_config() -> dict:
                 _srv = str(data.get("server_url", "") or "").strip().rstrip("/")
             cfg["auth_server_url"] = (_srv if _srv.startswith(("http://", "https://"))
                                       else AUTH_SERVER_DEFAULT)
-            cfg["server_url"] = ""   # 旧字段兼容占位（保存时不再写）
             # 多供应商：新结构直接读；旧结构（顶层 api_key/api_base）自动迁移
             if "providers" in data:
                 providers = normalize_providers(data.get("providers"))

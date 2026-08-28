@@ -53,12 +53,6 @@ dsh-update/
 /流萤_头像.png
 settings.local.json
 
-# 服务器版安卓壳
-android_server/.gradle/
-android_server/app/build/
-android_server/local.properties
-android_server/firefly-server.apk
-
 # 服务器后端（四部分之一，不提交 git/github，防泄露）
 /server/
 
@@ -66,6 +60,5 @@ android_server/firefly-server.apk
 _harden/
 _trash/
 _research/
-verify/
 tests/*.db
 .tmp_test/

@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env pwsh
+#!/usr/bin/env pwsh
 # 流萤 Android App — 构建 APK
 # 需要：JDK 17+、Android SDK（可自动下载）
 # 用法：.\build_apk.ps1
@@ -11,6 +11,7 @@ $SDK_DIR = "$ROOT\sdk"
 
 # 环境变量（提前设置：sdkmanager 也需要 Java 17+）
 $env:ANDROID_HOME = $SDK_DIR
+# 开发机 JDK 21 路径（硬编码：换机/换 JDK 位置需改这里；不读环境变量——本机全局 JAVA_HOME 指向旧版 jdk-1.8）
 $env:JAVA_HOME = "D:\Java\jdk-21"
 
 # 1. 检测/安装 Android SDK
@@ -57,7 +58,7 @@ if (-not $gradleBat) {
 }
 Write-Output "使用 Gradle: $gradleBat"
 
-# 4. 构建 APK（assembleDebug：免签名，验证用；发布版需另行配置签名）
+# 4. 构建 APK（assembleDebug：验证用；release 签名配置已在 build.gradle.kts——keystore 齐备时 assembleRelease 直接出签名包）
 Write-Output "=== 构建 APK (debug) ==="
 Push-Location $ROOT
 try {

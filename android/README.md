@@ -6,12 +6,12 @@
 
 - **本地模式（默认）**：壳启动 Chaquopy 引擎 → 引擎 HTTP 绑定 `127.0.0.1:8765` 提供统一前端；数据在手机私有目录（`user_data/`），Key 存后端 config.json；后台主动 = Python 直调 `backdoor_proactive_check`。
 - **服务器模式**：壳不启动引擎 → WebView 加载 `file:///android_asset/index.html`；壳拦截 `config.js` 请求动态注入 `FIREFLY_MODE="server"` + `FIREFLY_SERVER_BASE`（`assets/config.js` 单点）；登录 Bearer + Key localStorage + relay 引擎 + 资产本地化；后台主动 = 页面 `__serverProactive()`。
-- 模式切换：设置面板「运行模式」→ `FireflyMode.setMode` 桥 → SharedPreferences `firefly_mode` → `finishAffinity()` + 杀进程重启。
+- 模式判定（A7c 起全自动，无手动开关）：本地优先——启动始终尝试内嵌引擎，12s 探测超时或启动异常即自动回落服务器模式（界面提示"云端连接中"）。
 
 ## 构建
 
 ```powershell
-.\build_apk.ps1      # 自动下载 SDK + 构建（产物 app-release.apk）
+.\build_apk.ps1      # 自动下载 SDK + 构建（assembleDebug，产物拷贝为 android/firefly.apk）
 ```
 
 构建时自动执行两件事：

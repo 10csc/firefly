@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""上下文管理器 — 对话历史存储 + token 估算 + 精力计算
+"""上下文管理器 — 对话历史存储 + token 估算
 
 模块铁律：接收输入 → 审查约束 → 模块处理 → 验证结果 → 最终输出
 """
@@ -33,16 +33,13 @@ class InternalError(ContextManagerError):
 class ContextStats:
     """上下文统计快照"""
     total_tokens: int        # 估算的总 token 数
-    energy: int              # 精力值
-    energy_max: int = 300    # 精力上限
-    fatigue_visible: bool = False  # 疲劳是否可见（energy < 100）
 
 
 # ── Token 估算（内化实现，不引外部库）─────────────
 def _estimate_tokens(text: str) -> int:
     """中英文混合 token 估算。
     DeepSeek 分词中文约 0.6 token/字，英文/符号约 4 字符折合 1 token。
-    此为近似值，用于精力计算，不需要精确匹配 API 实际 token 数。
+    此为近似值，用于 token 用量监控，不需要精确匹配 API 实际 token 数。
     """
     if not text:
         return 0
@@ -62,16 +59,13 @@ def _estimate_messages_tokens(messages: list) -> int:
 
 # ── 核心类 ────────────────────────────────────────
 class ContextManager:
-    """上下文管理器 — 管理对话历史 + token 监控 + 精力计算"""
+    """上下文管理器 — 管理对话历史 + token 监控"""
 
-    def __init__(self, energy_max: int = 300, token_capacity: int = 300000):
+    def __init__(self, token_capacity: int = 300000):
         # 审查构造参数
-        if energy_max <= 0:
-            raise ContextManagerError(f"energy_max 必须为正数，当前: {energy_max}")
         if token_capacity <= 0:
             raise ContextManagerError(f"token_capacity 必须为正数，当前: {token_capacity}")
         self._history: list[dict] = []
-        self._energy_max = energy_max
         self._token_capacity = token_capacity
 
     # ── 行为记录 ────────────────────────────────
@@ -116,10 +110,6 @@ class ContextManager:
 
         # 3. 验证阶段 —— 内部状态异常立即暴露
         stats = self._compute_stats()
-        if not (0 <= stats.energy <= self._energy_max):
-            raise InternalError(
-                f"energy 溢出: {stats.energy}，范围 [0, {self._energy_max}]"
-            )
         if stats.total_tokens < 0:
             raise InternalError(f"total_tokens 为负: {stats.total_tokens}")
 
@@ -143,10 +133,6 @@ class ContextManager:
         logger.debug("add_proactive_turn: 累计消息=%d", len(self._history))
 
         stats = self._compute_stats()
-        if not (0 <= stats.energy <= self._energy_max):
-            raise InternalError(
-                f"energy 溢出: {stats.energy}，范围 [0, {self._energy_max}]"
-            )
         if stats.total_tokens < 0:
             raise InternalError(f"total_tokens 为负: {stats.total_tokens}")
         return stats
@@ -242,8 +228,6 @@ class ContextManager:
         """当前统计快照"""
         st = self._compute_stats()
         # property 不能抛异常，静默修正边界
-        if st.energy < 0:
-            st.energy = 0
         if st.total_tokens < 0:
             st.total_tokens = 0
         return st
@@ -254,14 +238,6 @@ class ContextManager:
         return sum(1 for m in self._history if m["role"] == "user")
 
     # ── 内部计算 ─────────────────────────────────
-    # 废弃标注（A 阶段仅标注，B 阶段移除）：energy / fatigue_visible 无任何消费方，
-    # 属于早期"精力值"设计的遗留，prompt 不读、前端不显示。
     def _compute_stats(self) -> ContextStats:
         total_tokens = _estimate_messages_tokens(self._history)
-        energy = max(0, self._energy_max - total_tokens // 1000)
-        return ContextStats(
-            total_tokens=total_tokens,
-            energy=energy,
-            energy_max=self._energy_max,
-            fatigue_visible=(energy < 100),
-        )
+        return ContextStats(total_tokens=total_tokens)

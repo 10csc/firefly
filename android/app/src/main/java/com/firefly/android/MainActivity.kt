@@ -7,7 +7,6 @@ import android.app.DownloadManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.graphics.Bitmap
 import android.net.Uri
 import android.net.wifi.WifiManager
 import android.os.Build
@@ -168,11 +167,8 @@ class MainActivity : AppCompatActivity() {
 
     /** Android 12- 图片选择所需的存储权限（一次申请；拒绝则走 GET_CONTENT 无权限也能选图——SAF 兜底） */
     private fun requestMediaPermissionIfNeeded() {
-        val perm = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            android.Manifest.permission.READ_EXTERNAL_STORAGE   // API 30-32
-        } else {
-            android.Manifest.permission.READ_EXTERNAL_STORAGE   // API 26-29
-        }
+        // READ_EXTERNAL_STORAGE 通用于 API 26-32（Manifest maxSdkVersion=32；API 33+ 走 PickVisualMedia 免权限）
+        val perm = android.Manifest.permission.READ_EXTERNAL_STORAGE
         if (ContextCompat.checkSelfPermission(this, perm) != PackageManager.PERMISSION_GRANTED) {
             ActivityCompat.requestPermissions(this, arrayOf(perm), MEDIA_PERMISSION_REQUEST)
         }
@@ -312,6 +308,17 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    /** 服务器模式后台主动通知桥（前端 proactive.js 调 window.FireflyJs.notify）：
+     * 仅 App 不在前台时发状态栏通知，前台不打扰（复刻本地版 _notify_reply_if_background 语义） */
+    inner class FireflyJsBridge {
+        @JavascriptInterface
+        fun notify(title: String, content: String) {
+            if (!KeepAliveService.isAppForeground()) {
+                KeepAliveService.notify(title, content)
+            }
+        }
+    }
+
     /** 返回键策略：聊天页返回首页，首页双击退出 */
     private fun handleBackPressed() {
         val wv = webView
@@ -376,21 +383,6 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun showError(msg: String) {
-        val container = findViewById<ViewGroup>(android.R.id.content)
-        container.removeAllViews()
-        container.addView(android.widget.TextView(this).apply {
-            text = msg
-            textSize = 16f
-            setTextColor(0xFFc8d0e0.toInt())
-            gravity = android.view.Gravity.CENTER
-            layoutParams = ViewGroup.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.MATCH_PARENT
-            )
-        })
-    }
-
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         // 通知权限结果：拒绝则后台概率触发的通知不可见（功能降级，不崩溃）
@@ -422,9 +414,6 @@ class MainActivity : AppCompatActivity() {
                 cacheMode = android.webkit.WebSettings.LOAD_NO_CACHE   // 每次拉取最新前端
             }
             webViewClient = object : WebViewClient() {
-                override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {}
-                override fun onPageFinished(view: WebView?, url: String?) {}
-
                 // config.js 动态注入（A7c 单态）：页面先加载 config.js 再加载 app.js，
                 // 壳按当前后端类型返回字段——local：FIREFLY_MODE=local；
                 // 回落 server：FIREFLY_MODE=server + FIREFLY_SERVER_BASE（读 assets/config.js 的地址单点）
@@ -522,7 +511,6 @@ class MainActivity : AppCompatActivity() {
                         setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
                         setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, fname)
                         setMimeType(mimeType ?: "application/zip")
-                        addRequestHeader("Authorization", "")   // 本地后端无鉴权，占位
                     }
                     val dm = getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
                     dm.enqueue(req)
@@ -534,6 +522,7 @@ class MainActivity : AppCompatActivity() {
                 }
             }
             addJavascriptInterface(WakeLockBridge(), "androidWakeLock")
+            addJavascriptInterface(FireflyJsBridge(), "FireflyJs")   // 服务器模式后台主动消息 → 状态栏通知
             loadUrl(baseUrl)
         }
         (findViewById<ViewGroup>(android.R.id.content)).addView(webView)
