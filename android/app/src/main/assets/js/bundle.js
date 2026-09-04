@@ -2632,7 +2632,7 @@ if (imageBtn && imageFileInput) {
         if (f.size > 10 * 1024 * 1024) { _toast("图片过大（上限 10MB）"); endMedia(false); return; }
         // 发送前压缩（imgzip.js）：GIF/小图原样；任何失败降级原图不阻塞发送
         const {blob, ext} = await compressImage(f);
-        let imgId = "", desc = "";
+        let imgId = "";
         try {
             const fd = new FormData();
             fd.append("file", blob, "upload." + ext);   // 压缩产物是匿名 Blob：补文件名让后端拿到正确扩展名
@@ -2641,17 +2641,12 @@ if (imageBtn && imageFileInput) {
             const data = await resp.json();
             if (!data.ok) { _toast("图片上传失败：" + (data.error || "")); endMedia(false); return; }   // 配额满等错误直接透传后端文案
             imgId = data.img_id || "";
-            desc = data.desc || "";
-            if (data.need_desc) desc = "";
         } catch (e) { _toast("网络错误，图片未发送"); endMedia(false); return; }
-        if (!desc) {
-            // 描述缺失（vision 不支持/失败）：让用户填一句（可为空 → [图片] 占位）
-            desc = (window.prompt("流萤还没有识图能力，这幅图是什么？（可留空）", "") || "").trim().slice(0, 300);
-        }
+        // 2026-08-29：不再弹窗让用户描述——图片理解统一由模型原生识图（发图当轮注入原图）；
+        // 模型真不支持时由后端 polisher 降级为"看不清"说明。
         const q = _quoteTarget;
-        addImage({img_id: imgId, desc}, "user");
+        addImage({img_id: imgId, desc: ""}, "user");
         const msg = {type: "image", img_id: imgId};
-        if (desc) msg.desc = desc;
         if (q) msg.quote = q;
         _chatSend([msg]);
         endMedia(true);   // 0.8.1：图片与文字同批合并（两判定+10条上限）

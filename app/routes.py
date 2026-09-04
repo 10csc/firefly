@@ -182,16 +182,11 @@ def chat(h):
                     rec["quote"] = q
                 _append_msg("user", rec, mode=mode)
                 if desc:
-                    # 有描述：流萤按描述理解（用户手填或 vision 生成）
+                    # 有描述（旧图兼容）按描述理解；无描述默认识图，原图当轮注入
                     llm_parts.append(_compose_user_text(f"[图片：{desc}]", q))
                 else:
-                    # 无描述且后续识图不可用：如实告知看不见，不假装看见（人设铁律）
-                    llm_parts.append(_compose_user_text(
-                        "[开拓者发了一张图片，但你（流萤）看不到图片内容——"
-                        "如实回应：你已经发了图片吗？我怎么看不见呀；不要假装看到了]", q))
-                # 首轮识图（决策 12 全链路：本地 direct / proxy / relay 统一——
-                # 图片已落盘（服务器版=压缩图），由此读字节转 data URL 进 vision_urls；
-                # orchestrator 侧再按客户端能力+模型门控决定是否真的注入 blocks）
+                    llm_parts.append(_compose_user_text("[图片]", q))
+                # 首轮识图：图片已落盘，读字节转 data URL 进 vision_urls（orchestrator 注入回复器）
                 if len(vision_urls) < 4:
                     url = _load_image_data_url(mode, img_id)
                     if url:

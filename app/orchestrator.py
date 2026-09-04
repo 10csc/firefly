@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """编排器 — 对话流水线总调度
 
-当前流程：向量检索 → 分析器 → 回复器（全权生成）→ 组织器（工具调度：表情包）→ 记录
+当前流程：检索器（LLM 子代理）→ 分析器 → 回复器（全权生成）→ 组织器（表情包/旁白）→ 记录
 """
 
 import logging, threading, time, random
@@ -32,7 +32,6 @@ _DIRECT_REPLIES = {
     "input:empty":    ["嗯…怎么啦？想说什么就说吧"],
     "input:too_long": ["你说了好多…我慢慢看，等一下哦"],
     "api:error":      ["嗯…信号好像不太好，你等一下哦"],
-    "image:unseen":   ["你已经发了图片吗？我怎么看不见呀"],
 }
 
 
@@ -55,21 +54,6 @@ def _first_degraded_code(*outputs) -> str | None:
             if code:
                 return code
     return None
-
-
-def _caps_vision(client, model: str = "") -> bool:
-    """当前 client 是否可注入图片 block（caps.vision；QuotaClient/本地 client 有 _caps）。
-    relay 链路追加模型门控：payload 模型名不含 vision 时不注入——BYOK 用户模型由
-    服务器配置，非视觉模型注入图片会被上游 400 拒绝、整轮降级（proxy 托管锁
-    mimo-v2.5 支持识图，不受此限）。"""
-    try:
-        if not bool(getattr(client, "_caps", {}).get("vision", True)):
-            return False
-        if hasattr(client, "_user_key"):   # RelayClient 特征（无 _caps 属性）
-            return "vision" in (model or "").lower()
-        return True
-    except Exception:
-        return False
 
 
 # ── A3 超时预算：单轮硬顶 210s（与网关 600s / 前端 4 分钟对齐的收紧）──
@@ -336,7 +320,6 @@ def handle_chat(
     try:
         if mode == "haruno":
             retrieved_knowledge = ""
-            retrieved_memory = ""
             _rt0 = _rt1 = time.perf_counter()
         else:
             _set_stage(session, "retriever")
@@ -352,7 +335,6 @@ def handle_chat(
             ))
             _rt1 = time.perf_counter()
             retrieved_knowledge = r_out.knowledge
-            retrieved_memory = ""   # 子代理输出为混合摘要，两层合并
             logger.info("[PIPELINE #%d] ⓪ Retriever 完成 (%.1fs)", turn, _rt1 - _rt0)
     except Exception as e:
         from modules.api_client import ApiError
@@ -360,7 +342,6 @@ def handle_chat(
         if isinstance(e, ApiError) and e.code == "timeout":
             raise
         retrieved_knowledge = ""
-        retrieved_memory = ""
         _rt0 = _rt1 = time.perf_counter()
         logger.warning("[PIPELINE #%d] ⓪ Retriever 失败: %s: %s", turn, type(e).__name__, e)
 
@@ -381,7 +362,6 @@ def handle_chat(
             user_input=input_text,
             recent_history=ctx.get_recent(20),
             retrieved_knowledge=retrieved_knowledge,
-            retrieved_memory=retrieved_memory,
             environment=environment,
         ))
         _t1 = time.perf_counter()
@@ -402,7 +382,7 @@ def handle_chat(
             recent_history=ctx.get_recent(15),
             memory_head=memory_head,
             environment=environment,
-            vision_images=(vision_images or []) if _caps_vision(client, polisher_model) else [],
+            vision_images=(vision_images or []),
         ))
         _t2 = time.perf_counter()
         messages = list(polish_output.messages)
@@ -454,7 +434,6 @@ def handle_chat(
             "retriever": {
                 "elapsed": round(_rt1 - _rt0, 2),
                 "knowledge": retrieved_knowledge,     # 完整内容落盘，诊断不依赖截断
-                "memory": retrieved_memory,
             },
             "analyzer": {
                 "elapsed": round(_t1 - _t0, 2),

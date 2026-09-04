@@ -39,12 +39,13 @@ except Exception:
 # ══════════════════════════════════════════════════
 print("\n=== JSON 解析 ===")
 
-raw = '{"intent":"关心","fact_check":[{"claim":"你还好吗","verdict":"真实","note":"关心状态"}],"knowledge_query":[],"memory_query":[],"summary":"开拓者在关心流萤的状态"}'
+raw = '{"intent":"关心","fact_check":[{"claim":"你还好吗","verdict":"真实","note":"关心状态"}],"summary":"开拓者在关心流萤的状态"}'
 out = _parse_and_validate(raw)
 check("正常 JSON→intent=关心", out.intent == "关心")
 check("正常 JSON→fact_check 1条", len(out.fact_check) == 1)
 check("正常 JSON→summary 非空", bool(out.summary))
-check("正常 JSON→knowledge_query 空", out.knowledge_query == [])
+check("正常 JSON→fact_check 字段齐全",
+      all(k in out.fact_check[0] for k in ("claim", "verdict", "note")))
 
 raw2 = '{}'
 out2 = _parse_and_validate(raw2)

@@ -381,6 +381,12 @@ class Polisher:
                 fact_lines.append(f"  - \"{fc.get('claim','')}\" → {fc.get('verdict','不确定')}: {fc.get('note','')}")
         fact_section = "\n".join(fact_lines) if fact_lines else "  （无）"
 
+        # 有图时说明：直接看，勿脑补（user 动态段，不动 system 缓存）
+        vision_note = ("## 你正在看开拓者刚发来的图片\n"
+                       "先说清它是什么（照片/画/截图/表情包…），再回应内容。\n"
+                       "看不清就如实说看不清。不要猜来历（谁拍的、谁画的…）。\n\n"
+        ) if inp.vision_images else ""
+
         dynamic = (
             f"## 最近对话\n{history_section}\n\n"
             f"{said_section}{memory_section}{env_section}"
@@ -388,7 +394,7 @@ class Polisher:
             f"意图: {inp.analyzer_intent}\n"
             f"事实核查:\n{fact_section}\n"
             f"摘要: {inp.analyzer_summary}\n\n"
-            f"{input_section}"
+            f"{vision_note}{input_section}"
         )
 
         # 3. 调 LLM
@@ -397,8 +403,8 @@ class Polisher:
                 extra = {"thinking": {"type": "enabled"}, "reasoning_effort": self._effort}
             else:
                 extra = {"thinking": {"type": "disabled"}}
-            # A9 首轮识图：vision_images（base64 data URL）→ user 消息 content blocks；
-            # 文本部分照旧（`[图片：desc]` 已在 user_input），图片字节仅此一轮进入模型
+            # 原生识图：vision_images（base64 data URL）→ user 消息 content blocks；
+            # 图片字节仅此一轮进入模型，不落任何日志
             if inp.vision_images:
                 blocks = [{"type": "text", "text": dynamic}]
                 for url in inp.vision_images:
@@ -438,7 +444,10 @@ class Polisher:
             record_error("polisher", self._model, str(e))
             # A3：降级输出携带被吞的 error_code（透传 /chat → 前端人话提示）
             from modules.api_client import error_code_of
-            return PolisherOutput(messages=_default_message(), raw="", degraded=True,
+            # 带图失败不脑补内容，如实说看不清（2026-08-29）
+            fallback = ([{"type": "text", "content": "图片好像看不清……我这边几乎看不见图呢。"}]
+                        if inp.vision_images else _default_message())
+            return PolisherOutput(messages=fallback, raw="", degraded=True,
                                   error_code=error_code_of(e))
 
         # 4. 解析输出

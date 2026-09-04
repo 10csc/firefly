@@ -72,8 +72,35 @@ msgs6 = _parse_response(raw6)
 check("[STICKER] 行忽略", len(msgs6) == 1)
 
 # ══════════════════════════════════════════════════
-# 计数器
+# 带图失败 → 诚实降级（2026-08-29：不再假装看见/让用户填描述）
 # ══════════════════════════════════════════════════
+print("\n=== 带图失败降级 ===")
+
+from unittest.mock import patch
+
+p_img = Polisher(None, model="mock")
+try:
+    out = p_img.polish(PolisherInput(user_input="看图", analyzer_summary="x",
+                                   vision_images=["data:image/png;base64,AAAA"]))
+    check("带图+调用失败→降级输出", out.degraded and out.messages)
+    check("带图+调用失败→看不出图片（不脑补内容）", "图片" in out.messages[0]["content"]
+          and "看不清" in out.messages[0]["content"])
+except Exception as e:
+    import traceback
+    traceback.print_exc()
+    check("带图+调用失败→降级输出", False)
+
+p_none = Polisher(None, model="mock")
+try:
+    out2 = p_none.polish(PolisherInput(user_input="你好", analyzer_summary="x"))
+    check("无图+调用失败→通用话术（不出现图片字样）", out2.degraded
+          and "图片" not in out2.messages[0]["content"])
+except Exception as e:
+    import traceback
+    traceback.print_exc()
+    check("无图+调用失败→通用话术", False)
+
+print("\n=== 计数器 ===")
 print("\n=== 计数器 ===")
 from modules.polisher import get_counters
 c = get_counters()

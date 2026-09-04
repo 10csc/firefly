@@ -25,8 +25,7 @@ class InputRejected(AnalyzerError): pass
 class AnalyzerInput:
     user_input: str
     recent_history: list = field(default_factory=list)
-    retrieved_knowledge: str = ""     # 检索到的世界知识（RAG 预留）
-    retrieved_memory: str = ""        # 检索到的记忆（RAG 预留）
+    retrieved_knowledge: str = ""     # 检索器（llm_retriever）输出的压缩知识摘要
     environment: str = ""             # 环境信息（时段描述等）
 
 
@@ -34,8 +33,6 @@ class AnalyzerInput:
 class AnalyzerOutput:
     intent: str = ""
     fact_check: list = field(default_factory=list)  # [{"claim","verdict","note"}]
-    knowledge_query: list = field(default_factory=list)  # 关键词（RAG 预留）
-    memory_query: list = field(default_factory=list)     # 关键词（RAG 预留）
     summary: str = ""
     raw_json: str = ""
     reasoning: str = ""               # 模型思考过程（调试观测用）
@@ -99,20 +96,15 @@ _ANALYZER_SYSTEM = """When you think, think in ENGLISH, start with "We need..."
 - "错误前提"：与当前模式的流萤状态或世界事实明显冲突 → 标记为错误前提
 - 无法判断 → 标记为"不确定"
 
-### 3. 结合检索到的知识和记忆，整理有用信息（summary）
-将分析结果、检索到的知识、检索到的记忆整合成一段话，
-供组织器直接使用。语言简洁，不要遗漏关键信息。
+### 3. 结合检索到的知识，整理有用信息（summary）
+将分析结果与检索到的知识整合成一段话，供回复器直接使用。语言简洁，不要遗漏关键信息。
 
-### 4. 还需要什么信息？（knowledge_query / memory_query）
-哪些信息有助于更准确地回复，但当前未提供？
-列出关键词，供后续 RAG 实现在下一轮加载。
-
-### 5. 场景推进（角色扮演铁律，最高优先）
+### 4. 场景推进（角色扮演铁律，最高优先）
 开拓者的消息可能是在**推进场景**——"你来了，请坐""我已经到门口了""进来吧"这类意味着当前场景已经推进（已见面/已到店）。**直接接住推进后的场景**：他说到了，就是到了，回复围绕"现在就在一起"展开。
 与既往约定的时间/地点不一致（比如约的周六、今天却是周二）→ 视为剧情跳跃，**不质疑、不纠正、不提**，顺其自然。只有开拓者明确表达困惑时才解释。
 
 ## 输出格式（一行 JSON，禁止任何其他文字）
-{{"intent":"意图","fact_check":[{{"claim":"开拓者说的具体说法","verdict":"真实/不存在/错误前提/不确定","note":"说明"}}],"knowledge_query":["关键词"],"memory_query":["关键词"],"summary":"分析结果整理"}}"""
+{{"intent":"意图","fact_check":[{{"claim":"开拓者说的具体说法","verdict":"真实/不存在/错误前提/不确定","note":"说明"}}],"summary":"分析结果整理"}}"""
 
 
 # story 模式专属事实核查参考（剧情世界观），haruno 不注入
@@ -130,12 +122,6 @@ _ANALYZER_HARUNO_EXTRA = """### 春日手信模式事实核查补充（haruno �
 常见错误前提：机甲 / 萨姆 / 格拉默铁骑 / 失熵症 / 星核猎手 / 梦境的深层阴谋 / 主线大事件——这些在本模式不存在；开拓者若提及，verdict 记"不存在"，summary 提示"按普通学生的真实困惑接话，不解释成剧情真相"。
 关系阶段：刚认识；只按对话中真实发生的事推进，不越级。
 时间与地点：时间随开拓者明确推进，不擅自跳天；地点只用黄金时刻真实地名（钟表小子广场、沉梦商街、奥帝购物中心、艾迪恩公园、甜蜜一隅、黄金中央车站、白日梦酒店大门广场）或开拓者明确说出的地点。"""
-
-
-_ANALYZER_SYSTEMS = {
-    "story": _ANALYZER_SYSTEM,
-    "haruno": _ANALYZER_SYSTEM,
-}
 
 
 # ── 分析器类 ──────────────────────────────────────
@@ -180,20 +166,13 @@ class Analyzer:
 
         env_section = f"## 当前环境\n{inp.environment}\n" if inp.environment else ""
         knowledge_section = f"## 检索到的相关知识\n{inp.retrieved_knowledge}\n" if inp.retrieved_knowledge else ""
-        memory_section = f"## 检索到的记忆\n{inp.retrieved_memory}\n" if inp.retrieved_memory else ""
-
-        knowledge_query_hint = "（以上已提供检索到的知识，此字段记录还缺什么）"
-        memory_query_hint = "（以上已提供检索到的记忆，此字段记录还缺什么）"
-
         dynamic = f"""## 最近对话
 {history_section}
 
-{env_section}{knowledge_section}{memory_section}## 开拓者刚才说
+{env_section}{knowledge_section}## 开拓者刚才说
 {inp.user_input}
 
 ## 分析提示
-- {knowledge_query_hint}
-- {memory_query_hint}
 - 有检索到的内容就利用，没有就不用。
 - 只输出 JSON。"""
 
@@ -266,13 +245,6 @@ def _parse_and_validate(raw: str) -> AnalyzerOutput:
         fc.setdefault("verdict", "不确定")
         fc.setdefault("note", "")
 
-    kq = data.get("knowledge_query", [])
-    if not isinstance(kq, list):
-        kq = []
-    mq = data.get("memory_query", [])
-    if not isinstance(mq, list):
-        mq = []
-
     summary = data.get("summary", "")
     if not isinstance(summary, str) or not summary.strip():
         summary = "分析结果：正常聊天。按分析结果自然接话。"
@@ -280,8 +252,6 @@ def _parse_and_validate(raw: str) -> AnalyzerOutput:
     return AnalyzerOutput(
         intent=intent,
         fact_check=fact_check,
-        knowledge_query=kq,
-        memory_query=mq,
         summary=summary,
         raw_json=raw,
     )

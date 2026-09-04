@@ -218,9 +218,3 @@ def _validate_input(inp: RetrieveInput):
         raise InputRejected("user_input 为空")
     if not isinstance(inp.recent_history, list):
         raise InputRejected("recent_history 必须为 list")
-
-
-def reset_knowledge_cache():
-    """强制重建知识库缓存（设定文件变更后调用）。"""
-    with _lock:
-        _KNOWLEDGE_CACHE.clear()

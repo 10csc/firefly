@@ -130,13 +130,6 @@ def is_relay_client(client) -> bool:
     return isinstance(client, RelayClient)
 
 
-def asset_or_placeholder(client, loader, *args, **kwargs):
-    """relay 模式：资产→占位符（APP 本地填充）；direct 模式：真实内容。"""
-    if is_relay_client(client):
-        return kwargs.pop("placeholder", ASSET_KNOWLEDGE)
-    return loader(*args, **kwargs)
-
-
 # ── 请求日志 ─────────────────────────────────────────
 _REQUEST_LOG: list[dict] = []
 _REQUEST_LOG_MAX = 500

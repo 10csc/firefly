@@ -19,11 +19,12 @@ logger = logging.getLogger(__name__)
 
 
 def upload_image(h):
-    """POST /upload-image（A9）：接收压缩图字节 → 落盘 {mode}/images/ + desc 生成。
+    """POST /upload-image（A9）：接收压缩图字节 → 落盘 {mode}/images/。
+    2026-08-29 变更：不再生成/要求文字描述，图片理解统一由模型原生识图（发图当轮
+    注入原图给回复器）；模型真不支持识图时由上游拒绝 → polisher 降级说明，前端不弹窗。
     铁律修订：原图不出设备，服务器只存压缩图——服务器版同样落盘
     （cfg.mode_root 经 _user_ctx 按用户目录隔离）。配额：每用户 FIREFLY_IMAGE_QUOTA_MB
     （默认 200MB），统计该用户所有模式 images/ 总字节，超限拒绝。"""
-    from modules.vision import to_data_url, describe_image
     import uuid as _uuid
     # 局部绑定：call-time 从 routes 取，保持测试改写 routes.parse_multipart 的拦截面不变
     from routes import parse_multipart
@@ -47,23 +48,9 @@ def upload_image(h):
     from modules.storage import atomic_write_bytes
     if not atomic_write_bytes(fp, data):
         h._json({"ok": False, "error": "图片保存失败"}); return
-    # desc 生成（vision 模型）：失败/不支持 → 空串（前端可让用户手填）。
-    # 对 QuotaClient/RelayClient 通用：describe_image 走 client.chat.completions.create，
-    # proxy 托管自动锁 vision 模型并记账。
-    desc = ""
-    client = cfg.get_client()
-    try:
-        vision_model = (cfg.config.get("vision_model", "deepseek-v4-flash-vision-exp")
-                        or "deepseek-v4-flash-vision-exp")
-        caps_ok = bool(getattr(client, "_caps", {}).get("vision", True))
-        if caps_ok and client is not None:
-            url = to_data_url(data, ext)
-            if url:
-                desc = describe_image(client, vision_model, url)
-    except Exception as e:
-        logger.warning("图片描述生成跳过: %s", e)
-    h._json({"ok": True, "img_id": img_id, "file": fp.name, "desc": desc,
-             "need_desc": not desc, "server_side": _is_server()})
+    # 图片理解统一由模型原生识图；desc 恒空（旧数据手填 desc 兼容读法不受影响）
+    h._json({"ok": True, "img_id": img_id, "file": fp.name, "desc": "",
+             "server_side": _is_server()})
 
 
 def add_sticker_route(h):

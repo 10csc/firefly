@@ -65,16 +65,15 @@ def _run(body):
     t1.join(timeout=4)
     return captured.get("text", "")
 
-print("=== A. 无 desc 图片 → 看不见提示词（不假装看见） ===")
+print("=== A. 无 desc 图片 → 中性占位 [图片]（默认识图，原图当轮注入；无图片时降级兜底在 polisher） ===")
 with patch("routes.get_session", side_effect=_session), \
      patch("routes.handle_chat", side_effect=_cap), \
      patch("routes._read_json", return_value={"messages": [{"type": "image", "img_id": "img_nonexistent"}],
                                               "session_id": "s1", "mode": "story"}), \
      patch("routes._write_replies", side_effect=lambda r, m: r.messages if hasattr(r, "messages") else r):
     txt = _run(None)   # _read_json 已 patch，传 None 即可
-check("A1 无描述图片注入看不见提示词",
-      "看不见" in txt and "你已经发了图片吗" in txt)
-check("A2 含'如实回应'指引（不假装看见的语义）", "如实" in txt)
+check("A1 无描述 → 中性 [图片] 占位", txt.strip() == "[图片]")
+check("A2 不注入看不见提示词（交给 polisher 失败降级）", "看不见" not in txt)
 
 print("=== B. 有 desc 图片 → 正常按描述回复 ===")
 captured.clear()
@@ -89,9 +88,8 @@ check("B2 有描述时不注入看不见提示", "看不见" not in txt)
 
 print("=== C. _handle_direct 数据完整性 ===")
 import orchestrator as orch
-replies = orch._handle_direct("image:unseen")
-check("C1 image:unseen 兜底话术存在", any("看不见" in r for r in replies))
-check("C2 未知 reason 仍走通用兜底", orch._handle_direct("x:y") != [])
+check("C1 未知 reason 仍走通用兜底", orch._handle_direct("x:y") != [])
+check("C2 已删 image:unseen（图片链路改由 polisher 降级）", "image:unseen" not in orch._DIRECT_REPLIES)
 
 print(f"\n统计: PASS={PASS} FAIL={FAIL}")
 sys.exit(0 if FAIL == 0 else 1)

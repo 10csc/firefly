@@ -64,62 +64,12 @@ check("B1 回灌 ≥1 轮", n >= 1)
 hist = ctx.get_recent(5)
 check("B2 上下文含 [图片：…]", any("[图片：" in str(m.get("content", "")) for m in hist))
 
-print("=== C. vision describe（mock：成功 / 失败降级 / caps 关闭不发） ===")
-from modules.vision import describe_image, to_data_url
+print("=== C. 图片字节工具（to_data_url） ===")
+from modules.vision import to_data_url
 
-
-class R:
-    def __init__(self, content):
-        self.choices = [type("C", (), {"message": type("M", (), {"content": content})})()]
-        self.usage = type("U", (), {})
-        self.model = "vision-x"
-
-
-class _CC:
-    def __init__(self, owner):
-        self._owner = owner
-
-    def create(self, **kw):
-        return self._owner.create(**kw)
-
-
-class ClientOK:
-    _timeout = 30.0
-    _caps = {"vision": True, "thinking": True}
-    sent = {}
-
-    def __init__(self):
-        self.chat = type("Chat", (), {"completions": _CC(self)})()
-
-    def create(self, **kw):
-        ClientOK.sent = kw
-        return R("一张生日蛋糕照片，桌上还有蜡烛。")
-
-
-with patch("modules.vision.record_usage", return_value=None):
-    c = ClientOK()
-    url = to_data_url(b"fake-image", ".png")
-    check("C1 data url 生成", url and url.startswith("data:image/png;base64,"))
-    desc = describe_image(c, "vision-model", url)
-    check("C2 desc 成功", "生日蛋糕" in desc)
-    check("C3 content blocks 结构", isinstance(ClientOK.sent.get("messages")[0]["content"], list)
-          and any(b.get("type") == "image_url" for b in ClientOK.sent["messages"][0]["content"]))
-
-
-class ClientFail:
-    _timeout = 30.0
-    _caps = {"vision": True, "thinking": True}
-
-    def __init__(self):
-        self.chat = type("Chat", (), {"completions": _CC(self)})()
-
-    def create(self, **kw):
-        raise RuntimeError("upstream 500")
-
-
-with patch("modules.vision.record_error", return_value=None):
-    check("C4 失败降级为空串", describe_image(ClientFail(), "m", url) == "")
-check("C5 空模型降级", describe_image(ClientOK(), "", url) == "")
+url = to_data_url(b"fake-image", ".png")
+check("C1 data url 生成", url and url.startswith("data:image/png;base64,"))
+check("C1b 非白名单扩展返回 None", to_data_url(b"x", ".exe") is None)
 
 print("=== D. upload-image 路由（本地版落盘 + /image 服务） ===")
 import routes
@@ -147,10 +97,10 @@ def fake_parse(hh, **kw):
 
 
 routes.parse_multipart = fake_parse
-with patch("modules.vision.describe_image", return_value="描述占位"):
-    routes.upload_image(h)
+routes.upload_image(h)
 routes.parse_multipart = real_parse
 check("D1 upload 返回 img_id", h.data.get("ok") and h.data["img_id"].startswith("img_"))
+check("D1b 不再自动生成 desc（原生识图链路）", h.data.get("desc") == "")
 check("D2 图片已落盘", len(list((cfg.mode_root("story") / "images").glob("*.png"))) >= 1)
 
 h2 = FakeH()
@@ -178,12 +128,11 @@ try:
     os.environ["FIREFLY_IMAGE_QUOTA_MB"] = "10"
     hs = FakeH()
     routes.parse_multipart = fake_parse
-    with patch("modules.vision.describe_image", return_value="服务器描述"):
-        routes.upload_image(hs)
+    routes.upload_image(hs)
     routes.parse_multipart = real_parse
     check("E3 服务器版上传成功", hs.data.get("ok") and hs.data.get("server_side") is True)
     check("E4 落盘在用户目录", len(list((_u7 / "story" / "images").glob("*.png"))) == 1)
-    check("E5 desc 已生成", hs.data.get("desc") == "服务器描述")
+    check("E5 不再自动生成 desc（原生识图链路）", hs.data.get("desc") == "")
 
     hs2 = FakeH()
     hs2.path = "/image?id=" + hs.data["img_id"] + "&mode=story"
