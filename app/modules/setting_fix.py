@@ -40,12 +40,9 @@ MAX_TOTAL_NEW = 4000           # 全部 new 合计上限
 MAX_FILE_CHARS = 50_000        # 改后单文件字符上限
 MAX_TEXT_LEN = 1000            # 用户单次输入上限
 
-# haruno 的 world/plot 只作“只读上下文”注入，不进入可修改白名单——
 # 世界/剧情类纠错按用户决定落进「用户设定.md」，避免补丁式改官方资产。
-CONTEXT_ONLY_FILES = {
-    "haruno": (("world.md", "春日手信世界设定（只读参考）"),
-               ("plot.md", "春日手信剧情阶段（只读参考）")),
-}
+# （2026-09-04：haruno world/plot.md 从未产物化，只读上下文机制随引用一并删除；
+#  若日后资料卡建卡，恢复见 git 历史）
 
 # ── 旧 feedback / harness 遗留数据（首次使用新功能时幂等清理）──
 _LEGACY_PATHS = (
@@ -126,20 +123,6 @@ def load_current_files(mode: str = DEFAULT_MODE, ensure: bool = True) -> dict[st
     for name in FIX_FILES:
         fp = readable_path(name, mode)
         out[name] = fp.read_text(encoding="utf-8") if fp.exists() else ""
-    return out
-
-
-def load_context_files(mode: str = DEFAULT_MODE) -> list[tuple[str, str, str]]:
-    """只读上下文文件（目前只有 haruno 的 world/plot）。用户副本优先，退回 bundled。"""
-    out = []
-    for name, label in CONTEXT_ONLY_FILES.get(mode, ()):
-        fp = mode_character_dir(mode) / name
-        if not fp.exists():
-            bundled = bundled_character_dir(mode) / name
-            fp = bundled if bundled.exists() else fp
-        text = fp.read_text(encoding="utf-8") if fp.exists() else ""
-        if text.strip():
-            out.append((name, label, text))
     return out
 
 
@@ -448,10 +431,6 @@ def run_alignment(client, mode: str, conversation: list[dict], user_text: str,
         f"===== {name}（{file_label(name)}）=====\n{text or '（空）'}"
         for name, text in files.items()
     )
-    ctx_parts = ["\n\n".join(
-        f"===== {name}（{label}）=====\n{text}" for name, label, text in load_context_files(mode))]
-    if ctx_parts:
-        bundle += "\n\n" + ctx_parts[0]
     turns = _user_turns(conversation) + 1
     conv_text = format_conversation(conversation)
     user_prompt = (
@@ -517,10 +496,6 @@ def run_proposal(client, mode: str, conversation: list[dict],
         f"===== {name}（{file_label(name)}）=====\n{text or '（空）'}"
         for name, text in files.items()
     )
-    ctx_parts = ["\n\n".join(
-        f"===== {name}（{label}）=====\n{text}" for name, label, text in load_context_files(mode))]
-    if ctx_parts:
-        bundle += "\n\n" + ctx_parts[0]
     conv_text = format_conversation(conversation)
     base_user = (
         f"## 该模式当前设定文件\n{bundle}\n\n"

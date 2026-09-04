@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 
 from modules.analyzer import Analyzer, AnalyzerInput
 from modules.organizer import Organizer, OrganizerInput
-from modules.polisher import Polisher, PolisherInput
+from modules.polisher import Polisher, PolisherInput, DEGRADED_TEXT
 from modules.context_manager import ContextManager
 from modules.llm_retriever import LlmRetriever, RetrieveInput
 from modules.llm_base import get_token_stats as _get_token_stats
@@ -31,7 +31,7 @@ class ChatResult:
 _DIRECT_REPLIES = {
     "input:empty":    ["嗯…怎么啦？想说什么就说吧"],
     "input:too_long": ["你说了好多…我慢慢看，等一下哦"],
-    "api:error":      ["嗯…信号好像不太好，你等一下哦"],
+    "api:error":      [DEGRADED_TEXT],   # 与 polisher 降级输出同源（2026-09-04 合并）
 }
 
 
@@ -109,33 +109,35 @@ def _merge_narrations(messages: list, narrations: list) -> list:
 # ── 开场演出（haruno 模式首条自动消息）────────────
 # 按 3.8 结尾流萤的想象：两人都是学生，开拓者从很远星球来、不熟悉环境，
 # 被流氓围住，流萤挺身而出救他。场景平实交代黄金时刻永夜与黄金中央车站。
-_HARUNO_OPENING = {
-    "narrations": [
-        {"text": "黄金时刻永远像午夜前，黄金中央车站外灯光很亮，人很多。你从很远的星球来旅行，刚出站就被几个小混混围住。", "style": "scene"},
-        {"text": "一个银发女生快步挡到你前面，三下两下把人赶跑了。", "style": "scene"},
-        {"text": "她转过身，先把你看了一圈，确认你有没有受伤。", "style": "action"},
-    ],
-    "first_messages": [
-        "你还好吗？有没有哪里受伤？",
-        "我是流萤，来黄金时刻旅行的学生。这里我熟，先带你离开这。",
-    ],
-}
+# 演出脚本归位角色资产（2026-09-04）：app/assets/character/haruno/opening.json，
+# 读取与设定文件同语义——用户副本 user_data/haruno/character/opening.json 优先。
 
 
-def haruno_opening() -> dict:
+def _load_haruno_opening() -> dict:
+    from modules.llm_base import resolve_character_file
+    import json
+    fp = resolve_character_file("opening.json", "haruno")
+    try:
+        data = json.loads(fp.read_text(encoding="utf-8"))
+        return {
+            "narrations": [n for n in data.get("narrations", []) if n.get("text")],
+            "first_messages": [t for t in data.get("first_messages", []) if t],
+        }
+    except Exception as e:
+        logger.warning("haruno 开场脚本加载失败（降级无开场）: %s: %s", fp, e)
+        return {"narrations": [], "first_messages": []}
+
+
+def haruno_opening() -> list:
     """返回 haruno 开场演出消息序列（含旁白与首条消息，均已写盘）。"""
     from modules.conversation_store import append_message as _app
+    opening = _load_haruno_opening()
     msgs = []
-    for n in _HARUNO_OPENING["narrations"]:
-        m = {"type": "narration", "text": n["text"], "style": n["style"]}
+    for n in opening["narrations"]:
+        m = {"type": "narration", "text": n["text"], "style": n.get("style", "scene")}
         _app("firefly", m, mode="haruno")
         msgs.append(dict(m))
-    first_messages = _HARUNO_OPENING.get("first_messages")
-    if not first_messages:
-        first_messages = [_HARUNO_OPENING.get("first_message", "")]
-    for text in first_messages:
-        if not text:
-            continue
+    for text in opening["first_messages"]:
         m = {"type": "text", "content": text}
         seq, t = _app("firefly", m, mode="haruno")
         m["time"] = t

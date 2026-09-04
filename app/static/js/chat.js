@@ -516,6 +516,7 @@ export async function _chatSend(msgs) {
                 // 上游卡住被超时中止：消息已即时写盘不丢，提示用户稍后再试
                 addTextMessage("嗯…上游有点忙，我先不打扰了，过会儿再试试？", "firefly");
             } else {
+                // 与后端 polisher.DEGRADED_TEXT 保持一致（降级话术单一来源，2026-09-04 合并）
                 addTextMessage("嗯…信号不太好，等会儿再试试？", "firefly");
             }
         }

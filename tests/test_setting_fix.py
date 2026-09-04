@@ -70,12 +70,8 @@ print("=== A. 文件白名单与副本 ===")
 files = sf.load_current_files("story")
 check("A1 六文件齐备", set(files) == set(sf.FIX_FILES))
 check("A2 core 有用户副本", (cfg.USER_DIR / "story" / "character" / "core.md").exists())
-try:
-    ctx_files = sf.load_context_files("haruno")
-    check("A3 haruno 只读上下文调用正常（world/plot 存在时注入）", isinstance(ctx_files, list))
-except Exception:
-    check("A3 haruno 只读上下文调用正常（world/plot 存在时注入）", False)
-check("A4 story 无只读上下文", sf.load_context_files("story") == [])
+check("A3 只读上下文机制已删（2026-09-04，world/plot 从未产物化）",
+      not hasattr(sf, "load_context_files") and not hasattr(sf, "CONTEXT_ONLY_FILES"))
 
 print("=== B. 修改校验 ===")
 old = "不是因为萤火虫短暂，是因为萤火虫很美。"

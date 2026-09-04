@@ -50,8 +50,12 @@ class PolisherOutput:
 
 
 # ── 默认输出（降级用，每次生成新实例避免跨请求污染）──
+# 降级话术单一来源：orchestrator 顶层 api:error 与前端 chat.js 网络错误兜底均对齐此句
+DEGRADED_TEXT = "嗯…信号不太好，等会儿再试试？"
+
+
 def _default_message() -> list:
-    return [{"type": "text", "content": "嗯…信号不太好，等会儿再试试？"}]
+    return [{"type": "text", "content": DEGRADED_TEXT}]
 
 
 # ── 短信样本加载（模块级缓存，按模式隔离）─────────
