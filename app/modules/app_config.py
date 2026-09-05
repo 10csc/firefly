@@ -6,7 +6,7 @@ server 拆分产物：路径引导、目录创建、默认文件拷贝、运行�
 避免各自复制 frozen 判断公式导致路径分裂。
 """
 
-import json, os, sys, time, logging
+import json, os, re, sys, time, logging
 import contextvars
 from pathlib import Path
 
@@ -292,11 +292,62 @@ CONFIG_FILE = USER_DIR / "config.json"
 # 公网入口（8787 网关）；发版时若切换服务器/域名，改此处 + docs/服务器管理规范.md
 AUTH_SERVER_DEFAULT = "http://101.200.14.126:8787"
 
-# ── 模式（多模式隔离）─────────────────────────────
+# ── 模式（预设包注册表）─────────────────────────────
+# 一个预设包 = assets/character/{id}/ 一个目录（含 preset.json 清单），
+# 打包三样东西：角色（人格/口吻）、剧本（知识库/核查口径）、演出形态（presentation）。
 # 每个模式独立数据根：USER_DIR/{mode}/，其下 character/ data/ journal/ 各一份。
-# story = 剧情模式（现有闭环，数据迁移自旧平铺目录）；haruno = 春日手信（匹诺康尼黄金时刻·普通学生旅行AU）。
-MODES = ("story", "haruno")
-DEFAULT_MODE = "story"
+# story = 剧情模式（流萤·主线）；haruno = 春日手信（匹诺康尼黄金时刻·普通学生旅行AU）。
+_PRESET_ID_RE = re.compile(r"^[a-z0-9_-]{1,32}$")
+
+
+def _discover_presets(base: Path | None = None) -> dict:
+    """扫描 bundled character 目录发现预设包。损坏/非法的包跳过（告警不阻塞）；
+    一个都没发现（打包异常等）回退两内置包硬编码兜底。base 参数供测试注入。"""
+    if base is None:
+        base = BASE_DIR / "assets" / "character"
+    presets = {}
+    try:
+        dirs = sorted(p for p in base.iterdir() if p.is_dir())
+    except OSError:
+        dirs = []
+    for d in dirs:
+        fp = d / "preset.json"
+        if not fp.exists():
+            continue
+        try:
+            data = json.loads(fp.read_text(encoding="utf-8"))
+        except Exception as e:
+            logger.warning("预设包 %s 的 preset.json 解析失败，跳过: %s", d.name, e)
+            continue
+        pid = str(data.get("id", "")).strip()
+        if pid != d.name or not _PRESET_ID_RE.fullmatch(pid):
+            logger.warning("预设包 %s 的 id 非法或与目录名不一致，跳过", d.name)
+            continue
+        name = str(data.get("name", "")).strip()
+        char_name = str(data.get("char_name", "")).strip()
+        user_name = str(data.get("user_name", "")).strip()
+        if not name or not char_name or not user_name:
+            logger.warning("预设包 %s 缺必填字段（name/char_name/user_name），跳过", pid)
+            continue
+        presentation = str(data.get("presentation", "")).strip()
+        if presentation not in ("sticker", "narration", "none"):
+            logger.warning("预设包 %s 的 presentation 非法（%r），回退 sticker", pid, presentation)
+            presentation = "sticker"
+        presets[pid] = {"id": pid, "name": name, "char_name": char_name,
+                        "user_name": user_name, "presentation": presentation}
+    if not presets:
+        logger.error("预设包发现为空，回退内置 story/haruno 兜底")
+        for pid, pname, pres in (("story", "剧情模式", "sticker"),
+                                 ("haruno", "春日手信", "narration")):
+            presets[pid] = {"id": pid, "name": pname, "char_name": "流萤",
+                            "user_name": "开拓者", "presentation": pres}
+    return presets
+
+
+PRESETS = _discover_presets()
+DEFAULT_MODE = "story" if "story" in PRESETS else next(iter(PRESETS), "story")
+# 模式元组（兼容既有几百处 `mode in cfg.MODES` 校验）：默认模式在前，其余按 id 排序
+MODES = tuple([DEFAULT_MODE] + sorted(k for k in PRESETS if k != DEFAULT_MODE))
 
 
 def mode_root(mode: str = DEFAULT_MODE) -> Path:
