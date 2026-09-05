@@ -15,7 +15,7 @@ from datetime import datetime
 from pathlib import Path
 
 from modules.app_config import (mode_character_dir, mode_data_dir, mode_journal_dir,
-                                bundled_character_dir, DEFAULT_MODE, MODES,
+                                bundled_character_dir, DEFAULT_MODE,
                                 char_name, user_name)
 from modules.llm_base import extract_json, parse_json, record_usage, record_error
 

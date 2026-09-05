@@ -1035,6 +1035,39 @@ async function loadPackPanel() {
     document.getElementById("pack-panel-name").textContent = `角色包：${data.name || data.mode}`;
     info.textContent = `形态：${presLabel}（对当前模式生效，改动只影响本包）`;
 
+    // 自定义包：显示删除入口（内置包不可删）
+    let delBtn = document.getElementById("pack-delete-btn");
+    if (data.custom) {
+        if (!delBtn) {
+            delBtn = document.createElement("button");
+            delBtn.id = "pack-delete-btn";
+            delBtn.type = "button";
+            delBtn.textContent = "删除此角色包";
+            delBtn.style.cssText = "margin-top:4px;color:#c66";
+            delBtn.onclick = async () => {
+                if (!confirm(`确定删除角色包「${data.name}」？\n该包的人设、记忆、聊天记录会一起删除，不可恢复。`)) return;
+                if (!confirm("再确认一次：删除后无法恢复。确定删除？")) return;
+                try {
+                    const r = await fetch("/pack-delete", {method: "POST",
+                        headers: {"Content-Type": "application/json"},
+                        body: JSON.stringify({id: data.mode})});
+                    const d = await r.json();
+                    if (d.ok) {
+                        showToast("已删除");
+                        try { closeMenu(); } catch (e) {}
+                        await window.__modesReload();
+                        try { window.showHome(); } catch (e) {}
+                    } else {
+                        showToast("删除失败：" + (d.error || ""));
+                    }
+                } catch (e) { showToast("网络错误"); }
+            };
+            info.parentElement.appendChild(delBtn);
+        }
+    } else if (delBtn) {
+        delBtn.remove();
+    }
+
     // 头像 / 封面
     assetsBox.innerHTML = "";
     for (const slot of ["avatar", "cover"]) {
@@ -3535,6 +3568,38 @@ window.__modesReload = async () => {
     await loadModes();
 };
 
+// ── 新建角色包（阶段7，本地版）──
+function togglePackCreate(show) {
+    const p = document.getElementById("pack-create-panel");
+    if (!p) return;
+    const visible = p.style.display !== "none";
+    const target = (show === undefined) ? !visible : !!show;
+    p.style.display = target ? "block" : "none";
+    if (target) document.getElementById("pc-name").focus();
+}
+window.togglePackCreate = togglePackCreate;
+
+document.getElementById("pc-submit")?.addEventListener("click", async () => {
+    const name = document.getElementById("pc-name").value.trim();
+    const charName = document.getElementById("pc-char").value.trim();
+    const userName = document.getElementById("pc-user").value.trim();
+    const presentation = document.getElementById("pc-presentation").value;
+    if (!name || !charName || !userName) { showToast("包名称、角色名、对方称呼都必填"); return; }
+    try {
+        const resp = await fetch("/pack-create", {method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({name, char_name: charName, user_name: userName, presentation})});
+        const data = await resp.json();
+        if (data.ok) {
+            showToast(`已创建「${data.name}」——菜单 → 角色包 里编辑人设`);
+            togglePackCreate(false);
+            await window.__modesReload();
+        } else {
+            showToast("创建失败：" + (data.error || ""));
+        }
+    } catch (e) { showToast("网络错误"); }
+});
+
 // 按 PRESET_MODES 渲染轮播图与 PC 大卡（卡片点击/滑动进入对应模式）
 function renderModeCards() {
     carouselTrack.innerHTML = "";
@@ -3566,6 +3631,21 @@ function renderModeCards() {
             const n2 = document.createElement("span"); n2.className = "hm-desc"; n2.textContent = m.desc || "";
             btn.append(img, n1, n2);
             hm.appendChild(btn);
+        }
+        // 「+ 新建角色」卡（仅本地版显示；服务器版不做自定义整包）
+        if (!IS_SERVER) {
+            const add = document.createElement("button");
+            add.className = "hm-card";
+            add.type = "button";
+            add.onclick = () => togglePackCreate();
+            const plus = document.createElement("span");
+            plus.className = "hm-name";
+            plus.textContent = "+ 新建角色";
+            const n2 = document.createElement("span");
+            n2.className = "hm-desc";
+            n2.textContent = "空白角色包，人设由你填";
+            add.append(plus, n2);
+            hm.appendChild(add);
         }
     }
 }

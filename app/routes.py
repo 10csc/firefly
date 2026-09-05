@@ -38,7 +38,7 @@ from routes_assets import (add_sticker_route, sticker_update, sticker_delete,
                            upload_image, get_image, assets_index, assets_raw,
                            add_favorite_route, get_favorites, delete_favorite_route,
                            get_pack_files, upload_pack_asset, delete_pack_asset,
-                           delete_character_file)
+                           delete_character_file, create_pack, delete_pack)
 from routes_fix import (setting_fix_status, setting_fix_message, setting_fix_start,
                         setting_fix_apply, setting_fix_dismiss, setting_fix_rollback,
                         setting_fix_reset)
@@ -715,6 +715,8 @@ POST_ROUTES = {
     "/pack-asset": upload_pack_asset,
     "/pack-asset/delete": delete_pack_asset,
     "/character-file/delete": delete_character_file,
+    "/pack-create": create_pack,
+    "/pack-delete": delete_pack,
 }
 
 

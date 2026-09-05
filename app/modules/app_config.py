@@ -300,48 +300,74 @@ AUTH_SERVER_DEFAULT = "http://101.200.14.126:8787"
 _PRESET_ID_RE = re.compile(r"^[a-z0-9_-]{1,32}$")
 
 
-def _discover_presets(base: Path | None = None) -> dict:
-    """扫描 bundled character 目录发现预设包。损坏/非法的包跳过（告警不阻塞）；
-    一个都没发现（打包异常等）回退两内置包硬编码兜底。base 参数供测试注入。"""
-    if base is None:
-        base = BASE_DIR / "assets" / "character"
-    presets = {}
+def _parse_preset(fp: Path, expect_id: str) -> dict | None:
+    """解析单个 preset.json 并校验（id 须等于目录名）。非法返回 None（告警不阻塞）。"""
     try:
-        dirs = sorted(p for p in base.iterdir() if p.is_dir())
-    except OSError:
-        dirs = []
-    for d in dirs:
-        fp = d / "preset.json"
-        if not fp.exists():
-            continue
+        data = json.loads(fp.read_text(encoding="utf-8"))
+    except Exception as e:
+        logger.warning("预设包 %s 的 preset.json 解析失败，跳过: %s", expect_id, e)
+        return None
+    pid = str(data.get("id", "")).strip()
+    if pid != expect_id or not _PRESET_ID_RE.fullmatch(pid):
+        logger.warning("预设包 %s 的 id 非法或与目录名不一致，跳过", expect_id)
+        return None
+    name = str(data.get("name", "")).strip()
+    cname = str(data.get("char_name", "")).strip()
+    uname = str(data.get("user_name", "")).strip()
+    if not name or not cname or not uname:
+        logger.warning("预设包 %s 缺必填字段（name/char_name/user_name），跳过", pid)
+        return None
+    presentation = str(data.get("presentation", "")).strip()
+    if presentation not in ("sticker", "narration", "none"):
+        logger.warning("预设包 %s 的 presentation 非法（%r），回退 sticker", pid, presentation)
+        presentation = "sticker"
+    # 知识库目录（可选）：包显式声明的仓库相对路径清单；不声明则用包内 knowledge/（存在才挂）
+    kd = data.get("knowledge_dirs")
+    knowledge_dirs = [str(x).strip().strip("/") for x in kd
+                      if isinstance(x, str) and str(x).strip()] if isinstance(kd, list) else None
+    return {"id": pid, "name": name, "char_name": cname,
+            "user_name": uname, "presentation": presentation,
+            "desc": str(data.get("desc", "") or "").strip(),
+            "tagline": str(data.get("tagline", "") or "").strip(),
+            "knowledge_dirs": knowledge_dirs}
+
+
+def _discover_presets(base: Path | None = None) -> dict:
+    """扫描发现预设包：bundled（assets/character/{id}/preset.json）+ 本地版追加用户自建区
+    （USER_DIR/{id}/character/preset.json；服务器版跳过——用户区属各账号，自定义整包不入全局注册表）。
+    内置包优先（用户区同 id 跳过）；一个都没发现回退两内置包硬编码兜底。base 参数供测试注入。"""
+    presets = {}
+    roots = [base or (BASE_DIR / "assets" / "character")]
+    for root in roots:
         try:
-            data = json.loads(fp.read_text(encoding="utf-8"))
-        except Exception as e:
-            logger.warning("预设包 %s 的 preset.json 解析失败，跳过: %s", d.name, e)
-            continue
-        pid = str(data.get("id", "")).strip()
-        if pid != d.name or not _PRESET_ID_RE.fullmatch(pid):
-            logger.warning("预设包 %s 的 id 非法或与目录名不一致，跳过", d.name)
-            continue
-        name = str(data.get("name", "")).strip()
-        char_name = str(data.get("char_name", "")).strip()
-        user_name = str(data.get("user_name", "")).strip()
-        if not name or not char_name or not user_name:
-            logger.warning("预设包 %s 缺必填字段（name/char_name/user_name），跳过", pid)
-            continue
-        presentation = str(data.get("presentation", "")).strip()
-        if presentation not in ("sticker", "narration", "none"):
-            logger.warning("预设包 %s 的 presentation 非法（%r），回退 sticker", pid, presentation)
-            presentation = "sticker"
-        # 知识库目录（可选）：包显式声明的仓库相对路径清单；不声明则用包内 knowledge/（存在才挂）
-        kd = data.get("knowledge_dirs")
-        knowledge_dirs = [str(x).strip().strip("/") for x in kd
-                          if isinstance(x, str) and str(x).strip()] if isinstance(kd, list) else None
-        presets[pid] = {"id": pid, "name": name, "char_name": char_name,
-                        "user_name": user_name, "presentation": presentation,
-                        "desc": str(data.get("desc", "") or "").strip(),
-                        "tagline": str(data.get("tagline", "") or "").strip(),
-                        "knowledge_dirs": knowledge_dirs}
+            dirs = sorted(p for p in root.iterdir() if p.is_dir())
+        except OSError:
+            dirs = []
+        for d in dirs:
+            fp = d / "preset.json"
+            if not fp.exists():
+                continue
+            p = _parse_preset(fp, d.name)
+            if p:
+                presets[p["id"]] = p
+    # 用户自建区（仅本地版；测试注入 base 时跳过）
+    if base is None and not os.environ.get("FIREFLY_SERVER"):
+        try:
+            user_dirs = sorted(p for p in USER_DIR.iterdir() if p.is_dir())
+        except OSError:
+            user_dirs = []
+        for d in user_dirs:
+            fp = d / "character" / "preset.json"
+            if not fp.exists():
+                continue
+            p = _parse_preset(fp, d.name)
+            if not p:
+                continue
+            if p["id"] in presets:
+                logger.warning("用户自建包 %s 与内置包同 id，跳过（内置优先）", p["id"])
+                continue
+            p["custom"] = True
+            presets[p["id"]] = p
     if not presets:
         logger.error("预设包发现为空，回退内置 story/haruno 兜底")
         presets["story"] = {"id": "story", "name": "剧情模式", "char_name": "流萤",
@@ -361,6 +387,17 @@ PRESETS = _discover_presets()
 DEFAULT_MODE = "story" if "story" in PRESETS else next(iter(PRESETS), "story")
 # 模式元组（兼容既有几百处 `mode in cfg.MODES` 校验）：默认模式在前，其余按 id 排序
 MODES = tuple([DEFAULT_MODE] + sorted(k for k in PRESETS if k != DEFAULT_MODE))
+
+
+def reload_presets() -> None:
+    """重新扫描预设包（新建/删除自定义包后调用）。
+    PRESETS 原地清空重建（dict 引用共享，各模块运行时再取）；MODES 重新赋值——
+    消费方须用 cfg.MODES 运行时访问（from-import 的值拷贝会陈旧）。"""
+    global PRESETS, MODES
+    fresh = _discover_presets()
+    PRESETS.clear()
+    PRESETS.update(fresh)
+    MODES = tuple([DEFAULT_MODE] + sorted(k for k in PRESETS if k != DEFAULT_MODE))
 
 
 def char_name(mode: str = DEFAULT_MODE) -> str:

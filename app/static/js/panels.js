@@ -527,6 +527,39 @@ async function loadPackPanel() {
     document.getElementById("pack-panel-name").textContent = `角色包：${data.name || data.mode}`;
     info.textContent = `形态：${presLabel}（对当前模式生效，改动只影响本包）`;
 
+    // 自定义包：显示删除入口（内置包不可删）
+    let delBtn = document.getElementById("pack-delete-btn");
+    if (data.custom) {
+        if (!delBtn) {
+            delBtn = document.createElement("button");
+            delBtn.id = "pack-delete-btn";
+            delBtn.type = "button";
+            delBtn.textContent = "删除此角色包";
+            delBtn.style.cssText = "margin-top:4px;color:#c66";
+            delBtn.onclick = async () => {
+                if (!confirm(`确定删除角色包「${data.name}」？\n该包的人设、记忆、聊天记录会一起删除，不可恢复。`)) return;
+                if (!confirm("再确认一次：删除后无法恢复。确定删除？")) return;
+                try {
+                    const r = await fetch("/pack-delete", {method: "POST",
+                        headers: {"Content-Type": "application/json"},
+                        body: JSON.stringify({id: data.mode})});
+                    const d = await r.json();
+                    if (d.ok) {
+                        showToast("已删除");
+                        try { closeMenu(); } catch (e) {}
+                        await window.__modesReload();
+                        try { window.showHome(); } catch (e) {}
+                    } else {
+                        showToast("删除失败：" + (d.error || ""));
+                    }
+                } catch (e) { showToast("网络错误"); }
+            };
+            info.parentElement.appendChild(delBtn);
+        }
+    } else if (delBtn) {
+        delBtn.remove();
+    }
+
     // 头像 / 封面
     assetsBox.innerHTML = "";
     for (const slot of ["avatar", "cover"]) {

@@ -245,6 +245,24 @@
     <div class="home-modes" id="home-modes"></div>
     <!-- 显式主入口（4.1：不点轮播图也能进聊天；进入当前模式） -->
     <button class="home-start" id="home-start-btn" type="button" onclick="showChat()">继续聊天 →</button>
+    <!-- 新建角色包（本地版；点「+ 新建角色」卡展开） -->
+    <div id="pack-create-panel" style="display:none;max-width:420px;margin:10px auto;text-align:left">
+        <div class="field"><input id="pc-name" placeholder="包名称（显示在卡片上，如：夏日烟火）" maxlength="30"></div>
+        <div class="field"><input id="pc-char" placeholder="角色名（她叫什么）" maxlength="20"></div>
+        <div class="field"><input id="pc-user" placeholder="对方称呼（她怎么称呼你）" maxlength="20"></div>
+        <div class="field">
+            <select id="pc-presentation">
+                <option value="sticker">短信 + 表情包</option>
+                <option value="narration">短信 + 旁白</option>
+                <option value="none">纯短信</option>
+            </select>
+        </div>
+        <div class="field" style="display:flex;gap:8px">
+            <button id="pc-submit" type="button" style="flex:1">创建</button>
+            <button type="button" style="flex:1" onclick="togglePackCreate(false)">取消</button>
+        </div>
+        <div class="field-tip">创建后在 菜单 →「角色包」里编辑人设与头像封面。</div>
+    </div>
     <div class="home-blank">
         <!-- 服务器版：登录/用户模块（0.8.0 内联表单，单页完成登录注册，不跳页） -->
         <div id="auth-module" style="display:none">

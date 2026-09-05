@@ -2,7 +2,9 @@
 """资产与媒体路由（routes.py 拆分产物，纯重构无行为变化）：
 表情包增删改查、角色设定文件、图片上传/读取、资产清单/下载、收藏夹。"""
 
+import json
 import logging
+import re
 import threading
 import time
 from pathlib import Path
@@ -275,6 +277,7 @@ def get_pack_files(h):
 
     h._json({
         "mode": mode, "name": p.get("name") or mode, "presentation": p.get("presentation", ""),
+        "custom": bool(p.get("custom")),
         "files": files,
         "assets": {"avatar": _slot_url("avatar"), "cover": _slot_url("cover")},
     })
@@ -353,6 +356,74 @@ def delete_character_file(h):
     from modules.llm_base import clear_cache
     clear_cache()
     h._json({"ok": True, "filename": filename, "existed": existed})
+
+
+# ═══ 自建角色包（阶段7；仅本地版——服务器版不做自定义整包）═══
+_PACK_ID_RE = re.compile(r"^[a-z0-9_-]{1,32}$")
+
+_PACK_CORE_TPL = "# {char_name} · 核心设定\n\n（在这里写：她是谁——身份、经历、价值观。每条一行，以 [事实] 开头）\n"
+_PACK_IDENTITY_TPL = "# {char_name} · 人际关系与认知边界\n\n（在这里写：她与{user_name}的关系、习惯与喜好、她知道什么不知道什么）\n"
+_PACK_SAMPLES_TPL = "# {char_name} · 短信风格示例\n\n（在这里贴几条她说的话的示例，模型会模仿这个语气。越真实越好）\n"
+
+
+def create_pack(h):
+    """POST /pack-create：新建自定义角色包（仅本地版）。
+    包目录 = user_data/{id}/（preset.json 在 character/ 下，与读取语义对齐——
+    自建包的全部内容即用户副本，天然可编辑）。"""
+    if _is_server():
+        h._json({"ok": False, "error": "服务器版暂不支持自建角色包"}); return
+    body = _read_json(h)
+    name = str(body.get("name") or "").strip()[:30]
+    cname = str(body.get("char_name") or "").strip()[:20]
+    uname = str(body.get("user_name") or "").strip()[:20]
+    presentation = str(body.get("presentation") or "sticker").strip()
+    if presentation not in ("sticker", "narration", "none"):
+        presentation = "sticker"
+    if not name or not cname or not uname:
+        h._json({"ok": False, "error": "包名称、角色名、对方称呼都必填"}); return
+    pid = str(body.get("id") or "").strip().lower()
+    if not pid:
+        import uuid as _uuid
+        pid = "custom_" + _uuid.uuid4().hex[:8]
+    if not _PACK_ID_RE.fullmatch(pid):
+        h._json({"ok": False, "error": "包 id 只能是小写字母/数字/下划线/短横线"}); return
+    if pid in cfg.PRESETS or (cfg.USER_DIR / pid).exists():
+        h._json({"ok": False, "error": "包 id 已存在"}); return
+    cdir = cfg.USER_DIR / pid / "character"
+    cdir.mkdir(parents=True, exist_ok=True)
+    (cdir / "preset.json").write_text(json.dumps({
+        "id": pid, "name": name, "char_name": cname, "user_name": uname,
+        "presentation": presentation,
+        "desc": str(body.get("desc") or "").strip()[:60],
+        "tagline": str(body.get("tagline") or "").strip()[:60],
+    }, ensure_ascii=False, indent=2), encoding="utf-8")
+    from modules.polisher import _EMERGENCY_PERSONA
+    (cdir / "prompts").mkdir(exist_ok=True)
+    (cdir / "prompts" / "polisher.md").write_text(_EMERGENCY_PERSONA, encoding="utf-8")
+    (cdir / "core.md").write_text(_PACK_CORE_TPL.format(char_name=cname, user_name=uname), encoding="utf-8")
+    (cdir / "identity.md").write_text(_PACK_IDENTITY_TPL.format(char_name=cname, user_name=uname), encoding="utf-8")
+    (cdir / "sms_samples.md").write_text(_PACK_SAMPLES_TPL.format(char_name=cname), encoding="utf-8")
+    cfg.reload_presets()
+    logger.info("自建角色包创建: %s（%s）", pid, name)
+    h._json({"ok": True, "id": pid, "name": name})
+
+
+def delete_pack(h):
+    """POST /pack-delete：删除自定义角色包（仅本地版；内置包拒绝）。
+    连数据一起删（user_data/{id}/ 整个目录）——前端已二次确认。"""
+    if _is_server():
+        h._json({"ok": False, "error": "服务器版暂不支持"}); return
+    body = _read_json(h)
+    pid = str(body.get("id") or "").strip()
+    if not _PACK_ID_RE.fullmatch(pid):
+        h._json({"ok": False, "error": "非法包 id"}); return
+    if not (cfg.PRESETS.get(pid) or {}).get("custom"):
+        h._json({"ok": False, "error": "内置包不能删除"}); return
+    import shutil
+    shutil.rmtree(cfg.USER_DIR / pid, ignore_errors=True)
+    cfg.reload_presets()
+    logger.info("自建角色包删除: %s", pid)
+    h._json({"ok": True, "id": pid})
 
 
 # ═══ 收藏夹（长按消息 → 收藏）═══

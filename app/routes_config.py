@@ -284,6 +284,7 @@ def get_modes(h):
             "name": p.get("name") or mode,
             "presentation": p.get("presentation", "sticker"),
             "char_name": p.get("char_name") or "",
+            "custom": bool(p.get("custom")),
             "desc": p.get("desc") or "",
             "tagline": p.get("tagline") or "",
             "avatar": _pack_asset_url(mode, "avatar.png"),
