@@ -93,10 +93,96 @@ export const homeView = document.getElementById("home-view");
 export const appView = document.getElementById("app");
 
 // 当前模式：story=剧情模式；haruno=春日手信（流萤想象的普通学生生活）
+// 角色预设化：模式清单来自后端注册表（GET /modes），前端不写死包列表
 export let CURRENT_MODE = "story";
 let _lastMode = null;   // 上次进入聊天时的模式（切换时重载历史）
 export let _modeGen = 0;       // 模式代际：切换时递增，飞行中的异步渲染/历史加载任务作废丢弃
-export const MODE_NAMES = { story: "剧情模式", haruno: "春日手信" };
+export const MODE_NAMES = { story: "剧情模式", haruno: "春日手信" };   // 默认两内置；loadModes 后按注册表刷新
+export const PRESET_MODES = [];   // /modes 清单（id/name/presentation/desc/tagline/cover/avatar/has_opening）
+let _modesLoaded = false;
+
+export function modeName(id) { return MODE_NAMES[id] || id; }
+export function currentPreset() {
+    return PRESET_MODES.find(m => m.id === CURRENT_MODE) || PRESET_MODES[0] || null;
+}
+
+// 拉取预设包清单并渲染模式卡片（轮播 + PC 大卡）；失败兜底两内置包（与后端兜底一致）
+export async function loadModes() {
+    if (_modesLoaded) return;
+    _modesLoaded = true;
+    try {
+        const resp = await fetch("/modes");
+        const data = await resp.json();
+        const list = Array.isArray(data.modes) ? data.modes : [];
+        if (list.length) {
+            PRESET_MODES.splice(0, PRESET_MODES.length, ...list);
+            for (const m of list) MODE_NAMES[m.id] = m.name || m.id;
+        }
+    } catch (e) {}
+    if (!PRESET_MODES.length) {
+        PRESET_MODES.push(
+            {id: "story", name: "剧情模式", presentation: "sticker", desc: "", tagline: "",
+             cover: "/assets/character/story/assets/cover.png", avatar: "/assets/character/story/assets/avatar.png", has_opening: false, char_name: "流萤"},
+            {id: "haruno", name: "春日手信", presentation: "narration", desc: "", tagline: "",
+             cover: "/assets/character/haruno/assets/cover.png", avatar: "/assets/character/haruno/assets/avatar.png", has_opening: true, char_name: "流萤"});
+    }
+    renderModeCards();
+    applyModeBranding();
+    try { window.renderFixModes && window.renderFixModes(); } catch (e) {}   // 纠错页模式按钮随注册表刷新
+}
+
+// 按 PRESET_MODES 渲染轮播图与 PC 大卡（卡片点击/滑动进入对应模式）
+function renderModeCards() {
+    carouselTrack.innerHTML = "";
+    carouselDots.innerHTML = "";
+    PRESET_MODES.forEach((m, i) => {
+        const img = document.createElement("img");
+        if (m.cover) img.src = m.cover;
+        img.alt = m.name || m.id;
+        carouselTrack.appendChild(img);
+        const dot = document.createElement("span");
+        if (i === 0) dot.classList.add("active");
+        dot.addEventListener("click", () => goCarousel(i));
+        carouselDots.appendChild(dot);
+    });
+    carouselCount = PRESET_MODES.length;
+    if (carouselCount) goCarousel(0);
+    const hm = document.getElementById("home-modes");
+    if (hm) {
+        hm.innerHTML = "";
+        for (const m of PRESET_MODES) {
+            const btn = document.createElement("button");
+            btn.className = "hm-card";
+            btn.type = "button";
+            btn.onclick = () => enterMode(m.id);
+            const img = document.createElement("img");
+            if (m.cover) img.src = m.cover;
+            img.alt = m.name || m.id;
+            const n1 = document.createElement("span"); n1.className = "hm-name"; n1.textContent = m.name || m.id;
+            const n2 = document.createElement("span"); n2.className = "hm-desc"; n2.textContent = m.desc || "";
+            btn.append(img, n1, n2);
+            hm.appendChild(btn);
+        }
+    }
+}
+
+// 聊天页/侧边栏的角色标识（头像/名字/签名）按当前包刷新
+export function applyModeBranding() {
+    const p = currentPreset() || {};
+    const cname = p.char_name || "";
+    for (const id of ["chat-avatar", "pcs-avatar"]) {
+        const img = document.getElementById(id);
+        if (img && p.avatar) img.src = p.avatar;
+    }
+    const pcsName = document.getElementById("pcs-name");
+    if (pcsName) pcsName.textContent = cname;
+    const chatName = document.getElementById("chat-char-name");
+    if (chatName) chatName.textContent = cname;
+    for (const id of ["pcs-status", "chat-status"]) {
+        const el = document.getElementById(id);
+        if (el) el.textContent = p.tagline || "";
+    }
+}
 
 export function showHome() {
     const fixView = document.getElementById("fix-view");
@@ -159,6 +245,7 @@ export async function showChat() {
     if (_lastMode !== CURRENT_MODE) {
         _lastMode = CURRENT_MODE;
         _modeGen++;   // 模式代际递增：作废所有飞行中的异步渲染任务（防止串模式显示）
+        applyModeBranding();   // 头部头像/角色名/签名刷新为当前包
         initAssets(); // 模式切换：同步该模式资产（story/haruno 设定不同；未登录时静默失败）
         // 未提交的提交窗口作废：旧模式的 flush/hint/批检查器不跨模式触发（防串写历史）
         clearTimeout(S._flushTimer);
@@ -169,9 +256,10 @@ export async function showChat() {
         messagesEl.innerHTML = "";
         S._hasMore = false;
         await loadHistory();   // 先加载历史（含已保存的开场）
-        // 历史为空（haruno 首次进入）：触发开场生成一次并保存为对话内容。
+        // 历史为空且当前包有开场脚本：触发开场生成一次并保存为对话内容。
         // 之后进入只走历史加载，不重复开场——与剧情模式行为一致。
-        if (CURRENT_MODE === "haruno" && messagesEl.children.length === 0) {
+        const _p = currentPreset();
+        if (_p && _p.has_opening && messagesEl.children.length === 0) {
             await openModeOpening();
         }
     }
@@ -198,15 +286,16 @@ async function openModeOpening() {
     } catch (e) {}
 }
 
-// 轮播图功能入口：剧情模式 / 春日手信 → 各自模式的对话
+// 轮播图功能入口：进入当前轮播位置对应的模式
 function enterCarouselAction() {
-    CURRENT_MODE = carouselIndex === 0 ? "story" : "haruno";
+    const m = PRESET_MODES[carouselIndex];
+    CURRENT_MODE = (m && m.id) || "story";
     showChat();
 }
 
 // PC 桌面模式大卡入口（home-modes）：与轮播图入口同语义，直接进入指定模式
 function enterMode(mode) {
-    if (mode !== "story" && mode !== "haruno") mode = "story";
+    if (!PRESET_MODES.some(m => m.id === mode)) mode = (PRESET_MODES[0] && PRESET_MODES[0].id) || "story";
     CURRENT_MODE = mode;
     showChat();
 }
@@ -234,15 +323,10 @@ const carouselTrack = document.getElementById("carousel-track");
 const carouselDots = document.getElementById("carousel-dots");
 let carouselIndex = 0;
 let carouselTimer = null;
-const carouselCount = carouselTrack.children.length;
+let carouselCount = 0;   // 由 renderModeCards 按 PRESET_MODES 设置（loadModes 后）
 
-for (let i = 0; i < carouselCount; i++) {
-    const dot = document.createElement("span");
-    if (i === 0) dot.classList.add("active");
-    dot.addEventListener("click", () => goCarousel(i));
-    carouselDots.appendChild(dot);
-}
 function goCarousel(i) {
+    if (!carouselCount) return;
     carouselIndex = (i + carouselCount) % carouselCount;
     // 安卓 WebView bug：transform 移动后的 img 合成层光栅化模糊。
     // 改用 opacity 淡入淡出切换（无 transform、无 display 硬切，过渡平滑）。
@@ -308,13 +392,8 @@ carouselTrack.addEventListener("wheel", (e) => {
 }, {passive: false});
 
 // 页面加载默认显示首页（若从对话页刷新则恢复对话页）
-document.addEventListener("DOMContentLoaded", () => {
-    // 初始化轮播显隐（opacity 叠放，transform 方案废弃避开 WebView 合成 bug）
-    [...carouselTrack.children].forEach((img, di) => {
-        img.style.opacity = di === 0 ? "1" : "0";
-        img.style.pointerEvents = di === 0 ? "auto" : "none";
-        img.style.zIndex = di === 0 ? "1" : "0";
-    });
+document.addEventListener("DOMContentLoaded", async () => {
+    await loadModes();   // 先拉预设包清单（渲染轮播/大卡/角色标识），再决定进哪个视图
     if (location.hash === "#chat") showChat();
     else if (location.hash === "#fix") openFixView();
     // 桌面双栏（≥1100px）：默认直接进聊天，首页降级为侧栏「首页」视图

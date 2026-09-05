@@ -203,9 +203,9 @@
 <!-- ═══ PC 双栏左侧导航（仅 ≥1100px 显示；petite-vue 挂载，js/pc_nav.js 按需加载） ═══ -->
 <nav id="pc-sidebar">
     <div class="pcs-head">
-        <img class="pcs-avatar" src="流萤_头像.png" alt="流萤">
-        <div class="pcs-name">流萤</div>
-        <div class="pcs-status">会找到的，属于我的梦...</div>
+        <img class="pcs-avatar" id="pcs-avatar" alt="">
+        <div class="pcs-name" id="pcs-name"></div>
+        <div class="pcs-status" id="pcs-status"></div>
     </div>
     <div class="pcs-nav">
         <div class="pcs-label">功能</div>
@@ -238,25 +238,11 @@
         <button id="home-settings-btn" class="home-settings" onclick="openSettings()" title="设置">⚙</button>
     </div>
     <div class="home-carousel" id="home-carousel">
-        <div class="carousel-track" id="carousel-track">
-            <img src="剧情模式.png?v=3" alt="剧情模式">
-            <img src="春日手信.png?v=3" alt="春日手信">
-        </div>
+        <div class="carousel-track" id="carousel-track"></div>
         <div class="carousel-dots" id="carousel-dots"></div>
     </div>
-    <!-- PC 桌面欢迎区：左右模式大卡（仅 ≥1100px 显示，移动端仍为轮播） -->
-    <div class="home-modes">
-        <button class="hm-card" type="button" onclick="enterMode('story')">
-            <img src="剧情模式.png?v=3" alt="剧情模式">
-            <span class="hm-name">剧情模式</span>
-            <span class="hm-desc">她的故事，与你共同推进</span>
-        </button>
-        <button class="hm-card" type="button" onclick="enterMode('haruno')">
-            <img src="春日手信.png?v=3" alt="春日手信">
-            <span class="hm-name">春日手信</span>
-            <span class="hm-desc">流萤想象的普通学生生活</span>
-        </button>
-    </div>
+    <!-- PC 桌面欢迎区：模式大卡（仅 ≥1100px 显示，移动端仍为轮播）；卡片按 /modes 动态渲染 -->
+    <div class="home-modes" id="home-modes"></div>
     <!-- 显式主入口（4.1：不点轮播图也能进聊天；进入当前模式） -->
     <button class="home-start" id="home-start-btn" type="button" onclick="showChat()">继续聊天 →</button>
     <div class="home-blank">
@@ -347,10 +333,7 @@
             <div class="status"><span id="fix-status-dot" class="fix-dot ok"></span><span id="fix-view-status">正在读取状态…</span></div>
         </div>
     </div>
-    <div class="fix-modes">
-        <button class="fix-mode active" data-mode="story" type="button">剧情模式</button>
-        <button class="fix-mode" data-mode="haruno" type="button">春日手信</button>
-    </div>
+    <div class="fix-modes" id="fix-modes"></div>
     <!-- 当前模式的最近聊天记录（可折叠参考面板） -->
     <details class="fix-chathist" id="fix-chathist">
         <summary id="fix-chathist-summary">📜 最近聊天记录<span class="fix-chathist-meta" id="fix-chathist-meta">点开查看，方便对照她说错的地方</span><span class="fix-chathist-arrow">▾</span></summary>
@@ -544,7 +527,7 @@
                     <div class="field">
                         <label>④ 组织器模型（表情包 / 旁白）</label>
                         <input id="organizer-model-input" list="model-suggest" placeholder="deepseek-v4-flash-vision-exp">
-                        <label style="margin-top:8px">思考等级（剧情模式默认无思考；春日手信旁白固定思考）</label>
+                        <label style="margin-top:8px">思考等级（表情包形态默认无思考；旁白形态固定思考）</label>
                         <select id="organizer-effort-select">
                             <option value="none">无思考（推荐）</option>
                             <option value="low">低</option>
@@ -628,10 +611,10 @@
         <p class="notice-tip">流萤是 AI 角色扮演应用（非真人），请勿透露个人敏感信息。</p>
         <h3>一、开始使用</h3>
         <p>1. 首页右上角 ⚙ 设置 → 填入 DeepSeek API Key → 保存</p>
-        <p>2. 回到首页，点击轮播图「剧情模式」进入聊天</p>
+        <p>2. 回到首页，点击轮播图进入聊天</p>
         <p class="notice-tip">Key 在 platform.deepseek.com 申请，仅存本机，不上传。</p>
-        <h3>二、两个模式</h3>
-        <p><b>剧情模式</b>：你们的主线故事；<b>春日手信</b>：流萤的普通学生日常。数据相互独立。</p>
+        <h3>二、模式</h3>
+        <p>首页的每一张卡片是一个独立模式（角色包），人设、记忆、数据相互独立。</p>
         <h3>三、常用功能</h3>
         <p><b>主动消息</b>：⚙ 设置 →「主动消息」可关，聊天中/空闲时/后台均可，傍晚活跃、深夜安静。</p>
         <p><b>让流萤休息</b>：☰ 菜单 →「让流萤休息」，把这段对话整理进记忆与手账。</p>
@@ -647,10 +630,10 @@
 
 <div id="app">
     <div id="header">
-        <img class="avatar-sm" src="流萤_头像.png" alt="流萤">
+        <img class="avatar-sm" id="chat-avatar" alt="">
         <div style="flex:1">
-            <div class="name">流萤 <span id="chat-mode-tag" class="chat-mode-tag">剧情模式</span></div>
-            <div class="status">会找到的，属于我的梦...</div>
+            <div class="name"><span id="chat-char-name"></span> <span id="chat-mode-tag" class="chat-mode-tag">剧情模式</span></div>
+            <div class="status" id="chat-status"></div>
         </div>
         <button id="menu-btn" title="菜单">☰</button>
     </div>

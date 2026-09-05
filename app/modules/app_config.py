@@ -339,14 +339,20 @@ def _discover_presets(base: Path | None = None) -> dict:
                           if isinstance(x, str) and str(x).strip()] if isinstance(kd, list) else None
         presets[pid] = {"id": pid, "name": name, "char_name": char_name,
                         "user_name": user_name, "presentation": presentation,
+                        "desc": str(data.get("desc", "") or "").strip(),
+                        "tagline": str(data.get("tagline", "") or "").strip(),
                         "knowledge_dirs": knowledge_dirs}
     if not presets:
         logger.error("预设包发现为空，回退内置 story/haruno 兜底")
         presets["story"] = {"id": "story", "name": "剧情模式", "char_name": "流萤",
                             "user_name": "开拓者", "presentation": "sticker",
+                            "desc": "她的故事，与你共同推进",
+                            "tagline": "会找到的，属于我的梦...",
                             "knowledge_dirs": ["knowledge", "database/dialogues_compiled"]}
         presets["haruno"] = {"id": "haruno", "name": "春日手信", "char_name": "流萤",
                              "user_name": "开拓者", "presentation": "narration",
+                             "desc": "流萤想象的普通学生生活",
+                             "tagline": "会找到的，属于我的梦...",
                              "knowledge_dirs": None}
     return presets
 
@@ -450,10 +456,18 @@ for _dst, _src in _DEFAULTS.items():
 
 
 def resolve_asset(path: str) -> Path:
-    """静态资源解析：当前用户目录优先（服务器版账号隔离），退回 bundled；表情包再查 stickers/。"""
+    """静态资源解析：当前用户目录优先（服务器版账号隔离），退回 bundled；表情包再查 stickers/。
+    包资产（assets/character/{包}/assets/{文件}）：用户副本 {user}/{包}/character/assets/ 优先
+    （软件内编辑头像/封面的产物），再退回 bundled 包目录。"""
     u = (_user_ctx_dir() or USER_DIR) / path
     if u.exists():
         return u
+    parts = Path(path).parts
+    if (len(parts) == 5 and parts[0] == "assets" and parts[1] == "character"
+            and parts[3] == "assets" and parts[2] in MODES):
+        ub = (_user_ctx_dir() or USER_DIR) / parts[2] / "character" / "assets" / parts[4]
+        if ub.exists():
+            return ub
     b = BASE_DIR / path
     if b.exists():
         return b

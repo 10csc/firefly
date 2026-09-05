@@ -3,7 +3,7 @@ import { S, messagesEl } from "./state.js";
 import { stickerSrc } from "./util.js";
 import { API_BASE, IS_SERVER } from "./api.js";
 import { TB_AVATARS, openAvatarPicker, tbChoice } from "./panels.js";
-import { CURRENT_MODE, _modeGen } from "./views.js";
+import { CURRENT_MODE, _modeGen, currentPreset } from "./views.js";
 
 // 消息渲染
 // ═══════════════════════════════════════════
@@ -29,11 +29,13 @@ function _addAvatar(row, who) {    const img = document.createElement("img");
     if (who === "user") {
         img.src = TB_AVATARS[tbChoice];
         img.classList.add("tb-toggle");
-        img.title = "点击切换开拓者";
+        img.title = "点击切换形象";
         img.addEventListener("click", openAvatarPicker);
         img.classList.add("tb-avatar");
     } else {
-        img.src = "流萤_头像.png";
+        // 角色头像按当前预设包（角色预设化）
+        const p = currentPreset();
+        if (p && p.avatar) img.src = p.avatar;
     }
     row.insertBefore(img, row.firstChild);
 }

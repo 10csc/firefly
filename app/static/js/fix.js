@@ -2,14 +2,14 @@
 import { SESSION_ID, sendBtn } from "./state.js";
 import { escapeHtml, showToast } from "./util.js";
 import { openSettings } from "./panels.js";
-import { MODE_NAMES, appView, homeView, showHome } from "./views.js";
+import { MODE_NAMES, PRESET_MODES, appView, homeView, showHome } from "./views.js";
 
 // ═══════════════════════════════════════════
 // 设定纠错助手（对齐 → 开始修改 → diff 审批 → 应用/回滚）
 // ═══════════════════════════════════════════
 const FIX_FILE_LABELS = {
     "core.md": "核心设定", "identity.md": "关系与习惯", "sms_samples.md": "短信风格",
-    "用户设定.md": "用户补充设定", "memory.md": "过往摘要", "手账.md": "流萤手账",
+    "用户设定.md": "用户补充设定", "memory.md": "过往摘要", "手账.md": "手账",
 };
 let FIX_MODE = "story";   // 首页卡片选择的模式；进入聊天后跟随最近使用模式
 let _fixBusy = false;
@@ -46,7 +46,8 @@ function toggleFixForms() {
 window.toggleFixForms = toggleFixForms;
 
 function setFixMode(mode) {
-    if (mode !== "story" && mode !== "haruno") mode = "story";
+    // 模式校验按预设包注册表（不写死两模式）
+    if (!PRESET_MODES.some(m => m.id === mode)) mode = (PRESET_MODES[0] && PRESET_MODES[0].id) || "story";
     FIX_MODE = mode;
     document.querySelectorAll("#fix-view .fix-mode").forEach(b => {
         b.classList.toggle("active", b.dataset.mode === FIX_MODE);
@@ -388,6 +389,23 @@ async function resetFix() {
 }
 window.resetFix = resetFix;
 
+// 模式按钮按预设包注册表动态渲染（容器在 index.html 留空，此处填充）
+function renderFixModes() {
+    const box = document.getElementById("fix-modes");
+    if (!box) return;
+    box.innerHTML = "";
+    for (const m of PRESET_MODES) {
+        const b = document.createElement("button");
+        b.className = "fix-mode" + (m.id === FIX_MODE ? " active" : "");
+        b.type = "button";
+        b.dataset.mode = m.id;
+        b.textContent = m.name || m.id;
+        b.addEventListener("click", () => setFixMode(m.id));
+        box.appendChild(b);
+    }
+}
+window.renderFixModes = renderFixModes;   // loadModes 完成后由 views.js 调用重渲染（ESM 循环规避）
+
 (function initFixModule() {
     const input = document.getElementById("fix-input");
     const sendBtn = document.getElementById("fix-send-btn");
@@ -397,13 +415,6 @@ window.resetFix = resetFix;
             if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendFixMessage(input.value); }
         });
     }
-    document.querySelectorAll("#fix-view .fix-mode").forEach(b => {
-        b.addEventListener("click", () => setFixMode(b.dataset.mode));
-    });
+    renderFixModes();
     const histRefresh = document.getElementById("fix-chathist-refresh");
-    if (histRefresh) histRefresh.addEventListener("click", loadFixChatHistory);
-    if (FIX_MODE === "story") {
-        const b = document.querySelector('#fix-view .fix-mode[data-mode="story"]');
-        if (b) b.classList.add("active");
-    }
-})();
+    if (histRefresh) histRefresh.addEventListener("click", loadFixChatHistory);})();

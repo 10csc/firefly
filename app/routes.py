@@ -32,7 +32,7 @@ from routes_common import (
 from routes_auth import (_AUTH_PROXY_MAP, _auth_server_base, _mk_auth_proxy,
                          auth_proxy, auth_state)
 from routes_config import (set_key, set_config, check_key, get_config,
-                           get_models, get_balance)
+                           get_models, get_balance, get_modes)
 from routes_assets import (add_sticker_route, sticker_update, sticker_delete,
                            get_stickers, character_file_update, get_character_files,
                            upload_image, get_image, assets_index, assets_raw,
@@ -722,6 +722,7 @@ GET_ROUTES = {
     "/check-key": check_key,
     "/config": get_config,
     "/models": get_models,
+    "/modes": get_modes,
     "/sync/manifest": sync_manifest,
     "/image": get_image,
     "/time": get_time,

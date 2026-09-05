@@ -260,6 +260,36 @@ def get_config(h):
     })
 
 
+def get_modes(h):
+    """GET /modes：预设包清单（前端模式卡片/名称/封面/头像的数据源，角色预设化）。
+    每包返回 id/name/presentation/avatar/cover/has_opening；资产 URL 存在才给（空串=无）。"""
+    from modules.llm_base import resolve_character_file
+
+    def _pack_asset_url(mode: str, fname: str) -> str:
+        # 用户副本（软件内编辑产物）优先，退回 bundled 包目录
+        ub = cfg.mode_character_dir(mode) / "assets" / fname
+        bb = cfg.bundled_character_dir(mode) / "assets" / fname
+        if ub.exists() or bb.exists():
+            return f"/assets/character/{mode}/assets/{fname}"
+        return ""
+
+    items = []
+    for mode in cfg.MODES:
+        p = cfg.PRESETS.get(mode) or {}
+        items.append({
+            "id": mode,
+            "name": p.get("name") or mode,
+            "presentation": p.get("presentation", "sticker"),
+            "char_name": p.get("char_name") or "",
+            "desc": p.get("desc") or "",
+            "tagline": p.get("tagline") or "",
+            "avatar": _pack_asset_url(mode, "avatar.png"),
+            "cover": _pack_asset_url(mode, "cover.png"),
+            "has_opening": resolve_character_file("opening.json", mode).exists(),
+        })
+    h._json({"modes": items, "default": cfg.DEFAULT_MODE})
+
+
 def get_models(h):
     """GET /models?provider=<id>：用该供应商 Key 请求其 /models 取官方模型清单（A8）。
     本地版后端带 Key 转发；服务器版 relay 由前端直连（Key 在浏览器），本端点不起作用。"""

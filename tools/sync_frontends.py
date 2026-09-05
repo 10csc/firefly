@@ -112,9 +112,9 @@ def sync(check_only: bool) -> int:
     # 1) server/frontend：三份共享前端文件（config.js/login.html/admin.html 为 server 独有，不动）
     sf_targets = ("index.html", "style.css")
     # 2) 安卓 assets：app/static 全部 + assets 子集 + server 版 config.js/login.html
+    # 注：模式封面/角色头像已入预设包（assets/character/{包}/assets/），经 syncBackend 随 app/ 进 APK
     aa_static = ("index.html", "style.css",
-                 "剧情模式.png", "春日手信.png",
-                 "开拓者_穹.png", "开拓者_星.png", "流萤_头像.png")
+                 "开拓者_穹.png", "开拓者_星.png")
 
     if check_only:
         ok = True
