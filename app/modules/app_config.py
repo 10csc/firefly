@@ -333,14 +333,21 @@ def _discover_presets(base: Path | None = None) -> dict:
         if presentation not in ("sticker", "narration", "none"):
             logger.warning("预设包 %s 的 presentation 非法（%r），回退 sticker", pid, presentation)
             presentation = "sticker"
+        # 知识库目录（可选）：包显式声明的仓库相对路径清单；不声明则用包内 knowledge/（存在才挂）
+        kd = data.get("knowledge_dirs")
+        knowledge_dirs = [str(x).strip().strip("/") for x in kd
+                          if isinstance(x, str) and str(x).strip()] if isinstance(kd, list) else None
         presets[pid] = {"id": pid, "name": name, "char_name": char_name,
-                        "user_name": user_name, "presentation": presentation}
+                        "user_name": user_name, "presentation": presentation,
+                        "knowledge_dirs": knowledge_dirs}
     if not presets:
         logger.error("预设包发现为空，回退内置 story/haruno 兜底")
-        for pid, pname, pres in (("story", "剧情模式", "sticker"),
-                                 ("haruno", "春日手信", "narration")):
-            presets[pid] = {"id": pid, "name": pname, "char_name": "流萤",
-                            "user_name": "开拓者", "presentation": pres}
+        presets["story"] = {"id": "story", "name": "剧情模式", "char_name": "流萤",
+                            "user_name": "开拓者", "presentation": "sticker",
+                            "knowledge_dirs": ["knowledge", "database/dialogues_compiled"]}
+        presets["haruno"] = {"id": "haruno", "name": "春日手信", "char_name": "流萤",
+                             "user_name": "开拓者", "presentation": "narration",
+                             "knowledge_dirs": None}
     return presets
 
 

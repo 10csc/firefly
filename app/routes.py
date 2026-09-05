@@ -607,17 +607,18 @@ def get_journal(h):
 
 
 def open_mode(h):
-    """模式开场演出：haruno 首次进入时返回自动首条消息（旁白+流萤的话）。
+    """模式开场演出：包内存在 opening.json 且首次进入时返回自动首条消息（旁白+角色的话）。
 
     幂等保护：会话已有历史时不再重复开场（重进不重演）。
     """
     body = _read_json(h)
     mode = _body_mode(body)
-    if mode == "haruno":
+    from modules.llm_base import resolve_character_file
+    if resolve_character_file("opening.json", mode).exists():
         from modules.conversation_store import get_total_count
-        if get_total_count(mode="haruno") == 0:
-            from orchestrator import haruno_opening
-            msgs = haruno_opening()
+        if get_total_count(mode=mode) == 0:
+            from orchestrator import preset_opening
+            msgs = preset_opening(mode)
             h._json({"messages": msgs, "opened": True})
             return
     h._json({"messages": [], "opened": False})

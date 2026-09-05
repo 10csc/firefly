@@ -46,12 +46,22 @@ class RetrieveOutput:
 
 
 # ── 知识库加载（模块级缓存，按模式隔离）────────────
-# 与 build_index.py 同源：knowledge/（含 story/ 个人经历）+ database/dialogues_compiled/
-# story 模式：既有世界观资料库；haruno 模式资料库待设计（当前回退空）。
+# 知识源按预设包声明：preset.json 的 knowledge_dirs（仓库相对路径清单，如 story 挂
+# knowledge/ + database/dialogues_compiled/）；未声明则挂包内 knowledge/（存在才挂）；
+# 都没有（haruno 等）返回空——无知识库的包跳过检索，省一次 LLM 调用。
 def _source_dirs(mode: str = DEFAULT_MODE) -> tuple:
-    if mode == "story":
-        return (ROOT / "knowledge", ROOT / "database" / "dialogues_compiled")
-    return ()  # haruno：资料库未设计，不注入任何知识
+    from modules.app_config import PRESETS, bundled_character_dir
+    p = PRESETS.get(mode) or {}
+    declared = p.get("knowledge_dirs")
+    if declared:
+        return tuple(ROOT / d for d in declared)
+    pkg_kb = bundled_character_dir(mode) / "knowledge"
+    return (pkg_kb,) if pkg_kb.exists() else ()
+
+
+def has_knowledge(mode: str = DEFAULT_MODE) -> bool:
+    """该模式是否有知识库可检索（orchestrator 据此决定是否跳过检索阶段）。"""
+    return bool(_source_dirs(mode))
 
 
 # 动态用户数据/过长原文/草稿不进知识库（与 build_index 排除规则一致）

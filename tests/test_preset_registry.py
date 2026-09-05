@@ -48,6 +48,9 @@ check("A3 story 包 presentation=sticker", cfg.PRESETS["story"]["presentation"] 
 check("A4 haruno 包 presentation=narration", cfg.PRESETS["haruno"]["presentation"] == "narration")
 check("A5 包角色名/用户称呼",
       cfg.PRESETS["story"]["char_name"] == "流萤" and cfg.PRESETS["haruno"]["user_name"] == "开拓者")
+check("A6 story 包 knowledge_dirs 声明",
+      cfg.PRESETS["story"]["knowledge_dirs"] == ["knowledge", "database/dialogues_compiled"])
+check("A7 haruno 包无 knowledge_dirs", cfg.PRESETS["haruno"]["knowledge_dirs"] is None)
 
 print("=== B. 扫描校验（临时目录注入） ===")
 with tempfile.TemporaryDirectory(prefix="firefly_test_preset_") as tmp:

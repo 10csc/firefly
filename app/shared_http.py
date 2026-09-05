@@ -80,13 +80,17 @@ def setup_stdio_utf8():
 
 
 def preload_knowledge() -> None:
-    """预加载知识库文本（避免首条消息等几秒拼接）。失败仅告警不阻塞启动。"""
-    print("  预加载知识库...", flush=True)
+    """预加载知识库文本（避免首条消息等几秒拼接）。失败仅告警不阻塞启动。
+    按预设包注册表预热所有声明了知识库的包（无知识库的包跳过）。"""
     try:
-        from modules.llm_retriever import _load_knowledge, get_knowledge_stats
-        _load_knowledge()
-        s = get_knowledge_stats()
-        print(f"  [OK] 知识库 {s['files']} 文件 {s['chars']} 字符", flush=True)
+        from modules.app_config import PRESETS
+        from modules.llm_retriever import _load_knowledge, get_knowledge_stats, has_knowledge
+        for mode in PRESETS:
+            if not has_knowledge(mode):
+                continue
+            _load_knowledge(mode)
+            s = get_knowledge_stats(mode)
+            print(f"  [OK] 知识库[{mode}] {s['files']} 文件 {s['chars']} 字符", flush=True)
     except Exception as e:
         print(f"  [WARN] 知识库加载失败: {e}", flush=True)
 

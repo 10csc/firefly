@@ -12,7 +12,7 @@ from modules.analyzer import Analyzer, AnalyzerInput
 from modules.organizer import Organizer, OrganizerInput
 from modules.polisher import Polisher, PolisherInput, DEGRADED_TEXT
 from modules.context_manager import ContextManager
-from modules.llm_retriever import LlmRetriever, RetrieveInput
+from modules.llm_retriever import LlmRetriever, RetrieveInput, has_knowledge
 from modules.llm_base import get_token_stats as _get_token_stats
 from modules.app_config import DEFAULT_MODE, user_name
 
@@ -106,17 +106,18 @@ def _merge_narrations(messages: list, narrations: list) -> list:
     return merged
 
 
-# ── 开场演出（haruno 模式首条自动消息）────────────
-# 按 3.8 结尾流萤的想象：两人都是学生，开拓者从很远星球来、不熟悉环境，
-# 被流氓围住，流萤挺身而出救他。场景平实交代黄金时刻永夜与黄金中央车站。
-# 演出脚本归位角色资产（2026-09-04）：app/assets/character/haruno/opening.json，
-# 读取与设定文件同语义——用户副本 user_data/haruno/character/opening.json 优先。
+# ── 开场演出（预设包首条自动消息）────────────
+# 演出脚本 = 包资产 opening.json（用户副本 {mode}/character/opening.json 优先）；
+# 包无此文件 → 无开场。haruno 的脚本内容按 3.8 结尾流萤的想象：两人都是学生，
+# 开拓者从很远星球来、被流氓围住，流萤挺身而出救他。
 
 
-def _load_haruno_opening() -> dict:
+def _load_opening(mode: str) -> dict:
     from modules.llm_base import resolve_character_file
     import json
-    fp = resolve_character_file("opening.json", "haruno")
+    fp = resolve_character_file("opening.json", mode)
+    if not fp.exists():
+        return {"narrations": [], "first_messages": []}   # 包无开场 = 正常，非失败
     try:
         data = json.loads(fp.read_text(encoding="utf-8"))
         return {
@@ -124,22 +125,22 @@ def _load_haruno_opening() -> dict:
             "first_messages": [t for t in data.get("first_messages", []) if t],
         }
     except Exception as e:
-        logger.warning("haruno 开场脚本加载失败（降级无开场）: %s: %s", fp, e)
+        logger.warning("%s 开场脚本加载失败（降级无开场）: %s: %s", mode, fp, e)
         return {"narrations": [], "first_messages": []}
 
 
-def haruno_opening() -> list:
-    """返回 haruno 开场演出消息序列（含旁白与首条消息，均已写盘）。"""
+def preset_opening(mode: str) -> list:
+    """返回该模式的开场演出消息序列（含旁白与首条消息，均已写盘）。"""
     from modules.conversation_store import append_message as _app
-    opening = _load_haruno_opening()
+    opening = _load_opening(mode)
     msgs = []
     for n in opening["narrations"]:
         m = {"type": "narration", "text": n["text"], "style": n.get("style", "scene")}
-        _app("firefly", m, mode="haruno")
+        _app("firefly", m, mode=mode)
         msgs.append(dict(m))
     for text in opening["first_messages"]:
         m = {"type": "text", "content": text}
-        seq, t = _app("firefly", m, mode="haruno")
+        seq, t = _app("firefly", m, mode=mode)
         m["time"] = t
         msgs.append(m)
     return msgs
@@ -157,10 +158,9 @@ def _get_environment(mode: str = DEFAULT_MODE) -> str:
     elif 18 <= h < 21:   desc = "傍晚。"
     elif 21 <= h < 24:   desc = "夜晚。"
     else:                desc = "深夜，万籁俱寂。"
-    if mode == "haruno":
-        # 黄金时刻永远是午夜前的商业区：现实作息按时间走，街景不按昼夜变。
-        return f"{d}{desc}黄金时刻仍亮如午夜前，街上的灯光和人流没有散。"
-    return f"{d}{desc}"
+    # 世界观后缀随预设包（prompts/env_suffix.md，如 haruno 的"黄金时刻永夜"规则）；无则无时
+    from modules.llm_base import load_slot
+    return f"{d}{desc}{load_slot('prompts/env_suffix', mode)}"
 
 
 # ── 监控 ─────────────────────────────────────────
@@ -318,9 +318,9 @@ def handle_chat(
     # 输出压缩知识摘要。无本地模型依赖（安卓端可行），全局性覆盖。
     # 话题锚点只取上一条用户消息：指代消解；话题理解归 analyzer（20 轮历史），
     # 子代理不重复接收流萤自产回复（噪音 + miss 成本 + 话题漂移）。
-    # haruno 模式：无知识库可检索，直接跳过（省一次 LLM 调用）。
+    # 无知识库的包（未声明 knowledge_dirs 且包内无 knowledge/）：跳过，省一次 LLM 调用。
     try:
-        if mode == "haruno":
+        if not has_knowledge(mode):
             retrieved_knowledge = ""
             _rt0 = _rt1 = time.perf_counter()
         else:

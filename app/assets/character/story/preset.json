@@ -4,5 +4,6 @@
   "char_name": "流萤",
   "user_name": "开拓者",
   "presentation": "sticker",
-  "bans": "default"
+  "bans": "default",
+  "knowledge_dirs": ["knowledge", "database/dialogues_compiled"]
 }
