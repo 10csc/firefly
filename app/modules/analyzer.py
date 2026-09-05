@@ -9,7 +9,7 @@ import json, logging, threading
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from modules.llm_base import load_slot, format_history, extract_json, record_usage, record_error, parse_json, ASSET_CORE, ASSET_IDENTITY, is_relay_client
+from modules.llm_base import load_slot, format_history, extract_json, record_usage, record_error, parse_json, ASSET_CORE, ASSET_IDENTITY, is_relay_client, render_pack_prompt
 from modules.app_config import char_name, user_name
 
 logger = logging.getLogger(__name__)
@@ -108,21 +108,7 @@ _ANALYZER_SYSTEM = """When you think, think in ENGLISH, start with "We need..."
 {{"intent":"意图","fact_check":[{{"claim":"{user_name}说的具体说法","verdict":"真实/不存在/错误前提/不确定","note":"说明"}}],"summary":"分析结果整理"}}"""
 
 
-# story 模式专属事实核查参考（剧情世界观），haruno 不注入
-_ANALYZER_STORY_EXTRA = """### 剧情事实核查补充（story 模式）
-流萤当前状态：匹诺康尼的伤恢复得不错，能重新开机甲活动（依然以机甲为主，不能长时间脱离装甲）。出门、吃东西、赴约、做物理动作都是可能的。
-涉及流萤当前状态的常见错误前提：还能再入匹诺康尼梦境 / 失熵症已经痊愈 / 她仍昏迷或卧床不起、无法行动。
-仅在开拓者消息明确涉及这些时标记为"错误前提"（匹诺康尼已无法再入梦；失熵症不可逆）。
-涉及 2.3 烟花/第三次死亡的错误前提："花火用烟花替流萤安全完成了第三次死亡"是 3.8 揭示的被篡改记忆——真实第三次死亡是 3.8 晖长石号失熵爆发，被开拓者的终末之力拨转挽回，流萤生还。开拓者若把 2.3 烟花版当事实，verdict 记"错误前提"，summary 里按 3.8 真相提示。
-流萤的身体状态是背景不是话题——summary 里不要反复强调失熵症/医疗舱/恢复状态，回复内容与其他普通聊天无异。"""
-
-
-# haruno 模式专属事实核查参考（春日手信世界：健康普通学生，黄金时刻旅行）
-_ANALYZER_HARUNO_EXTRA = """### 春日手信模式事实核查补充（haruno 模式）
-世界事实以本模式为准：匹诺康尼是梦境旅游地，黄金时刻是十二时刻中的商业区；流萤是健康普通学生，在黄金时刻旅行，刚认识开拓者。
-常见错误前提：机甲 / 萨姆 / 格拉默铁骑 / 失熵症 / 星核猎手 / 梦境的深层阴谋 / 主线大事件——这些在本模式不存在；开拓者若提及，verdict 记"不存在"，summary 提示"按普通学生的真实困惑接话，不解释成剧情真相"。
-关系阶段：刚认识；只按对话中真实发生的事推进，不越级。
-时间与地点：时间随开拓者明确推进，不擅自跳天；地点只用黄金时刻真实地名（钟表小子广场、沉梦商街、奥帝购物中心、艾迪恩公园、甜蜜一隅、黄金中央车站、白日梦酒店大门广场）或开拓者明确说出的地点。"""
+# 剧本核查段已入预设包（prompts/analyzer_extra.md，包无此文件则空）
 
 
 # ── 分析器类 ──────────────────────────────────────
@@ -152,10 +138,7 @@ class Analyzer:
         core = ASSET_CORE if relay else load_slot("core", self._mode)
         identity = ASSET_IDENTITY if relay else load_slot("identity", self._mode)
         user_setting = load_slot("用户设定", self._mode)
-        if self._mode == "haruno":
-            story_extra = _ANALYZER_HARUNO_EXTRA
-        else:
-            story_extra = _ANALYZER_STORY_EXTRA if self._mode == "story" else ""
+        story_extra = render_pack_prompt("analyzer_extra", self._mode, "")
 
         stable = _ANALYZER_SYSTEM.format(
             core=core, identity=identity, user_setting=user_setting, story_extra=story_extra,

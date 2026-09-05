@@ -47,6 +47,32 @@ def clear_cache():
         _CACHE.clear()
 
 
+def render_pack_prompt(slot: str, mode: str, fallback: str, **kw) -> str:
+    """加载并渲染包级提示词段（prompts/{slot}.md，用户副本优先，缓存随 clear_cache）。
+
+    三段兜底：用户/包文件 format 失败（用户编辑引入未转义 {} 等）→ 试 bundled 原文渲染
+    → 仍失败回退 fallback（框架应急文案）。全程告警日志，不抛异常。"""
+    text = load_slot(f"prompts/{slot}", mode)
+    if text.strip():
+        try:
+            return text.format(**kw)
+        except Exception as e:
+            logger.warning("包 %s 的 prompts/%s.md 渲染失败（%s），试 bundled 原文", mode, slot, e)
+            try:
+                fp = bundled_character_dir(mode) / "prompts" / f"{slot}.md"
+                bundled = fp.read_text(encoding="utf-8") if fp.exists() else ""
+                if bundled.strip():
+                    return bundled.format(**kw)
+            except Exception as e2:
+                logger.warning("bundled prompts/%s.md 渲染也失败（%s），回退应急文案", slot, e2)
+    else:
+        logger.warning("包 %s 缺 prompts/%s.md，使用框架应急文案", mode, slot)
+    try:
+        return fallback.format(**kw)
+    except Exception:
+        return fallback
+
+
 # ── 手账加载（按模式隔离）───────────────────────────
 # 统一写入点：{mode}/journal/手账.md（前端保存、记忆管理器更新都写这里）。
 # 读取 fallback 旧位置 knowledge/story/手账.md，兼容历史数据。

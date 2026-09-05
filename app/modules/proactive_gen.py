@@ -14,6 +14,7 @@ import logging
 from dataclasses import dataclass, field
 
 from modules.app_config import DEFAULT_MODE, char_name, user_name
+from modules.llm_base import load_slot
 from modules.proactive_gate import _load_log
 
 logger = logging.getLogger(__name__)
@@ -118,15 +119,8 @@ user 消息里列出的"已说过话题"——禁止原样重复，但允许开�
 - should_speak=false 或 reason_type=none → 不说话
 - topic_hint/reason 为空字符串，不要编造"""
 
-    _MODE_CONTEXT = {
-        "story": "剧情模式：匹诺康尼的一切已经结束，流萤恢复得不错，能重新开机甲活动了"
-                 "（依然以机甲为主，不能长时间脱离装甲）。她能出门、能赴约，见面正常安排即可；"
-                 "话题围绕生活与想念，不汇报身体状态",
-        "haruno": "春日手信模式：普通学生流萤正在匹诺康尼黄金时刻（梦境商业区）旅行，"
-                  "刚认识开拓者。可用素材：钟表小子广场、沉梦商街、奥帝购物中心、艾迪恩公园、"
-                  "苏乐达、橡木蛋糕卷、球笼、美梦剧团。关系尚浅：主动消息保持朋友分寸，"
-                  "不越级亲密、不虚构事件、不碰主线阴谋",
-    }
+    # 模式情境文案已入预设包（prompts/proactive_context.md，包无此文件则空）
+    _mode_context = load_slot("prompts/proactive_context", mode)
 
     user_prompt = f"""## 当前环境
 {environment}
@@ -144,7 +138,7 @@ user 消息里列出的"已说过话题"——禁止原样重复，但允许开�
 {recent_said if recent_said else "（暂无）"}
 
 ## 当前模式
-{mode}——{_MODE_CONTEXT.get(mode, "")}
+{mode}——{_mode_context}
 
 请判断：{char_name(mode)}现在是否应该主动给{user_name(mode)}发消息？只输出 JSON，不要输出其他内容。"""
 

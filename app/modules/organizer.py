@@ -11,7 +11,7 @@ haruno 模式：旁白生成器（视觉小说式 RP——环境/动作描写，
 import logging, threading
 from dataclasses import dataclass, field
 
-from modules.llm_base import record_usage, record_error, extract_json, parse_json
+from modules.llm_base import record_usage, record_error, extract_json, parse_json, render_pack_prompt
 from modules.app_config import char_name, user_name
 
 logger = logging.getLogger(__name__)
@@ -56,9 +56,11 @@ def get_counters() -> dict:
 
 
 # ── Prompt ────────────────────────────────────────
-_ORGANIZER_SYSTEM = """你是流萤的表情包助手。流萤刚打完一串短信，你帮她顺手挑一张表情包。
+# 两个调度提示词已入预设包（prompts/organizer_sticker.md / organizer_narration.md，
+# 用户副本优先）；以下为框架兜底文案（包缺失/损坏时用，角色名槽位化）。
+_ORGANIZER_SYSTEM_FALLBACK = """你是{char_name}的表情包助手。{char_name}刚打完一串短信，你帮她顺手挑一张表情包。
 
-## 流萤的表情包习惯
+## {char_name}的表情包习惯
 - 她挺爱发表情包的：情绪明显的回复（开心/害羞/无奈/委屈/道歉/调侃/安慰）基本都会配一张
 - 日常闲聊大约每 2-3 轮配一张；纯信息性回复、沉重话题可以不配
 - 最近几轮已经连续发过表情包的话，这轮歇一歇
@@ -85,39 +87,33 @@ def _build_sticker_list() -> str:
 
 
 # ── haruno 模式：旁白生成器（视觉小说式 RP 演出）──
-_NARRATION_SYSTEM = """你是流萤的故事演出助手。流萤刚发完一段话（可能分多条），你为这段对话配上环境/动作描写（旁白）。
-
-## 春日手信世界速览（旁白只能写这个世界里的东西）
-- 黄金时刻是匹诺康尼十二时刻中的梦境商业区，永远像午夜前：霓虹、钟表、爵士乐、繁华但不危险。
-- 可写地点：钟表小子广场、沉梦商街、奥帝购物中心、艾迪恩公园、甜蜜一隅、白日梦酒店大门、黄金中央车站。
-- 流萤是健康普通学生。动作只写日常：看地图、系围巾、买苏乐达、躲镜头、指甜品店、把找零放回口袋。
-- 不写机甲、剧情战斗、失熵症、星核、主线阴谋等剧情元素，也不写绑架、事故、黑帮、异能；日常见义勇为可以写，但只按普通学生能做到的程度写。
+_NARRATION_SYSTEM_FALLBACK = """你是{char_name}的故事演出助手。{char_name}刚发完一段话（可能分多条），你为这段对话配上环境/动作描写（旁白）。
 
 ## 你的产出是什么
-旁白是"第三者视角"的演出文字，补充流萤的动作、神态和环境氛围。两种类型：
-- scene：环境/事件描写（居中小字，无括号）——如"黄金时刻，霓虹初上，人流如织"
+旁白是"第三者视角"的演出文字，补充{char_name}的动作、神态和环境氛围。两种类型：
+- scene：环境/事件描写（居中小字，无括号）——如"夜色渐深，人流如织"
 - action：动作/神态描写（前端会自动加括号，**你输出的文本不要带括号**）——如"少女在仔细观察你"
 
 ## 旁白的位置（after 字段，关键）
-流萤的话是分条发的，旁白可以插在任意两条消息之间。after 指定"插在第几条消息之后"：
-- after=-1：放在所有消息**之前**（开场环境交代、大动作）——如"黄金时刻，霓虹初上"、"少女松了口气"
+{char_name}的话是分条发的，旁白可以插在任意两条消息之间。after 指定"插在第几条消息之后"：
+- after=-1：放在所有消息**之前**（开场环境交代、大动作）
 - after=0：插在**第 1 条**消息之后
 - after=1：插在**第 2 条**消息之后
 - 以此类推，after=n 表示插在 reply_texts 第 n+1 条之后
 - 每个 after 至多一条旁白；不穿插时全用 -1
 
 ## 旁白写作规则
-- 从流萤的视角出发描写她：她的动作、神态、看向开拓者的目光、周围的环境变化
+- 从{char_name}的视角出发描写她：她的动作、神态、看向{user_name}的目光、周围的环境变化
 - 动作要具体、克制：一个眼神、一次停顿、手指捏紧衣角——不要大段抒情
 - 环境描写只在氛围确实变化时出现（人流、灯光、风），不要每轮都写
 - 字数：每条 10-40 字。一条消息一个动作，不要堆砌
-- 频率：**不是每轮都必须有**。纯对话轮（就是聊天）不配旁白；只有流萤有明显动作/神态/环境变化时才写
-- 典型搭配：她说话的同时做了什么（说话前接、说话时做）、她听开拓者说话时的反应、她注意到的东西
-- 分条节奏：流萤连发多条时，把最生动的动作插在两条之间（先做动作再发下一条），比全部堆前面更自然
+- 频率：**不是每轮都必须有**。纯对话轮（就是聊天）不配旁白；只有{char_name}有明显动作/神态/环境变化时才写
+- 典型搭配：她说话的同时做了什么（说话前接、说话时做）、她听{user_name}说话时的反应、她注意到的东西
+- 分条节奏：{char_name}连发多条时，把最生动的动作插在两条之间（先做动作再发下一条），比全部堆前面更自然
 
 ## 绝对禁止
-- 禁止写开拓者的动作和心理（那是用户的事，不代写）
-- 禁止旁白里出现"流萤说/流萤问"（对话本身就是消息，旁白只写动作和环境）
+- 禁止写{user_name}的动作和心理（那是用户的事，不代写）
+- 禁止旁白里出现"{char_name}说/{char_name}问"（对话本身就是消息，旁白只写动作和环境）
 - 禁止把短信内容复述进旁白
 - 禁止每轮都输出旁白——空数组是常态，有内容才写
 
@@ -152,8 +148,11 @@ class Organizer:
         with _lock:
             _ORGANIZE_COUNT += 1
 
-        # 2. 构建 prompt
-        stable = _ORGANIZER_SYSTEM.format(sticker_labels=_build_sticker_list())
+        # 2. 构建 prompt（提示词从预设包加载，兜底框架通用版）
+        stable = render_pack_prompt(
+            "organizer_sticker", self._mode, _ORGANIZER_SYSTEM_FALLBACK,
+            sticker_labels=_build_sticker_list(),
+            char_name=char_name(self._mode), user_name=user_name(self._mode))
 
         recent_lines = []
         for m in inp.recent_history:
@@ -227,8 +226,10 @@ class Organizer:
         with _lock:
             _ORGANIZE_COUNT += 1
 
-        # 2. 构建 prompt
-        stable = _NARRATION_SYSTEM
+        # 2. 构建 prompt（提示词从预设包加载，兜底框架通用版）
+        stable = render_pack_prompt(
+            "organizer_narration", self._mode, _NARRATION_SYSTEM_FALLBACK,
+            char_name=char_name(self._mode), user_name=user_name(self._mode))
 
         recent_lines = []
         for m in inp.recent_history:
