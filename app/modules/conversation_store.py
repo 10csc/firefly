@@ -75,11 +75,13 @@ def sanitize_quote(q):
     return out
 
 
-def format_quote_for_llm(quote) -> str:
-    """引用快照 → LLM 可见文本（如 [引用流萤：「…」]）。无效返回空串。"""
+def format_quote_for_llm(quote, mode: str = DEFAULT_MODE) -> str:
+    """引用快照 → LLM 可见文本（如 [引用流萤：「…」]）。无效返回空串。
+    显示名按预设包注入（角色预设化）。"""
     if not isinstance(quote, dict):
         return ""
-    who = {"firefly": "流萤", "user": "开拓者"}.get(quote.get("who"), "对方")
+    from modules.app_config import char_name as _cn, user_name as _un
+    who = {"firefly": _cn(mode), "user": _un(mode)}.get(quote.get("who"), "对方")
     t = quote.get("type")
     if t == "sticker":
         body = f"[表情包：{quote.get('label') or quote.get('path') or ''}]"
@@ -95,9 +97,9 @@ def format_quote_for_llm(quote) -> str:
     return f"[引用{who}：「{body}」]"
 
 
-def compose_user_text(content, quote) -> str:
+def compose_user_text(content, quote, mode: str = DEFAULT_MODE) -> str:
     """带引用的用户消息 → 提交给 LLM 的文本（无引用时原样返回）。"""
-    prefix = format_quote_for_llm(quote)
+    prefix = format_quote_for_llm(quote, mode)
     text = str(content or "")
     return (prefix + "\n" + text) if prefix else text
 

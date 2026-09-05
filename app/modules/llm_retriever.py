@@ -17,7 +17,7 @@ import logging, threading
 from pathlib import Path
 from dataclasses import dataclass, field
 
-from modules.app_config import ROOT, DEFAULT_MODE
+from modules.app_config import ROOT, DEFAULT_MODE, char_name, user_name
 from modules.llm_base import (format_history, record_usage, record_error,
                               ASSET_KNOWLEDGE, is_relay_client)
 
@@ -95,13 +95,13 @@ def get_knowledge_stats(mode: str = DEFAULT_MODE) -> dict:
 
 
 # ── Prompt（稳定层：知识库 + 指令，跨请求缓存命中）──
-_SYSTEM_PROMPT = """你是流萤的设定资料检索助手。以下是流萤的完整设定资料库，包含她的身份、经历、人际关系、关键台词与场景原文。
+_SYSTEM_PROMPT = """你是{char_name}的设定资料检索助手。以下是{char_name}的完整设定资料库，包含她的身份、经历、人际关系、关键台词与场景原文。
 
 ## 设定资料库
 {knowledge}
 
 ## 任务
-根据最近对话与开拓者的最新消息，从资料库中找出与当前话题**直接或间接相关**的所有内容，输出一份压缩知识摘要，供主模型参考。要求：
+根据最近对话与{user_name}的最新消息，从资料库中找出与当前话题**直接或间接相关**的所有内容，输出一份压缩知识摘要，供主模型参考。要求：
 - 覆盖：直接相关的事实、关联的人物与事件、可用于回复的原文台词
 - 全局性：一件事不仅找它本身，还要找间接关联的内容（相关的人、过去的约定、类似的情境）
 - 只输出资料库中存在的内容，禁止编造
@@ -109,9 +109,9 @@ _SYSTEM_PROMPT = """你是流萤的设定资料检索助手。以下是流萤的
 - 只输出摘要正文，不要任何解释、前后缀或标题
 
 ## 绝对禁止（输出即失败）
-- 禁止输出对话体：任何"流萤：""开拓者："开头的一问一答形式。资料库中的对话原文只能作为引用片段嵌入摘要（如"她说过：'……'"),不得模拟流萤当场说话
-- 禁止以第一人称扮演流萤回复开拓者（"我想去……""你愿意和我说说吗"等）
-- 你是检索助手，不是流萤。你的读者是分析层，不是开拓者"""
+- 禁止输出对话体：任何"{char_name}：""{user_name}："开头的一问一答形式。资料库中的对话原文只能作为引用片段嵌入摘要（如"她说过：'……'"),不得模拟{char_name}当场说话
+- 禁止以第一人称扮演{char_name}回复{user_name}（"我想去……""你愿意和我说说吗"等）
+- 你是检索助手，不是{char_name}。你的读者是分析层，不是{user_name}"""
 
 
 # ── 监控 ──────────────────────────────────────────
@@ -156,9 +156,11 @@ class LlmRetriever:
             return RetrieveOutput(knowledge="", raw="")
         # relay 模式：知识库→占位符（APP 本地资产填充，服务器只告诉 APP 用哪些资产）
         inject = ASSET_KNOWLEDGE if is_relay_client(self._client) else knowledge
-        sys_prompt = _SYSTEM_PROMPT.format(knowledge=inject)
-        history_section = format_history(inp.recent_history) if inp.recent_history else "（无）"
-        dynamic = f"## 最近对话\n{history_section}\n\n## 开拓者刚才说\n{inp.user_input}"
+        sys_prompt = _SYSTEM_PROMPT.format(
+            knowledge=inject,
+            char_name=char_name(self._mode), user_name=user_name(self._mode))
+        history_section = format_history(inp.recent_history, self._mode) if inp.recent_history else "（无）"
+        dynamic = f"## 最近对话\n{history_section}\n\n## {user_name(self._mode)}刚才说\n{inp.user_input}"
 
         # 3. 调 LLM（默认 Non-think：temperature 生效，0 温度保证摘要格式稳定）
         try:
@@ -190,22 +192,23 @@ class LlmRetriever:
             return RetrieveOutput(knowledge="", raw="", degraded=True,
                                   error_code=error_code_of(e))
 
-        # 4. 验证：空输出 / 对话体污染（模拟流萤回复而非摘要）→ 降级为空
-        if not raw or _looks_like_dialogue(raw):
+        # 4. 验证：空输出 / 对话体污染（模拟角色回复而非摘要）→ 降级为空
+        if not raw or _looks_like_dialogue(raw, self._mode):
             logger.warning("子代理检索输出异常（空或对话体），降级为空知识: %s", raw[:80])
             return RetrieveOutput(knowledge="", raw=raw)
 
         return RetrieveOutput(knowledge=raw, raw=raw)
 
 
-def _looks_like_dialogue(raw: str) -> bool:
-    """检测对话体污染：摘要里出现'流萤：'或'开拓者：'开头的连续对白行。"""
+def _looks_like_dialogue(raw: str, mode: str = DEFAULT_MODE) -> bool:
+    """检测对话体污染：摘要里出现'{角色名}：'或'{用户称呼}：'开头的连续对白行。"""
+    cname, uname = char_name(mode) + "：", user_name(mode) + "："
     lines = [l.strip() for l in raw.split("\n") if l.strip()]
     if len(lines) < 2:
         return False
     dialogue_lines = 0
     for l in lines:
-        if l.startswith("流萤：") or l.startswith("开拓者："):
+        if l.startswith(cname) or l.startswith(uname):
             dialogue_lines += 1
     return dialogue_lines >= 2
 

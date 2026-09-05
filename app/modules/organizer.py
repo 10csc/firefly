@@ -12,6 +12,7 @@ import logging, threading
 from dataclasses import dataclass, field
 
 from modules.llm_base import record_usage, record_error, extract_json, parse_json
+from modules.app_config import char_name, user_name
 
 logger = logging.getLogger(__name__)
 _lock = threading.Lock()
@@ -159,9 +160,9 @@ class Organizer:
             role = m.get("role", "")
             content = m.get("content", "")
             if role == "user":
-                recent_lines.append(f"开拓者: {content}")
+                recent_lines.append(f"{user_name(self._mode)}: {content}")
             elif role == "assistant":
-                recent_lines.append(f"流萤: {content}")
+                recent_lines.append(f"{char_name(self._mode)}: {content}")
             elif role == "system":
                 recent_lines.append(content)  # [行为: 表情包] xx —— 频率感知
         recent_section = "\n".join(recent_lines) if recent_lines else "（无）"
@@ -170,8 +171,8 @@ class Organizer:
 
         dynamic = (
             f"## 最近几轮（注意里面的表情包记录，控制频率）\n{recent_section}\n\n"
-            f"## 开拓者刚才说\n{inp.user_input}\n\n"
-            f"## 流萤刚打完的短信\n{reply_section}\n\n"
+            f"## {user_name(self._mode)}刚才说\n{inp.user_input}\n\n"
+            f"## {char_name(self._mode)}刚打完的短信\n{reply_section}\n\n"
             "请输出 JSON："
         )
 
@@ -234,9 +235,9 @@ class Organizer:
             role = m.get("role", "")
             content = m.get("content", "")
             if role == "user":
-                recent_lines.append(f"开拓者: {content}")
+                recent_lines.append(f"{user_name(self._mode)}: {content}")
             elif role == "assistant":
-                recent_lines.append(f"流萤: {content}")
+                recent_lines.append(f"{char_name(self._mode)}: {content}")
             elif role == "system":
                 recent_lines.append(content)  # 旁白/行为记录
         recent_section = "\n".join(recent_lines) if recent_lines else "（无）"
@@ -245,8 +246,8 @@ class Organizer:
 
         dynamic = (
             f"## 最近几轮（含之前的旁白记录，避免重复描写）\n{recent_section}\n\n"
-            f"## 开拓者刚才说\n{inp.user_input}\n\n"
-            f"## 流萤刚发的话\n{reply_section}\n\n"
+            f"## {user_name(self._mode)}刚才说\n{inp.user_input}\n\n"
+            f"## {char_name(self._mode)}刚发的话\n{reply_section}\n\n"
             "请输出旁白 JSON："
         )
 

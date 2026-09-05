@@ -14,7 +14,7 @@ from modules.polisher import Polisher, PolisherInput, DEGRADED_TEXT
 from modules.context_manager import ContextManager
 from modules.llm_retriever import LlmRetriever, RetrieveInput
 from modules.llm_base import get_token_stats as _get_token_stats
-from modules.app_config import DEFAULT_MODE
+from modules.app_config import DEFAULT_MODE, user_name
 
 logger = logging.getLogger(__name__)
 
@@ -351,9 +351,9 @@ def handle_chat(
         # ── 1. 分析器 ──────────────────────────
         input_text = user_input
         if hint == "typing_long":
-            input_text = "（开拓者正在输入了很久，但还没有发送。你可以先问：怎么了？有什么想和我说的吗？）"
+            input_text = f"（{user_name(mode)}正在输入了很久，但还没有发送。你可以先问：怎么了？有什么想和我说的吗？）"
         elif hint == "still_typing":
-            input_text = f"{user_input}\n（注意：开拓者还在输入第二条消息，可能还有下文）"
+            input_text = f"{user_input}\n（注意：{user_name(mode)}还在输入第二条消息，可能还有下文）"
 
         _t0 = time.perf_counter()
         logger.info("[PIPELINE #%d] ① Analyzer 开始...", turn)

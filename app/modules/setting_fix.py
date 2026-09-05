@@ -15,22 +15,23 @@ from datetime import datetime
 from pathlib import Path
 
 from modules.app_config import (mode_character_dir, mode_data_dir, mode_journal_dir,
-                                bundled_character_dir, DEFAULT_MODE, MODES)
+                                bundled_character_dir, DEFAULT_MODE, MODES,
+                                char_name, user_name)
 from modules.llm_base import extract_json, parse_json, record_usage, record_error
 
 logger = logging.getLogger(__name__)
 
 # ── 六文件白名单（不新增任何文件）────────────────────────
 # name -> (目录类型, 展示名, 允许 append, 必须保留的结构标题)
+# 锚点标记：__FIRST_HEADER__ = bundled 包文件首个 # 标题行（随包自动正确）；
+#           __JOURNAL__ = 按包角色名/用户称呼拼手账三标题。
 FIX_FILES = {
-    "core.md":        ("character", "核心设定",     False, ("__CORE__",)),
-    "identity.md":    ("character", "关系与习惯",   False, ("# 次级核心",)),
-    "sms_samples.md": ("character", "短信风格",     False, ("# 流萤短信风格速查",)),
+    "core.md":        ("character", "核心设定",     False, ("__FIRST_HEADER__",)),
+    "identity.md":    ("character", "关系与习惯",   False, ("__FIRST_HEADER__",)),
+    "sms_samples.md": ("character", "短信风格",     False, ("__FIRST_HEADER__",)),
     "用户设定.md":     ("character", "用户补充设定", True,  ()),
     "memory.md":      ("data",      "过往摘要",     True,  ("# 核心记忆头部", "# 事实与任务")),
-    "手账.md":         ("journal",   "流萤手账",     True,  ("# 流萤的手账",
-                                                            "## 我和开拓者聊了什么",
-                                                            "## 我想要去做的事/约定")),
+    "手账.md":         ("journal",   "手账",        True,  ("__JOURNAL__",)),
 }
 
 MAX_ALIGN_USER_TURNS = 6       # 对齐阶段最多追问轮数（用户消息数）
@@ -53,19 +54,35 @@ _LEGACY_PATHS = (
 )
 
 
-def file_label(name: str) -> str:
-    return FIX_FILES[name][1]
+def file_label(name: str, mode: str = DEFAULT_MODE) -> str:
+    label = FIX_FILES[name][1]
+    if label == "手账":
+        return f"{char_name(mode)}手账"
+    return label
 
 
-def _core_required(mode: str) -> str:
-    """core.md 必须保留的标题随模式不同。"""
-    return "# 春日手信 · 核心设定" if mode == "haruno" else "# 第一层：核心上下文"
+def _bundled_first_header(name: str, mode: str) -> str:
+    """bundled 包文件的首个 # 标题行（结构锚点，随包自动正确）。"""
+    fp = bundled_character_dir(mode) / name
+    try:
+        for line in fp.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if line.startswith("#"):
+                return line
+    except OSError:
+        pass
+    return ""
 
 
 def _required_headers(name: str, mode: str) -> tuple:
     headers = FIX_FILES[name][3]
-    if headers and headers[0] == "__CORE__":
-        return (_core_required(mode),)
+    if headers and headers[0] == "__FIRST_HEADER__":
+        h = _bundled_first_header(name, mode)
+        return (h,) if h else ()
+    if headers and headers[0] == "__JOURNAL__":
+        return (f"# {char_name(mode)}的手账",
+                f"## 我和{user_name(mode)}聊了什么",
+                "## 我想要去做的事/约定")
     return headers
 
 
@@ -198,14 +215,23 @@ def _conflict_errors(new_text: str, other_texts: list[str]) -> list[str]:
 # ── 空文件的默认骨架（首次修改 memory/手账时自动建立必需结构）──
 _DEFAULT_SKELETON = {
     "memory.md": "# 核心记忆头部\n\n（暂无）\n\n# 事实与任务（追加区）\n",
-    "手账.md": "# 流萤的手账\n\n## 我和开拓者聊了什么\n\n（暂无）\n\n## 我想要去做的事/约定\n\n（暂无）\n",
 }
 
 
-def _seed_empty(name: str, text: str) -> str:
+def _default_skeleton(name: str, mode: str) -> str:
+    """手账骨架按包角色名/用户称呼拼；memory 骨架通用。"""
+    if name == "手账.md":
+        return (f"# {char_name(mode)}的手账\n\n## 我和{user_name(mode)}聊了什么\n\n（暂无）\n\n"
+                "## 我想要去做的事/约定\n\n（暂无）\n")
+    return _DEFAULT_SKELETON.get(name, "")
+
+
+def _seed_empty(name: str, text: str, mode: str = DEFAULT_MODE) -> str:
     """首次修改空文件时给默认结构（不改变用户已有内容）。"""
-    if not text.strip() and name in _DEFAULT_SKELETON:
-        return _DEFAULT_SKELETON[name]
+    if not text.strip():
+        skeleton = _default_skeleton(name, mode)
+        if skeleton:
+            return skeleton
     return text
 
 
@@ -324,7 +350,7 @@ def validate_changes(changes, mode: str = DEFAULT_MODE, files: dict | None = Non
                 self_hay = self_hay.replace(old, "", 1)
         errors.extend(_conflict_errors(new_text, others + [self_hay]))
         try:
-            working[name] = _seed_empty(name, working[name])
+            working[name] = _seed_empty(name, working[name], mode)
             working[name] = apply_change(working[name], ch)
         except ValueError as e:
             return False, [f"{name}: {e}"] + errors
@@ -390,7 +416,7 @@ def _call_json(client, system: str, user: str, model: str, effort: str,
 
 
 # ── 阶段一：对齐 Agent ────────────────────────────────
-_ALIGN_SYSTEM = """你是「流萤设定纠错助手」。你的任务不是扮演流萤，而是和用户把“她哪里说得不对”对齐清楚。
+_ALIGN_SYSTEM = """你是「__CHAR__设定纠错助手」。你的任务不是扮演__CHAR__，而是和用户把“她哪里说得不对”对齐清楚。
 
 ## 当前阶段
 只做对齐：提问、复述理解、给选择。**绝对不生成修改内容，也绝对不写入任何文件。**
@@ -401,7 +427,7 @@ _ALIGN_SYSTEM = """你是「流萤设定纠错助手」。你的任务不是扮�
 - sms_samples.md：短信说话方式
 - 用户设定.md：用户补充的剧情/世界设定
 - memory.md：这段对话的过往摘要（头部 + 承诺/偏好/事件）
-- 手账.md：流萤第一人称的重要对话与约定
+- 手账.md：__CHAR__第一人称的重要对话与约定
 
 ## 归因方向
 - 官方设定错 → core / identity / sms_samples
@@ -428,7 +454,7 @@ def run_alignment(client, mode: str, conversation: list[dict], user_text: str,
     user_text = user_text.strip()[:MAX_TEXT_LEN]
     files = load_current_files(mode)
     bundle = "\n\n".join(
-        f"===== {name}（{file_label(name)}）=====\n{text or '（空）'}"
+        f"===== {name}（{file_label(name, mode)}）=====\n{text or '（空）'}"
         for name, text in files.items()
     )
     turns = _user_turns(conversation) + 1
@@ -440,7 +466,8 @@ def run_alignment(client, mode: str, conversation: list[dict], user_text: str,
         f"## 约束\n当前是第 {turns} 轮用户输入（上限 {MAX_ALIGN_USER_TURNS} 轮）。"
         "只输出 JSON。"
     )
-    data = _call_json(client, _ALIGN_SYSTEM, user_prompt, model, effort, max_tokens=3000)
+    data = _call_json(client, _ALIGN_SYSTEM.replace("__CHAR__", char_name(mode)),
+                      user_prompt, model, effort, max_tokens=3000)
 
     if not isinstance(data, dict):
         data = {}
@@ -470,7 +497,7 @@ def run_alignment(client, mode: str, conversation: list[dict], user_text: str,
 
 
 # ── 阶段二：提案 Agent ────────────────────────────────
-_PROPOSE_SYSTEM = """你是「流萤设定纠错助手」的修改提案层。基于与用户的对齐对话，生成一份**不生效**的修改清单。
+_PROPOSE_SYSTEM = """你是「__CHAR__设定纠错助手」的修改提案层。基于与用户的对齐对话，生成一份**不生效**的修改清单。
 
 ## 铁律
 1. 你只提案，永远不直接修改文件；生效必须由用户点「应用」。
@@ -493,7 +520,7 @@ def run_proposal(client, mode: str, conversation: list[dict],
                  model: str, effort: str) -> dict:
     files = load_current_files(mode)
     bundle = "\n\n".join(
-        f"===== {name}（{file_label(name)}）=====\n{text or '（空）'}"
+        f"===== {name}（{file_label(name, mode)}）=====\n{text or '（空）'}"
         for name, text in files.items()
     )
     conv_text = format_conversation(conversation)
@@ -502,7 +529,8 @@ def run_proposal(client, mode: str, conversation: list[dict],
         f"## 与用户的对齐对话\n{conv_text}\n\n"
         "请只输出 JSON。"
     )
-    data = _call_json(client, _PROPOSE_SYSTEM, base_user, model, effort, max_tokens=6000)
+    propose_system = _PROPOSE_SYSTEM.replace("__CHAR__", char_name(mode))
+    data = _call_json(client, propose_system, base_user, model, effort, max_tokens=6000)
     if not isinstance(data, dict):
         raise ValueError("提案模型返回格式非法")
 
@@ -525,7 +553,7 @@ def run_proposal(client, mode: str, conversation: list[dict],
         # 把校验错误回喂模型重试一次（只允许一次）
         retry_user = (base_user + "\n\n## 上次方案被校验器拒绝，请修正后重新输出 JSON\n"
                       + "；".join(errors[:6]))
-        data2 = _call_json(client, _PROPOSE_SYSTEM, retry_user, model, effort, max_tokens=6000)
+        data2 = _call_json(client, propose_system, retry_user, model, effort, max_tokens=6000)
         if isinstance(data2, dict) and data2.get("kind") == "proposal":
             changes2 = data2.get("changes") if isinstance(data2.get("changes"), list) else []
             ok, errors = validate_changes(changes2, mode, files)

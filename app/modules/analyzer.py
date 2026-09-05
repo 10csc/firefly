@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from modules.llm_base import load_slot, format_history, extract_json, record_usage, record_error, parse_json, ASSET_CORE, ASSET_IDENTITY, is_relay_client
+from modules.app_config import char_name, user_name
 
 logger = logging.getLogger(__name__)
 _lock = threading.Lock()
@@ -66,10 +67,10 @@ def get_counters() -> dict:
 # ── Prompt（按模式，剧情专属段仅 story 注入）────────
 _ANALYZER_SYSTEM = """When you think, think in ENGLISH, start with "We need..."
 
-你是一个分析助手。你的任务是在流萤回复之前，分析开拓者刚才发来的消息。
+你是一个分析助手。你的任务是在{char_name}回复之前，分析{user_name}刚才发来的消息。
 
 ## 你是谁
-你是流萤的"分析层"——负责理解消息、核查事实、整理有用知识。
+你是{char_name}的"分析层"——负责理解消息、核查事实、整理有用知识。
 你不是在写回复，你是在分析。不要生成回复文本，只输出分析结果。
 
 ## 角色上下文
@@ -85,26 +86,26 @@ _ANALYZER_SYSTEM = """When you think, think in ENGLISH, start with "We need..."
 
 ## 分析任务
 
-### 1. 开拓者为什么这么说？（intent）
+### 1. {user_name}为什么这么说？（intent）
 推测意图：关心 / 调侃 / 求助 / 试探 / 分享日常 / 越界 / 提问 / 其他
-**重要**：中文经常省略主语。结合历史对话，明确判断"这句话说的是谁"（说的是开拓者自己、说的是流萤、还是说的别人）。判断错了会导致回复驴唇不对马嘴。
+**重要**：中文经常省略主语。结合历史对话，明确判断"这句话说的是谁"（说的是{user_name}自己、说的是{char_name}、还是说的别人）。判断错了会导致回复驴唇不对马嘴。
 
-### 2. 开拓者说的内容属实吗？（fact_check）
+### 2. {user_name}说的内容属实吗？（fact_check）
 逐条核查用户消息中涉及的每个具体说法：
 - "真实"：在设定文件中有明确记载 → 注明出处
 - "不存在"：设定文件中没有的角色/事件/概念 → 标记为不存在
-- "错误前提"：与当前模式的流萤状态或世界事实明显冲突 → 标记为错误前提
+- "错误前提"：与当前模式的{char_name}状态或世界事实明显冲突 → 标记为错误前提
 - 无法判断 → 标记为"不确定"
 
 ### 3. 结合检索到的知识，整理有用信息（summary）
 将分析结果与检索到的知识整合成一段话，供回复器直接使用。语言简洁，不要遗漏关键信息。
 
 ### 4. 场景推进（角色扮演铁律，最高优先）
-开拓者的消息可能是在**推进场景**——"你来了，请坐""我已经到门口了""进来吧"这类意味着当前场景已经推进（已见面/已到店）。**直接接住推进后的场景**：他说到了，就是到了，回复围绕"现在就在一起"展开。
-与既往约定的时间/地点不一致（比如约的周六、今天却是周二）→ 视为剧情跳跃，**不质疑、不纠正、不提**，顺其自然。只有开拓者明确表达困惑时才解释。
+{user_name}的消息可能是在**推进场景**——"你来了，请坐""我已经到门口了""进来吧"这类意味着当前场景已经推进（已见面/已到店）。**直接接住推进后的场景**：他说到了，就是到了，回复围绕"现在就在一起"展开。
+与既往约定的时间/地点不一致（比如约的周六、今天却是周二）→ 视为剧情跳跃，**不质疑、不纠正、不提**，顺其自然。只有{user_name}明确表达困惑时才解释。
 
 ## 输出格式（一行 JSON，禁止任何其他文字）
-{{"intent":"意图","fact_check":[{{"claim":"开拓者说的具体说法","verdict":"真实/不存在/错误前提/不确定","note":"说明"}}],"summary":"分析结果整理"}}"""
+{{"intent":"意图","fact_check":[{{"claim":"{user_name}说的具体说法","verdict":"真实/不存在/错误前提/不确定","note":"说明"}}],"summary":"分析结果整理"}}"""
 
 
 # story 模式专属事实核查参考（剧情世界观），haruno 不注入
@@ -158,18 +159,19 @@ class Analyzer:
 
         stable = _ANALYZER_SYSTEM.format(
             core=core, identity=identity, user_setting=user_setting, story_extra=story_extra,
+            char_name=char_name(self._mode), user_name=user_name(self._mode),
         )
 
         # 历史格式化复用 llm_base.format_history（含 system 行为行与主动标记——
         # 与 polisher/organizer 口径一致，prompt 更完整）
-        history_section = format_history(inp.recent_history)
+        history_section = format_history(inp.recent_history, self._mode)
 
         env_section = f"## 当前环境\n{inp.environment}\n" if inp.environment else ""
         knowledge_section = f"## 检索到的相关知识\n{inp.retrieved_knowledge}\n" if inp.retrieved_knowledge else ""
         dynamic = f"""## 最近对话
 {history_section}
 
-{env_section}{knowledge_section}## 开拓者刚才说
+{env_section}{knowledge_section}## {user_name(self._mode)}刚才说
 {inp.user_input}
 
 ## 分析提示

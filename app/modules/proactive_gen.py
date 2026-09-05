@@ -13,7 +13,7 @@
 import logging
 from dataclasses import dataclass, field
 
-from modules.app_config import DEFAULT_MODE
+from modules.app_config import DEFAULT_MODE, char_name, user_name
 from modules.proactive_gate import _load_log
 
 logger = logging.getLogger(__name__)
@@ -58,18 +58,18 @@ def _decide_motivation(client, memory_head: str, journal: str, environment: str,
       share=有想分享的事
     """
     casual_note = (
-        "\n\n注意：本次触发是你主动找开拓者的机会（用户空闲/不在场）。"
-        "即使没有上述具体动机，也可以随便聊点什么——想想开拓者此刻可能在做什么、"
+        f"\n\n注意：本次触发是你主动找{user_name(mode)}的机会（用户空闲/不在场）。"
+        f"即使没有上述具体动机，也可以随便聊点什么——想想{user_name(mode)}此刻可能在做什么、"
         "分享当下的一件小事、一句轻轻的问候都可以。总之要说话，不要沉默。"
     ) if allow_casual else ""
-    system = """你是流萤的内心判断层。判断她现在是否应该主动给开拓者发消息。
+    system = f"""你是{char_name(mode)}的内心判断层。判断她现在是否应该主动给{user_name(mode)}发消息。
 触发机会已经由频率控制把关（每 N 轮一次机会 + 概率）——**机会到来时，默认应该说**，
 你的判断重心是"说什么"，不是"要不要说"。
 
 除非是明确的不该打扰：对方刚说"晚安/去忙了/先睡了"、对话刚结束、深夜对方已不在——
 此时才 should_speak=false。
 
-流萤是有表达欲的人——主动就是创造话题：想提要求就提（邀约、想吃想玩想去哪）、
+{char_name(mode)}是有表达欲的人——主动就是创造话题：想提要求就提（邀约、想吃想玩想去哪）、
 想到什么就说（新话题、见闻、想法）、想分享就分享。
 
 主动的方向（有具体内容即可，不必等什么契机）：
@@ -140,13 +140,13 @@ user 消息里列出的"已说过话题"——禁止原样重复，但允许开�
 ## 最近对话摘要（以下内容已经聊过了——不要重复其中的话题或细节）
 {recent_topics[:800] if recent_topics else "（最近没有对话）"}
 
-## 流萤最近主动说过的话题（以下内容已说过——禁止再次选择相同或相似的话题）
+## {char_name(mode)}最近主动说过的话题（以下内容已说过——禁止再次选择相同或相似的话题）
 {recent_said if recent_said else "（暂无）"}
 
 ## 当前模式
 {mode}——{_MODE_CONTEXT.get(mode, "")}
 
-请判断：流萤现在是否应该主动给开拓者发消息？只输出 JSON，不要输出其他内容。"""
+请判断：{char_name(mode)}现在是否应该主动给{user_name(mode)}发消息？只输出 JSON，不要输出其他内容。"""
 
     try:
         resp = client.chat.completions.create(
@@ -202,7 +202,7 @@ def generate_proactive(session: dict, client, mode: str = DEFAULT_MODE,
     environment = _get_environment(mode)
     recent = session["context"].get_recent(8)
     recent_topics = "\n".join(
-        f"[{'开拓者' if m.get('role') == 'user' else '流萤'}]: {m.get('content', '')}"
+        f"[{user_name(mode) if m.get('role') == 'user' else char_name(mode)}]: {m.get('content', '')}"
         for m in recent if m.get("content")
     )
 
@@ -229,8 +229,8 @@ def generate_proactive(session: dict, client, mode: str = DEFAULT_MODE,
         decision = {
             "should_speak": True,
             "reason_type": "share",
-            "topic_hint": "随便聊聊——想起开拓者了，说点当下的什么都可以",
-            "reason": "触发机会已到，流萤想跟开拓者说说话（无具体来源的轻松问候）",
+            "topic_hint": f"随便聊聊——想起{user_name(mode)}了，说点当下的什么都可以",
+            "reason": f"触发机会已到，{char_name(mode)}想跟{user_name(mode)}说说话（无具体来源的轻松问候）",
         }
 
     reason_type = decision.get("reason_type", "share")
@@ -253,13 +253,13 @@ def generate_proactive(session: dict, client, mode: str = DEFAULT_MODE,
         )
         out = polisher.polish(PolisherInput(
             user_input=(
-                "（开拓者安静了好一会儿，一直没有新消息。你心里想起了一些事，"
+                f"（{user_name(mode)}安静了好一会儿，一直没有新消息。你心里想起了一些事，"
                 f"想开口跟他聊起来）主题：{topic_hint}。原因：{reason}\n"
                 f"{meet_note}\n"
                 "注意：不要用'傍晚/天气/景物描写+问候对方'的固定套路收尾，"
                 "像普通聊天一样直接说想说的话。"
             ),
-            analyzer_summary=f"（本条消息由概率式回复触发，流萤想起开拓者）主题：{topic_hint}。原因：{reason}",
+            analyzer_summary=f"（本条消息由概率式回复触发，{char_name(mode)}想起{user_name(mode)}）主题：{topic_hint}。原因：{reason}",
             analyzer_intent="proactive",
             recent_history=session["context"].get_recent(15),
             memory_head=memory_head,
@@ -268,13 +268,13 @@ def generate_proactive(session: dict, client, mode: str = DEFAULT_MODE,
     else:
         out = polisher.polish(PolisherInput(
             user_input=topic_hint,
-            analyzer_summary=f"（本条消息是流萤主动发给开拓者的，不是回复）主题：{topic_hint}。原因：{reason}",
+            analyzer_summary=f"（本条消息是{char_name(mode)}主动发给{user_name(mode)}的，不是回复）主题：{topic_hint}。原因：{reason}",
             analyzer_intent="proactive",
             recent_history=session["context"].get_recent(15),
             memory_head=memory_head,
             environment=environment,
             proactive_context=(
-                f"你现在是主动找开拓者说话。主题：{topic_hint}。原因：{reason}。"
+                f"你现在是主动找{user_name(mode)}说话。主题：{topic_hint}。原因：{reason}。"
                 "不要解释'为什么找你'——像平时发短信一样，直接说想说的话。不要以'在吗''忙吗'开头。"
                 "不要用'傍晚/天气/景物描写+问候对方'的固定套路收尾——像普通聊天一样直接说事情。"
                 + (("你已经恢复得不错，能出门、能赴约——见面正常安排就好；"

@@ -350,6 +350,18 @@ DEFAULT_MODE = "story" if "story" in PRESETS else next(iter(PRESETS), "story")
 MODES = tuple([DEFAULT_MODE] + sorted(k for k in PRESETS if k != DEFAULT_MODE))
 
 
+def char_name(mode: str = DEFAULT_MODE) -> str:
+    """当前模式角色名（预设包声明；非法 mode 回退默认包，兜底"流萤"）。"""
+    p = PRESETS.get(mode) or PRESETS.get(DEFAULT_MODE) or {}
+    return p.get("char_name") or "流萤"
+
+
+def user_name(mode: str = DEFAULT_MODE) -> str:
+    """当前模式用户称呼（同 char_name）。"""
+    p = PRESETS.get(mode) or PRESETS.get(DEFAULT_MODE) or {}
+    return p.get("user_name") or "开拓者"
+
+
 def mode_root(mode: str = DEFAULT_MODE) -> Path:
     """模式数据根：{user_dir}/{mode}/（服务器版按用户隔离；本地版 = USER_DIR/{mode}）。非法 mode 回退 story（审查约束）。"""
     m = mode if mode in MODES else DEFAULT_MODE

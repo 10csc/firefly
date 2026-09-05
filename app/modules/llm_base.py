@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 # ── 运行时数据根目录 ─────────────────────────────────
 # 唯一来源：app_config。前端所有"编辑保存"类接口都写 user_data/，
 # 因此读取必须 user_data 优先，否则出现"前端显示已改、模型仍用旧文件"的静默分裂。
-from modules.app_config import USER_DIR, ROOT as _ROOT, mode_character_dir, bundled_character_dir, mode_journal_dir, DEFAULT_MODE, user_scope_key
+from modules.app_config import USER_DIR, ROOT as _ROOT, mode_character_dir, bundled_character_dir, mode_journal_dir, DEFAULT_MODE, user_scope_key, char_name, user_name
 
 # ── 角色设定加载（共享缓存，key 含模式，跨模式不串）──
 _CACHE = {}
@@ -82,8 +82,10 @@ def reload_journal(mode: str = DEFAULT_MODE):
 
 
 # ── 历史格式化（各模块共享）──────────────────────────
-def format_history(messages: list) -> str:
-    """把 context 历史格式化为带轮次标注的文本。system 行为消息原样保留。"""
+def format_history(messages: list, mode: str = DEFAULT_MODE) -> str:
+    """把 context 历史格式化为带轮次标注的文本。system 行为消息原样保留。
+    角色名/用户称呼按预设包注入（角色预设化：框架不含角色名字面量）。"""
+    cname, uname = char_name(mode), user_name(mode)
     lines = []
     turn = 0
     for m in messages:
@@ -91,12 +93,12 @@ def format_history(messages: list) -> str:
         content = m.get("content", "")
         if role == "user":
             turn += 1
-            lines.append(f"[第{turn}轮] 开拓者: {content}")
+            lines.append(f"[第{turn}轮] {uname}: {content}")
         elif role == "assistant":
             if m.get("proactive"):
-                lines.append(f"      流萤(主动): {content}")
+                lines.append(f"      {cname}(主动): {content}")
             else:
-                lines.append(f"      流萤: {content}")
+                lines.append(f"      {cname}: {content}")
         elif role == "system":
             lines.append(f"      {content}")
     return "\n".join(lines) if lines else "（无历史）"

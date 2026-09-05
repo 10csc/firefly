@@ -151,7 +151,7 @@ def chat(h):
                     if q:
                         rec["quote"] = q
                     _append_msg("user", rec, mode=mode)
-                    llm_parts.append(_compose_user_text(text, q))
+                    llm_parts.append(_compose_user_text(text, q, mode))
             elif isinstance(m, dict) and m.get("type") == "sticker" and m.get("label"):
                 label = m["label"]
                 path = m.get("path") or m.get("file") or ""
@@ -169,7 +169,7 @@ def chat(h):
                     if q:
                         rec["quote"] = q
                     _append_msg("user", rec, mode=mode)
-                llm_parts.append(_compose_user_text(f"[表情包：{label}]", q))
+                llm_parts.append(_compose_user_text(f"[表情包：{label}]", q, mode))
             elif isinstance(m, dict) and m.get("type") == "image" and m.get("img_id"):
                 # A9：jsonl 只存 img_id + desc（图片字节本地持有，不进任何历史/日志）
                 img_id = str(m["img_id"]).strip()[:_CONTENT_MAX]
@@ -183,9 +183,9 @@ def chat(h):
                 _append_msg("user", rec, mode=mode)
                 if desc:
                     # 有描述（旧图兼容）按描述理解；无描述默认识图，原图当轮注入
-                    llm_parts.append(_compose_user_text(f"[图片：{desc}]", q))
+                    llm_parts.append(_compose_user_text(f"[图片：{desc}]", q, mode))
                 else:
-                    llm_parts.append(_compose_user_text("[图片]", q))
+                    llm_parts.append(_compose_user_text("[图片]", q, mode))
                 # 首轮识图：图片已落盘，读字节转 data URL 进 vision_urls（orchestrator 注入回复器）
                 if len(vision_urls) < 4:
                     url = _load_image_data_url(mode, img_id)

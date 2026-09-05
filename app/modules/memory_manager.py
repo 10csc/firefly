@@ -9,7 +9,7 @@ import json, logging, os, threading
 from pathlib import Path
 from dataclasses import dataclass
 
-from modules.app_config import ROOT, USER_DIR, mode_data_dir, mode_journal_dir, DEFAULT_MODE
+from modules.app_config import ROOT, USER_DIR, mode_data_dir, mode_journal_dir, DEFAULT_MODE, char_name, user_name
 
 logger = logging.getLogger(__name__)
 _lock = threading.Lock()
@@ -95,7 +95,7 @@ _migrate_legacy()
 # ## 事件
 # - [日期] 内容
 
-_REST_PROMPT = """你正在整理流萤与开拓者的对话记忆。只输出 JSON。
+_REST_PROMPT = """你正在整理{char_name}与{user_name}的对话记忆。只输出 JSON。
 当前日期：{today}
 
 ## 上次的核心记忆头部
@@ -113,8 +113,8 @@ _REST_PROMPT = """你正在整理流萤与开拓者的对话记忆。只输出 J
 3. 提取本轮新增的事实条目（承诺/偏好/事件）。
 
 ## 铁律（违反即失败）
-- **只记录对话中真实发生的内容**：开拓者明确说过的话、双方实际达成的约定、真实发生的互动。
-- **不记录推断与脑补**：不把"对方可能喜欢""以后大概会"这类推测当事实；不把流萤自己的比喻、客气话、随口假设写成事实条目。
+- **只记录对话中真实发生的内容**：{user_name}明确说过的话、双方实际达成的约定、真实发生的互动。
+- **不记录推断与脑补**：不把"对方可能喜欢""以后大概会"这类推测当事实；不把{char_name}自己的比喻、客气话、随口假设写成事实条目。
 - **对话里不存在的人、事、物、约定——一律不新增**。
 - **日期必须真实**：每条 added 的 date 取该对话内容发生时的时间（新对话每行开头 `[YYYY-MM-DD HH:MM]` 时间标记，或取"当前日期"）；格式 YYYY-MM-DD。**严禁照抄输出示例中的占位日期**（示例里的 <发生日期> 只是格式演示，不是真实值）。
 - 拿不准某条是不是真实发生的 → 不记。
@@ -122,7 +122,7 @@ _REST_PROMPT = """你正在整理流萤与开拓者的对话记忆。只输出 J
 ## 输出（只输出一行 JSON）
 {{"new_head": "...", "resolved": [{{"type":"承诺","text":"..."}}], "added": [{{"type":"承诺","text":"...","date":"<发生日期>"}}]}}"""
 
-_JOURNAL_PROMPT = r"""你是流萤。你在整理自己的手账。以第一人称口吻，更新以下两栏。
+_JOURNAL_PROMPT = r"""你是{char_name}。你在整理自己的手账。以第一人称口吻，更新以下两栏。
 
 ## 当前手账
 {old}
@@ -131,10 +131,10 @@ _JOURNAL_PROMPT = r"""你是流萤。你在整理自己的手账。以第一人�
 {new}
 
 ## 手账格式（严格遵循，不超过1000字符）
-# 流萤的手账
+# {char_name}的手账
 
-## 我和开拓者聊了什么
-（以流萤的口吻，摘要记录本轮新对话中的重要内容。若已有旧内容，保留重要的旧条目并追加新的。每条一行，不超过整体40%）
+## 我和{user_name}聊了什么
+（以{char_name}的口吻，摘要记录本轮新对话中的重要内容。若已有旧内容，保留重要的旧条目并追加新的。每条一行，不超过整体40%）
 ## 我想要去做的事/约定
 （记录想做的事和重要约定。已完成的事标记（已做完），新增事项追加到末尾。每条一行）
 
@@ -237,7 +237,7 @@ class MemoryManager:
         if isinstance(new_dialogue, list):
             lines = []
             for m in new_dialogue:
-                role = "开拓者" if m.get("role") == "user" else ("流萤" if m.get("role") == "assistant" else "（行为）")
+                role = user_name(self._mode) if m.get("role") == "user" else (char_name(self._mode) if m.get("role") == "assistant" else "（行为）")
                 lines.append(f"{role}: {m.get('content', '')}")
             new_dialogue = "\n".join(lines)
         old_journal = ""
@@ -246,7 +246,9 @@ class MemoryManager:
         if src is not None and src.exists():
             old_journal = src.read_text(encoding="utf-8").strip()
         try:
-            prompt = _JOURNAL_PROMPT.format(old=old_journal or "（空）", new=new_dialogue)
+            prompt = _JOURNAL_PROMPT.format(old=old_journal or "（空）", new=new_dialogue,
+                                            char_name=char_name(self._mode),
+                                            user_name=user_name(self._mode))
             resp = self._client.chat.completions.create(
                 model=self._model,
                 messages=[{"role": "system", "content": prompt}],
@@ -257,7 +259,7 @@ class MemoryManager:
             rc = (getattr(resp.choices[0].message, "reasoning_content", "") or "").strip()
             if not new_content and rc:
                 new_content = rc
-            if not new_content or "我和开拓者聊了什么" not in new_content:
+            if not new_content or f"我和{user_name(self._mode)}聊了什么" not in new_content:
                 return False
             jf.parent.mkdir(parents=True, exist_ok=True)
             jf.write_text(new_content, encoding="utf-8")
@@ -285,7 +287,7 @@ class MemoryManager:
                 turn += 1
             if turn <= last_turn:
                 continue
-            role = "开拓者" if m.get("role") == "user" else ("流萤" if m.get("role") == "assistant" else "（行为）")
+            role = user_name(self._mode) if m.get("role") == "user" else (char_name(self._mode) if m.get("role") == "assistant" else "（行为）")
             ts = str(m.get("time") or "").strip()
             prefix = f"[{ts}] " if ts else ""
             lines.append(f"{prefix}{role}: {m.get('content','')}")
@@ -297,6 +299,8 @@ class MemoryManager:
             old_head=old_head or "（无）",
             old_tail=old_tail or "（无）",
             new_dialogue=new_dialogue,
+            char_name=char_name(self._mode),
+            user_name=user_name(self._mode),
         )
         resp = self._client.chat.completions.create(
             model=self._model,

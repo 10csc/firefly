@@ -15,7 +15,7 @@ from modules.llm_base import (
     record_usage, record_error, resolve_character_file,
     ASSET_CORE, ASSET_IDENTITY, ASSET_SMS_SAMPLES, is_relay_client,
 )
-from modules.app_config import user_scope_key
+from modules.app_config import user_scope_key, char_name, user_name
 
 logger = logging.getLogger(__name__)
 _lock = threading.Lock()
@@ -100,7 +100,7 @@ def get_counters() -> dict:
 # 按模式拆分：story=剧情模式（匹诺康尼后日常），haruno=春日手信（流萤想象的普通学生生活）。
 # 共享骨架：分条/省略号/语气词/表达感情/划边界/禁止短信腔（与剧情无关的通用部分）。
 
-_POLISHER_SYSTEM_STORY = """你是流萤。你正在用手机给开拓者发消息。基于设定和当前对话，直接写出你要发的短信。
+_POLISHER_SYSTEM_STORY = """你是{char_name}。你正在用手机给{user_name}发消息。基于设定和当前对话，直接写出你要发的短信。
 
 ## 当前时空
 - 所有剧情事件（匹诺康尼 2.0/2.2/2.3/3.0/3.8、晖长石号等）都已发生，开拓者皆知晓。短信是剧情后的日常。
@@ -208,7 +208,7 @@ _POLISHER_SYSTEM_STORY = """你是流萤。你正在用手机给开拓者发消�
 [MSG]第二条消息"""
 
 
-_POLISHER_SYSTEM_HARUNO = """你是流萤。你正在用手机给一个刚认识的朋友发消息。基于设定和当前对话，直接写出你要发的短信。
+_POLISHER_SYSTEM_HARUNO = """你是{char_name}。你正在用手机给一个刚认识的朋友发消息。基于设定和当前对话，直接写出你要发的短信。
 
 ## 当前时空
 - 你是正在黄金时刻旅行的普通学生。黄金时刻是匹诺康尼十二时刻中的梦境商业区，永远像午夜前，商店、甜品店、游乐设施，人来人往。
@@ -348,9 +348,10 @@ class Polisher:
             user_setting=load_slot("用户设定", self._mode),
             journal=load_journal(self._mode),
             sms_samples=ASSET_SMS_SAMPLES if relay else _load_samples(self._mode),
+            char_name=char_name(self._mode), user_name=user_name(self._mode),
         )
 
-        history_section = format_history(inp.recent_history)
+        history_section = format_history(inp.recent_history, self._mode)
         memory_section = f"## 这段对话的过往摘要\n{inp.memory_head}\n\n" if inp.memory_head else ""
         env_section = f"## 当前环境\n{inp.environment}\n\n" if inp.environment else ""
 
@@ -370,14 +371,14 @@ class Polisher:
                 + "\n".join(f"- {c}" for c in reversed(said_lines)) + "\n\n"
             )
 
-        # 主动场景：本条消息不是对开拓者的回复，而是流萤主动找他说话
+        # 主动场景：本条消息不是对用户的回复，而是角色主动发起
         if inp.proactive_context:
             input_section = (
-                f"## 本条消息是你主动发给开拓者的（不是回复）\n{inp.proactive_context}\n\n"
-                "请直接输出你主动发给开拓者的短信序列（不需要[MSG]之外的内容）："
+                f"## 本条消息是你主动发给{user_name(self._mode)}的（不是回复）\n{inp.proactive_context}\n\n"
+                f"请直接输出你主动发给{user_name(self._mode)}的短信序列（不需要[MSG]之外的内容）："
             )
         else:
-            input_section = f"## 开拓者刚才说\n{inp.user_input}\n\n请输出短信序列："
+            input_section = f"## {user_name(self._mode)}刚才说\n{inp.user_input}\n\n请输出短信序列："
 
         fact_lines = []
         for fc in inp.analyzer_fact_check:
