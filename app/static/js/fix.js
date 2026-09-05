@@ -415,6 +415,7 @@ window.renderFixModes = renderFixModes;   // loadModes 完成后由 views.js 调
             if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendFixMessage(input.value); }
         });
     }
-    renderFixModes();
+    // 模式按钮由 loadModes 完成后桥调 window.renderFixModes() 渲染
+    // （不可在此直接调：bundle 拼接顺序 fix 段在 views 段前，PRESET_MODES 此时 TDZ 未初始化）
     const histRefresh = document.getElementById("fix-chathist-refresh");
     if (histRefresh) histRefresh.addEventListener("click", loadFixChatHistory);})();
