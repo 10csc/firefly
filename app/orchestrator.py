@@ -407,7 +407,7 @@ def handle_chat(
             ))
             if org_output.sticker_label:
                 from tools.sticker_picker import pick_sticker_by_label
-                entry = pick_sticker_by_label(org_output.sticker_label)
+                entry = pick_sticker_by_label(org_output.sticker_label, mode)
                 if entry:
                     messages.append({"type": "sticker", "path": entry.file, "label": entry.label})
             # haruno 旁白：after=-1 前置；after=n 插在第 n+1 条消息之后（视觉小说式穿插演出）

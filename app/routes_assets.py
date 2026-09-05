@@ -64,6 +64,8 @@ def add_sticker_route(h):
         fields, files = parse_multipart(h)
         category = fields.get("category", "")
         label = fields.get("label", "")
+        # 归属包（角色预设化阶段6）：前端上传带当前模式；空 = 全局共享
+        pack = (fields.get("mode") or "").strip()
         file_info = files.get("file")
         if not file_info:
             h._json({"ok": False, "error": "缺少图片文件"}); return
@@ -84,7 +86,7 @@ def add_sticker_route(h):
             # 服务器对图片字节只传输不保存：仅登记元数据（内容哈希供客户端索引
             # IndexedDB；label 即图片文字描述，已入 LLM 上下文）
             digest = hashlib.sha256(data).hexdigest()
-            entry = add_sticker(f"local:{digest}{ext}", category, label)
+            entry = add_sticker(f"local:{digest}{ext}", category, label, pack=pack)
             h._json({"ok": True, "id": entry.id, "label": entry.label,
                      "file": entry.file, "local": True,
                      "note": "图片已存于本机（服务器不保存图片）"})
@@ -106,7 +108,7 @@ def add_sticker_route(h):
         (save_dir / safe_name).write_bytes(file_info["data"])
 
         # 写入注册表
-        entry = add_sticker(f"stickers/{safe_name}", category, label)
+        entry = add_sticker(f"stickers/{safe_name}", category, label, pack=pack)
         h._json({"ok": True, "sticker_id": entry.id, "label": entry.label})
     except StickerAddError as e:
         h._json({"ok": False, "error": str(e)})
@@ -152,8 +154,12 @@ def character_file_update(h):
     mode = _body_mode(body)
     filename = (body.get("filename") or "").strip()
     content = (body.get("content") or "")
-    # 白名单：仅允许用户维护的补充设定（核心设定 core/identity/sms_samples 隐藏且不可经 API 修改）
-    allowed = {"用户设定.md"}
+    # 白名单：用户设定 + 包提示词段（角色预设化：软件内可编辑包文案）。
+    # 核心设定 core/identity/sms_samples 不可经 API 修改（走设定纠错链路）。
+    allowed = {"用户设定.md",
+               "prompts/polisher.md", "prompts/analyzer_extra.md",
+               "prompts/organizer_sticker.md", "prompts/organizer_narration.md",
+               "prompts/proactive_context.md", "prompts/env_suffix.md"}
     if filename not in allowed:
         h._json({"ok": False, "error": f"不允许的文件: {filename}"}); return
     if not content:
@@ -162,7 +168,7 @@ def character_file_update(h):
         filepath = cfg.mode_character_dir(mode) / filename
         filepath.parent.mkdir(parents=True, exist_ok=True)
         filepath.write_text(content, encoding="utf-8")
-        # 清除各模块的角色设定缓存
+        # 清除各模块的角色设定缓存（含包提示词段缓存——render_pack_prompt 走同一缓存）
         from modules.llm_base import clear_cache
         clear_cache()
         from modules.polisher import clear_samples_cache
@@ -216,7 +222,7 @@ def get_stickers(h):
     h._json({
         "stickers": [
             {"id": s.id, "file": s.file, "category": s.category,
-             "label": s.label, "enabled": bool(s.enabled),
+             "label": s.label, "enabled": bool(s.enabled), "pack": s.pack,
              "is_default": s.id in _STICKERS_DEFAULT,
              "editable": editable_all or s.id in ids}
             for s in items
@@ -234,6 +240,119 @@ def get_character_files(h):
         if fp.exists():
             files.append({"name": fname, "content": fp.read_text(encoding="utf-8")})
     h._json({"files": files})
+
+
+# ═══ 角色包管理（阶段6：软件内修改包资产）═══
+# 可编辑的包提示词段（与 character_file_update 白名单同一份语义）
+_PACK_PROMPT_FILES = ("prompts/polisher.md", "prompts/analyzer_extra.md",
+                      "prompts/organizer_sticker.md", "prompts/organizer_narration.md",
+                      "prompts/proactive_context.md", "prompts/env_suffix.md")
+_PACK_ASSET_SLOTS = ("avatar", "cover")   # 头像 / 封面
+
+
+def get_pack_files(h):
+    """GET /pack-files?mode=：包管理页数据——可编辑文案（读用户副本优先，含是否已覆盖标记）
+    + 视觉资产当前 URL。"""
+    from modules.llm_base import resolve_character_file
+    mode = _query_mode(h)
+    files = []
+    for fname in ("用户设定.md",) + _PACK_PROMPT_FILES:
+        user_fp = cfg.mode_character_dir(mode) / fname
+        fp = resolve_character_file(fname, mode)
+        content = fp.read_text(encoding="utf-8") if fp.exists() else ""
+        files.append({"name": fname, "content": content,
+                      "customized": user_fp.exists()})
+    p = cfg.PRESETS.get(mode) or {}
+
+    def _slot_url(slot: str) -> str:
+        for base in (cfg.mode_character_dir(mode) / "assets",
+                     cfg.bundled_character_dir(mode) / "assets"):
+            if base.is_dir():
+                for fp in sorted(base.glob(f"{slot}.*")):
+                    if fp.suffix.lower() in (".png", ".jpg", ".jpeg", ".webp"):
+                        return f"/assets/character/{mode}/assets/{fp.name}"
+        return ""
+
+    h._json({
+        "mode": mode, "name": p.get("name") or mode, "presentation": p.get("presentation", ""),
+        "files": files,
+        "assets": {"avatar": _slot_url("avatar"), "cover": _slot_url("cover")},
+    })
+
+
+def upload_pack_asset(h):
+    """POST /pack-asset（multipart: mode + slot + file）：上传包头像/封面。
+    落 user_data/{mode}/character/assets/（用户副本，resolve_asset 优先于 bundled；
+    恢复默认 = POST /pack-asset/delete 删副本）。"""
+    from routes import parse_multipart
+    fields, files = parse_multipart(h, max_bytes=11 * 1024 * 1024)
+    mode = fields.get("mode", DEFAULT_MODE)
+    if mode not in cfg.MODES:
+        h._json({"ok": False, "error": "非法模式"}); return
+    slot = (fields.get("slot") or "").strip()
+    if slot not in _PACK_ASSET_SLOTS:
+        h._json({"ok": False, "error": "slot 必须为 avatar/cover"}); return
+    file_info = files.get("file")
+    if not file_info:
+        h._json({"ok": False, "error": "缺少图片文件"}); return
+    data = file_info["data"]
+    ext = Path(str(file_info.get("filename") or "")).suffix.lower()
+    if ext not in (".png", ".jpg", ".jpeg", ".webp"):
+        h._json({"ok": False, "error": "仅支持 png/jpg/jpeg/webp 图片格式"}); return
+    if not isinstance(data, bytes) or len(data) > 5 * 1024 * 1024:
+        h._json({"ok": False, "error": "图片过大（上限 5MB）"}); return
+    # 按原扩展名落盘（避免扩展名与内容不符导致 MIME 错误）；
+    # 同名槽位只留一份（清掉旧的其他扩展名副本）
+    d = cfg.mode_character_dir(mode) / "assets"
+    d.mkdir(parents=True, exist_ok=True)
+    from modules.storage import atomic_write_bytes
+    for old in d.glob(f"{slot}.*"):
+        if old.suffix.lower() != ext:
+            try: old.unlink()
+            except OSError: pass
+    fp = d / f"{slot}{ext}"
+    if not atomic_write_bytes(fp, data):
+        h._json({"ok": False, "error": "图片保存失败"}); return
+    h._json({"ok": True, "slot": slot,
+             "url": f"/assets/character/{mode}/assets/{slot}{ext}"})
+
+
+def delete_pack_asset(h):
+    """POST /pack-asset/delete：删除包资产用户副本（恢复 bundled 默认）。"""
+    body = _read_json(h)
+    mode = _body_mode(body)
+    slot = (body.get("slot") or "").strip()
+    if slot not in _PACK_ASSET_SLOTS:
+        h._json({"ok": False, "error": "slot 必须为 avatar/cover"}); return
+    d = cfg.mode_character_dir(mode) / "assets"
+    removed = 0
+    if d.is_dir():
+        for fp in d.glob(f"{slot}.*"):
+            try:
+                fp.unlink(); removed += 1
+            except OSError:
+                pass
+    h._json({"ok": True, "slot": slot, "removed": removed})
+
+
+def delete_character_file(h):
+    """POST /character-file/delete：删除文案用户副本（恢复 bundled 默认）。
+    白名单与 character_file_update 相同。"""
+    body = _read_json(h)
+    mode = _body_mode(body)
+    filename = (body.get("filename") or "").strip()
+    allowed = {"用户设定.md"} | set(_PACK_PROMPT_FILES)
+    if filename not in allowed:
+        h._json({"ok": False, "error": f"不允许的文件: {filename}"}); return
+    fp = cfg.mode_character_dir(mode) / filename
+    existed = fp.exists()
+    try:
+        fp.unlink(missing_ok=True)
+    except OSError as e:
+        h._json({"ok": False, "error": f"删除失败: {e}"}); return
+    from modules.llm_base import clear_cache
+    clear_cache()
+    h._json({"ok": True, "filename": filename, "existed": existed})
 
 
 # ═══ 收藏夹（长按消息 → 收藏）═══

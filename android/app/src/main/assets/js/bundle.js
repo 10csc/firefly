@@ -596,6 +596,7 @@ document.querySelectorAll(".menu-tab").forEach(btn => {
         const target = document.getElementById("tab-" + btn.dataset.tab);
         if (target) target.classList.add("active");
         if (btn.dataset.tab === "char") { loadCharFiles(); loadJournal(); loadUserMemory(); }
+        if (btn.dataset.tab === "pack") loadPackPanel();
         if (btn.dataset.tab === "state") loadStateTab();
         if (btn.dataset.tab === "fav") loadFavorites();
         if (btn.dataset.tab === "log") loadRequestLog();
@@ -875,6 +876,7 @@ document.getElementById("sticker-submit").addEventListener("click", async () => 
     if (!file) { msg.textContent = "请先选择图片"; return; }
     if (!label) { msg.textContent = "请填写含义描述"; return; }
     const fd = new FormData(); fd.append("file", file); fd.append("category", category); fd.append("label", label);
+    fd.append("mode", CURRENT_MODE);   // 归属当前包（阶段6）
     try {
         const resp = await fetch("/add-sticker", { method: "POST", body: fd });
         const data = await resp.json();
@@ -1004,6 +1006,144 @@ async function loadStickerList() {
 // 运行模式切换（A7c 已删除）：本地优先 + 后端失败自动回落服务器——无手动切换入口。
 // 保留此注释防止旧代码/测试引用复活。
 // ═══════════════════════════════════════════
+
+// ═══════════════════════════════════════════
+// 角色包管理（阶段6：软件内修改包资产——头像/封面/提示词文案）
+// ═══════════════════════════════════════════
+const _PACK_PROMPT_LABELS = {
+    "prompts/polisher.md": "回复器人设（核心文案）",
+    "prompts/analyzer_extra.md": "分析器·剧本事实核查补充",
+    "prompts/organizer_sticker.md": "组织器·表情包调度提示词",
+    "prompts/organizer_narration.md": "组织器·旁白生成提示词",
+    "prompts/proactive_context.md": "主动消息·情境文案",
+    "prompts/env_suffix.md": "环境句·世界后缀",
+};
+
+async function loadPackPanel() {
+    const info = document.getElementById("pack-panel-info");
+    const assetsBox = document.getElementById("pack-assets");
+    const promptsBox = document.getElementById("pack-prompts");
+    if (!info || !assetsBox || !promptsBox) return;
+    let data;
+    try {
+        const resp = await fetch(`/pack-files?mode=${encodeURIComponent(CURRENT_MODE)}`);
+        data = await resp.json();
+    } catch (e) { info.textContent = "加载失败（网络）"; return; }
+    if (!data || !data.files) { info.textContent = "加载失败"; return; }
+
+    const presLabel = {sticker: "短信+表情包", narration: "短信+旁白", none: "纯短信"}[data.presentation] || data.presentation;
+    document.getElementById("pack-panel-name").textContent = `角色包：${data.name || data.mode}`;
+    info.textContent = `形态：${presLabel}（对当前模式生效，改动只影响本包）`;
+
+    // 头像 / 封面
+    assetsBox.innerHTML = "";
+    for (const slot of ["avatar", "cover"]) {
+        const label = slot === "avatar" ? "头像" : "封面（首页卡片图）";
+        const row = document.createElement("div");
+        row.style.cssText = "display:flex;align-items:center;gap:10px;margin:8px 0";
+        const img = document.createElement("img");
+        img.style.cssText = slot === "avatar"
+            ? "width:48px;height:48px;border-radius:50%;object-fit:cover;background:#222"
+            : "width:96px;height:54px;border-radius:8px;object-fit:cover;background:#222";
+        if (data.assets && data.assets[slot]) img.src = data.assets[slot] + "?t=" + Date.now();
+        const name = document.createElement("span");
+        name.style.cssText = "font-size:0.8em;color:var(--fg-muted);flex:1";
+        name.textContent = label;
+        const upBtn = document.createElement("button");
+        upBtn.type = "button"; upBtn.textContent = "替换";
+        upBtn.onclick = () => _packAssetUpload(slot);
+        const rstBtn = document.createElement("button");
+        rstBtn.type = "button"; rstBtn.textContent = "恢复默认";
+        rstBtn.onclick = async () => {
+            if (!confirm(`恢复${label}为默认？（删除你的修改）`)) return;
+            try {
+                await fetch("/pack-asset/delete", {method: "POST",
+                    headers: {"Content-Type": "application/json"},
+                    body: JSON.stringify({mode: CURRENT_MODE, slot})});
+                showToast("已恢复默认");
+                loadPackPanel();
+                try { window.loadModes && (window.__modesReload ? window.__modesReload() : location.reload()); } catch (e) {}
+            } catch (e) { showToast("操作失败"); }
+        };
+        row.append(img, name, upBtn, rstBtn);
+        assetsBox.appendChild(row);
+    }
+
+    // 提示词文案（可折叠编辑器）
+    promptsBox.innerHTML = "";
+    for (const f of data.files) {
+        if (!f.name.startsWith("prompts/")) continue;
+        const det = document.createElement("details");
+        det.style.cssText = "margin:8px 0;border:1px solid var(--border-mid);border-radius:10px;padding:8px 10px";
+        const sum = document.createElement("summary");
+        sum.style.cssText = "cursor:pointer;font-size:0.82em";
+        sum.textContent = (_PACK_PROMPT_LABELS[f.name] || f.name) + (f.customized ? "（已修改）" : "");
+        const ta = document.createElement("textarea");
+        ta.style.cssText = "width:100%;height:160px;margin-top:8px";
+        ta.value = f.content || "";
+        const btnRow = document.createElement("div");
+        btnRow.className = "btn-row";
+        btnRow.style.marginTop = "6px";
+        const saveBtn = document.createElement("button");
+        saveBtn.type = "button"; saveBtn.textContent = "保存";
+        saveBtn.onclick = async () => {
+            const content = ta.value;
+            if (!content.trim()) { showToast("内容不能为空（要恢复默认请用右侧按钮）"); return; }
+            try {
+                const r = await fetch("/character-file-update", {method: "POST",
+                    headers: {"Content-Type": "application/json"},
+                    body: JSON.stringify({mode: CURRENT_MODE, filename: f.name, content})});
+                const d = await r.json();
+                showToast(d.ok ? "已保存（下轮对话生效）" : ("保存失败：" + (d.error || "")));
+                if (d.ok) sum.textContent = (_PACK_PROMPT_LABELS[f.name] || f.name) + "（已修改）";
+            } catch (e) { showToast("网络错误"); }
+        };
+        const rstBtn = document.createElement("button");
+        rstBtn.type = "button"; rstBtn.textContent = "恢复默认";
+        rstBtn.onclick = async () => {
+            if (!confirm("恢复该文案为包默认？（删除你的修改）")) return;
+            try {
+                await fetch("/character-file/delete", {method: "POST",
+                    headers: {"Content-Type": "application/json"},
+                    body: JSON.stringify({mode: CURRENT_MODE, filename: f.name})});
+                showToast("已恢复默认");
+                loadPackPanel();
+            } catch (e) { showToast("操作失败"); }
+        };
+        btnRow.append(saveBtn, rstBtn);
+        det.append(sum, ta, btnRow);
+        promptsBox.appendChild(det);
+    }
+}
+
+// 头像/封面上传（复用图片压缩，选文件后上传为包资产）
+function _packAssetUpload(slot) {
+    const inp = document.createElement("input");
+    inp.type = "file";
+    inp.accept = "image/png,image/jpeg,image/webp";
+    inp.onchange = async () => {
+        const f = inp.files && inp.files[0];
+        if (!f) return;
+        if (f.size > 5 * 1024 * 1024) { showToast("图片过大（上限 5MB）"); return; }
+        try {
+            const fd = new FormData();
+            fd.append("mode", CURRENT_MODE);
+            fd.append("slot", slot);
+            fd.append("file", f, f.name || (slot + ".png"));
+            const r = await fetch("/pack-asset", {method: "POST", body: fd});
+            const d = await r.json();
+            if (d.ok) {
+                showToast("已替换");
+                loadPackPanel();
+                // 封面/头像换了：模式卡片与品牌标识刷新（重拉注册表资产 URL）
+                try { window.__modesReload && window.__modesReload(); } catch (e) {}
+            } else {
+                showToast("上传失败：" + (d.error || ""));
+            }
+        } catch (e) { showToast("网络错误"); }
+    };
+    inp.click();
+}
 
 
 /* ── 来源：js/settings.js ── */
@@ -3388,6 +3528,12 @@ async function loadModes() {
     applyModeBranding();
     try { window.renderFixModes && window.renderFixModes(); } catch (e) {}   // 纠错页模式按钮随注册表刷新
 }
+
+// 包资产编辑后强制重拉注册表（panels.js 角色包管理调用）
+window.__modesReload = async () => {
+    _modesLoaded = false;
+    await loadModes();
+};
 
 // 按 PRESET_MODES 渲染轮播图与 PC 大卡（卡片点击/滑动进入对应模式）
 function renderModeCards() {

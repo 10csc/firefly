@@ -29,6 +29,7 @@ class StickerEntry:
     category: str    # 可爱 | 帅气
     label: str       # 含义描述
     enabled: bool = True   # 是否参与选图（管理页可启停）
+    pack: str = ""         # 归属预设包（空 = 全局共享；角色预设化阶段6）
 
 # 代码内默认项（流萤常用可爱系 + 萨姆帅气系）
 _STICKERS_DEFAULT: dict[str, StickerEntry] = {
@@ -154,6 +155,7 @@ def _load_registry() -> dict[str, StickerEntry]:
                 id=sid, file=file, category=category,
                 label=item.get("label", ""),
                 enabled=bool(item.get("enabled", True)),
+                pack=str(item.get("pack", "") or ""),
             )
 
     _merge(_read_registry_items(_REGISTRY_FILE))
@@ -168,7 +170,7 @@ def editable_ids() -> set[str]:
     return {str(i.get("id", "")) for i in _read_registry_items(_user_registry_file())}
 
 
-def _save_user_entry(sid: str, file: str, category: str, label: str) -> None:
+def _save_user_entry(sid: str, file: str, category: str, label: str, pack: str = "") -> None:
     """把用户添加项追加到当前用户的 registry.json（服务器版按账号隔离）。"""
     fp = _user_registry_file()
     existing = {"stickers": []}
@@ -181,7 +183,7 @@ def _save_user_entry(sid: str, file: str, category: str, label: str) -> None:
             existing = {"stickers": []}
     existing.setdefault("stickers", []).append({
         "id": sid, "file": file, "category": category, "label": label,
-        "enabled": True,
+        "enabled": True, "pack": pack,
     })
     fp.parent.mkdir(parents=True, exist_ok=True)
     fp.write_text(
@@ -204,13 +206,14 @@ class StickerDeleteError(Exception):
     pass
 
 
-def add_sticker(file: str, category: str, label: str) -> StickerEntry:
+def add_sticker(file: str, category: str, label: str, pack: str = "") -> StickerEntry:
     """用户添加表情包——生成 id + 写盘到 registry.json。
 
     Args:
         file: 相对于 assets/ 的路径（如 stickers/用户上传的xxx.png）
         category: 可爱 | 帅气
         label: 含义描述
+        pack: 归属预设包 id（空 = 全局共享；阶段6起新添加默认带当前包）
 
     Returns:
         新建的 StickerEntry
@@ -221,25 +224,32 @@ def add_sticker(file: str, category: str, label: str) -> StickerEntry:
         raise StickerAddError("file 不能为空")
     if not label or not isinstance(label, str):
         raise StickerAddError("label 不能为空")
+    if pack:
+        from modules.app_config import MODES
+        if pack not in MODES:
+            raise StickerAddError(f"非法预设包: {pack}")
 
     with _lock:
         sid = "user_" + uuid.uuid4().hex[:8]
-        entry = StickerEntry(sid, file, category, label)
-        _save_user_entry(sid, file, category, label)
-    logger.info("用户添加表情包: id=%s file=%s category=%s", sid, file, category)
+        entry = StickerEntry(sid, file, category, label, pack=pack)
+        _save_user_entry(sid, file, category, label, pack)
+    logger.info("用户添加表情包: id=%s file=%s category=%s pack=%s", sid, file, category, pack)
     return entry
 
 
-# ── 列表 / 修改 / 删除（供前端管理表使用）──────────────
+# ── 列表（供前端管理表使用）──────────────
 def list_all_stickers() -> list[StickerEntry]:
-    """返回全量表情包列表（默认 + 用户添加），按 id 排序，供前端管理表展示。"""
+    """返回全量表情包列表（默认 + 用户添加，所有包），按 id 排序，供前端管理表展示。"""
     stickers = _load_registry()
     return sorted(stickers.values(), key=lambda s: s.id)
 
 
-def get_enabled_stickers() -> dict[str, StickerEntry]:
-    """只返回启用中的表情包（组织器选图与管理页“可用”视图用）。"""
-    return {sid: s for sid, s in _load_registry().items() if s.enabled}
+def get_enabled_stickers(mode: str = "") -> dict[str, StickerEntry]:
+    """只返回启用中的表情包；mode 给定时按包过滤（全局共享 + 归属该包）。"""
+    stickers = _load_registry()
+    if mode:
+        stickers = {sid: s for sid, s in stickers.items() if not s.pack or s.pack == mode}
+    return {sid: s for sid, s in stickers.items() if s.enabled}
 
 
 def _write_registry_all(stickers: dict[str, StickerEntry]) -> None:
@@ -260,7 +270,7 @@ def _write_registry_all(stickers: dict[str, StickerEntry]) -> None:
         elif sid not in prev_ids:
             continue            # 公共池条目：不是用户的，不写入用户文件
         user_items.append({"id": s.id, "file": s.file, "category": s.category,
-                           "label": s.label, "enabled": bool(s.enabled)})
+                           "label": s.label, "enabled": bool(s.enabled), "pack": s.pack})
     fp.parent.mkdir(parents=True, exist_ok=True)
     fp.write_text(
         json.dumps({"stickers": user_items}, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -344,13 +354,13 @@ def delete_sticker(sid: str) -> None:
 
 
 # ── 选图 ──────────────────────────────────────────
-def pick_sticker(category: str = "可爱") -> StickerEntry | None:
+def pick_sticker(category: str = "可爱", mode: str = "") -> StickerEntry | None:
     """从指定分类中随机选一张。无图则降级到可爱，仍无返回 None。"""
     global _PICK_COUNT
     if category not in VALID_CATEGORIES:
         category = "可爱"
 
-    stickers = get_enabled_stickers()
+    stickers = get_enabled_stickers(mode)
     matches = [s for s in stickers.values() if s.category == category]
     if not matches and category != "可爱":
         matches = [s for s in stickers.values() if s.category == "可爱"]
@@ -367,7 +377,7 @@ def _char_overlap(a: str, b: str) -> int:
     return len(set(a) & set(b))
 
 
-def pick_sticker_by_meaning(meaning: str) -> StickerEntry | None:
+def pick_sticker_by_meaning(meaning: str, mode: str = "") -> StickerEntry | None:
     """按"想表达的意思"匹配 label 最接近的一张。
 
     meaning: 规划器给的自然语言，如"害羞""安慰他""无奈""比心""撒娇""道歉"。
@@ -379,7 +389,7 @@ def pick_sticker_by_meaning(meaning: str) -> StickerEntry | None:
     if not isinstance(meaning, str) or not meaning.strip():
         return None
 
-    stickers = get_all_stickers()
+    stickers = get_all_stickers(mode)
     if not stickers:
         return None
 
@@ -397,21 +407,22 @@ def pick_sticker_by_meaning(meaning: str) -> StickerEntry | None:
     return random.choice(top)
 
 
-def pick_sticker_by_label(label: str) -> StickerEntry | None:
+def pick_sticker_by_label(label: str, mode: str = "") -> StickerEntry | None:
     """按 label 精确匹配（工具调度器直接输出 label 原文时用），
     未命中时降级字符重叠模糊匹配。"""
     global _PICK_COUNT
     if not isinstance(label, str) or not label.strip():
         return None
     label = label.strip()
-    stickers = get_all_stickers()
+    stickers = get_all_stickers(mode)
     exact = [s for s in stickers.values() if s.label == label]
     if exact:
         with _lock: _PICK_COUNT += 1
         return random.choice(exact)
-    return pick_sticker_by_meaning(label)
+    return pick_sticker_by_meaning(label, mode)
 
 
-def get_all_stickers() -> dict[str, StickerEntry]:
-    """选图用：只返回启用中的表情包。管理页全量列表用 list_all_stickers()。"""
-    return get_enabled_stickers()
+def get_all_stickers(mode: str = "") -> dict[str, StickerEntry]:
+    """选图用：只返回启用中的表情包；mode 给定时按包过滤（全局共享 + 归属该包）。
+    管理页全量列表用 list_all_stickers()。"""
+    return get_enabled_stickers(mode)

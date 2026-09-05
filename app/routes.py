@@ -36,7 +36,9 @@ from routes_config import (set_key, set_config, check_key, get_config,
 from routes_assets import (add_sticker_route, sticker_update, sticker_delete,
                            get_stickers, character_file_update, get_character_files,
                            upload_image, get_image, assets_index, assets_raw,
-                           add_favorite_route, get_favorites, delete_favorite_route)
+                           add_favorite_route, get_favorites, delete_favorite_route,
+                           get_pack_files, upload_pack_asset, delete_pack_asset,
+                           delete_character_file)
 from routes_fix import (setting_fix_status, setting_fix_message, setting_fix_start,
                         setting_fix_apply, setting_fix_dismiss, setting_fix_rollback,
                         setting_fix_reset)
@@ -159,7 +161,7 @@ def chat(h):
                 if not path:
                     try:
                         from tools.sticker_picker import pick_sticker_by_label
-                        entry = pick_sticker_by_label(label)
+                        entry = pick_sticker_by_label(label, mode)
                         path = entry.file if entry else ""
                     except Exception:
                         path = ""
@@ -710,6 +712,9 @@ POST_ROUTES = {
     "/favorite": add_favorite_route,
     "/favorites/delete": delete_favorite_route,
     "/upload-image": upload_image,
+    "/pack-asset": upload_pack_asset,
+    "/pack-asset/delete": delete_pack_asset,
+    "/character-file/delete": delete_character_file,
 }
 
 
@@ -736,6 +741,7 @@ GET_ROUTES = {
     "/wake-status": get_wake_status,
     "/stickers": get_stickers,
     "/character-files": get_character_files,
+    "/pack-files": get_pack_files,
     "/user-memory": get_user_memory,
     "/journal": get_journal,
     "/export-data": export_data,

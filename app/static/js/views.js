@@ -131,6 +131,12 @@ export async function loadModes() {
     try { window.renderFixModes && window.renderFixModes(); } catch (e) {}   // 纠错页模式按钮随注册表刷新
 }
 
+// 包资产编辑后强制重拉注册表（panels.js 角色包管理调用）
+window.__modesReload = async () => {
+    _modesLoaded = false;
+    await loadModes();
+};
+
 // 按 PRESET_MODES 渲染轮播图与 PC 大卡（卡片点击/滑动进入对应模式）
 function renderModeCards() {
     carouselTrack.innerHTML = "";

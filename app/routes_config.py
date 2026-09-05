@@ -266,11 +266,14 @@ def get_modes(h):
     from modules.llm_base import resolve_character_file
 
     def _pack_asset_url(mode: str, fname: str) -> str:
-        # 用户副本（软件内编辑产物）优先，退回 bundled 包目录
-        ub = cfg.mode_character_dir(mode) / "assets" / fname
-        bb = cfg.bundled_character_dir(mode) / "assets" / fname
-        if ub.exists() or bb.exists():
-            return f"/assets/character/{mode}/assets/{fname}"
+        # 按槽位名 glob（任意图片扩展名）：用户副本优先，退回 bundled 包目录
+        slot = fname.split(".")[0]
+        for base in (cfg.mode_character_dir(mode) / "assets",
+                     cfg.bundled_character_dir(mode) / "assets"):
+            if base.is_dir():
+                for fp in sorted(base.glob(f"{slot}.*")):
+                    if fp.suffix.lower() in (".png", ".jpg", ".jpeg", ".webp"):
+                        return f"/assets/character/{mode}/assets/{fp.name}"
         return ""
 
     items = []

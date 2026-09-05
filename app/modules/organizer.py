@@ -73,10 +73,10 @@ _ORGANIZER_SYSTEM_FALLBACK = """你是{char_name}的表情包助手。{char_name
 {{"sticker":"label原文"}} 或 {{"sticker":"无"}}"""
 
 
-def _build_sticker_list() -> str:
-    """从注册表构建 label 清单（按分类分组）。"""
+def _build_sticker_list(mode: str = "") -> str:
+    """从注册表构建 label 清单（按分类分组）；按包过滤（全局共享 + 归属该包）。"""
     from tools.sticker_picker import get_all_stickers
-    stickers = get_all_stickers()
+    stickers = get_all_stickers(mode)
     by_cat: dict[str, list[str]] = {}
     for s in stickers.values():
         by_cat.setdefault(s.category, []).append(s.label)
@@ -157,7 +157,7 @@ class Organizer:
         # 2. 构建 prompt（提示词从预设包加载，兜底框架通用版）
         stable = render_pack_prompt(
             "organizer_sticker", self._mode, _ORGANIZER_SYSTEM_FALLBACK,
-            sticker_labels=_build_sticker_list(),
+            sticker_labels=_build_sticker_list(self._mode),
             char_name=char_name(self._mode), user_name=user_name(self._mode))
 
         recent_lines = []

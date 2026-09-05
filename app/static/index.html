@@ -676,6 +676,7 @@
             <button class="menu-tab" data-tab="fav">收藏</button>
             <button class="menu-tab" data-tab="sticker">表情包</button>
             <button class="menu-tab" data-tab="char">设定文件</button>
+            <button class="menu-tab" data-tab="pack">角色包</button>
             <!-- 流萤状态：状态系统下线后的占位 tab（4.5：隐藏不删，接回后恢复） -->
             <button class="menu-tab" data-tab="state" style="display:none">流萤状态</button>
             <div class="menu-group-title">与系统相关</div>
@@ -720,6 +721,24 @@
                 </div>
                 <textarea id="journal-editor" style="height:180px"></textarea>
                 <div id="journal-msg" style="color:#8a8a8a;font-size:0.75em;margin-top:4px"></div>
+            </div>
+        </div>
+
+        <!-- Tab: 角色包（当前包信息 / 头像封面上传 / 提示词文案编辑） -->
+        <div class="menu-content" id="tab-pack">
+            <div class="field">
+                <label id="pack-panel-name">角色包</label>
+                <div class="field-tip" id="pack-panel-info">读取中…</div>
+            </div>
+            <div class="field">
+                <label>头像 / 封面</label>
+                <div class="field-tip">替换后全局生效；「恢复默认」删除你的修改。</div>
+                <div id="pack-assets"></div>
+            </div>
+            <div class="field">
+                <label>提示词文案（高级）</label>
+                <div class="field-tip">直接改包的人设/核查/调度文案。含 {core} {journal} 等槽位标记的行请保留槽位原文。「恢复默认」删除你的修改。</div>
+                <div id="pack-prompts"></div>
             </div>
         </div>
 
