@@ -770,6 +770,25 @@ body {
     clip-path: inset(0 round 18px);
     margin: 0 auto;
 }
+/* 角色包管理入口：轮播图/大卡右上角齿轮角标（显眼但不过度打扰） */
+#carousel-manage-btn {
+    position: absolute; top: 8px; right: 8px; z-index: 5;
+    width: 34px; height: 34px; border-radius: 50%;
+    border: 1px solid var(--border-mid, rgba(255,255,255,0.14));
+    background: rgba(20, 22, 34, 0.55); backdrop-filter: blur(6px);
+    color: #e8dfc8; font-size: 16px; cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+}
+.hm-card { position: relative; }
+.hm-manage {
+    position: absolute; top: 8px; right: 8px; z-index: 5;
+    width: 32px; height: 32px; border-radius: 50%;
+    border: 1px solid var(--border-mid, rgba(255,255,255,0.14));
+    background: rgba(20, 22, 34, 0.55); backdrop-filter: blur(6px);
+    color: #e8dfc8; font-size: 15px; cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+}
+.hm-manage:hover, #carousel-manage-btn:hover { background: rgba(60, 64, 90, 0.75); }
 .carousel-track {
     position: relative; height: 100%; width: 100%;
     border-radius: 18px; overflow: hidden;

@@ -19,6 +19,7 @@
                 { key: "chat",    icon: "💬", label: "聊天" },
                 { key: "home",    icon: "🏠", label: "首页" },
                 { key: "char",    icon: "📖", label: "设定文件" },
+                { key: "pack",    icon: "🎭", label: "角色包" },
                 { key: "sticker", icon: "😊", label: "表情包" },
                 { key: "fav",     icon: "⭐", label: "收藏" },
                 { key: "fix",     icon: "🛠", label: "指出问题" },

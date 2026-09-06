@@ -524,7 +524,27 @@ async function loadPackPanel() {
     if (!data || !data.files) { info.textContent = "加载失败"; return; }
 
     const presLabel = {sticker: "短信+表情包", narration: "短信+旁白", none: "纯短信"}[data.presentation] || data.presentation;
-    document.getElementById("pack-panel-name").textContent = `角色包：${data.name || data.mode}`;
+
+    // 顶部：包切换器（多包时可直接切换管理对象）
+    const nameEl = document.getElementById("pack-panel-name");
+    nameEl.textContent = "";
+    const sel = document.createElement("select");
+    sel.style.cssText = "font-size:0.9em;max-width:220px";
+    let mods = [];
+    try { const v = await import("./views.js"); mods = v.PRESET_MODES; } catch (e) {}
+    for (const m of mods) {
+        const opt = document.createElement("option");
+        opt.value = m.id;
+        opt.textContent = m.name || m.id;
+        if (m.id === data.mode) opt.selected = true;
+        sel.appendChild(opt);
+    }
+    sel.onchange = async () => {
+        try { const v = await import("./views.js"); v.setCurrentMode(sel.value); } catch (e) {}
+        loadPackPanel();
+    };
+    nameEl.appendChild(document.createTextNode("角色包："));
+    nameEl.appendChild(sel);
     info.textContent = `形态：${presLabel}（对当前模式生效，改动只影响本包）`;
 
     // 自定义包：显示删除入口（内置包不可删）
@@ -563,22 +583,24 @@ async function loadPackPanel() {
     // 头像 / 封面
     assetsBox.innerHTML = "";
     for (const slot of ["avatar", "cover"]) {
-        const label = slot === "avatar" ? "头像" : "封面（首页卡片图）";
+        const label = slot === "avatar" ? "头像" : "封面";
         const row = document.createElement("div");
         row.style.cssText = "display:flex;align-items:center;gap:10px;margin:8px 0";
         const img = document.createElement("img");
         img.style.cssText = slot === "avatar"
-            ? "width:48px;height:48px;border-radius:50%;object-fit:cover;background:#222"
-            : "width:96px;height:54px;border-radius:8px;object-fit:cover;background:#222";
+            ? "width:48px;height:48px;border-radius:50%;object-fit:cover;background:#222;flex:0 0 auto"
+            : "width:96px;height:54px;border-radius:8px;object-fit:cover;background:#222;flex:0 0 auto";
         if (data.assets && data.assets[slot]) img.src = data.assets[slot] + "?t=" + Date.now();
         const name = document.createElement("span");
-        name.style.cssText = "font-size:0.8em;color:var(--fg-muted);flex:1";
+        name.style.cssText = "font-size:0.8em;color:var(--fg-muted);white-space:nowrap";
         name.textContent = label;
         const upBtn = document.createElement("button");
         upBtn.type = "button"; upBtn.textContent = "替换";
+        upBtn.style.cssText = "flex:1";
         upBtn.onclick = () => _packAssetUpload(slot);
         const rstBtn = document.createElement("button");
         rstBtn.type = "button"; rstBtn.textContent = "恢复默认";
+        rstBtn.style.cssText = "flex:1";
         rstBtn.onclick = async () => {
             if (!confirm(`恢复${label}为默认？（删除你的修改）`)) return;
             try {

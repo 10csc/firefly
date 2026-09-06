@@ -105,6 +105,9 @@ export function modeName(id) { return MODE_NAMES[id] || id; }
 export function currentPreset() {
     return PRESET_MODES.find(m => m.id === CURRENT_MODE) || PRESET_MODES[0] || null;
 }
+export function setCurrentMode(mode) {   // ESM 导出只读绑定，外部经此切换
+    if (PRESET_MODES.some(m => m.id === mode)) CURRENT_MODE = mode;
+}
 
 // 拉取预设包清单并渲染模式卡片（轮播 + PC 大卡）；失败兜底两内置包（与后端兜底一致）
 export async function loadModes() {
@@ -136,6 +139,19 @@ window.__modesReload = async () => {
     _modesLoaded = false;
     await loadModes();
 };
+
+// 进入某包的管理页（卡片角标/轮播角标入口）：切到该包 + 打开角色包管理
+function managePack(mode) {
+    if (PRESET_MODES.some(m => m.id === mode)) CURRENT_MODE = mode;
+    try { window.openMenuTab("pack"); } catch (e) {}
+}
+window.managePack = managePack;
+// 轮播角标：管理当前轮播位置的包
+document.getElementById("carousel-manage-btn")?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    const m = PRESET_MODES[carouselIndex];
+    if (m) managePack(m.id);
+});
 
 // ── 新建角色包（阶段7，本地版）──
 function togglePackCreate(show) {
@@ -198,7 +214,13 @@ function renderModeCards() {
             img.alt = m.name || m.id;
             const n1 = document.createElement("span"); n1.className = "hm-name"; n1.textContent = m.name || m.id;
             const n2 = document.createElement("span"); n2.className = "hm-desc"; n2.textContent = m.desc || "";
-            btn.append(img, n1, n2);
+            // 管理角标（显眼入口：直接进该包的管理页）
+            const mg = document.createElement("span");
+            mg.className = "hm-manage";
+            mg.title = `管理「${m.name || m.id}」`;
+            mg.textContent = "⚙";
+            mg.onclick = (e) => { e.stopPropagation(); managePack(m.id); };
+            btn.append(img, n1, n2, mg);
             hm.appendChild(btn);
         }
         // 「+ 新建角色」卡（仅本地版显示；服务器版不做自定义整包）
