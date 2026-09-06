@@ -706,6 +706,21 @@ body {
     background: transparent; color: var(--fg-muted); font-size: 0.92em; cursor: pointer; font-family: inherit;
     transition: color 0.18s, border-color 0.18s; }
 #cv-new-btn:hover { color: var(--fg-accent); border-color: var(--gold-line); }
+/* 新建角色表单：控件深色化（与 menu-content 同风格；修复原生白底突兀） */
+#cards-view .field { margin-bottom: 10px; }
+#cards-view input[type="text"], #cards-view select {
+    width: 100%; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--input-border);
+    background: var(--ctrl-bg); color: var(--fg-main);
+    font-family: inherit; font-size: 16px; box-sizing: border-box;   /* 16px 防移动端聚焦缩放 */
+}
+#cards-view input::placeholder { color: var(--fg-muted); }
+#cards-view .field-tip { color: var(--fg-muted); font-size: 0.72em; margin-top: 6px; }
+#pack-create-panel button {
+    padding: 10px; border-radius: 999px; border: 1px solid var(--border-mid);
+    background: var(--ctrl-bg-2); color: var(--fg-bright);
+    font-family: inherit; font-size: 15px; cursor: pointer;
+}
+#pack-create-panel #pc-submit { background: var(--send-bg); color: var(--send-fg); border-color: var(--gold-line); }
 /* ── 角色编辑页（全屏，与 fix-view 同层级模式）── */
 #pack-view {
     position: fixed; inset: 0; z-index: 6;

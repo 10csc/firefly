@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>流萤</title>
-<link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="style.css?v=42509c61">
 <style>
 /* 服务器版：轮播图下登录/用户模块 */
 #auth-module{margin:14px 10px 0}
@@ -339,9 +339,9 @@
     <div class="cv-new">
         <button id="cv-new-btn" type="button" onclick="togglePackCreate()">+ 新建角色</button>
         <div id="pack-create-panel" style="display:none;text-align:left;margin-top:10px">
-            <div class="field"><input id="pc-name" placeholder="剧本/卡片名称（如：夏日烟火）" maxlength="30"></div>
-            <div class="field"><input id="pc-char" placeholder="角色名（她叫什么）" maxlength="20"></div>
-            <div class="field"><input id="pc-user" placeholder="对方称呼（她怎么称呼你）" maxlength="20"></div>
+            <div class="field"><input id="pc-name" type="text" placeholder="剧本/卡片名称（如：夏日烟火）" maxlength="30"></div>
+            <div class="field"><input id="pc-char" type="text" placeholder="角色名（她叫什么）" maxlength="20"></div>
+            <div class="field"><input id="pc-user" type="text" placeholder="对方称呼（她怎么称呼你）" maxlength="20"></div>
             <div class="field">
                 <select id="pc-presentation">
                     <option value="sticker">短信 + 表情包</option>
@@ -968,7 +968,7 @@
 </script>
 <script src="config.js"></script>
 <!-- 运行时入口：bundle.js（classic script，file:// 兼容；ES Module 在安卓服务器模式 file:// 下被 CORS 拦截） -->
-<script src="js/bundle.js"></script>
+<script src="js/bundle.js?v=9cf48517"></script>
 <script src="js/pc_nav.js"></script>
 </body>
 </html>
