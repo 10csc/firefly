@@ -596,7 +596,6 @@ document.querySelectorAll(".menu-tab").forEach(btn => {
         const target = document.getElementById("tab-" + btn.dataset.tab);
         if (target) target.classList.add("active");
         if (btn.dataset.tab === "char") { loadCharFiles(); loadJournal(); loadUserMemory(); }
-        if (btn.dataset.tab === "pack") loadPackPanel();
         if (btn.dataset.tab === "state") loadStateTab();
         if (btn.dataset.tab === "fav") loadFavorites();
         if (btn.dataset.tab === "log") loadRequestLog();
@@ -1008,7 +1007,7 @@ async function loadStickerList() {
 // ═══════════════════════════════════════════
 
 // ═══════════════════════════════════════════
-// 角色包管理（阶段6：软件内修改包资产——头像/封面/提示词文案）
+// 角色编辑页（全屏 #pack-view：封面横幅 + 大头像 + 人设文案编辑 + 自建角色删除）
 // ═══════════════════════════════════════════
 const _PACK_PROMPT_LABELS = {
     "prompts/polisher.md": "回复器人设（核心文案）",
@@ -1019,122 +1018,92 @@ const _PACK_PROMPT_LABELS = {
     "prompts/env_suffix.md": "环境句·世界后缀",
 };
 
-async function loadPackPanel() {
-    const info = document.getElementById("pack-panel-info");
-    const assetsBox = document.getElementById("pack-assets");
-    const promptsBox = document.getElementById("pack-prompts");
-    if (!info || !assetsBox || !promptsBox) return;
+async function loadPackView() {
     let data;
     try {
         const resp = await fetch(`/pack-files?mode=${encodeURIComponent(CURRENT_MODE)}`);
         data = await resp.json();
-    } catch (e) { info.textContent = "加载失败（网络）"; return; }
-    if (!data || !data.files) { info.textContent = "加载失败"; return; }
+    } catch (e) { showToast("加载失败（网络）"); return; }
+    if (!data || !data.files) return;
 
     const presLabel = {sticker: "短信+表情包", narration: "短信+旁白", none: "纯短信"}[data.presentation] || data.presentation;
+    const t = Date.now();
+    const coverEl = document.getElementById("pv-cover");
+    if (coverEl && data.assets && data.assets.cover) coverEl.src = data.assets.cover + "?t=" + t;
+    const avatarEl = document.getElementById("pv-avatar");
+    if (avatarEl && data.assets && data.assets.avatar) avatarEl.src = data.assets.avatar + "?t=" + t;
+    document.getElementById("pv-name").textContent = "";
+    document.getElementById("pv-scene").textContent = data.name || data.mode;
+    document.getElementById("pv-pres").textContent = presLabel;
+    document.getElementById("pv-tagline").textContent = "";
+    // 角色名/签名从注册表取（经 views.js 的 window 桥——bundle 拼接后 import() 会产生第二份模块实例）
+    try {
+        const mods = (window.__getPresets && window.__getPresets()) || [];
+        const p = mods.find(m => m.id === data.mode) || {};
+        document.getElementById("pv-name").textContent = p.char_name || data.name || data.mode;
+        document.getElementById("pv-tagline").textContent = p.tagline || "";
+    } catch (e) {}
+    // 封面/头像编辑按钮绑定
+    document.getElementById("pv-cover-edit").onclick = () => _packAssetUpload("cover");
+    document.getElementById("pv-avatar-edit").onclick = () => _packAssetUpload("avatar");
 
-    // 顶部：包切换器（多包时可直接切换管理对象）
-    const nameEl = document.getElementById("pack-panel-name");
-    nameEl.textContent = "";
-    const sel = document.createElement("select");
-    sel.style.cssText = "font-size:0.9em;max-width:220px";
-    let mods = [];
-    try { const v = await import("./views.js"); mods = v.PRESET_MODES; } catch (e) {}
-    for (const m of mods) {
-        const opt = document.createElement("option");
-        opt.value = m.id;
-        opt.textContent = m.name || m.id;
-        if (m.id === data.mode) opt.selected = true;
-        sel.appendChild(opt);
-    }
-    sel.onchange = async () => {
-        try { const v = await import("./views.js"); v.setCurrentMode(sel.value); } catch (e) {}
-        loadPackPanel();
-    };
-    nameEl.appendChild(document.createTextNode("角色包："));
-    nameEl.appendChild(sel);
-    info.textContent = `形态：${presLabel}（对当前模式生效，改动只影响本包）`;
-
-    // 自定义包：显示删除入口（内置包不可删）
-    let delBtn = document.getElementById("pack-delete-btn");
-    if (data.custom) {
-        if (!delBtn) {
-            delBtn = document.createElement("button");
-            delBtn.id = "pack-delete-btn";
-            delBtn.type = "button";
-            delBtn.textContent = "删除此角色包";
-            delBtn.style.cssText = "margin-top:4px;color:#c66";
-            delBtn.onclick = async () => {
-                if (!confirm(`确定删除角色包「${data.name}」？\n该包的人设、记忆、聊天记录会一起删除，不可恢复。`)) return;
-                if (!confirm("再确认一次：删除后无法恢复。确定删除？")) return;
-                try {
-                    const r = await fetch("/pack-delete", {method: "POST",
-                        headers: {"Content-Type": "application/json"},
-                        body: JSON.stringify({id: data.mode})});
-                    const d = await r.json();
-                    if (d.ok) {
-                        showToast("已删除");
-                        try { closeMenu(); } catch (e) {}
-                        await window.__modesReload();
-                        try { window.showHome(); } catch (e) {}
-                    } else {
-                        showToast("删除失败：" + (d.error || ""));
-                    }
-                } catch (e) { showToast("网络错误"); }
-            };
-            info.parentElement.appendChild(delBtn);
-        }
-    } else if (delBtn) {
-        delBtn.remove();
-    }
-
-    // 头像 / 封面
-    assetsBox.innerHTML = "";
-    for (const slot of ["avatar", "cover"]) {
-        const label = slot === "avatar" ? "头像" : "封面";
-        const row = document.createElement("div");
-        row.style.cssText = "display:flex;align-items:center;gap:10px;margin:8px 0";
-        const img = document.createElement("img");
-        img.style.cssText = slot === "avatar"
-            ? "width:48px;height:48px;border-radius:50%;object-fit:cover;background:#222;flex:0 0 auto"
-            : "width:96px;height:54px;border-radius:8px;object-fit:cover;background:#222;flex:0 0 auto";
-        if (data.assets && data.assets[slot]) img.src = data.assets[slot] + "?t=" + Date.now();
-        const name = document.createElement("span");
-        name.style.cssText = "font-size:0.8em;color:var(--fg-muted);white-space:nowrap";
-        name.textContent = label;
-        const upBtn = document.createElement("button");
-        upBtn.type = "button"; upBtn.textContent = "替换";
-        upBtn.style.cssText = "flex:1";
-        upBtn.onclick = () => _packAssetUpload(slot);
-        const rstBtn = document.createElement("button");
-        rstBtn.type = "button"; rstBtn.textContent = "恢复默认";
-        rstBtn.style.cssText = "flex:1";
-        rstBtn.onclick = async () => {
-            if (!confirm(`恢复${label}为默认？（删除你的修改）`)) return;
+    // 危险区：自建角色可删除；非自建显示恢复资产默认入口
+    const danger = document.getElementById("pv-danger");
+    danger.innerHTML = "";
+    const tools = document.createElement("div");
+    tools.style.cssText = "margin-top:16px;font-size:0.75em;color:var(--fg-muted);display:flex;gap:14px";
+    for (const [slot, label] of [["avatar", "恢复头像默认"], ["cover", "恢复封面默认"]]) {
+        const a = document.createElement("a");
+        a.textContent = label;
+        a.style.cssText = "cursor:pointer;text-decoration:underline";
+        a.onclick = async () => {
+            if (!confirm(`${label}？（删除你的修改）`)) return;
             try {
                 await fetch("/pack-asset/delete", {method: "POST",
                     headers: {"Content-Type": "application/json"},
                     body: JSON.stringify({mode: CURRENT_MODE, slot})});
                 showToast("已恢复默认");
-                loadPackPanel();
-                try { window.loadModes && (window.__modesReload ? window.__modesReload() : location.reload()); } catch (e) {}
+                loadPackView();
+                try { window.__modesReload && window.__modesReload(); } catch (e) {}
             } catch (e) { showToast("操作失败"); }
         };
-        row.append(img, name, upBtn, rstBtn);
-        assetsBox.appendChild(row);
+        tools.appendChild(a);
+    }
+    danger.appendChild(tools);
+    if (data.custom) {
+        const delBtn = document.createElement("button");
+        delBtn.className = "pv-danger-btn";
+        delBtn.type = "button";
+        delBtn.textContent = `删除角色「${data.name}」（含人设与聊天记录）`;
+        delBtn.onclick = async () => {
+            if (!confirm(`确定删除角色「${data.name}」？\n人设、记忆、聊天记录会一起删除，不可恢复。`)) return;
+            if (!confirm("再确认一次：删除后无法恢复。确定删除？")) return;
+            try {
+                const r = await fetch("/pack-delete", {method: "POST",
+                    headers: {"Content-Type": "application/json"},
+                    body: JSON.stringify({id: data.mode})});
+                const d = await r.json();
+                if (d.ok) {
+                    showToast("已删除");
+                    await window.__modesReload();
+                    try { window.closePackView(); } catch (e) {}
+                } else {
+                    showToast("删除失败：" + (d.error || ""));
+                }
+            } catch (e) { showToast("网络错误"); }
+        };
+        danger.appendChild(delBtn);
     }
 
-    // 提示词文案（可折叠编辑器）
+    // 人设文案（可折叠编辑器）
+    const promptsBox = document.getElementById("pv-prompts");
     promptsBox.innerHTML = "";
     for (const f of data.files) {
         if (!f.name.startsWith("prompts/")) continue;
         const det = document.createElement("details");
-        det.style.cssText = "margin:8px 0;border:1px solid var(--border-mid);border-radius:10px;padding:8px 10px";
         const sum = document.createElement("summary");
-        sum.style.cssText = "cursor:pointer;font-size:0.82em";
         sum.textContent = (_PACK_PROMPT_LABELS[f.name] || f.name) + (f.customized ? "（已修改）" : "");
         const ta = document.createElement("textarea");
-        ta.style.cssText = "width:100%;height:160px;margin-top:8px";
         ta.value = f.content || "";
         const btnRow = document.createElement("div");
         btnRow.className = "btn-row";
@@ -1143,7 +1112,7 @@ async function loadPackPanel() {
         saveBtn.type = "button"; saveBtn.textContent = "保存";
         saveBtn.onclick = async () => {
             const content = ta.value;
-            if (!content.trim()) { showToast("内容不能为空（要恢复默认请用右侧按钮）"); return; }
+            if (!content.trim()) { showToast("内容不能为空（要恢复默认请用下方小字）"); return; }
             try {
                 const r = await fetch("/character-file-update", {method: "POST",
                     headers: {"Content-Type": "application/json"},
@@ -1156,13 +1125,13 @@ async function loadPackPanel() {
         const rstBtn = document.createElement("button");
         rstBtn.type = "button"; rstBtn.textContent = "恢复默认";
         rstBtn.onclick = async () => {
-            if (!confirm("恢复该文案为包默认？（删除你的修改）")) return;
+            if (!confirm("恢复该文案为默认？（删除你的修改）")) return;
             try {
                 await fetch("/character-file/delete", {method: "POST",
                     headers: {"Content-Type": "application/json"},
                     body: JSON.stringify({mode: CURRENT_MODE, filename: f.name})});
                 showToast("已恢复默认");
-                loadPackPanel();
+                loadPackView();
             } catch (e) { showToast("操作失败"); }
         };
         btnRow.append(saveBtn, rstBtn);
@@ -1170,6 +1139,7 @@ async function loadPackPanel() {
         promptsBox.appendChild(det);
     }
 }
+window.loadPackView = loadPackView;
 
 // 头像/封面上传（复用图片压缩，选文件后上传为包资产）
 function _packAssetUpload(slot) {
@@ -1189,7 +1159,7 @@ function _packAssetUpload(slot) {
             const d = await r.json();
             if (d.ok) {
                 showToast("已替换");
-                loadPackPanel();
+                loadPackView();
                 // 封面/头像换了：模式卡片与品牌标识刷新（重拉注册表资产 URL）
                 try { window.__modesReload && window.__modesReload(); } catch (e) {}
             } else {
@@ -3593,6 +3563,10 @@ window.__modesReload = async () => {
     _modesLoaded = false;
     await loadModes();
 };
+// bundle 拼接单作用域下，panels.js 取注册表/切模式的桥（避免 import("./views.js")
+// 动态导入产生第二份 ESM 模块实例）
+window.__getPresets = () => PRESET_MODES;
+window.__setCurrentMode = (mode) => setCurrentMode(mode);
 
 // 进入某包的管理页（卡片角标/轮播角标入口）：切到该包 + 打开角色包管理
 function managePack(mode) {
@@ -3639,7 +3613,45 @@ document.getElementById("pc-submit")?.addEventListener("click", async () => {
     } catch (e) { showToast("网络错误"); }
 });
 
-// 按 PRESET_MODES 渲染轮播图与 PC 大卡（卡片点击/滑动进入对应模式）
+// 轮播图上的角色信息条：跟随当前轮播位置
+function _updateCarouselChar() {
+    const c = document.getElementById("carousel-char");
+    if (!c) return;
+    const m = PRESET_MODES[carouselIndex];
+    if (!m) { c.style.display = "none"; return; }
+    c.style.display = "";
+    const img = c.querySelector("img");
+    if (m.avatar) img.src = m.avatar;
+    c.querySelector(".cc-name").textContent = m.char_name || "";
+    c.querySelector(".cc-scene").textContent = m.name || "";
+}
+
+// 角色编辑页（独立全屏）：切换目标包 + 打开
+function openPackView(mode) {
+    if (mode && PRESET_MODES.some(m => m.id === mode)) CURRENT_MODE = mode;
+    homeView.classList.remove("show");
+    const fixView = document.getElementById("fix-view");
+    if (fixView) fixView.classList.remove("show");
+    const v = document.getElementById("pack-view");
+    if (!v) return;
+    v.classList.add("show");
+    try { if (location.hash !== "#pack") history.pushState({pack: true}, "", "#pack"); } catch (e) {}
+    try { window.loadPackView && window.loadPackView(); } catch (e) {}
+}
+window.openPackView = openPackView;
+function closePackView() {
+    const v = document.getElementById("pack-view");
+    if (v) v.classList.remove("show");
+    showHome();
+    try { if (location.hash === "#pack") history.replaceState({}, "", location.pathname + location.search); } catch (e) {}
+}
+window.closePackView = closePackView;
+// 卡片角标/轮播角标入口（保留 managePack 名兼容）
+function managePack(mode) { openPackView(mode); }
+window.managePack = managePack;
+
+// 按 PRESET_MODES 渲染角色卡（轮播 + PC 大卡）：卡的主角是角色（头像+角色名），
+// 剧本名（剧情模式/春日手信）是小标签；卡上 ✎ 角标进角色编辑页
 function renderModeCards() {
     carouselTrack.innerHTML = "";
     carouselDots.innerHTML = "";
@@ -3653,6 +3665,8 @@ function renderModeCards() {
         dot.addEventListener("click", () => goCarousel(i));
         carouselDots.appendChild(dot);
     });
+    // 轮播图上叠加当前包的角色信息条（左下）
+    _updateCarouselChar();
     carouselCount = PRESET_MODES.length;
     if (carouselCount) goCarousel(0);
     const hm = document.getElementById("home-modes");
@@ -3664,17 +3678,28 @@ function renderModeCards() {
             btn.type = "button";
             btn.onclick = () => enterMode(m.id);
             const img = document.createElement("img");
+            img.className = "hm-cover";
             if (m.cover) img.src = m.cover;
             img.alt = m.name || m.id;
-            const n1 = document.createElement("span"); n1.className = "hm-name"; n1.textContent = m.name || m.id;
-            const n2 = document.createElement("span"); n2.className = "hm-desc"; n2.textContent = m.desc || "";
-            // 管理角标（显眼入口：直接进该包的管理页）
-            const mg = document.createElement("span");
-            mg.className = "hm-manage";
-            mg.title = `管理「${m.name || m.id}」`;
-            mg.textContent = "⚙";
-            mg.onclick = (e) => { e.stopPropagation(); managePack(m.id); };
-            btn.append(img, n1, n2, mg);
+            const edit = document.createElement("span");
+            edit.className = "hm-edit";
+            edit.title = `编辑「${m.char_name || m.name || m.id}」`;
+            edit.textContent = "✎";
+            edit.onclick = (e) => { e.stopPropagation(); openPackView(m.id); };
+            const char = document.createElement("div");
+            char.className = "hm-char";
+            const av = document.createElement("img");
+            if (m.avatar) av.src = m.avatar;
+            const info = document.createElement("div");
+            const cn = document.createElement("div");
+            cn.className = "hm-charname";
+            cn.textContent = m.char_name || m.name || m.id;
+            const sc = document.createElement("div");
+            sc.className = "hm-scene";
+            sc.textContent = m.name || "";
+            info.append(cn, sc);
+            char.append(av, info);
+            btn.append(img, edit, char);
             hm.appendChild(btn);
         }
         // 「+ 新建角色」卡（仅本地版显示；服务器版不做自定义整包）
@@ -3858,6 +3883,7 @@ function goCarousel(i) {
     if (!carouselCount) return;
     carouselIndex = (i + carouselCount) % carouselCount;
     // 安卓 WebView bug：transform 移动后的 img 合成层光栅化模糊。
+    _updateCarouselChar();   // 角色信息条跟随当前卡
     // 改用 opacity 淡入淡出切换（无 transform、无 display 硬切，过渡平滑）。
     [...carouselTrack.children].forEach((img, di) => {
         const active = di === carouselIndex;

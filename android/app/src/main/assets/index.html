@@ -238,8 +238,9 @@
         <button id="home-settings-btn" class="home-settings" onclick="openSettings()" title="设置">⚙</button>
     </div>
     <div class="home-carousel" id="home-carousel">
-        <button id="carousel-manage-btn" type="button" title="管理这个角色">⚙</button>
+        <button id="carousel-manage-btn" type="button" title="编辑这个角色">✎</button>
         <div class="carousel-track" id="carousel-track"></div>
+        <div class="carousel-char" id="carousel-char"><img alt=""><div><div class="cc-name"></div><div class="cc-scene"></div></div></div>
         <div class="carousel-dots" id="carousel-dots"></div>
     </div>
     <!-- PC 桌面欢迎区：模式大卡（仅 ≥1100px 显示，移动端仍为轮播）；卡片按 /modes 动态渲染 -->
@@ -340,6 +341,34 @@
                 <button class="am-btn" onclick="openServerWeb()">打开服务器版 →</button>
             </div>
         </div>
+    </div>
+</div>
+
+<!-- ═══ 角色编辑页：独立全屏页（封面横幅 + 大头像 + 人设编辑；点图即换） ═══ -->
+<div id="pack-view">
+    <div class="pv-banner">
+        <img id="pv-cover" alt="">
+        <button class="pv-back" type="button" onclick="closePackView()">←</button>
+        <button class="pv-imgedit" id="pv-cover-edit" type="button">换封面</button>
+    </div>
+    <div class="pv-head">
+        <div class="pv-avatar-wrap">
+            <img id="pv-avatar" alt="">
+            <button class="pv-imgedit" id="pv-avatar-edit" type="button">换头像</button>
+        </div>
+        <div class="pv-title">
+            <div class="pv-name" id="pv-name"></div>
+            <div class="pv-sub"><span id="pv-scene"></span><span id="pv-pres"></span></div>
+            <div class="pv-tagline" id="pv-tagline"></div>
+        </div>
+    </div>
+    <div class="pv-body">
+        <div class="field">
+            <label>人设文案</label>
+            <div class="field-tip">直接改这个角色的设定与文案。含 {core} {journal} 等槽位标记的行请保留槽位原文；「恢复默认」删除你的修改。</div>
+            <div id="pv-prompts"></div>
+        </div>
+        <div id="pv-danger"></div>
     </div>
 </div>
 
@@ -695,7 +724,6 @@
             <button class="menu-tab" data-tab="fav">收藏</button>
             <button class="menu-tab" data-tab="sticker">表情包</button>
             <button class="menu-tab" data-tab="char">设定文件</button>
-            <button class="menu-tab" data-tab="pack">角色包</button>
             <!-- 流萤状态：状态系统下线后的占位 tab（4.5：隐藏不删，接回后恢复） -->
             <button class="menu-tab" data-tab="state" style="display:none">流萤状态</button>
             <div class="menu-group-title">与系统相关</div>
@@ -740,24 +768,6 @@
                 </div>
                 <textarea id="journal-editor" style="height:180px"></textarea>
                 <div id="journal-msg" style="color:#8a8a8a;font-size:0.75em;margin-top:4px"></div>
-            </div>
-        </div>
-
-        <!-- Tab: 角色包（当前包信息 / 头像封面上传 / 提示词文案编辑） -->
-        <div class="menu-content" id="tab-pack">
-            <div class="field">
-                <label id="pack-panel-name">角色包</label>
-                <div class="field-tip" id="pack-panel-info">读取中…</div>
-            </div>
-            <div class="field">
-                <label>头像 / 封面</label>
-                <div class="field-tip">替换后全局生效；「恢复默认」删除你的修改。</div>
-                <div id="pack-assets"></div>
-            </div>
-            <div class="field">
-                <label>提示词文案（高级）</label>
-                <div class="field-tip">直接改包的人设/核查/调度文案。含 {core} {journal} 等槽位标记的行请保留槽位原文。「恢复默认」删除你的修改。</div>
-                <div id="pack-prompts"></div>
             </div>
         </div>
 

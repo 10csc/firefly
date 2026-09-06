@@ -139,6 +139,10 @@ window.__modesReload = async () => {
     _modesLoaded = false;
     await loadModes();
 };
+// bundle 拼接单作用域下，panels.js 取注册表/切模式的桥（避免 import("./views.js")
+// 动态导入产生第二份 ESM 模块实例）
+window.__getPresets = () => PRESET_MODES;
+window.__setCurrentMode = (mode) => setCurrentMode(mode);
 
 // 进入某包的管理页（卡片角标/轮播角标入口）：切到该包 + 打开角色包管理
 function managePack(mode) {
@@ -185,7 +189,45 @@ document.getElementById("pc-submit")?.addEventListener("click", async () => {
     } catch (e) { showToast("网络错误"); }
 });
 
-// 按 PRESET_MODES 渲染轮播图与 PC 大卡（卡片点击/滑动进入对应模式）
+// 轮播图上的角色信息条：跟随当前轮播位置
+function _updateCarouselChar() {
+    const c = document.getElementById("carousel-char");
+    if (!c) return;
+    const m = PRESET_MODES[carouselIndex];
+    if (!m) { c.style.display = "none"; return; }
+    c.style.display = "";
+    const img = c.querySelector("img");
+    if (m.avatar) img.src = m.avatar;
+    c.querySelector(".cc-name").textContent = m.char_name || "";
+    c.querySelector(".cc-scene").textContent = m.name || "";
+}
+
+// 角色编辑页（独立全屏）：切换目标包 + 打开
+function openPackView(mode) {
+    if (mode && PRESET_MODES.some(m => m.id === mode)) CURRENT_MODE = mode;
+    homeView.classList.remove("show");
+    const fixView = document.getElementById("fix-view");
+    if (fixView) fixView.classList.remove("show");
+    const v = document.getElementById("pack-view");
+    if (!v) return;
+    v.classList.add("show");
+    try { if (location.hash !== "#pack") history.pushState({pack: true}, "", "#pack"); } catch (e) {}
+    try { window.loadPackView && window.loadPackView(); } catch (e) {}
+}
+window.openPackView = openPackView;
+function closePackView() {
+    const v = document.getElementById("pack-view");
+    if (v) v.classList.remove("show");
+    showHome();
+    try { if (location.hash === "#pack") history.replaceState({}, "", location.pathname + location.search); } catch (e) {}
+}
+window.closePackView = closePackView;
+// 卡片角标/轮播角标入口（保留 managePack 名兼容）
+function managePack(mode) { openPackView(mode); }
+window.managePack = managePack;
+
+// 按 PRESET_MODES 渲染角色卡（轮播 + PC 大卡）：卡的主角是角色（头像+角色名），
+// 剧本名（剧情模式/春日手信）是小标签；卡上 ✎ 角标进角色编辑页
 function renderModeCards() {
     carouselTrack.innerHTML = "";
     carouselDots.innerHTML = "";
@@ -199,6 +241,8 @@ function renderModeCards() {
         dot.addEventListener("click", () => goCarousel(i));
         carouselDots.appendChild(dot);
     });
+    // 轮播图上叠加当前包的角色信息条（左下）
+    _updateCarouselChar();
     carouselCount = PRESET_MODES.length;
     if (carouselCount) goCarousel(0);
     const hm = document.getElementById("home-modes");
@@ -210,17 +254,28 @@ function renderModeCards() {
             btn.type = "button";
             btn.onclick = () => enterMode(m.id);
             const img = document.createElement("img");
+            img.className = "hm-cover";
             if (m.cover) img.src = m.cover;
             img.alt = m.name || m.id;
-            const n1 = document.createElement("span"); n1.className = "hm-name"; n1.textContent = m.name || m.id;
-            const n2 = document.createElement("span"); n2.className = "hm-desc"; n2.textContent = m.desc || "";
-            // 管理角标（显眼入口：直接进该包的管理页）
-            const mg = document.createElement("span");
-            mg.className = "hm-manage";
-            mg.title = `管理「${m.name || m.id}」`;
-            mg.textContent = "⚙";
-            mg.onclick = (e) => { e.stopPropagation(); managePack(m.id); };
-            btn.append(img, n1, n2, mg);
+            const edit = document.createElement("span");
+            edit.className = "hm-edit";
+            edit.title = `编辑「${m.char_name || m.name || m.id}」`;
+            edit.textContent = "✎";
+            edit.onclick = (e) => { e.stopPropagation(); openPackView(m.id); };
+            const char = document.createElement("div");
+            char.className = "hm-char";
+            const av = document.createElement("img");
+            if (m.avatar) av.src = m.avatar;
+            const info = document.createElement("div");
+            const cn = document.createElement("div");
+            cn.className = "hm-charname";
+            cn.textContent = m.char_name || m.name || m.id;
+            const sc = document.createElement("div");
+            sc.className = "hm-scene";
+            sc.textContent = m.name || "";
+            info.append(cn, sc);
+            char.append(av, info);
+            btn.append(img, edit, char);
             hm.appendChild(btn);
         }
         // 「+ 新建角色」卡（仅本地版显示；服务器版不做自定义整包）
@@ -404,6 +459,7 @@ function goCarousel(i) {
     if (!carouselCount) return;
     carouselIndex = (i + carouselCount) % carouselCount;
     // 安卓 WebView bug：transform 移动后的 img 合成层光栅化模糊。
+    _updateCarouselChar();   // 角色信息条跟随当前卡
     // 改用 opacity 淡入淡出切换（无 transform、无 display 硬切，过渡平滑）。
     [...carouselTrack.children].forEach((img, di) => {
         const active = di === carouselIndex;

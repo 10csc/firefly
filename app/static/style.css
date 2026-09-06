@@ -660,6 +660,67 @@ body {
     padding-top: env(safe-area-inset-top);
 }
 #fix-view.show { display: flex; }
+/* ── 角色编辑页（全屏，与 fix-view 同层级模式）── */
+#pack-view {
+    position: fixed; inset: 0; z-index: 6;
+    width: 100%; height: 100vh; height: 100dvh;
+    display: none; flex-direction: column;
+    background: var(--panel-solid);
+    backdrop-filter: blur(10px);
+    padding-top: env(safe-area-inset-top);
+    overflow-y: auto;
+}
+#pack-view.show { display: flex; }
+.pv-banner { position: relative; width: 100%; height: clamp(140px, 26vh, 230px); overflow: hidden; flex-shrink: 0; background: var(--ctrl-bg); }
+.pv-banner img { width: 100%; height: 100%; object-fit: cover; object-position: center 30%; display: block; }
+.pv-back {
+    position: absolute; top: 10px; left: 10px; z-index: 2;
+    width: 36px; height: 36px; border-radius: 50%;
+    border: 1px solid var(--border-mid); background: rgba(20,22,34,0.6);
+    color: var(--fg-main); font-size: 1.05em; cursor: pointer;
+}
+.pv-imgedit {
+    position: absolute; right: 10px; bottom: 10px; z-index: 2;
+    padding: 5px 12px; border-radius: 10px; font-size: 0.75em; cursor: pointer;
+    border: 1px solid var(--border-mid); background: rgba(20,22,34,0.6); color: var(--fg-main);
+}
+.pv-head { display: flex; align-items: flex-end; gap: 12px; padding: 0 clamp(12px,4vw,20px); margin-top: -28px; position: relative; z-index: 2; }
+.pv-avatar-wrap { position: relative; flex: 0 0 auto; display: flex; flex-direction: column; align-items: center; gap: 3px; }
+.pv-avatar-wrap img { width: 76px; height: 76px; border-radius: 50%; object-fit: cover; border: 3px solid var(--panel-solid); background: #222; display: block; }
+.pv-avatar-wrap .pv-imgedit { position: static; padding: 2px 8px; font-size: 0.68em; }
+.pv-title { flex: 1; min-width: 0; padding-bottom: 4px; }
+.pv-name { font-size: 1.25em; color: var(--fg-bright); font-weight: 600; }
+.pv-sub { font-size: 0.78em; color: var(--fg-muted); margin-top: 2px; }
+.pv-sub span + span::before { content: " · "; }
+.pv-tagline { font-size: 0.78em; color: var(--fg-muted); margin-top: 2px; opacity: 0.85; }
+.pv-body { padding: 14px clamp(12px,4vw,20px) 30px; }
+.pv-body details { margin: 8px 0; border: 1px solid var(--border-mid); border-radius: 10px; padding: 8px 10px; }
+.pv-body summary { cursor: pointer; font-size: 0.85em; color: var(--fg-main); }
+.pv-body textarea { width: 100%; height: 160px; margin-top: 8px; }
+.pv-danger-btn { margin-top: 16px; padding: 8px 14px; border-radius: 10px; border: 1px solid rgba(200,90,90,.4); background: transparent; color: #c66; cursor: pointer; font-size: 0.8em; }
+/* 首页角色卡：角色为主角（头像+角色名+剧本小标签），封面为背景 */
+.hm-card { position: relative; overflow: hidden; }
+.hm-card img.hm-cover { width: 100%; aspect-ratio: 2 / 1; object-fit: cover; display: block; }
+.hm-char { display: flex; align-items: center; gap: 10px; padding: 9px 12px; }
+.hm-char img { width: 42px; height: 42px; border-radius: 50%; object-fit: cover; background: #222; flex: 0 0 auto; }
+.hm-charname { color: var(--fg-bright); font-size: 1.0em; text-align: left; }
+.hm-scene { color: var(--fg-muted); font-size: 0.72em; text-align: left; margin-top: 1px; }
+.hm-edit {
+    position: absolute; top: 8px; right: 8px; z-index: 5;
+    width: 30px; height: 30px; border-radius: 50%;
+    border: 1px solid var(--border-mid); background: rgba(20,22,34,0.55);
+    color: #e8dfc8; font-size: 13px; cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+}
+.hm-edit:hover { background: rgba(60,64,90,0.75); }
+/* 轮播图上叠加角色信息条（左下） */
+.carousel-char {
+    position: absolute; left: 10px; bottom: 10px; z-index: 4;
+    display: flex; align-items: center; gap: 8px; pointer-events: none;
+}
+.carousel-char img { width: 34px; height: 34px; border-radius: 50%; object-fit: cover; border: 2px solid rgba(255,255,255,0.25); }
+.carousel-char .cc-name { color: #fff; font-size: 0.95em; text-shadow: 0 1px 6px rgba(0,0,0,0.8); }
+.carousel-char .cc-scene { color: rgba(255,255,255,0.75); font-size: 0.7em; text-shadow: 0 1px 4px rgba(0,0,0,0.8); }
 .fix-view-header {
     display: flex; align-items: center; gap: 10px; flex-shrink: 0;
     padding: clamp(10px, 3vw, 14px) clamp(12px, 4vw, 16px);
@@ -1009,7 +1070,7 @@ body.low-end #app { background: var(--panel-solid); }
     }
     /* 各全屏视图收进右栏 */
     #app, #home-view, #fix-view, #settings-panel, #notice-panel, #feedback-panel,
-    #menu-overlay, #sticker-panel {
+    #menu-overlay, #sticker-panel, #pack-view {
         left: 264px;
     }
     #app { position: fixed; max-width: none; width: auto; box-shadow: none; }
@@ -1052,7 +1113,7 @@ body.low-end #app { background: var(--panel-solid); }
         transform: translateY(-3px); border-color: var(--gold-line);
         box-shadow: 0 10px 30px rgba(0,0,0,0.4);
     }
-    .hm-card img { width: 100%; aspect-ratio: 2 / 1; object-fit: cover; display: block; }
+    .hm-card > img.hm-cover { width: 100%; aspect-ratio: 2 / 1; object-fit: cover; display: block; }
     .hm-card .hm-name {
         display: block; color: var(--fg-main); font-size: 1.05em; font-weight: 600;
         padding: 12px 16px 2px;
