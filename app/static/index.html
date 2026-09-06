@@ -246,24 +246,9 @@
     <!-- PC 桌面欢迎区：模式大卡（仅 ≥1100px 显示，移动端仍为轮播）；卡片按 /modes 动态渲染 -->
     <div class="home-modes" id="home-modes"></div>
     <!-- 显式主入口（4.1：不点轮播图也能进聊天；进入当前模式） -->
-    <button class="home-start" id="home-start-btn" type="button" onclick="showChat()">继续聊天 →</button>
-    <!-- 新建角色包（本地版；点「+ 新建角色」卡展开） -->
-    <div id="pack-create-panel" style="display:none;max-width:420px;margin:10px auto;text-align:left">
-        <div class="field"><input id="pc-name" placeholder="包名称（显示在卡片上，如：夏日烟火）" maxlength="30"></div>
-        <div class="field"><input id="pc-char" placeholder="角色名（她叫什么）" maxlength="20"></div>
-        <div class="field"><input id="pc-user" placeholder="对方称呼（她怎么称呼你）" maxlength="20"></div>
-        <div class="field">
-            <select id="pc-presentation">
-                <option value="sticker">短信 + 表情包</option>
-                <option value="narration">短信 + 旁白</option>
-                <option value="none">纯短信</option>
-            </select>
-        </div>
-        <div class="field" style="display:flex;gap:8px">
-            <button id="pc-submit" type="button" style="flex:1">创建</button>
-            <button type="button" style="flex:1" onclick="togglePackCreate(false)">取消</button>
-        </div>
-        <div class="field-tip">创建后在 菜单 →「角色包」里编辑人设与头像封面。</div>
+    <div class="home-entry-row">
+        <button class="home-start" id="home-start-btn" type="button" onclick="showChat()">继续聊天 →</button>
+        <button class="home-entry" id="cards-manage-btn" type="button" onclick="openCardsView()">角色卡管理</button>
     </div>
     <div class="home-blank">
         <!-- 服务器版：登录/用户模块（0.8.0 内联表单，单页完成登录注册，不跳页） -->
@@ -340,6 +325,35 @@
                 </div>
                 <button class="am-btn" onclick="openServerWeb()">打开服务器版 →</button>
             </div>
+        </div>
+    </div>
+</div>
+
+<!-- ═══ 角色卡管理：独立全屏页（卡片列表 → 点卡进详情编辑；底部新建） ═══ -->
+<div id="cards-view">
+    <div class="cv-head">
+        <button class="cv-back" type="button" onclick="closeCardsView()">←</button>
+        <div class="cv-title">角色卡管理</div>
+    </div>
+    <div class="cv-list" id="cv-list"></div>
+    <div class="cv-new">
+        <button id="cv-new-btn" type="button" onclick="togglePackCreate()">+ 新建角色</button>
+        <div id="pack-create-panel" style="display:none;text-align:left;margin-top:10px">
+            <div class="field"><input id="pc-name" placeholder="剧本/卡片名称（如：夏日烟火）" maxlength="30"></div>
+            <div class="field"><input id="pc-char" placeholder="角色名（她叫什么）" maxlength="20"></div>
+            <div class="field"><input id="pc-user" placeholder="对方称呼（她怎么称呼你）" maxlength="20"></div>
+            <div class="field">
+                <select id="pc-presentation">
+                    <option value="sticker">短信 + 表情包</option>
+                    <option value="narration">短信 + 旁白</option>
+                    <option value="none">纯短信</option>
+                </select>
+            </div>
+            <div class="field" style="display:flex;gap:8px">
+                <button id="pc-submit" type="button" style="flex:1">创建</button>
+                <button type="button" style="flex:1" onclick="togglePackCreate(false)">取消</button>
+            </div>
+            <div class="field-tip">创建后点列表里的卡片进详情页，编辑人设与头像封面。</div>
         </div>
     </div>
 </div>

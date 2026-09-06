@@ -660,6 +660,38 @@ body {
     padding-top: env(safe-area-inset-top);
 }
 #fix-view.show { display: flex; }
+/* ── 角色卡管理页（全屏，卡片列表）── */
+#cards-view {
+    position: fixed; inset: 0; z-index: 6;
+    width: 100%; height: 100vh; height: 100dvh;
+    display: none; flex-direction: column;
+    background: var(--panel-solid);
+    backdrop-filter: blur(10px);
+    padding-top: env(safe-area-inset-top);
+}
+#cards-view.show { display: flex; }
+.cv-head { display: flex; align-items: center; gap: 10px; flex-shrink: 0;
+    padding: clamp(10px,3vw,14px) clamp(12px,4vw,16px); border-bottom: 1px solid var(--ctrl-bg); }
+.cv-back { width: 38px; height: 38px; flex-shrink: 0; border-radius: 50%;
+    border: 1px solid var(--border-mid); background: var(--ctrl-bg-3);
+    color: var(--fg-main); font-size: 1.05em; cursor: pointer; }
+.cv-title { font-size: 1.05em; color: var(--fg-main); font-weight: 600; }
+.cv-list { flex: 1; overflow-y: auto; padding: 12px clamp(12px,4vw,16px); }
+.cv-card {
+    display: flex; align-items: center; gap: 12px; width: 100%;
+    padding: 10px 12px; margin-bottom: 10px; text-align: left; cursor: pointer;
+    border: 1px solid var(--border-mid); border-radius: 14px; background: var(--ctrl-bg-3);
+    font-family: inherit; transition: border-color 0.15s;
+}
+.cv-card:hover { border-color: var(--gold-line); }
+.cv-card img { width: 52px; height: 52px; border-radius: 50%; object-fit: cover; background: #222; flex: 0 0 auto; }
+.cv-card .cv-cname { color: var(--fg-bright); font-size: 0.98em; }
+.cv-card .cv-csub { color: var(--fg-muted); font-size: 0.72em; margin-top: 2px; }
+.cv-card .cv-cgo { margin-left: auto; color: var(--fg-muted); flex: 0 0 auto; }
+.cv-new { flex-shrink: 0; padding: 10px clamp(12px,4vw,16px) 16px; border-top: 1px solid var(--ctrl-bg); }
+#cv-new-btn { width: 100%; padding: 11px; border-radius: 12px; border: 1px dashed var(--border-mid);
+    background: transparent; color: var(--fg-muted); font-size: 0.9em; cursor: pointer; font-family: inherit; }
+#cv-new-btn:hover { color: var(--fg-main); border-color: var(--gold-line); }
 /* ── 角色编辑页（全屏，与 fix-view 同层级模式）── */
 #pack-view {
     position: fixed; inset: 0; z-index: 6;
@@ -696,6 +728,7 @@ body {
 .pv-body { padding: 14px clamp(12px,4vw,20px) 30px; }
 .pv-body details { margin: 8px 0; border: 1px solid var(--border-mid); border-radius: 10px; padding: 8px 10px; }
 .pv-body summary { cursor: pointer; font-size: 0.85em; color: var(--fg-main); }
+.pv-body .field label { color: var(--fg-main); }
 .pv-body textarea { width: 100%; height: 160px; margin-top: 8px; }
 .pv-danger-btn { margin-top: 16px; padding: 8px 14px; border-radius: 10px; border: 1px solid rgba(200,90,90,.4); background: transparent; color: #c66; cursor: pointer; font-size: 0.8em; }
 /* 首页角色卡：角色为主角（头像+角色名+剧本小标签），封面为背景 */
@@ -894,6 +927,16 @@ body {
     transition: background 0.2s;
 }
 .home-start:hover { background: var(--send-bg-hover); }
+/* 首页入口行：继续聊天（主）+ 角色卡管理（次）。两档都显示（不再随 home-start 隐藏） */
+.home-entry-row { display: flex; gap: 10px; justify-content: center; align-items: center; margin-top: 14px; flex-shrink: 0; }
+.home-entry-row .home-start { margin: 0; }
+.home-entry {
+    padding: 10px 22px; border-radius: 22px; border: 1px solid var(--border-mid);
+    background: var(--ctrl-bg-3); color: var(--fg-main);
+    font-family: inherit; font-size: clamp(13px, 3.8vw, 15px);
+    cursor: pointer; transition: border-color 0.2s;
+}
+.home-entry:hover { border-color: var(--gold-line); }
 /* 手机端不显示「继续聊天」按钮（点轮播图进入是既有习惯）；仅 PC 桌面保留显式入口 */
 @media (max-width: 1099px) {
     .home-start { display: none; }
@@ -1070,7 +1113,7 @@ body.low-end #app { background: var(--panel-solid); }
     }
     /* 各全屏视图收进右栏 */
     #app, #home-view, #fix-view, #settings-panel, #notice-panel, #feedback-panel,
-    #menu-overlay, #sticker-panel, #pack-view {
+    #menu-overlay, #sticker-panel, #pack-view, #cards-view {
         left: 264px;
     }
     #app { position: fixed; max-width: none; width: auto; box-shadow: none; }

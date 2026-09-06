@@ -180,9 +180,10 @@ document.getElementById("pc-submit")?.addEventListener("click", async () => {
             body: JSON.stringify({name, char_name: charName, user_name: userName, presentation})});
         const data = await resp.json();
         if (data.ok) {
-            showToast(`已创建「${data.name}」——菜单 → 角色包 里编辑人设`);
+            showToast(`已创建「${data.name}」——点列表里的卡片进详情编辑人设`);
             togglePackCreate(false);
             await window.__modesReload();
+            renderCardsList();
         } else {
             showToast("创建失败：" + (data.error || ""));
         }
@@ -202,10 +203,14 @@ function _updateCarouselChar() {
     c.querySelector(".cc-scene").textContent = m.name || "";
 }
 
-// 角色编辑页（独立全屏）：切换目标包 + 打开
-function openPackView(mode) {
+// 角色编辑页（独立全屏）：切换目标包 + 打开；_packFrom 记录来源（cards=列表页 / 其他=首页）
+let _packFrom = "";
+function openPackView(mode, from) {
     if (mode && PRESET_MODES.some(m => m.id === mode)) CURRENT_MODE = mode;
+    _packFrom = from || "";
     homeView.classList.remove("show");
+    const cv = document.getElementById("cards-view");
+    if (cv) cv.classList.remove("show");
     const fixView = document.getElementById("fix-view");
     if (fixView) fixView.classList.remove("show");
     const v = document.getElementById("pack-view");
@@ -218,10 +223,65 @@ window.openPackView = openPackView;
 function closePackView() {
     const v = document.getElementById("pack-view");
     if (v) v.classList.remove("show");
+    if (_packFrom === "cards") { showCardsView(); return; }   // 从列表来则回列表
     showHome();
     try { if (location.hash === "#pack") history.replaceState({}, "", location.pathname + location.search); } catch (e) {}
 }
 window.closePackView = closePackView;
+
+// ── 角色卡管理页（全屏：卡片列表 → 点卡进详情编辑）──
+function openCardsView() {
+    homeView.classList.remove("show");
+    const fixView = document.getElementById("fix-view");
+    if (fixView) fixView.classList.remove("show");
+    const v = document.getElementById("cards-view");
+    if (!v) return;
+    v.classList.add("show");
+    // 服务器版不做自定义整包：隐藏新建区
+    const newBox = document.querySelector("#cards-view .cv-new");
+    if (newBox) newBox.style.display = IS_SERVER ? "none" : "";
+    try { if (location.hash !== "#cards") history.pushState({cards: true}, "", "#cards"); } catch (e) {}
+    renderCardsList();
+}
+window.openCardsView = openCardsView;
+function showCardsView() { openCardsView(); }
+function closeCardsView() {
+    const v = document.getElementById("cards-view");
+    if (v) v.classList.remove("show");
+    showHome();
+    try { if (location.hash === "#cards") history.replaceState({}, "", location.pathname + location.search); } catch (e) {}
+}
+window.closeCardsView = closeCardsView;
+
+// 卡片列表：每张卡 = 头像 + 角色名 + 剧本/形态，点击进详情编辑页
+function renderCardsList() {
+    const list = document.getElementById("cv-list");
+    if (!list) return;
+    list.innerHTML = "";
+    const presLabel = {sticker: "短信+表情包", narration: "短信+旁白", none: "纯短信"};
+    for (const m of PRESET_MODES) {
+        const card = document.createElement("button");
+        card.className = "cv-card";
+        card.type = "button";
+        card.onclick = () => openPackView(m.id, "cards");
+        const img = document.createElement("img");
+        if (m.avatar) img.src = m.avatar;
+        const mid = document.createElement("div");
+        const cn = document.createElement("div");
+        cn.className = "cv-cname";
+        cn.textContent = (m.char_name || "") + (m.custom ? "" : "");
+        const sub = document.createElement("div");
+        sub.className = "cv-csub";
+        sub.textContent = (m.name || m.id) + " · " + (presLabel[m.presentation] || m.presentation);
+        mid.append(cn, sub);
+        const go = document.createElement("span");
+        go.className = "cv-cgo";
+        go.textContent = "›";
+        card.append(img, mid, go);
+        list.appendChild(card);
+    }
+}
+
 // 卡片角标/轮播角标入口（保留 managePack 名兼容）
 function managePack(mode) { openPackView(mode); }
 window.managePack = managePack;
@@ -277,21 +337,6 @@ function renderModeCards() {
             char.append(av, info);
             btn.append(img, edit, char);
             hm.appendChild(btn);
-        }
-        // 「+ 新建角色」卡（仅本地版显示；服务器版不做自定义整包）
-        if (!IS_SERVER) {
-            const add = document.createElement("button");
-            add.className = "hm-card";
-            add.type = "button";
-            add.onclick = () => togglePackCreate();
-            const plus = document.createElement("span");
-            plus.className = "hm-name";
-            plus.textContent = "+ 新建角色";
-            const n2 = document.createElement("span");
-            n2.className = "hm-desc";
-            n2.textContent = "空白角色包，人设由你填";
-            add.append(plus, n2);
-            hm.appendChild(add);
         }
     }
 }
