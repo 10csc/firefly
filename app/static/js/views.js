@@ -265,7 +265,9 @@ function renderCardsList() {
         card.type = "button";
         card.onclick = () => openPackView(m.id, "cards");
         const img = document.createElement("img");
-        if (m.avatar) img.src = m.avatar;
+        img.className = "cv-thumb";
+        if (m.cover) img.src = m.cover;
+        img.alt = "";
         const mid = document.createElement("div");
         const cn = document.createElement("div");
         cn.className = "cv-cname";
@@ -317,16 +319,20 @@ function renderModeCards() {
             img.className = "hm-cover";
             if (m.cover) img.src = m.cover;
             img.alt = m.name || m.id;
+            // 编辑角标（毛玻璃，hover 卡面时显现）
             const edit = document.createElement("span");
             edit.className = "hm-edit";
             edit.title = `编辑「${m.char_name || m.name || m.id}」`;
             edit.textContent = "✎";
             edit.onclick = (e) => { e.stopPropagation(); openPackView(m.id); };
-            const char = document.createElement("div");
-            char.className = "hm-char";
+            // 角色信息叠加层：底部渐变压暗 + 头像 + 角色名 + 剧本标签
+            const ov = document.createElement("div");
+            ov.className = "hm-overlay";
             const av = document.createElement("img");
+            av.className = "hm-avatar";
             if (m.avatar) av.src = m.avatar;
             const info = document.createElement("div");
+            info.className = "hm-info";
             const cn = document.createElement("div");
             cn.className = "hm-charname";
             cn.textContent = m.char_name || m.name || m.id;
@@ -334,8 +340,8 @@ function renderModeCards() {
             sc.className = "hm-scene";
             sc.textContent = m.name || "";
             info.append(cn, sc);
-            char.append(av, info);
-            btn.append(img, edit, char);
+            ov.append(av, info);
+            btn.append(img, edit, ov);
             hm.appendChild(btn);
         }
     }
