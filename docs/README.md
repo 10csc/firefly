@@ -18,7 +18,7 @@ POST /chat → routes → orchestrator.handle_chat()
 
 | 模块 | 代码 |
 |------|------|
-| 路由（9 文件聚合） | [routes.py](../app/routes.py) + routes_common/auth/config/assets/fix/data/update/relay |
+| 路由（11 文件聚合） | [routes.py](../app/routes.py) + routes_common/auth/config/assets/pack/snapshot/fix/data/update/relay |
 | 编排器 | [orchestrator.py](../app/orchestrator.py) |
 | 分析器 / 回复器 / 组织器 | [analyzer.py](../app/modules/analyzer.py) / [polisher.py](../app/modules/polisher.py) / [organizer.py](../app/modules/organizer.py) |
 | 检索器 / 记忆 | [llm_retriever.py](../app/modules/llm_retriever.py) / [memory_manager.py](../app/modules/memory_manager.py) |
