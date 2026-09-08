@@ -34,11 +34,12 @@ from routes_auth import (_AUTH_PROXY_MAP, _auth_server_base, _mk_auth_proxy,
 from routes_config import (set_key, set_config, check_key, get_config,
                            get_models, get_balance, get_modes)
 from routes_assets import (add_sticker_route, sticker_update, sticker_delete,
-                           get_stickers, character_file_update, get_character_files,
+                           get_stickers, get_character_files,
                            upload_image, get_image, assets_index, assets_raw,
-                           add_favorite_route, get_favorites, delete_favorite_route,
-                           get_pack_files, upload_pack_asset, delete_pack_asset,
-                           delete_character_file, create_pack, delete_pack)
+                           add_favorite_route, get_favorites, delete_favorite_route)
+from routes_pack import (character_file_update, delete_character_file,
+                         get_pack_files, upload_pack_asset, delete_pack_asset,
+                         create_pack, delete_pack)
 from routes_fix import (setting_fix_status, setting_fix_message, setting_fix_start,
                         setting_fix_apply, setting_fix_dismiss, setting_fix_rollback,
                         setting_fix_reset)

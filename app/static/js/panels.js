@@ -502,6 +502,9 @@ async function loadStickerList() {
 // 角色编辑页（全屏 #pack-view：封面横幅 + 大头像 + 人设文案编辑 + 自建角色删除）
 // ═══════════════════════════════════════════
 const _PACK_PROMPT_LABELS = {
+    "core.md": "核心设定（身份/经历/价值观）",
+    "identity.md": "人际关系与认知边界",
+    "sms_samples.md": "短信风格示例",
     "prompts/polisher.md": "回复器人设（核心文案）",
     "prompts/analyzer_extra.md": "分析器·剧本事实核查补充",
     "prompts/organizer_sticker.md": "组织器·表情包调度提示词",
@@ -587,11 +590,10 @@ async function loadPackView() {
         danger.appendChild(delBtn);
     }
 
-    // 人设文案（可折叠编辑器）
+    // 人设文案（可折叠编辑器：核心三件 + 用户设定 + 提示词六段，全部放权可编辑）
     const promptsBox = document.getElementById("pv-prompts");
     promptsBox.innerHTML = "";
     for (const f of data.files) {
-        if (!f.name.startsWith("prompts/")) continue;
         const det = document.createElement("details");
         const sum = document.createElement("summary");
         sum.textContent = (_PACK_PROMPT_LABELS[f.name] || f.name) + (f.customized ? "（已修改）" : "");
