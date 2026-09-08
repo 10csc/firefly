@@ -497,7 +497,7 @@ def sync_export(h):
 
 def sync_now(h):
     """本地端编排（A1）：本地后端直连认证服务器完成一轮双向同步。
-    触发时机：登录态冷启动 / 聊天页回前台 / 设置页手动按钮（W4 前端接线在 W7）。
+    mode=all/缺省 = 全部角色包逐包同步（全包化）；mode=单包 = 仅该包（兼容）。
     范围：对话/记忆/手账/设定/收藏/pipeline 文字类 + images/ 压缩图（blob 整份，
     上传 read_bytes / 拉取 write_bytes，不解码不合并）；stickers/ 表情包二进制不进清单。"""
     if _is_server():
@@ -509,12 +509,10 @@ def sync_now(h):
     from modules.sync_engine import (scan_manifest, plan_sync, merge_jsonl,
                                      merge_favorites, backup_file)
     body = _read_json(h)
-    mode = _body_mode(body)
+    mode = str(body.get("mode", "all") or "all")
     token = get_token()
     if not token:
         h._json({"ok": False, "error": "未登录（请先在首页登录账号）"}); return
-    root, m = _sync_mode_root(mode)
-    reports = {"uploaded": [], "downloaded": [], "merged": [], "skipped": [], "conflicts": 0}
     base = _auth_server_base()
 
     def call(path: str, payload: dict | None = None, binary: bool = False):
@@ -529,11 +527,29 @@ def sync_now(h):
             raw = r.read()
         return raw if binary else json.loads(raw.decode("utf-8"))
 
+    modes = list(cfg.MODES) if mode in ("all", "") else ([mode] if mode in cfg.MODES else [DEFAULT_MODE])
+    reports = {"uploaded": [], "downloaded": [], "merged": [], "skipped": [], "conflicts": 0, "modes": modes}
+    for _m in modes:
+        err = _sync_one_mode(call, _m, reports)
+        if err:
+            h._json({"ok": False, "error": f"[{_m}] {err}"}); return
+    h._json({"ok": True, **reports})
+
+
+def _sync_one_mode(call, mode: str, reports: dict) -> str | None:
+    """单模式双向同步主体（sync_now 按包遍历调用）。出错返回错误串，成功返回 None。"""
+    import io
+    import zipfile
+    from modules.auth_store import get_token
+    from modules.sync_engine import (scan_manifest, plan_sync, merge_jsonl,
+                                     merge_favorites, backup_file)
+    root, m = _sync_mode_root(mode)
+
     try:
         # 1. 服务器清单
         remote = call(f"/sync/manifest?mode={m}").get("files", {})
     except Exception as e:
-        h._json({"ok": False, "error": f"连接服务器失败: {e}"}); return
+        return f"连接服务器失败: {e}"
 
     local = scan_manifest(root)
     plan = plan_sync(local, remote)
@@ -564,9 +580,9 @@ def sync_now(h):
                    + b'Content-Disposition: form-data; name="mtimes"\r\n\r\n'
                    + json.dumps(mtimes).encode("utf-8") + b"\r\n")
         body_mp = b"".join(parts) + b"--" + boundary.encode() + b"--\r\n"
-        req = urllib.request.Request(base + "/sync/import",
+        req = urllib.request.Request(_auth_server_base() + "/sync/import",
                                      data=body_m + body_mt + body_mp,
-                                     headers={"Authorization": f"Bearer {token}",
+                                     headers={"Authorization": f"Bearer {get_token()}",
                                               "Content-Type": f"multipart/form-data; boundary={boundary}"},
                                      method="POST")
         try:
@@ -576,7 +592,7 @@ def sync_now(h):
             reports["conflicts"] += int(rp.get("conflicts", 0))
             reports["skipped"].extend(rp.get("skipped", []))
         except urllib.error.HTTPError as e:
-            h._json({"ok": False, "error": f"上传失败（{e.code}）"}); return
+            return f"上传失败（{e.code}）"
 
     # 3. 拉取（服务器独有 + 服务器更新的合并项）→ 本地合并落盘
     local_after = scan_manifest(root)
@@ -590,7 +606,7 @@ def sync_now(h):
         try:
             zip_raw = call("/sync/export", {"mode": m, "files": need}, binary=True)
         except Exception as e:
-            h._json({"ok": False, "error": f"拉取失败: {e}"}); return
+            return f"拉取失败: {e}"
         with zipfile.ZipFile(io.BytesIO(zip_raw)) as zf:
             backups_dir = root / ".sync_backups"
             for info in zf.infolist():
@@ -639,4 +655,4 @@ def sync_now(h):
                 except Exception as e:
                     logger.warning("同步拉取落盘失败 %s: %s", name, e)
                     reports["skipped"].append(f"{name}（{e}）")
-    h._json({"ok": True, **reports})
+    return None

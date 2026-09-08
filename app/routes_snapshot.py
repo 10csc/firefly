@@ -207,11 +207,7 @@ def snapshot_delete(h):
 
 def snapshot_restore(h):
     """POST /snapshot/restore {name}：恢复指定快照（按包分发覆盖）。
-    恢复前对当前全部包打一份 pre-restore 自动快照。zip slip 防御 + 上限校验。"""
-    import io
-    import zipfile
-    from routes_data import (_zip_safe_entries, _IMPORT_MAX_FILE_BYTES,
-                             _IMPORT_MAX_TOTAL_BYTES, _IMPORT_MAX_BYTES)
+    恢复前对当前全部包打一份 pre-restore 自动快照；主体复用 routes_data._restore_full_snapshot。"""
     body = _read_json(h)
     name = _snap_name_ok(body.get("name"))
     if not name:
@@ -220,6 +216,7 @@ def snapshot_restore(h):
     if not fp.is_file():
         h._json({"ok": False, "error": "快照不存在"}); return
     data = fp.read_bytes()
+    from routes_data import _IMPORT_MAX_BYTES, _restore_full_snapshot
     if len(data) > _IMPORT_MAX_BYTES:
         h._json({"ok": False, "error": "快照过大"}); return
     # 恢复前自动快照当前（pre-restore- 前缀：不进列表/滚动配额，单独留 3 份；失败不阻断）
@@ -234,34 +231,7 @@ def snapshot_restore(h):
             except OSError: pass
     except Exception as e:
         logger.warning("恢复前自动快照失败（继续恢复）: %s", e)
-    user_root = _user_root()
-    written = 0
-    try:
-        with zipfile.ZipFile(io.BytesIO(data)) as zf:
-            entries = _zip_safe_entries(zf)
-            for name_in_zip, info in entries:
-                rel = Path(name_in_zip)
-                top = rel.parts[0] if rel.parts else ""
-                if top == "_config.json":
-                    continue   # 配置不自动恢复（防覆盖现有 Key/供应商设置）
-                # 目标目录白名单：模式目录 或 stickers/（用户表情包）
-                if top not in cfg.MODES and top != "stickers":
-                    continue
-                target = user_root / rel
-                target.parent.mkdir(parents=True, exist_ok=True)
-                target.write_bytes(zf.read(info))
-                written += 1
-    except zipfile.BadZipFile:
-        h._json({"ok": False, "error": "快照文件损坏"}); return
-    except ValueError as e:
-        h._json({"ok": False, "error": str(e)}); return
-    # 清缓存让恢复的设定/记忆生效
-    try:
-        from modules.llm_base import clear_cache
-        clear_cache()
-        from modules.polisher import clear_samples_cache
-        clear_samples_cache()
-        cfg.reload_presets()
-    except Exception:
-        pass
-    h._json({"ok": True, "restored": name, "files": written})
+    ok, err, n = _restore_full_snapshot(data)
+    if not ok:
+        h._json({"ok": False, "error": err}); return
+    h._json({"ok": True, "restored": name, "files": n})

@@ -60,7 +60,7 @@ window.autoSyncNow = async function (force) {
         const r = await fetch("/sync/now", {
             method: "POST",
             headers: {"Content-Type": "application/json"},
-            body: JSON.stringify({mode: CURRENT_MODE}),
+            body: JSON.stringify({mode: "all"}),   // 全包同步（全部角色包）
         });
         const d = await r.json().catch(() => ({}));
         if (d.ok) {
