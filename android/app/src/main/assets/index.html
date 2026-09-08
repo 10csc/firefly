@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>流萤</title>
-<link rel="stylesheet" href="style.css?v=42509c61">
+<link rel="stylesheet" href="style.css?v=3e8257a7">
 <style>
 /* 服务器版：轮播图下登录/用户模块 */
 #auth-module{margin:14px 10px 0}
@@ -377,6 +377,21 @@
         </div>
     </div>
     <div class="pv-body">
+        <div class="pv-proactive">
+            <div class="pv-sec-title">主动消息</div>
+            <label class="pv-check"><input type="checkbox" id="pv-pro-enabled"> 允许她主动找你聊天</label>
+            <div class="pv-pro-row">
+                <span>频率：每 <b id="pv-pro-hard-v">6</b> 轮对话 1 次机会</span>
+                <input type="range" id="pv-pro-hard" min="1" max="10" step="1">
+            </div>
+            <div class="pv-pro-row">
+                <span>触发概率：<b id="pv-pro-soft-v">35%</b></span>
+                <input type="range" id="pv-pro-soft" min="0" max="100" step="5">
+            </div>
+            <label class="pv-check"><input type="checkbox" id="pv-pro-prob"> 偶尔也会随便聊聊（概率式）</label>
+            <label class="pv-check"><input type="checkbox" id="pv-pro-hidden"> 后台时也会想起你（隐藏式）</label>
+            <div class="pv-pro-msg" id="pv-pro-msg"></div>
+        </div>
         <div class="field">
             <label>人设文案</label>
             <div class="field-tip">直接改这个角色的设定与文案。含 {core} {journal} 等槽位标记的行请保留槽位原文；「恢复默认」删除你的修改。</div>
@@ -474,49 +489,6 @@
                     <button id="key-save" type="button">保存 Key 与连接设置</button>
                     <span id="config-msg" class="set-save-msg"></span>
                 </div>
-            </div>
-        </section>
-
-        <!-- ② 主动消息：自然语言 + 高级折叠 -->
-        <section class="set-group">
-            <button class="set-head" type="button" data-group="proactive">💬 主动消息<span class="set-summary" id="proactive-summary">已开启</span><span class="set-arrow">▾</span></button>
-            <div class="set-body">
-                <div class="field">
-                    <label style="display:flex;align-items:center;gap:8px">
-                        <input id="proactive-enabled" type="checkbox" style="width:auto;accent-color:var(--fg-bright)">
-                        让流萤在聊天里主动找你
-                    </label>
-                    <label style="margin-top:8px">主动频率</label>
-                    <select id="proactive-preset">
-                        <option value="less">较少（约每 8 轮一次机会）</option>
-                        <option value="medium">偶尔（推荐）</option>
-                        <option value="often">经常（约每 4 轮一次机会）</option>
-                    </select>
-                </div>
-                <div class="field">
-                    <label style="display:flex;align-items:center;gap:8px">
-                        <input id="prob-reply-enabled" type="checkbox" style="width:auto;accent-color:var(--fg-bright)">
-                        你空闲时，偶尔想起你
-                    </label>
-                </div>
-                <div class="field" id="hidden-reply-field" style="display:none">
-                    <label style="display:flex;align-items:center;gap:8px">
-                        <input id="hidden-reply-enabled" type="checkbox" style="width:auto;accent-color:var(--fg-bright)">
-                        App 在后台时，发消息提醒你（仅安卓）
-                    </label>
-                </div>
-                <details class="set-advanced" id="proactive-advanced">
-                    <summary>自定义频率（高级）</summary>
-                    <div class="field">
-                        <label>主动机会：每 <span id="proactive-hard-value">6</span> 轮对话一次</label>
-                        <input id="proactive-hard-slider" type="range" min="1" max="10" step="1" value="6">
-                        <label style="margin-top:8px">机会触发概率 <span id="proactive-soft-value">35%</span></label>
-                        <input id="proactive-soft-slider" type="range" min="0" max="100" step="5" value="35">
-                        <label style="margin-top:8px">空闲触发概率 <span id="prob-reply-value">10%</span></label>
-                        <input id="prob-reply-slider" type="range" min="0" max="100" step="5" value="10">
-                        <div style="color:var(--fg-muted);font-size:0.7em;margin-top:2px">空闲主动：每 10 分钟判断一次；后台主动：傍晚更活跃，深夜基本不打扰。</div>
-                    </div>
-                </details>
             </div>
         </section>
 
@@ -678,7 +650,7 @@
         <h3>二、模式</h3>
         <p>首页的每一张卡片是一个独立模式（角色包），人设、记忆、数据相互独立。</p>
         <h3>三、常用功能</h3>
-        <p><b>主动消息</b>：⚙ 设置 →「主动消息」可关，聊天中/空闲时/后台均可，傍晚活跃、深夜安静。</p>
+        <p><b>主动消息</b>：在「角色卡管理」→ 点角色卡 →「主动消息」里开关与调频率（按角色独立）。</p>
         <p><b>让流萤休息</b>：☰ 菜单 →「让流萤休息」，把这段对话整理进记忆与手账。</p>
         <p><b>撤回 / 清除</b>：☰ 菜单 →「撤回上一轮」或「清除历史」。</p>
         <p><b>表情 / 图片</b>：输入框右侧 😊 表情包、🖼 发图（图片压缩后上传，原图不出设备）。</p>
@@ -968,7 +940,7 @@
 </script>
 <script src="config.js"></script>
 <!-- 运行时入口：bundle.js（classic script，file:// 兼容；ES Module 在安卓服务器模式 file:// 下被 CORS 拦截） -->
-<script src="js/bundle.js?v=9cf48517"></script>
+<script src="js/bundle.js?v=6ce2430c"></script>
 <script src="js/pc_nav.js"></script>
 </body>
 </html>

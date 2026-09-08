@@ -502,6 +502,9 @@ async function loadStickerList() {
 // 角色编辑页（全屏 #pack-view：封面横幅 + 大头像 + 人设文案编辑 + 自建角色删除）
 // ═══════════════════════════════════════════
 const _PACK_PROMPT_LABELS = {
+    "core.md": "核心设定（身份/经历/价值观）",
+    "identity.md": "人际关系与认知边界",
+    "sms_samples.md": "短信风格示例",
     "prompts/polisher.md": "回复器人设（核心文案）",
     "prompts/analyzer_extra.md": "分析器·剧本事实核查补充",
     "prompts/organizer_sticker.md": "组织器·表情包调度提示词",
@@ -538,6 +541,17 @@ async function loadPackView() {
     // 封面/头像编辑按钮绑定
     document.getElementById("pv-cover-edit").onclick = () => _packAssetUpload("cover");
     document.getElementById("pv-avatar-edit").onclick = () => _packAssetUpload("avatar");
+
+    // 主动消息区填值
+    const pro = data.proactive || {};
+    const setChk = (id, v) => { const el = document.getElementById(id); if (el) el.checked = !!v; };
+    setChk("pv-pro-enabled", pro.enabled);
+    setChk("pv-pro-prob", pro.pro_enabled);
+    setChk("pv-pro-hidden", pro.hidden_enabled);
+    const hardEl = document.getElementById("pv-pro-hard");
+    const softEl = document.getElementById("pv-pro-soft");
+    if (hardEl) { hardEl.value = pro.hard ?? 6; document.getElementById("pv-pro-hard-v").textContent = hardEl.value; }
+    if (softEl) { softEl.value = Math.round((pro.soft ?? 0.35) * 100); document.getElementById("pv-pro-soft-v").textContent = softEl.value + "%"; }
 
     // 危险区：自建角色可删除；非自建显示恢复资产默认入口
     const danger = document.getElementById("pv-danger");
@@ -587,11 +601,10 @@ async function loadPackView() {
         danger.appendChild(delBtn);
     }
 
-    // 人设文案（可折叠编辑器）
+    // 人设文案（可折叠编辑器：核心三件 + 用户设定 + 提示词六段，全部放权可编辑）
     const promptsBox = document.getElementById("pv-prompts");
     promptsBox.innerHTML = "";
     for (const f of data.files) {
-        if (!f.name.startsWith("prompts/")) continue;
         const det = document.createElement("details");
         const sum = document.createElement("summary");
         sum.textContent = (_PACK_PROMPT_LABELS[f.name] || f.name) + (f.customized ? "（已修改）" : "");
@@ -632,6 +645,43 @@ async function loadPackView() {
     }
 }
 window.loadPackView = loadPackView;
+
+// 主动消息区：400ms 防抖自动保存（与设置页同风格）
+let _proSaveTimer = null;
+function _proScheduleSave() {
+    clearTimeout(_proSaveTimer);
+    _proSaveTimer = setTimeout(async () => {
+        const msg = document.getElementById("pv-pro-msg");
+        const payload = {
+            mode: CURRENT_MODE,
+            enabled: document.getElementById("pv-pro-enabled").checked,
+            hard: parseInt(document.getElementById("pv-pro-hard").value) || 6,
+            soft: (parseInt(document.getElementById("pv-pro-soft").value) || 35) / 100,
+            prob_enabled: document.getElementById("pv-pro-prob").checked,
+            hidden_enabled: document.getElementById("pv-pro-hidden").checked,
+        };
+        try {
+            const r = await fetch("/pack-config", {method: "POST",
+                headers: {"Content-Type": "application/json"},
+                body: JSON.stringify(payload)});
+            const d = await r.json();
+            if (msg) msg.textContent = d.ok ? "已保存" : ("保存失败：" + (d.error || ""));
+        } catch (e) { if (msg) msg.textContent = "保存失败（网络）"; }
+    }, 400);
+}
+for (const id of ["pv-pro-enabled", "pv-pro-prob", "pv-pro-hidden"]) {
+    document.getElementById(id)?.addEventListener("change", _proScheduleSave);
+}
+document.getElementById("pv-pro-hard")?.addEventListener("input", () => {
+    const el = document.getElementById("pv-pro-hard");
+    document.getElementById("pv-pro-hard-v").textContent = el.value;
+    _proScheduleSave();
+});
+document.getElementById("pv-pro-soft")?.addEventListener("input", () => {
+    const el = document.getElementById("pv-pro-soft");
+    document.getElementById("pv-pro-soft-v").textContent = el.value + "%";
+    _proScheduleSave();
+});
 
 // 头像/封面上传（复用图片压缩，选文件后上传为包资产）
 function _packAssetUpload(slot) {

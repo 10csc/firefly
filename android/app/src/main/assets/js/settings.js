@@ -217,6 +217,7 @@ function updateSettingsSummaries() {
 }
 
 function _buildSettingsPayload() {
+    // 主动消息设置已移入角色详情页（包级配置），此处不再提交——后端保留既有值
     return {
         analyzer_model: _$("analyzer-model-input").value.trim(),
         retriever_model: _$("retriever-model-input").value.trim(),
@@ -227,12 +228,6 @@ function _buildSettingsPayload() {
         polisher_effort: _$("polisher-effort-select").value,
         organizer_effort: _$("organizer-effort-select").value,
         retriever_temperature: parseFloat(_$("retriever-temp-slider").value) || 0,
-        proactive_enabled: _$("proactive-enabled").checked,
-        proactive_hard: parseInt(_$("proactive-hard-slider").value) || 6,
-        proactive_soft: (parseInt(_$("proactive-soft-slider").value) || 35) / 100,
-        prob_reply_enabled: _$("prob-reply-enabled").checked,
-        prob_reply_value: (parseInt(_$("prob-reply-slider").value) || 10) / 100,
-        hidden_reply_enabled: _$("hidden-reply-enabled").checked,
     };
 }
 

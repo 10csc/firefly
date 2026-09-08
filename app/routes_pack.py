@@ -111,7 +111,52 @@ def get_pack_files(h):
         "files": files,
         "assets": {"avatar": _slot_url("avatar"), "cover": _slot_url("cover")},
         "knowledge": knowledge,
+        "proactive": _pack_proactive_view(mode),
     })
+
+
+# 主动消息包级配置（主动消息随角色走；详情页编辑）
+def _pack_proactive_view(mode: str) -> dict:
+    return {
+        "enabled": bool(cfg.pack_cfg(mode, "proactive_enabled", True)),
+        "hard": int(cfg.pack_cfg(mode, "proactive_hard", 6)),
+        "soft": float(cfg.pack_cfg(mode, "proactive_soft", 0.35)),
+        "prob_enabled": bool(cfg.pack_cfg(mode, "prob_reply_enabled", True)),
+        "prob_value": float(cfg.pack_cfg(mode, "prob_reply_value", 0.10)),
+        "hidden_enabled": bool(cfg.pack_cfg(mode, "hidden_reply_enabled", True)),
+    }
+
+
+def set_pack_config(h):
+    """POST /pack-config：写包级主动消息配置（仅白名单字段，逐个校验）。"""
+    body = _read_json(h)
+    mode = _body_mode(body)
+    updates = {}
+    if "enabled" in body:
+        updates["proactive_enabled"] = bool(body["enabled"])
+    if "hard" in body:
+        try:
+            updates["proactive_hard"] = max(1, min(10, int(body["hard"])))
+        except (TypeError, ValueError):
+            h._json({"ok": False, "error": "hard 必须为 1-10 整数"}); return
+    if "soft" in body:
+        try:
+            updates["proactive_soft"] = max(0.0, min(1.0, float(body["soft"])))
+        except (TypeError, ValueError):
+            h._json({"ok": False, "error": "soft 必须为 0-1 数值"}); return
+    if "prob_enabled" in body:
+        updates["prob_reply_enabled"] = bool(body["prob_enabled"])
+    if "prob_value" in body:
+        try:
+            updates["prob_reply_value"] = max(0.0, min(1.0, float(body["prob_value"])))
+        except (TypeError, ValueError):
+            h._json({"ok": False, "error": "prob_value 必须为 0-1 数值"}); return
+    if "hidden_enabled" in body:
+        updates["hidden_reply_enabled"] = bool(body["hidden_enabled"])
+    if not updates:
+        h._json({"ok": False, "error": "没有可更新的字段"}); return
+    cfg.set_pack_cfg(mode, updates)
+    h._json({"ok": True, "proactive": _pack_proactive_view(mode)})
 
 
 def upload_pack_asset(h):

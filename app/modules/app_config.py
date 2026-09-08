@@ -64,6 +64,41 @@ def user_dir_id() -> int:
         return 0
 
 
+# ── 包级配置（主动消息等随角色走的设置；2026-09-08 主动消息按包化）──
+# 存 user_data/{mode}/data/proactive.json；读取顺序：包级 → 全局 config → 默认。
+# 全局 config 的 proactive_* 保留作"默认值"（新包/未配置包继承）。
+_PACK_CFG_NAME = "proactive.json"
+
+
+def pack_cfg(mode: str, key: str, default=None):
+    """包级配置读取：user_data/{mode}/data/proactive.json → 全局 config → default。"""
+    fp = mode_data_dir(mode) / _PACK_CFG_NAME
+    try:
+        if fp.exists():
+            data = json.loads(fp.read_text(encoding="utf-8"))
+            if isinstance(data, dict) and data.get(key) not in (None, ""):
+                return data[key]
+    except Exception:
+        pass
+    return config.get(key, default)
+
+
+def set_pack_cfg(mode: str, updates: dict) -> None:
+    """写包级配置（合并 updates 后落盘）。"""
+    fp = mode_data_dir(mode) / _PACK_CFG_NAME
+    data = {}
+    try:
+        if fp.exists():
+            old = json.loads(fp.read_text(encoding="utf-8"))
+            if isinstance(old, dict):
+                data = old
+    except Exception:
+        data = {}
+    data.update(updates)
+    fp.parent.mkdir(parents=True, exist_ok=True)
+    fp.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+
+
 # ── 按用户配置覆盖（A2：/set-config 服务器版只写覆盖，不污染全站默认）──
 _user_overlay: contextvars.ContextVar = contextvars.ContextVar("firefly_user_overlay", default=None)
 

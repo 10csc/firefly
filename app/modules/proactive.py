@@ -316,11 +316,11 @@ def backdoor_proactive_check(mode: str = None) -> list:
         hydrate_context(session["context"], max_turns=20, mode=mode)
         result = check_and_generate(
             session, client, mode=mode,
-            enabled=bool(cfg.config.get("proactive_enabled", True)),
-            hard=cfg.config.get("proactive_hard", 4),
-            soft=cfg.config.get("proactive_soft", 0.5),
-            prob_enabled=bool(cfg.config.get("hidden_reply_enabled", True)),
-            prob_value=cfg.config.get("prob_reply_value", 0.3),
+            enabled=bool(cfg.pack_cfg(mode, "proactive_enabled", True)),
+            hard=cfg.pack_cfg(mode, "proactive_hard", 4),
+            soft=cfg.pack_cfg(mode, "proactive_soft", 0.5),
+            prob_enabled=bool(cfg.pack_cfg(mode, "hidden_reply_enabled", True)),
+            prob_value=cfg.pack_cfg(mode, "prob_reply_value", 0.3),
             hidden=True,   # 隐藏式独立通道：HIDDEN 冷却，不碰 ACTIVE
             polisher_model=cfg.config["polisher_model"],
             polisher_effort=cfg.config["polisher_effort"],

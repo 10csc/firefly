@@ -39,7 +39,7 @@ from routes_assets import (add_sticker_route, sticker_update, sticker_delete,
                            add_favorite_route, get_favorites, delete_favorite_route)
 from routes_pack import (character_file_update, delete_character_file,
                          get_pack_files, upload_pack_asset, delete_pack_asset,
-                         create_pack, delete_pack)
+                         create_pack, delete_pack, set_pack_config)
 from routes_fix import (setting_fix_status, setting_fix_message, setting_fix_start,
                         setting_fix_apply, setting_fix_dismiss, setting_fix_rollback,
                         setting_fix_reset)
@@ -653,11 +653,11 @@ def proactive_status(h):
         with session["lock"]:
             result = check_and_generate(
                 session, client, mode=mode,
-                enabled=bool(cfg.eff_cfg("proactive_enabled", True)),
-                hard=cfg.eff_cfg("proactive_hard", 6),
-                soft=cfg.eff_cfg("proactive_soft", 0.35),
-                prob_enabled=bool(cfg.eff_cfg("prob_reply_enabled", True)),
-                prob_value=cfg.eff_cfg("prob_reply_value", 0.10),
+                enabled=bool(cfg.pack_cfg(mode, "proactive_enabled", True)),
+                hard=cfg.pack_cfg(mode, "proactive_hard", 6),
+                soft=cfg.pack_cfg(mode, "proactive_soft", 0.35),
+                prob_enabled=bool(cfg.pack_cfg(mode, "prob_reply_enabled", True)),
+                prob_value=cfg.pack_cfg(mode, "prob_reply_value", 0.10),
                 polisher_model=cfg.eff_cfg("polisher_model"),
                 polisher_effort=cfg.eff_cfg("polisher_effort"),
                 polisher_temperature=cfg.eff_cfg("polisher_temperature"),
@@ -718,6 +718,7 @@ POST_ROUTES = {
     "/character-file/delete": delete_character_file,
     "/pack-create": create_pack,
     "/pack-delete": delete_pack,
+    "/pack-config": set_pack_config,
 }
 
 
