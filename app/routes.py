@@ -39,7 +39,8 @@ from routes_assets import (add_sticker_route, sticker_update, sticker_delete,
                            add_favorite_route, get_favorites, delete_favorite_route)
 from routes_pack import (character_file_update, delete_character_file,
                          get_pack_files, upload_pack_asset, delete_pack_asset,
-                         create_pack, delete_pack, set_pack_config)
+                         create_pack, delete_pack, set_pack_config,
+                         pack_forge_start, pack_forge_next, pack_forge_finish)
 from routes_snapshot import (snapshot_create, snapshot_list, snapshot_download,
                              snapshot_delete, snapshot_restore)
 from routes_fix import (setting_fix_status, setting_fix_message, setting_fix_start,
@@ -721,6 +722,9 @@ POST_ROUTES = {
     "/pack-create": create_pack,
     "/pack-delete": delete_pack,
     "/pack-config": set_pack_config,
+    "/pack-forge/start": pack_forge_start,
+    "/pack-forge/next": pack_forge_next,
+    "/pack-forge/finish": pack_forge_finish,
     "/snapshot/create": snapshot_create,
     "/snapshot/delete": snapshot_delete,
     "/snapshot/restore": snapshot_restore,

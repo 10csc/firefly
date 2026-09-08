@@ -190,6 +190,103 @@ document.getElementById("pc-submit")?.addEventListener("click", async () => {
     } catch (e) { showToast("网络错误"); }
 });
 
+// ── AI 建卡向导（搜索 + 分步生成）──
+const _forge = { session: "", step: "", drafts: {} };
+
+function togglePackForge(show) {
+    const p = document.getElementById("pack-forge-panel");
+    if (!p) return;
+    const visible = p.style.display !== "none";
+    const target = (show === undefined) ? !visible : !!show;
+    p.style.display = target ? "block" : "none";
+    if (target) document.getElementById("pf-query").focus();
+}
+window.togglePackForge = togglePackForge;
+
+function _pfStatus(t) { const el = document.getElementById("pf-status"); if (el) el.textContent = t || ""; }
+
+document.getElementById("pf-start")?.addEventListener("click", async () => {
+    const query = document.getElementById("pf-query").value.trim();
+    if (!query) { showToast("先描述想创建的角色"); return; }
+    const btn = document.getElementById("pf-start");
+    btn.disabled = true;
+    _pfStatus("正在联网搜索并生成第一步（核心设定），可能要十几秒…");
+    try {
+        const resp = await fetch("/pack-forge/start", {method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({
+                query,
+                char_name: document.getElementById("pf-char").value.trim(),
+                user_name: document.getElementById("pf-user").value.trim(),
+                presentation: document.getElementById("pf-presentation").value,
+            })});
+        const data = await resp.json();
+        if (!data.ok) { _pfStatus(data.error || "生成失败"); btn.disabled = false; return; }
+        _forge.session = data.session;
+        _forge.step = data.step;
+        _forge.drafts = { [data.step]: data.draft };
+        _pfShowDraft(data);
+        _pfStatus(data.searched ? `已搜到资料（${data.search_source || "网络"}），草案可改，确认后点下一步`
+                                : "没搜到足够资料——已按你的描述构建（请仔细检查）");
+    } catch (e) { _pfStatus("网络错误"); btn.disabled = false; }
+});
+
+function _pfShowDraft(data) {
+    document.getElementById("pf-draft-box").style.display = "block";
+    document.getElementById("pf-step-label").textContent = `第 ${_stepNo(data.step)} 步 / 共 4 步：${data.step_label}`;
+    document.getElementById("pf-draft").value = data.draft || "";
+    document.getElementById("pf-next").style.display = data.is_last ? "none" : "";
+    document.getElementById("pf-finish").style.display = data.is_last ? "" : "none";
+}
+function _stepNo(s) { return {core: 1, identity: 2, sms_samples: 3, polisher: 4}[s] || 1; }
+
+document.getElementById("pf-next")?.addEventListener("click", async () => {
+    const btn = document.getElementById("pf-next");
+    btn.disabled = true;
+    _pfStatus("生成下一步…");
+    try {
+        const resp = await fetch("/pack-forge/next", {method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({session: _forge.session, step: _forge.step,
+                                  draft: document.getElementById("pf-draft").value})});
+        const data = await resp.json();
+        if (!data.ok) { _pfStatus(data.error || "生成失败"); btn.disabled = false; return; }
+        _forge.step = data.step;
+        _forge.drafts[data.step] = data.draft;
+        _pfShowDraft(data);
+        _pfStatus("草案可改，确认后继续");
+    } catch (e) { _pfStatus("网络错误"); }
+    btn.disabled = false;
+});
+
+document.getElementById("pf-finish")?.addEventListener("click", async () => {
+    _forge.drafts[_forge.step] = document.getElementById("pf-draft").value;
+    const btn = document.getElementById("pf-finish");
+    btn.disabled = true;
+    _pfStatus("正在创建角色包…");
+    try {
+        const resp = await fetch("/pack-forge/finish", {method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({session: _forge.session,
+                                  name: document.getElementById("pf-query").value.trim().slice(0, 30),
+                                  char_name: document.getElementById("pf-char").value.trim(),
+                                  user_name: document.getElementById("pf-user").value.trim(),
+                                  files: _forge.drafts})});
+        const data = await resp.json();
+        if (data.ok) {
+            showToast(`已创建「${data.name}」——点列表里的卡片进详情，换头像封面、配表情包`);
+            togglePackForge(false);
+            document.getElementById("pf-draft-box").style.display = "none";
+            _pfStatus("");
+            await window.__modesReload();
+            renderCardsList();
+        } else {
+            _pfStatus(data.error || "创建失败");
+            btn.disabled = false;
+        }
+    } catch (e) { _pfStatus("网络错误"); btn.disabled = false; }
+});
+
 // 轮播图上的角色信息条：跟随当前轮播位置
 function _updateCarouselChar() {
     const c = document.getElementById("carousel-char");

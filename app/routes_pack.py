@@ -272,6 +272,32 @@ def create_pack(h):
     h._json({"ok": True, "id": pid, "name": name})
 
 
+# ═══ AI 建卡向导（搜索 + 分步生成；仅本地版）═══
+
+def pack_forge_start(h):
+    if _is_server():
+        h._json({"ok": False, "error": "服务器版暂不支持"}); return
+    client = cfg.get_client()
+    if not client:
+        h._json({"ok": False, "error": "请先设置 API Key"}); return
+    from modules.pack_forge import forge_start
+    h._json(forge_start(client, _read_json(h)))
+
+
+def pack_forge_next(h):
+    if _is_server():
+        h._json({"ok": False, "error": "服务器版暂不支持"}); return
+    from modules.pack_forge import forge_next
+    h._json(forge_next(_read_json(h)))
+
+
+def pack_forge_finish(h):
+    if _is_server():
+        h._json({"ok": False, "error": "服务器版暂不支持"}); return
+    from modules.pack_forge import forge_finish
+    h._json(forge_finish(_read_json(h)))
+
+
 def delete_pack(h):
     """POST /pack-delete：删除自定义角色包（仅本地版；内置包 story/haruno 拒绝）。
     连数据一起删（user_data/{id}/ 整个目录）——前端已二次确认。"""

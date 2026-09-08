@@ -338,6 +338,33 @@
     <div class="cv-list" id="cv-list"></div>
     <div class="cv-new">
         <button id="cv-new-btn" type="button" onclick="togglePackCreate()">+ 新建角色</button>
+        <button id="cv-forge-btn" type="button" style="margin-top:8px" onclick="togglePackForge()">✨ 让 AI 帮我搭（联网搜资料）</button>
+        <!-- AI 建卡向导 -->
+        <div id="pack-forge-panel" style="display:none;text-align:left;margin-top:10px">
+            <div class="field"><input id="pf-query" type="text" placeholder="想创建谁？（名字 / 作品 / 一句话描述）" maxlength="120"></div>
+            <div class="field" style="display:flex;gap:8px">
+                <input id="pf-char" type="text" placeholder="角色名（可留空，AI 定）" maxlength="20" style="flex:1">
+                <input id="pf-user" type="text" placeholder="对方称呼" maxlength="20" style="flex:1">
+            </div>
+            <div class="field">
+                <select id="pf-presentation">
+                    <option value="sticker">短信 + 表情包</option>
+                    <option value="narration">短信 + 旁白</option>
+                    <option value="none">纯短信</option>
+                </select>
+            </div>
+            <button id="pf-start" type="button" style="width:100%">✨ 开始搭建</button>
+            <button type="button" style="width:100%;margin-top:6px" onclick="togglePackForge(false)">取消</button>
+            <div id="pf-status" style="font-size:0.75em;color:var(--fg-muted);margin-top:8px"></div>
+            <div id="pf-draft-box" style="display:none;margin-top:8px">
+                <div id="pf-step-label" style="font-size:0.85em;color:var(--fg-main);margin-bottom:4px"></div>
+                <textarea id="pf-draft" style="width:100%;height:220px"></textarea>
+                <div style="display:flex;gap:8px;margin-top:8px">
+                    <button id="pf-next" type="button" style="flex:1">确认，下一步 →</button>
+                    <button id="pf-finish" type="button" style="flex:1;display:none">✓ 完成创建</button>
+                </div>
+            </div>
+        </div>
         <div id="pack-create-panel" style="display:none;text-align:left;margin-top:10px">
             <div class="field"><input id="pc-name" type="text" placeholder="剧本/卡片名称（如：夏日烟火）" maxlength="30"></div>
             <div class="field"><input id="pc-char" type="text" placeholder="角色名（她叫什么）" maxlength="20"></div>
@@ -952,7 +979,7 @@
 </script>
 <script src="config.js"></script>
 <!-- 运行时入口：bundle.js（classic script，file:// 兼容；ES Module 在安卓服务器模式 file:// 下被 CORS 拦截） -->
-<script src="js/bundle.js?v=6d3e90e3"></script>
+<script src="js/bundle.js?v=5d1488eb"></script>
 <script src="js/pc_nav.js"></script>
 </body>
 </html>
