@@ -40,6 +40,8 @@ from routes_assets import (add_sticker_route, sticker_update, sticker_delete,
 from routes_pack import (character_file_update, delete_character_file,
                          get_pack_files, upload_pack_asset, delete_pack_asset,
                          create_pack, delete_pack, set_pack_config)
+from routes_snapshot import (snapshot_create, snapshot_list, snapshot_download,
+                             snapshot_delete, snapshot_restore)
 from routes_fix import (setting_fix_status, setting_fix_message, setting_fix_start,
                         setting_fix_apply, setting_fix_dismiss, setting_fix_rollback,
                         setting_fix_reset)
@@ -719,6 +721,9 @@ POST_ROUTES = {
     "/pack-create": create_pack,
     "/pack-delete": delete_pack,
     "/pack-config": set_pack_config,
+    "/snapshot/create": snapshot_create,
+    "/snapshot/delete": snapshot_delete,
+    "/snapshot/restore": snapshot_restore,
 }
 
 
@@ -750,6 +755,8 @@ GET_ROUTES = {
     "/journal": get_journal,
     "/export-data": export_data,
     "/backups": backups_list,
+    "/snapshot/list": snapshot_list,
+    "/snapshot/download": snapshot_download,
     "/setting-fix/status": setting_fix_status,
     "/assets/index": assets_index,
     "/assets/raw": assets_raw,

@@ -617,23 +617,20 @@
                     <div id="update-msg" style="color:var(--fg-muted);font-size:0.75em;margin-top:6px"></div>
                 </div>
                 <div class="field">
-                    <label>数据备份</label>
+                    <label>数据快照</label>
                     <div style="margin-top:6px">
-                        <button id="export-btn" type="button" onclick="exportData()">导出当前模式数据（zip）</button>
+                        <button id="snapshot-create-btn" type="button">保存快照（全部角色）</button>
                         <button id="import-btn" type="button" onclick="importData()">导入备份（zip）</button>
                         <input id="import-file" type="file" accept=".zip,application/zip" style="display:none">
                     </div>
-                    <div style="color:var(--fg-muted);font-size:0.7em;margin-top:6px">含对话/记忆/手账/设定/图片描述（不含 Key）。导入会覆盖当前模式数据（导入前自动备份）</div>
-                    <div class="field" id="backup-field" style="margin-top:10px">
-                        <label>本地备份</label>
-                        <button id="backup-create-btn" type="button" onclick="createBackup()">新建备份</button>
-                        <div id="backup-list" style="margin-top:8px"></div>
-                    </div>
-                    <div class="field" id="sync-now-field" style="margin-top:10px">
-                        <label>云端同步（登录后自动同步，可立即同步）</label>
-                        <button id="sync-now-btn" type="button" onclick="syncNow()">立即同步</button>
-                        <div id="sync-now-msg" style="color:var(--fg-muted);font-size:0.7em;margin-top:6px"></div>
-                    </div>
+                    <div style="color:var(--fg-muted);font-size:0.7em;margin-top:6px">快照包含所有角色卡与聊天记录（不含 Key），存服务器，每账号留最近 5 份——换手机也能恢复。</div>
+                    <div id="snapshot-list" style="margin-top:8px"></div>
+                </div>
+                <div class="field" id="sync-now-field" style="margin-top:10px">
+                    <label>云端同步（登录后自动同步，可立即同步）</label>
+                    <button id="sync-now-btn" type="button" onclick="syncNow()">立即同步</button>
+                    <div id="sync-now-msg" style="color:var(--fg-muted);font-size:0.7em;margin-top:6px"></div>
+                </div>
                     <div style="color:var(--fg-accent);font-size:0.7em;margin-top:8px;padding:8px 10px;border:1px solid var(--gold-line);border-radius:8px;background:var(--gold-glow)">
                         🖼 <b>图片说明</b>：服务器只存压缩图，原图不出设备；表情包仅存本机。
                     </div>
@@ -955,7 +952,7 @@
 </script>
 <script src="config.js"></script>
 <!-- 运行时入口：bundle.js（classic script，file:// 兼容；ES Module 在安卓服务器模式 file:// 下被 CORS 拦截） -->
-<script src="js/bundle.js?v=a09b336d"></script>
+<script src="js/bundle.js?v=4c133cf9"></script>
 <script src="js/pc_nav.js"></script>
 </body>
 </html>

@@ -198,30 +198,7 @@ const ERROR_TIPS = {
     unknown: "出了点问题，请稍后再试",
 };
 
-/** 导出当前模式数据备份（zip）。
- *  local：window.location.href（PC 浏览器直接下载 / 安卓壳 DownloadListener 接管下载目录）；
- *  server：fetch → blob → a.click()（file:// 页面跨域，不能直接 window.location）。 */
-async function exportData() {
-    if (!IS_SERVER) {
-        window.location.href = `/export-data?mode=${encodeURIComponent(CURRENT_MODE)}`;
-        _toast("正在导出备份…");
-        return;
-    }
-    try {
-        const resp = await fetch(`/export-data?mode=${encodeURIComponent(CURRENT_MODE)}`);
-        if (!resp.ok) { _toast("导出失败，请稍后再试"); return; }
-        const blob = await resp.blob();
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.href = url;
-        a.download = `firefly-backup-${CURRENT_MODE}.zip`;
-        document.body.appendChild(a);
-        a.click();
-        setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 1500);
-        _toast("已开始导出备份");
-    } catch (e) { _toast("导出失败，请检查网络"); }
-}
-window.exportData = exportData;
+
 
 /** 导入 zip 备份（覆盖当前模式数据；导入前后端自动备份现有数据）。 */
 function importData() {
@@ -251,8 +228,7 @@ function importData() {
 }
 window.importData = importData;
 
-/** 本地备份管理（备份存后端 backups/ 目录；云端账号备份已下线，改由 /sync/now 增量同步）。
- *  列表 / 新建 / 恢复 / 删除 / 下载；恢复与删除沿用 confirm 二次确认。 */
+// ══ 数据快照（保存全部角色到服务器；每账号留最近 5 份，换机可恢复）══
 function _fmtSize(n) {
     n = Number(n) || 0;
     if (n >= 1024 * 1024) return (n / 1024 / 1024).toFixed(1) + " MB";
@@ -260,60 +236,70 @@ function _fmtSize(n) {
     return n + " B";
 }
 
-async function loadBackups() {
-    const list = document.getElementById("backup-list");
-    if (!list) return;
+async function createSnapshot() {
+    _toast("正在打包快照…");
     try {
-        const resp = await fetch("/backups");
-        const data = await resp.json();
-        const items = (data.backups || []).filter(b => !b.mode || b.mode === CURRENT_MODE);
-        if (!items.length) {
-            list.innerHTML = '<div style="color:var(--fg-muted);font-size:0.75em">还没有备份，点「新建备份」存一份</div>';
-            return;
-        }
-        list.innerHTML = items.map(b => `
-        <div class="backup-row" data-name="${escapeHtml(b.name)}" style="display:flex;align-items:center;gap:6px;padding:5px 0;border-bottom:1px solid rgba(255,255,255,0.06);font-size:0.75em">
-            <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escapeHtml(b.name)}">${escapeHtml(b.time || b.name)}</span>
-            <span style="color:var(--fg-muted);flex-shrink:0">${_fmtSize(b.size)}</span>
-            <button type="button" class="bk-restore">恢复</button>
-            <button type="button" class="bk-del">删除</button>
-            <button type="button" class="bk-download">下载</button>
-        </div>`).join("");
-        list.querySelectorAll(".backup-row").forEach(row => {
-            const name = row.dataset.name;
-            row.querySelector(".bk-restore").addEventListener("click", () => restoreBackup(name));
-            row.querySelector(".bk-del").addEventListener("click", () => deleteBackup(name));
-            row.querySelector(".bk-download").addEventListener("click", () => downloadBackup(name));
-        });
-    } catch (e) {
-        list.innerHTML = '<div style="color:#c66;font-size:0.75em">备份列表加载失败</div>';
-    }
-}
-window.loadBackups = loadBackups;
-
-async function createBackup() {
-    _toast("正在创建备份…");
-    try {
-        const resp = await fetch("/backup/create", {
-            method: "POST", headers: {"Content-Type": "application/json"},
-            body: JSON.stringify({mode: CURRENT_MODE}),
-        });
+        const resp = await fetch("/snapshot/create", { method: "POST" });
         const data = await resp.json().catch(() => ({}));
         if (resp.ok && data.ok) {
-            _toast("备份已创建（" + _fmtSize(data.size) + "）");
-            loadBackups();
+            _toast(data.pushed ? "快照已保存到服务器（" + _fmtSize(data.size) + "）"
+                               : "快照已保存到本机（" + _fmtSize(data.size) + "）"
+                                 + (data.push_error ? "；" + data.push_error : ""));
+            loadSnapshots();
         } else {
-            _toast("备份失败：" + (data.error || ""));
+            _toast("快照失败：" + (data.error || ""));
         }
-    } catch (e) { _toast("备份失败，请检查网络"); }
+    } catch (e) { _toast("快照失败，请检查网络"); }
 }
-window.createBackup = createBackup;
 
-async function restoreBackup(name) {
-    if (!confirm(`用备份「${name}」覆盖当前「${MODE_NAMES[CURRENT_MODE] || CURRENT_MODE}」的全部数据？\n\n确定恢复吗？`)) return;
-    _toast("正在恢复备份…");
+async function loadSnapshots() {
+    const list = document.getElementById("snapshot-list");
+    if (!list) return;
     try {
-        const resp = await fetch("/backup/restore", {
+        const resp = await fetch("/snapshot/list");
+        const data = await resp.json();
+        const items = data.snapshots || [];
+        if (!items.length) {
+            list.innerHTML = '<div style="color:var(--fg-muted);font-size:0.75em">还没有快照，点「保存快照」存一份</div>';
+            return;
+        }
+        list.innerHTML = items.map(s => `
+        <div class="snapshot-row" data-name="${escapeHtml(s.name)}" style="display:flex;align-items:center;gap:6px;padding:5px 0;border-bottom:1px solid rgba(255,255,255,0.06);font-size:0.75em">
+            <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escapeHtml(s.name)}">${escapeHtml(s.time || s.name)}</span>
+            <span style="color:var(--fg-muted);flex-shrink:0">${_fmtSize(s.size)}</span>
+            <button type="button" class="sn-restore">恢复</button>
+            <button type="button" class="sn-download">下载</button>
+            <button type="button" class="sn-del">删除</button>
+        </div>`).join("");
+        list.querySelectorAll(".snapshot-row").forEach(row => {
+            const name = row.dataset.name;
+            row.querySelector(".sn-restore").addEventListener("click", () => restoreSnapshot(name));
+            row.querySelector(".sn-del").addEventListener("click", () => deleteSnapshot(name));
+            row.querySelector(".sn-download").addEventListener("click", () => {
+                if (!IS_SERVER) {
+                    window.location.href = `/snapshot/download?name=${encodeURIComponent(name)}`;
+                } else {
+                    fetch(`/snapshot/download?name=${encodeURIComponent(name)}`)
+                        .then(r => r.blob()).then(blob => {
+                            const url = URL.createObjectURL(blob);
+                            const a = document.createElement("a");
+                            a.href = url; a.download = name;
+                            document.body.appendChild(a); a.click();
+                            setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 1500);
+                        }).catch(() => _toast("下载失败"));
+                }
+            });
+        });
+    } catch (e) {
+        list.innerHTML = '<div style="color:#c66;font-size:0.75em">快照列表加载失败</div>';
+    }
+}
+
+async function restoreSnapshot(name) {
+    if (!confirm(`用快照「${name}」覆盖全部角色与聊天记录？\n恢复前会自动保存当前状态的快照。\n\n确定恢复吗？`)) return;
+    _toast("正在恢复快照…");
+    try {
+        const resp = await fetch("/snapshot/restore", {
             method: "POST", headers: {"Content-Type": "application/json"},
             body: JSON.stringify({name}),
         });
@@ -327,45 +313,26 @@ async function restoreBackup(name) {
     } catch (e) { _toast("恢复失败，请检查网络"); }
 }
 
-async function deleteBackup(name) {
-    if (!confirm(`删除备份「${name}」？此操作不可撤销。`)) return;
+async function deleteSnapshot(name) {
+    if (!confirm(`删除快照「${name}」？此操作不可撤销。`)) return;
     try {
-        const resp = await fetch("/backup/delete", {
+        const resp = await fetch("/snapshot/delete", {
             method: "POST", headers: {"Content-Type": "application/json"},
             body: JSON.stringify({name}),
         });
         const data = await resp.json().catch(() => ({}));
         if (resp.ok && data.ok) {
-            _toast("备份已删除");
-            loadBackups();
+            _toast("快照已删除");
+            loadSnapshots();
         } else {
             _toast("删除失败：" + (data.error || ""));
         }
     } catch (e) { _toast("删除失败，请检查网络"); }
 }
 
-/** 下载备份 zip（沿用导出通道 GET /export-data 的浏览器下载；带 name 时后端给对应备份包）。 */
-async function downloadBackup(name) {
-    const qs = `mode=${encodeURIComponent(CURRENT_MODE)}` + (name ? `&name=${encodeURIComponent(name)}` : "");
-    if (!IS_SERVER) {
-        window.location.href = `/export-data?${qs}`;
-        _toast("正在下载备份…");
-        return;
-    }
-    try {
-        const resp = await fetch(`/export-data?${qs}`);
-        if (!resp.ok) { _toast("下载失败，请稍后再试"); return; }
-        const blob = await resp.blob();
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.href = url;
-        a.download = name || `firefly-backup-${CURRENT_MODE}.zip`;
-        document.body.appendChild(a);
-        a.click();
-        setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 1500);
-        _toast("已开始下载备份");
-    } catch (e) { _toast("下载失败，请检查网络"); }
-}
+document.getElementById("snapshot-create-btn")?.addEventListener("click", createSnapshot);
+document.getElementById("snapshot-list") && loadSnapshots();
+
 
 /** 等待回复期间轮询流水线阶段（检索→分析→回复→表情包），把"对方正在输入…"换成具体阶段。
  *  仅在拿到 stage 时替换文本；请求结束由 _chatSend 的 finally 清除。

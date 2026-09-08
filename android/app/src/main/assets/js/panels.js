@@ -60,7 +60,7 @@ const settingsPanel = document.getElementById("settings-panel");
 export function openSettings() {
     settingsPanel.classList.add("show");
     loadConfig();
-    try { window.loadBackups && window.loadBackups(); } catch (e) {}   // 本地备份列表（chat.js 注册）
+    try { loadSnapshots(); } catch (e) {}   // 快照列表（chat.js 同作用域函数）
     try { window.btActivate && window.btActivate("mine"); } catch (e) {}
 }
 export function closeSettings() { settingsPanel.classList.remove("show"); }
