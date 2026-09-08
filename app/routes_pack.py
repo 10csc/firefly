@@ -83,8 +83,18 @@ def get_pack_files(h):
         user_fp = cfg.mode_character_dir(mode) / fname
         fp = resolve_character_file(fname, mode)
         content = fp.read_text(encoding="utf-8") if fp.exists() else ""
+        # customized = 用户副本与 bundled 内容不同（首启拷贝不算用户修改）
+        customized = False
+        if user_fp.exists():
+            try:
+                user_text = user_fp.read_text(encoding="utf-8")
+                bundled_fp = cfg.bundled_character_dir(mode) / fname
+                bundled_text = bundled_fp.read_text(encoding="utf-8") if bundled_fp.exists() else ""
+                customized = user_text.strip() != bundled_text.strip()
+            except OSError:
+                customized = True
         files.append({"name": fname, "content": content,
-                      "customized": user_fp.exists()})
+                      "customized": customized})
     p = cfg.PRESETS.get(mode) or {}
 
     def _slot_url(slot: str) -> str:
