@@ -413,7 +413,7 @@ async function loadStickerList() {
             <div class="stk-head">
                 ${thumb}
                 <button class="stk-toggle ${s.enabled ? "on" : ""}" data-on="${s.enabled ? "1" : ""}" ${(s.editable || s.is_default) ? "" : "disabled"}>${s.enabled ? "启用中" : "已停用"}</button>
-            </div>
+            </div>${s.pack ? `<div style="font-size:0.62em;color:var(--fg-accent);margin-top:2px">专属：${escapeHtml(s.pack)}</div>` : ""}
             <div class="stk-main">
                 <select class="stk-cat-sel" ${(s.editable || s.is_default) ? "" : "disabled"}>
                     <option value="可爱" ${s.category==="可爱"?"selected":""}>可爱</option>
@@ -553,6 +553,8 @@ async function loadPackView() {
     if (hardEl) { hardEl.value = pro.hard ?? 6; document.getElementById("pv-pro-hard-v").textContent = hardEl.value; }
     if (softEl) { softEl.value = Math.round((pro.soft ?? 0.35) * 100); document.getElementById("pv-pro-soft-v").textContent = softEl.value + "%"; }
 
+    _loadPackStickers();
+
     // 危险区：自建角色可删除；非自建显示恢复资产默认入口
     const danger = document.getElementById("pv-danger");
     danger.innerHTML = "";
@@ -681,6 +683,111 @@ document.getElementById("pv-pro-soft")?.addEventListener("input", () => {
     const el = document.getElementById("pv-pro-soft");
     document.getElementById("pv-pro-soft-v").textContent = el.value + "%";
     _proScheduleSave();
+});
+
+// ═══════════════════════════════════════════
+// 详情页表情包区（本包可用 = 全局共享 + 本包专属；专属可增删启停）
+// ═══════════════════════════════════════════
+async function _loadPackStickers() {
+    const grid = document.getElementById("pv-stk-grid");
+    if (!grid) return;
+    grid.innerHTML = "";
+    let items = [];
+    try {
+        const resp = await fetch("/stickers");
+        const data = await resp.json();
+        items = Array.isArray(data.stickers) ? data.stickers : [];
+    } catch (e) { return; }
+    const usable = items.filter(s => !s.pack || s.pack === CURRENT_MODE);
+    for (const s of usable) {
+        const cell = document.createElement("div");
+        cell.className = "pv-stk-item" + (s.enabled ? "" : " off");
+        const img = document.createElement("img");
+        try {
+            const url = await stickerSrc(s.file, IS_SERVER, API_BASE);
+            if (url) img.src = url;
+        } catch (e) {}
+        if (s.pack === CURRENT_MODE) {
+            const pk = document.createElement("span");
+            pk.className = "pk";
+            pk.textContent = "专属";
+            cell.appendChild(pk);
+        }
+        const lb = document.createElement("div");
+        lb.className = "lb";
+        lb.textContent = s.label || "";
+        const ops = document.createElement("div");
+        ops.className = "ops";
+        const tgl = document.createElement("button");
+        tgl.textContent = s.enabled ? "◐" : "○";
+        tgl.title = s.enabled ? "停用" : "启用";
+        tgl.onclick = async () => {
+            try {
+                await fetch("/sticker-update", {method: "POST",
+                    headers: {"Content-Type": "application/json"},
+                    body: JSON.stringify({id: s.id, enabled: !s.enabled})});
+                _loadPackStickers();
+            } catch (e) {}
+        };
+        ops.appendChild(tgl);
+        if (s.pack === CURRENT_MODE && s.editable) {
+            const del = document.createElement("button");
+            del.textContent = "×";
+            del.title = "删除（仅专属）";
+            del.onclick = async () => {
+                if (!confirm(`删除表情包「${s.label}」？`)) return;
+                try {
+                    await fetch("/sticker-delete", {method: "POST",
+                        headers: {"Content-Type": "application/json"},
+                        body: JSON.stringify({id: s.id})});
+                    _loadPackStickers();
+                } catch (e) {}
+            };
+            ops.appendChild(del);
+        }
+        cell.append(img, lb, ops);
+        grid.appendChild(cell);
+    }
+    if (!usable.length) {
+        const empty = document.createElement("div");
+        empty.style.cssText = "color:var(--fg-muted);font-size:0.78em;grid-column:1/-1";
+        empty.textContent = "还没有表情包——点下方按钮给这个角色添加第一张。";
+        grid.appendChild(empty);
+    }
+}
+
+// 详情页表情包添加（自动归属当前包）
+document.getElementById("pv-stk-add")?.addEventListener("click", () => {
+    const f = document.getElementById("pv-stk-addform");
+    if (f) f.style.display = f.style.display === "none" ? "block" : "none";
+});
+document.getElementById("pv-stk-submit")?.addEventListener("click", async () => {
+    const file = document.getElementById("pv-stk-file").files[0];
+    const category = document.getElementById("pv-stk-category").value;
+    const label = document.getElementById("pv-stk-label").value.trim();
+    const msg = document.getElementById("pv-stk-msg");
+    if (!file) { msg.textContent = "请先选择图片"; return; }
+    if (!label) { msg.textContent = "请填写含义描述"; return; }
+    const fd = new FormData();
+    fd.append("file", file);
+    fd.append("category", category);
+    fd.append("label", label);
+    fd.append("mode", CURRENT_MODE);   // 归属当前包
+    try {
+        const resp = await fetch("/add-sticker", {method: "POST", body: fd});
+        const data = await resp.json();
+        if (data.ok) {
+            if (data.local && data.file && file instanceof Blob) {
+                try { await idbSaveMedia(String(data.file).slice("local:".length), file); } catch (e) {}
+            }
+            msg.textContent = "已添加";
+            document.getElementById("pv-stk-label").value = "";
+            document.getElementById("pv-stk-file").value = "";
+            _loadPackStickers();
+        } else {
+            msg.textContent = "失败：" + (data.error || "");
+        }
+    } catch (e) { msg.textContent = "网络错误"; }
 });
 
 // 头像/封面上传（复用图片压缩，选文件后上传为包资产）

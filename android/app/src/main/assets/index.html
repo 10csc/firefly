@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>流萤</title>
-<link rel="stylesheet" href="style.css?v=3e8257a7">
+<link rel="stylesheet" href="style.css?v=33419aec">
 <style>
 /* 服务器版：轮播图下登录/用户模块 */
 #auth-module{margin:14px 10px 0}
@@ -392,6 +392,21 @@
             <label class="pv-check"><input type="checkbox" id="pv-pro-hidden"> 后台时也会想起你（隐藏式）</label>
             <div class="pv-pro-msg" id="pv-pro-msg"></div>
         </div>
+        <div class="pv-stickers">
+            <div class="pv-sec-title">表情包</div>
+            <div class="field-tip">这个角色可以用的表情包（含全局共享与本角色专属）。专属的新增在此管理，互不影响其他角色。</div>
+            <div class="pv-stk-grid" id="pv-stk-grid"></div>
+            <button id="pv-stk-add" type="button">+ 给这个角色添加表情包</button>
+            <div id="pv-stk-addform" style="display:none;margin-top:8px">
+                <input type="file" id="pv-stk-file" accept="image/*">
+                <input type="text" id="pv-stk-label" placeholder="含义描述（如：害羞地低头）" maxlength="120" style="margin-top:6px">
+                <div style="display:flex;gap:8px;margin-top:8px">
+                    <select id="pv-stk-category"><option value="可爱">可爱</option><option value="帅气">帅气</option></select>
+                    <button id="pv-stk-submit" type="button" style="flex:1">保存</button>
+                </div>
+                <div id="pv-stk-msg" style="font-size:0.72em;color:var(--fg-muted);margin-top:4px"></div>
+            </div>
+        </div>
         <div class="field">
             <label>人设文案</label>
             <div class="field-tip">直接改这个角色的设定与文案。含 {core} {journal} 等槽位标记的行请保留槽位原文；「恢复默认」删除你的修改。</div>
@@ -770,7 +785,7 @@
                 <button id="sticker-submit" type="button">保存</button>
                 <div id="sticker-add-msg"></div>
             </div>
-            <button id="sticker-manage-btn" type="button">表情包映射表</button>
+            <button id="sticker-manage-btn" type="button">全部表情包（含各角色专属）</button>
             <div id="sticker-manage-panel" style="display:none">
                 <div id="sticker-manage-msg"></div>
                 <div id="sticker-list"></div>
@@ -940,7 +955,7 @@
 </script>
 <script src="config.js"></script>
 <!-- 运行时入口：bundle.js（classic script，file:// 兼容；ES Module 在安卓服务器模式 file:// 下被 CORS 拦截） -->
-<script src="js/bundle.js?v=6ce2430c"></script>
+<script src="js/bundle.js?v=a09b336d"></script>
 <script src="js/pc_nav.js"></script>
 </body>
 </html>
