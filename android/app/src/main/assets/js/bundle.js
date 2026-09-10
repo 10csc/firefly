@@ -1056,6 +1056,8 @@ async function loadPackView() {
     setChk("pv-pro-enabled", pro.enabled);
     setChk("pv-pro-prob", pro.pro_enabled);
     setChk("pv-pro-hidden", pro.hidden_enabled);
+    // 后台主动消息的客户端门控跟随当前角色卡的「隐藏式」开关（服务端不含该判断）
+    S._hiddenEnabled = !!pro.hidden_enabled;
     const hardEl = document.getElementById("pv-pro-hard");
     const softEl = document.getElementById("pv-pro-soft");
     if (hardEl) { hardEl.value = pro.hard ?? 6; document.getElementById("pv-pro-hard-v").textContent = hardEl.value; }
@@ -1176,6 +1178,7 @@ function _proScheduleSave() {
                 body: JSON.stringify(payload)});
             const d = await r.json();
             if (msg) msg.textContent = d.ok ? "已保存" : ("保存失败：" + (d.error || ""));
+            if (d.ok) S._hiddenEnabled = payload.hidden_enabled;   // 后台主动门控即时跟随
         } catch (e) { if (msg) msg.textContent = "保存失败（网络）"; }
     }, 400);
 }
@@ -1570,7 +1573,8 @@ async function _postSettings(payload, msg) {
         msg.textContent = "保存失败：" + (data.error || "请稍后再试");
         return false;
     }
-    S._hiddenEnabled = payload.hidden_reply_enabled !== false;
+    // 注意：这里不再改 S._hiddenEnabled——本页已无「隐藏式」控件，
+    // 该开关按角色卡存（角色详情页 → 主动消息），由 panels.js 同步。
     msg.textContent = "已保存 ✓";
     clearTimeout(msg._timer);
     msg._timer = setTimeout(() => { msg.textContent = ""; }, 2500);
@@ -1889,7 +1893,8 @@ async function checkUpdate() {
     }
     // 本地模式：优先走本地后端（权威版本源 + 自动下载能力），失败退回纯前端双源检测
     try {
-        const lr = await fetch("/check-update", {cache: "no-store"});
+        // /check-update 只注册在 POST_ROUTES（GET 会 404，曾长期被前端双源兜底掩盖）
+        const lr = await fetch("/check-update", {method: "POST", cache: "no-store"});
         if (lr.ok) {
             const d = await lr.json();
             if (!d.ok) throw new Error(d.error || "check fail");
@@ -2567,6 +2572,27 @@ function importData() {
     input.click();
 }
 window.importData = importData;
+
+// ══ 导出当前角色（2026-09-10 加）══
+// 为什么需要它：此前前端只有「导入」没有「导出」——用户无法自助备份，唯一的备份入口是
+// 全量快照，而快照对自建角色包曾存在丢包问题（R-01）。导出走既有 GET /export-data?mode=，
+// 产出本地 zip（含该角色的包定义与全部对话/手账/记忆，_config.json 已剥离 Key），
+// 可离线留存、也可用「导入」在本机或其他设备还原。
+function exportData() {
+    const name = MODE_NAMES[CURRENT_MODE] || CURRENT_MODE;
+    if (!confirm(`导出「${name}」的全部数据为本地 zip？\n\n包含：角色设定、对话记录、手账、记忆（不含 API Key）。\n可用于离线备份或换机迁移。`)) return;
+    _toast("正在打包导出…");
+    const url = API_BASE + "/export-data?mode=" + encodeURIComponent(CURRENT_MODE);
+    // 用隐藏链接触发下载（保留 Content-Disposition 文件名；window.open 在部分 WebView 会被拦）
+    const a = document.createElement("a");
+    a.href = url;
+    a.rel = "noopener";
+    a.style.display = "none";
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => a.remove(), 1500);
+}
+window.exportData = exportData;
 
 // ══ 数据快照（保存全部角色到服务器；每账号留最近 5 份，换机可恢复）══
 function _fmtSize(n) {
@@ -4570,54 +4596,50 @@ function _guideStickerTabOpen() {
 // 详细引导 = 实际操作教程：每一步让用户真的点对应功能，操作成功自动进下一步。
 const DEEP_GUIDE_STEPS = [
     { el: "#home-settings-btn", title: "① 实际点开设置",
-      text: "请点右上角 ⚙ 打开设置页（不要点“下一步”）。\n\n设置页有 5 组卡片：账号与连接 / 主动消息 / 模型与速度 / 外观 / 数据；除 API Key 外，改动会自动保存。",
+      text: "请点右上角 ⚙ 打开设置页（不要点“下一步”）。\n\n设置页有 4 组卡片：账号与连接 / 模型与速度 / 外观 / 数据；除 API Key 外，改动会自动保存。",
       setup: () => { showHome(); },
       done: () => document.getElementById("settings-panel").classList.contains("show") },
     { el: "#key-input", title: "② 试填 API Key",
       text: "请点 API Key 输入框，粘贴 sk- 开头的 Key；留空=保留原来的 Key。\n\n填完点「保存 Key 与连接设置」。需要换模型可在「模型与速度」里改 API 供应商。",
       setup: () => { showHome(); openSettings(); },
       done: () => document.activeElement && document.activeElement.id === "key-input" },
-    { el: '#settings-panel .set-head[data-group="proactive"]', title: "③ 点开「主动消息」",
-      text: "请点「💬 主动消息」标题展开它。\n\n三种主动行为：聊天里按轮次主动找你、你空闲时想起你（10 分钟一次）、后台通知（仅安卓）。用 较少/偶尔/经常 调频率，关掉开关就安静。",
-      setup: () => { openSettings(); },
-      done: () => _guideGroupOpen("proactive") },
-    { el: '#settings-panel .set-head[data-group="model"]', title: "④ 点开「模型与速度」",
+    { el: '#settings-panel .set-head[data-group="model"]', title: "③ 点开「模型与速度」",
       text: "请点「🧠 模型与速度」展开。\n\n默认真接 DeepSeek 官方（填 Key 即用）；展开「自定义」可分别调检索/分析/回复/组织四个阶段的模型与思考档位。",
       setup: () => { openSettings(); },
       done: () => _guideGroupOpen("model") },
-    { el: '#settings-panel .set-head[data-group="system"]', title: "⑤ 点开「数据」",
-      text: "请点「📦 数据」展开。\n\n更新、导出/导入 zip、本地备份都在这里；登录后文字数据自动同步到云端，也可手动立即同步。",
+    { el: '#settings-panel .set-head[data-group="system"]', title: "④ 点开「数据」",
+      text: "请点「📦 数据」展开。\n\n版本更新、数据快照（保存/恢复/导入 zip）、云端同步都在这里；主动消息则按角色卡配（角色卡管理 → 点角色卡 → 主动消息）。",
       setup: () => { openSettings(); },
       done: () => _guideGroupOpen("system") },
-    { el: "#menu-btn", title: "⑥ 到聊天页打开菜单",
+    { el: "#menu-btn", title: "⑤ 到聊天页打开菜单",
       text: "已经帮你切到聊天页：请点右上角 ☰ 打开菜单。\n\n菜单里是分组页签：与她相关（收藏 / 表情包 / 设定文件）、与系统相关（请求记录 / 流程日志）。",
       setup: () => { closeSettings(); showChat(); },
       done: () => document.getElementById("menu-drawer").classList.contains("open") },
-    { el: '.menu-tab[data-tab="sticker"]', title: "⑦ 点「表情包」页签",
+    { el: '.menu-tab[data-tab="sticker"]', title: "⑥ 点「表情包」页签",
       text: "请在菜单顶部点「表情包」。\n\n这一页能添加新表情、打开映射表逐个启用/停用；停用的表情不会出现在聊天面板，也不会被 AI 使用。",
       setup: () => { openMenu(); },
       done: () => _guideStickerTabOpen() },
-    { el: "#sticker-manage-btn", title: "⑧ 展开映射表试开关",
+    { el: "#sticker-manage-btn", title: "⑦ 展开映射表试开关",
       text: "请点「表情包映射表」。\n\n展开后可以试试点某张表情的「启用中 / 已停用」按钮，状态会立刻切换；改分类和描述后要点该卡片「保存」。内置默认表情的「删」是灰色保护。",
       setup: () => { openMenu(); try { document.querySelector('.menu-tab[data-tab="sticker"]')?.click(); } catch (e) {} },
       done: () => { const p = document.getElementById("sticker-manage-panel"); return !!(p && p.style.display !== "none" && p.style.display !== ""); } },
-    { el: "#sticker-add-btn", title: "⑨ 看看添加表情包表单",
+    { el: "#sticker-add-btn", title: "⑧ 看看添加表情包表单",
       text: "请点「+ 添加表情包」展开表单（不用真的上传）。\n\n流程是：选图 → 选分类（可爱/帅气）→ 写一句含义描述 → 保存。描述越清楚，AI 选图越准。",
       setup: () => { openMenu(); try { document.querySelector('.menu-tab[data-tab="sticker"]')?.click(); } catch (e) {} },
       done: () => { const f = document.getElementById("sticker-add-form"); return !!(f && f.style.display !== "none" && f.style.display !== ""); } },
-    { el: "#fix-module .am-btn", title: "⑩ 进入设定纠错",
+    { el: "#fix-module .am-btn", title: "⑨ 进入设定纠错",
       text: "已经回到首页：请点「指出问题 →」进入设定纠错助手。\n\n进去后先选模式：剧情模式 或 春日手信，两个模式的设定和历史完全独立。",
       setup: () => { closeMenu(); showHome(); },
       done: () => document.getElementById("fix-view").classList.contains("show") },
-    { el: "#fix-chathist", title: "⑪ 展开最近聊天记录",
+    { el: "#fix-chathist", title: "⑩ 展开最近聊天记录",
       text: "请点「📜 最近聊天记录」展开它。\n\n这里显示当前模式的最近 20 条聊天，描述问题时可以直接对照她具体说错了哪句，不用切页面。",
       setup: () => { closeMenu(); if (!document.getElementById("fix-view").classList.contains("show")) openFixView(); },
       done: () => { const d = document.getElementById("fix-chathist"); return !!(d && d.open); } },
-    { el: "#fix-input", title: "⑫ 点输入框，试着描述问题",
+    { el: "#fix-input", title: "⑪ 点输入框，试着描述问题",
       text: "请点底部输入框，试着输入一句“她哪里说得不对”（先不用发送，或只发一句真实问题）。\n\n流程是：AI 多轮确认 → 点「开始修改」→ 看修改清单 → 点「应用修改」才生效；顶部状态点会显示：状态正常/对齐中/已对齐/方案待确认。",
       setup: () => { closeMenu(); if (!document.getElementById("fix-view").classList.contains("show")) openFixView(); },
       done: () => document.activeElement && document.activeElement.id === "fix-input" },
-    { el: "#home-feedback-btn", title: "⑬ 反馈页可随时重看",
+    { el: "#home-feedback-btn", title: "⑫ 反馈页可随时重看",
       text: "最后请点左上角「✉ 反馈」。\n\n以后想复习：反馈页点「查看详细使用教程」即可重新开始这套实际操作教程；有问题可在 GitHub / QQ 群 / 邮箱反馈。",
       setup: () => { showHome(); },
       done: () => document.getElementById("feedback-panel").classList.contains("show") },

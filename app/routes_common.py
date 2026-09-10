@@ -93,17 +93,38 @@ def _read_json(h) -> dict:
         return {}
 
 
-def _body_mode(body: dict) -> str:
-    """从请求体取模式，非法回退默认（审查约束）。"""
+def _body_mode_ex(body: dict) -> tuple[str, bool]:
+    """从请求体取模式，返回 (mode, fell_back)。
+
+    fell_back=True 表示客户端请求了一个**本端未注册**的 mode（例如 PC 本地版自建的角色包，
+    在服务器版上没有对应包）→ 调用方应显式告知用户，而不是静默按默认包继续
+    （R-07，2026-09-10：静默回退会让用户以为"角色坏了"，且同步链路会把 story 数据
+    灌进自建包目录）。"""
     m = body.get("mode", DEFAULT_MODE)
-    return m if m in cfg.MODES else DEFAULT_MODE
+    if m in cfg.MODES:
+        return m, False
+    logger.warning("未知 mode=%r（本端未注册），回退 %s", m, DEFAULT_MODE)
+    return DEFAULT_MODE, bool(m and m != DEFAULT_MODE)
+
+
+def _body_mode(body: dict) -> str:
+    """从请求体取模式，非法回退默认（审查约束）。兼容旧调用点，丢弃 fell_back。"""
+    return _body_mode_ex(body)[0]
+
+
+def _query_mode_ex(h) -> tuple[str, bool]:
+    """从 query string 取模式（GET 接口用），返回 (mode, fell_back)。"""
+    qs = parse_qs(urlparse(h.path).query)
+    m = qs.get("mode", [DEFAULT_MODE])[0]
+    if m in cfg.MODES:
+        return m, False
+    logger.warning("未知 mode=%r（本端未注册），回退 %s", m, DEFAULT_MODE)
+    return DEFAULT_MODE, bool(m and m != DEFAULT_MODE)
 
 
 def _query_mode(h) -> str:
-    """从 query string 取模式（GET 接口用）。"""
-    qs = parse_qs(urlparse(h.path).query)
-    m = qs.get("mode", [DEFAULT_MODE])[0]
-    return m if m in cfg.MODES else DEFAULT_MODE
+    """从 query string 取模式（GET 接口用）。兼容旧调用点，丢弃 fell_back。"""
+    return _query_mode_ex(h)[0]
 
 
 def _is_server() -> bool:

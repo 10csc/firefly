@@ -242,7 +242,8 @@ async function _postSettings(payload, msg) {
         msg.textContent = "保存失败：" + (data.error || "请稍后再试");
         return false;
     }
-    S._hiddenEnabled = payload.hidden_reply_enabled !== false;
+    // 注意：这里不再改 S._hiddenEnabled——本页已无「隐藏式」控件，
+    // 该开关按角色卡存（角色详情页 → 主动消息），由 panels.js 同步。
     msg.textContent = "已保存 ✓";
     clearTimeout(msg._timer);
     msg._timer = setTimeout(() => { msg.textContent = ""; }, 2500);

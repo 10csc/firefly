@@ -1227,8 +1227,8 @@ body.low-end #app { background: var(--panel-solid); }
     #fav-list .fav-item, #fav-list .fav-empty { margin-bottom: 0; }
     #fav-list .fav-empty, #log-list > div, #pipeline-list > div { grid-column: 1 / -1; }
     #fav-list .fav-item { grid-column: auto; }
-    /* 首页 PC 欢迎区：轮播退役，左右模式大卡 */
-    .home-carousel, .home-start { display: none; }
+    /* 首页 PC 欢迎区：轮播退役，左右模式大卡；入口行（继续聊天/角色卡管理）保留 */
+    .home-carousel { display: none; }
     .home-modes {
         display: grid; grid-template-columns: 1fr 1fr; gap: 18px;
         padding: 22px clamp(20px, 4vw, 48px) 8px; flex-shrink: 0;

@@ -55,13 +55,30 @@ def character_file_update(h):
         h._json({"ok": False, "error": f"保存失败: {e}"})
 
 
+def _no_bundled_fallback(mode: str) -> bool:
+    """该包是否存在 bundled 版本可回退（F-2，2026-09-10）。
+
+    自建包（{user}/custom_x/character/）没有 bundled 对应物 → 它自己的文件就是**唯一副本**。
+    此时"恢复默认"实际等于**永久删除该文件**（删完 load_slot 读空，角色设定变空），
+    而按钮文案却是"恢复默认"，属误导性不可逆操作。此函数用于在删除前拦下来。"""
+    try:
+        return not (cfg.bundled_character_dir(mode) / "preset.json").exists()
+    except Exception:
+        return False
+
+
 def delete_character_file(h):
-    """POST /character-file/delete：删除文案用户副本（恢复 bundled 默认）。白名单同 update。"""
+    """POST /character-file/delete：删除文案用户副本（恢复 bundled 默认）。白名单同 update。
+
+    2026-09-10（F-2）：自建包无可回退的默认内容 → 拒绝删除（文件即唯一副本）。"""
     body = _read_json(h)
     mode = _body_mode(body)
     filename = (body.get("filename") or "").strip()
     if filename not in _EDITABLE_FILES:
         h._json({"ok": False, "error": f"不允许的文件: {filename}"}); return
+    if _no_bundled_fallback(mode):
+        h._json({"ok": False, "error": "自建角色包没有可恢复的默认内容——"
+                                       "删除即永久清空该文件。如确需清空，请直接编辑内容。"}); return
     fp = cfg.mode_character_dir(mode) / filename
     existed = fp.exists()
     try:
@@ -207,12 +224,17 @@ def upload_pack_asset(h):
 
 
 def delete_pack_asset(h):
-    """POST /pack-asset/delete：删除包资产用户副本（恢复 bundled 默认）。"""
+    """POST /pack-asset/delete：删除包资产用户副本（恢复 bundled 默认）。
+
+    2026-09-10（F-2）：自建包无可回退的默认资产 → 拒绝删除（该图即唯一副本）。"""
     body = _read_json(h)
     mode = _body_mode(body)
     slot = (body.get("slot") or "").strip()
     if slot not in _PACK_ASSET_SLOTS:
         h._json({"ok": False, "error": "slot 必须为 avatar/cover"}); return
+    if _no_bundled_fallback(mode):
+        h._json({"ok": False, "error": "自建角色包没有可恢复的默认图片——"
+                                       "删除后该位置将无头像/封面。如确需更换请直接上传新图。"}); return
     d = cfg.mode_character_dir(mode) / "assets"
     removed = 0
     if d.is_dir():
@@ -260,6 +282,7 @@ def create_pack(h):
         "presentation": presentation,
         "desc": str(body.get("desc") or "").strip()[:60],
         "tagline": str(body.get("tagline") or "").strip()[:60],
+        "schema": cfg.PRESET_SCHEMA,
     }, ensure_ascii=False, indent=2), encoding="utf-8")
     from modules.polisher import _EMERGENCY_PERSONA
     (cdir / "prompts").mkdir(exist_ok=True)

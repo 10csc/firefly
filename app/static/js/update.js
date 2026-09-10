@@ -58,7 +58,8 @@ async function checkUpdate() {
     }
     // 本地模式：优先走本地后端（权威版本源 + 自动下载能力），失败退回纯前端双源检测
     try {
-        const lr = await fetch("/check-update", {cache: "no-store"});
+        // /check-update 只注册在 POST_ROUTES（GET 会 404，曾长期被前端双源兜底掩盖）
+        const lr = await fetch("/check-update", {method: "POST", cache: "no-store"});
         if (lr.ok) {
             const d = await lr.json();
             if (!d.ok) throw new Error(d.error || "check fail");

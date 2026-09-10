@@ -4,19 +4,23 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>流萤</title>
-<link rel="stylesheet" href="style.css?v=33419aec">
+<link rel="stylesheet" href="style.css?v=152372d9">
 <style>
 /* 服务器版：轮播图下登录/用户模块 */
+/* 首页卡片族：账号模块 / 设定纠错 / 服务器云端版入口共用（原先只写了两份 scoped 副本，
+   导致 #server-web-entry 的卡片裸渲染） */
 #auth-module{margin:14px 10px 0}
-#auth-module .am-card{
+#fix-module{margin:14px 10px 0}
+#server-web-entry{margin:14px 10px 0}
+.am-card{
   display:flex;align-items:center;justify-content:space-between;gap:12px;
   background:var(--ctrl-bg-2);border:1px solid var(--border-mid);border-radius:14px;
   padding:14px 16px;
 }
-#auth-module .am-info{flex:1;min-width:0}
-#auth-module .am-title{color:var(--fg-main);font-size:0.95em;font-weight:600}
-#auth-module .am-sub{color:var(--fg-muted);font-size:0.75em;margin-top:3px;line-height:1.5}
-#auth-module .am-btn{
+.am-info{flex:1;min-width:0}
+.am-title{color:var(--fg-main);font-size:0.95em;font-weight:600}
+.am-sub{color:var(--fg-muted);font-size:0.75em;margin-top:3px;line-height:1.5}
+.am-btn{
   flex-shrink:0;padding:9px 18px;border-radius:20px;border:none;cursor:pointer;
   background:var(--btn-bg);color:var(--fg-bright);font-family:inherit;font-size:0.85em;
   letter-spacing:1px;white-space:nowrap;
@@ -55,21 +59,7 @@
 .set-save-row{display:flex;align-items:center;gap:10px;margin-top:14px}
 .set-save-row #key-save{width:auto;flex:0 0 auto;margin-top:0}
 .set-save-msg{flex:1;min-width:0;color:var(--fg-muted);font-size:0.75em;line-height:1.5;word-break:break-all;overflow-wrap:anywhere}
-/* 设定纠错助手：首页 auth-module 下方卡片（样式与账号模块一致） */
-#fix-module{margin:14px 10px 0}
-#fix-module .am-card{
-  display:flex;align-items:center;justify-content:space-between;gap:12px;
-  background:var(--ctrl-bg-2);border:1px solid var(--border-mid);border-radius:14px;
-  padding:14px 16px;
-}
-#fix-module .am-info{flex:1;min-width:0}
-#fix-module .am-title{color:var(--fg-main);font-size:0.95em;font-weight:600}
-#fix-module .am-sub{color:var(--fg-muted);font-size:0.75em;margin-top:3px;line-height:1.5}
-#fix-module .am-btn{
-  flex-shrink:0;padding:9px 18px;border-radius:20px;border:none;cursor:pointer;
-  background:var(--btn-bg);color:var(--fg-bright);font-family:inherit;font-size:0.85em;
-  letter-spacing:1px;white-space:nowrap;
-}
+/* 设定纠错助手：卡片样式复用上面的 .am-*（2026-09-08 合并），仅表单区另立 */
 #fix-forms{background:var(--ctrl-bg-2);border:1px solid var(--border-mid);border-radius:14px;padding:12px 14px;margin-top:10px}
 .fix-modes{display:flex;gap:8px;margin-bottom:10px}
 .fix-mode{
@@ -648,9 +638,10 @@
                     <div style="margin-top:6px">
                         <button id="snapshot-create-btn" type="button">保存快照（全部角色）</button>
                         <button id="import-btn" type="button" onclick="importData()">导入备份（zip）</button>
+                        <button id="export-btn" type="button" onclick="exportData()">导出当前角色（zip）</button>
                         <input id="import-file" type="file" accept=".zip,application/zip" style="display:none">
                     </div>
-                    <div style="color:var(--fg-muted);font-size:0.7em;margin-top:6px">快照包含所有角色卡与聊天记录（不含 Key），存服务器，每账号留最近 5 份——换手机也能恢复。</div>
+                    <div style="color:var(--fg-muted);font-size:0.7em;margin-top:6px">快照包含所有角色卡与聊天记录（不含 Key），存服务器，每账号留最近 5 份——换手机也能恢复。<b>「导出当前角色」下载本地 zip（含角色包与对话），是唯一可离线留存的备份方式。</b></div>
                     <div id="snapshot-list" style="margin-top:8px"></div>
                 </div>
                 <div class="field" id="sync-now-field" style="margin-top:10px">
@@ -979,7 +970,7 @@
 </script>
 <script src="config.js"></script>
 <!-- 运行时入口：bundle.js（classic script，file:// 兼容；ES Module 在安卓服务器模式 file:// 下被 CORS 拦截） -->
-<script src="js/bundle.js?v=5d1488eb"></script>
+<script src="js/bundle.js?v=08311417"></script>
 <script src="js/pc_nav.js"></script>
 </body>
 </html>

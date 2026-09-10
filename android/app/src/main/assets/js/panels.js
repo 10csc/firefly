@@ -3,6 +3,7 @@ import { _esc, escapeHtml, showToast, stickerSrc, idbSaveMedia } from "./util.js
 import { IS_SERVER, API_BASE } from "./api.js";
 import { CURRENT_MODE } from "./views.js";
 import { loadConfig } from "./settings.js";
+import { S } from "./state.js";
 
 // 开拓者头像
 export const TB_AVATARS = { 穹: "开拓者_穹.png", 星: "开拓者_星.png" };
@@ -548,6 +549,8 @@ async function loadPackView() {
     setChk("pv-pro-enabled", pro.enabled);
     setChk("pv-pro-prob", pro.pro_enabled);
     setChk("pv-pro-hidden", pro.hidden_enabled);
+    // 后台主动消息的客户端门控跟随当前角色卡的「隐藏式」开关（服务端不含该判断）
+    S._hiddenEnabled = !!pro.hidden_enabled;
     const hardEl = document.getElementById("pv-pro-hard");
     const softEl = document.getElementById("pv-pro-soft");
     if (hardEl) { hardEl.value = pro.hard ?? 6; document.getElementById("pv-pro-hard-v").textContent = hardEl.value; }
@@ -668,6 +671,7 @@ function _proScheduleSave() {
                 body: JSON.stringify(payload)});
             const d = await r.json();
             if (msg) msg.textContent = d.ok ? "已保存" : ("保存失败：" + (d.error || ""));
+            if (d.ok) S._hiddenEnabled = payload.hidden_enabled;   // 后台主动门控即时跟随
         } catch (e) { if (msg) msg.textContent = "保存失败（网络）"; }
     }, 400);
 }

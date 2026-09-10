@@ -42,9 +42,17 @@ def load_slot(slot: str, mode: str = DEFAULT_MODE) -> str:
 
 
 def clear_cache():
-    """清除角色设定缓存（前端编辑设定文件后调用）。"""
+    """清除角色设定缓存（前端编辑设定文件后调用）。
+
+    2026-09-10（R-06）：连带清检索器的知识库缓存——此前该缓存没有任何失效入口，
+    导致"改了包设定/导入了数据，但检索器仍用旧拼接结果"。用延迟 import 防循环依赖。"""
     with _CACHE_LOCK:
         _CACHE.clear()
+    try:
+        from modules.llm_retriever import clear_knowledge_cache
+        clear_knowledge_cache()
+    except Exception as e:      # 缓存清理失败不应影响保存动作本身
+        logger.warning("知识库缓存清理失败（下次重启会重建）: %s", e)
 
 
 def render_pack_prompt(slot: str, mode: str, fallback: str, **kw) -> str:

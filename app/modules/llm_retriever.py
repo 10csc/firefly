@@ -71,10 +71,17 @@ _KNOWLEDGE_STATS: dict[str, dict] = {}
 
 
 def _load_knowledge(mode: str = DEFAULT_MODE) -> str:
-    """拼接 {mode} 设定资料库文本。模块级缓存（内容只在文件变更后重建）。"""
+    """拼接 {mode} 设定资料库文本。模块级缓存（内容只在文件变更后重建）。
+
+    2026-09-10（R-06）：缓存 key 加上用户作用域（user_scope_key），并新增 clear_knowledge_cache()。
+    原实现只用 mode 作 key——当前 `_source_dirs` 只返回 bundled/仓库路径、不含用户目录，
+    所以**不构成跨用户泄漏**；但一旦将来 knowledge_dirs 支持用户目录（或服务器版放开自建包），
+    就会立刻变成跨账号串数据。同时补上失效入口：此前编辑包设定/导入数据都不会重建知识库缓存。"""
+    from modules.app_config import user_scope_key
+    ck = f"{mode}::{user_scope_key()}"
     with _lock:
-        if mode in _KNOWLEDGE_CACHE and _KNOWLEDGE_CACHE[mode] is not None:
-            return _KNOWLEDGE_CACHE[mode]
+        if _KNOWLEDGE_CACHE.get(ck) is not None:
+            return _KNOWLEDGE_CACHE[ck]
         parts = []
         total_chars = 0
         file_count = 0
@@ -93,15 +100,33 @@ def _load_knowledge(mode: str = DEFAULT_MODE) -> str:
                 total_chars += len(text)
                 file_count += 1
                 parts.append(f"## {fp.relative_to(ROOT)}\n{text}")
-        _KNOWLEDGE_CACHE[mode] = "\n\n".join(parts)
-        _KNOWLEDGE_STATS[mode] = {"files": file_count, "chars": total_chars}
+        _KNOWLEDGE_CACHE[ck] = "\n\n".join(parts)
+        _KNOWLEDGE_STATS[ck] = {"files": file_count, "chars": total_chars}
         logger.info("知识库加载[%s]: %d 文件, %d 字符", mode, file_count, total_chars)
-        return _KNOWLEDGE_CACHE[mode]
+        return _KNOWLEDGE_CACHE[ck]
+
+
+def clear_knowledge_cache(mode: str | None = None) -> None:
+    """清知识库缓存（编辑包设定/导入数据/恢复快照后调用）。
+
+    2026-09-10（R-06）新增：此前没有任何失效入口——用户改了 knowledge_dirs 覆盖的文件、
+    或导入了新数据，检索器仍用旧拼接结果（对话里表现为"改了设定但没生效"）。
+    mode=None 清全部（跨模式共享的缓存也一并重建）。"""
+    with _lock:
+        if mode is None:
+            _KNOWLEDGE_CACHE.clear()
+            _KNOWLEDGE_STATS.clear()
+            return
+        for k in [k for k in _KNOWLEDGE_CACHE if k.startswith(f"{mode}::")]:
+            _KNOWLEDGE_CACHE.pop(k, None)
+            _KNOWLEDGE_STATS.pop(k, None)
 
 
 def get_knowledge_stats(mode: str = DEFAULT_MODE) -> dict:
+    from modules.app_config import user_scope_key
     _load_knowledge(mode)
-    return dict(_KNOWLEDGE_STATS.get(mode, {"files": 0, "chars": 0}))
+    return dict(_KNOWLEDGE_STATS.get(f"{mode}::{user_scope_key()}",
+                                     {"files": 0, "chars": 0}))
 
 
 # ── Prompt（稳定层：知识库 + 指令，跨请求缓存命中）──

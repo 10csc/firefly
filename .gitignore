@@ -48,6 +48,8 @@ dsh-update/
 .vscode/
 .zcode/
 *.webp
+# 例外：内置表情包是项目资产（app/assets/stickers/ 下的 webp 必须入库）
+!app/assets/stickers/*.webp
 屏幕截图*.png
 /开拓者_*.png
 /流萤_头像.png

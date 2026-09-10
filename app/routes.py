@@ -27,6 +27,7 @@ from modules.app_config import DEFAULT_MODE
 from routes_common import (
     sessions, _SESSIONS_LOCK, _session_key, get_session,
     _read_json, _body_mode, _query_mode, _is_server, _CONTENT_MAX,
+    _body_mode_ex, _query_mode_ex,
     _write_replies, _notify_reply_if_background, _IMG_ID_RE, _load_image_data_url,
 )
 from routes_auth import (_AUTH_PROXY_MAP, _auth_server_base, _mk_auth_proxy,
@@ -132,7 +133,7 @@ def chat(h):
     body = _read_json(h)
     session_id = body.get("session_id", "default")
     hint = (body.get("hint") or "").strip()
-    mode = _body_mode(body)
+    mode, mode_fell_back = _body_mode_ex(body)
 
     # 即时写盘：用户消息一发就记。
     # 前端分条发送（messages 数组）→ 分条写盘（刷新后显示多条），
@@ -325,6 +326,11 @@ def chat(h):
         resp = {"messages": enriched}
         if result.error_code:
             resp["error_code"] = result.error_code   # 错误分类（前端人话提示）
+        # R-07（2026-09-10）：客户端请求的 mode 在本端未注册（如 PC 本地版自建角色包 →
+        # 服务器版无此包）→ 显式标记，避免用户把"角色变了"当成 bug 而不知原因。
+        if mode_fell_back:
+            resp["mode_fallback"] = True
+            resp["mode_used"] = mode
         h._json(resp)
     finally:
         reply_unlock(mode)
@@ -530,11 +536,19 @@ def get_chat_stage(h):
 
 
 def get_metrics(h):
+    # 2026-09-10 修复：metrics 是进程级全局计数器（token/费用/各模块调用数），
+    # 服务器版下任何登录账号都能看到**全站**用量与运营成本 → 仅本地版可用。
+    if _is_server():
+        h._json({"error": "服务器版不提供全站指标（多用户共享计数器）"}, 403); return
     from modules.metrics import collect
     h._json(collect())
 
 
 def get_requests(h):
+    # 2026-09-10 修复：_REQUEST_LOG 是进程级全局环形缓冲（module/model/token/费用），
+    # 服务器版下任一账号可见**全站**请求元数据 → 仅本地版可用。
+    if _is_server():
+        h._json({"error": "服务器版不提供全站请求日志（多用户共享缓冲）"}, 403); return
     from modules.llm_base import get_request_log
     log = get_request_log(200)
     h._json({"requests": log, "count": len(log)})

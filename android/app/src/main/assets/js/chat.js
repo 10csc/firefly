@@ -1,7 +1,7 @@
 // 聊天核心：长按菜单 / 引用 / 发送四阶段 / 提交窗口状态机 / 数据备份导入导出
 import { S, SESSION_ID, inputEl, messagesEl, sendBtn } from "./state.js";
 import { _toast, escapeHtml, showToast } from "./util.js";
-import { IS_SERVER } from "./api.js";
+import { IS_SERVER, API_BASE } from "./api.js";
 import { openMenu, openSettings } from "./panels.js";
 import { addTextMessage, _quoteContentText, _quoteWhoName } from "./chat_render.js";
 import { CURRENT_MODE, MODE_NAMES, _modeGen } from "./views.js";
@@ -227,6 +227,27 @@ function importData() {
     input.click();
 }
 window.importData = importData;
+
+// ══ 导出当前角色（2026-09-10 加）══
+// 为什么需要它：此前前端只有「导入」没有「导出」——用户无法自助备份，唯一的备份入口是
+// 全量快照，而快照对自建角色包曾存在丢包问题（R-01）。导出走既有 GET /export-data?mode=，
+// 产出本地 zip（含该角色的包定义与全部对话/手账/记忆，_config.json 已剥离 Key），
+// 可离线留存、也可用「导入」在本机或其他设备还原。
+function exportData() {
+    const name = MODE_NAMES[CURRENT_MODE] || CURRENT_MODE;
+    if (!confirm(`导出「${name}」的全部数据为本地 zip？\n\n包含：角色设定、对话记录、手账、记忆（不含 API Key）。\n可用于离线备份或换机迁移。`)) return;
+    _toast("正在打包导出…");
+    const url = API_BASE + "/export-data?mode=" + encodeURIComponent(CURRENT_MODE);
+    // 用隐藏链接触发下载（保留 Content-Disposition 文件名；window.open 在部分 WebView 会被拦）
+    const a = document.createElement("a");
+    a.href = url;
+    a.rel = "noopener";
+    a.style.display = "none";
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => a.remove(), 1500);
+}
+window.exportData = exportData;
 
 // ══ 数据快照（保存全部角色到服务器；每账号留最近 5 份，换机可恢复）══
 function _fmtSize(n) {

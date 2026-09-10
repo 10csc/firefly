@@ -100,6 +100,27 @@ class FireflyHandler(ResponseMixin, SimpleHTTPRequestHandler):
 
 def main():
     setup_stdio_utf8()
+    # 旧布局迁移（一次性，幂等）显式执行：原在 app_config import 期自动跑，会导致
+    # 服务器版每次启动都对共享 user_data 根做移动式迁移（2026-09-10 修复）。
+    # 无待迁移内容时不产生任何副作用（不写备份、不建目录）。
+    try:
+        _mig = cfg.run_legacy_migration()
+        if _mig.get("aborted"):
+            print(f"  [WARN] 旧布局迁移已中止（迁移前备份失败）：{_mig.get('error')}", flush=True)
+        elif _mig.get("pending"):
+            print(f"  [OK] 旧布局迁移：moved={_mig['moved']} skipped={_mig['skipped']} "
+                  f"failed={_mig['failed']}", flush=True)
+    except Exception as e:
+        print(f"  [WARN] 旧布局迁移异常（继续启动）：{e}", flush=True)
+    # 首启引导（建目录 + 拷贝默认文件）必须在迁移**之后**：迁移未跑就拷贝默认文件会
+    # 占位，导致旧数据迁移被跳过而丢失（该顺序铁律原先靠 import 期串行保证）。
+    try:
+        _init = cfg.run_startup_init()
+        if _init.get("files_copied") or _init.get("stale_removed"):
+            print(f"  [OK] 首启引导：拷贝默认文件 {_init['files_copied']} 个，"
+                  f"清理未修改副本 {_init['stale_removed']} 个", flush=True)
+    except Exception as e:
+        print(f"  [WARN] 首启引导异常（继续启动）：{e}", flush=True)
     preload_knowledge()
 
     # 端口占用检查——防止旧进程残留导致请求路由到旧代码。

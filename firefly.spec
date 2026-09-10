@@ -28,8 +28,8 @@ a = Analysis(
         (str(ROOT / "knowledge"), "knowledge"),
         # 原始资料库（wiki 抓取物，仅查证）
         (str(ROOT / "database"), "database"),
-        # 文档（错误总结等）
-        (str(ROOT / "docs"), "docs"),
+        # 注意：docs/ 是开发/运维内部文档（含生产 IP、运维流程、协作记忆），
+        # 不随发行版分发给用户——2026-09-08 移除（app/server 代码运行时不读 docs/）
     ],
     hiddenimports=[
         "modules.memory_manager",
@@ -41,6 +41,9 @@ a = Analysis(
         "numpy", "sentence_transformers", "torch", "torchvision", "torchaudio",
         "PIL", "matplotlib", "scipy", "pandas",
         "cv2", "onnxruntime",
+        # 2026-09-08：以下四包代码零 import（urllib3.contrib.pyopenssl 可选路径带入），
+        # 实测占 _internal ~12.2MB，排除后不影响任何功能
+        "cryptography", "bcrypt", "zstandard", "chardet",
     ],
     noarchive=False,
     optimize=0,

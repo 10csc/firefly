@@ -262,6 +262,7 @@ def forge_finish(body: dict) -> dict:
     (cdir / "preset.json").write_text(json.dumps({
         "id": pid, "name": name, "char_name": char_name, "user_name": user_name,
         "presentation": presentation, "desc": "AI 协助搭建", "tagline": "",
+        "schema": cfg.PRESET_SCHEMA,
     }, ensure_ascii=False, indent=2), encoding="utf-8")
     from modules.polisher import _EMERGENCY_PERSONA
     (cdir / "prompts").mkdir(exist_ok=True)

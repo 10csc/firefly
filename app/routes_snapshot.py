@@ -15,7 +15,7 @@ import time
 from pathlib import Path
 
 from modules import app_config as cfg
-from routes_common import _read_json
+from routes_common import _read_json, _is_server
 
 logger = logging.getLogger(__name__)
 
@@ -219,7 +219,11 @@ def snapshot_restore(h):
     from routes_data import _IMPORT_MAX_BYTES, _restore_full_snapshot
     if len(data) > _IMPORT_MAX_BYTES:
         h._json({"ok": False, "error": "快照过大"}); return
-    # 恢复前自动快照当前（pre-restore- 前缀：不进列表/滚动配额，单独留 3 份；失败不阻断）
+    # 恢复前自动快照当前（pre-restore- 前缀：不进列表/滚动配额，单独留 3 份）
+    # 2026-09-10 修复：原来恢复前快照「失败不阻断」，却仍以 backup=False 调用恢复主体，
+    # 等于在"没有任何备份"的情况下执行破坏性覆盖（磁盘满/目录不可写时即触发）。
+    # 现在改为：pre-restore 快照成功才跳过逐包备份；失败则回落到逐包备份。
+    pre_ok = False
     try:
         pre = build_full_snapshot_zip()
         d = _snapshots_dir()
@@ -229,9 +233,10 @@ def snapshot_restore(h):
         for old in olds[:max(len(olds) - 3, 0)]:
             try: (d / old).unlink()
             except OSError: pass
+        pre_ok = True
     except Exception as e:
-        logger.warning("恢复前自动快照失败（继续恢复）: %s", e)
-    ok, err, n = _restore_full_snapshot(data)
+        logger.warning("恢复前自动快照失败，改为逐包备份: %s", e)
+    ok, err, n = _restore_full_snapshot(data, backup=not pre_ok)
     if not ok:
-        h._json({"ok": False, "error": err}); return
-    h._json({"ok": True, "restored": name, "files": n})
+        h._json({"ok": False, "error": err, "backup_ok": pre_ok}); return
+    h._json({"ok": True, "restored": name, "files": n, "backup_ok": pre_ok})
