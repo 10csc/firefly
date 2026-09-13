@@ -514,12 +514,26 @@ const _PACK_PROMPT_LABELS = {
     "prompts/env_suffix.md": "环境句·世界后缀",
 };
 
+// F-3（2026-09-13）包详情页的两个捕获量：
+// - _packViewMode：本页展示的是哪个包。所有写回（保存文案 / 换资产 / 恢复默认 / 加表情包 /
+//   主动消息配置）一律用它，**不读实时的 CURRENT_MODE** —— 原来 A→B 快速切换后，
+//   A 页残留的"保存"会把 A 的文案写进 B（请求发出时 CURRENT_MODE 已经是 B）。
+// - _packViewGen：进入本页时的模式代际。await 之后一旦模式已切换就丢弃本次结果，
+//   不把 A 的数据渲染进 B 的页面（范式与 chat_history.loadHistory 一致）。
+let _packViewMode = "";
+let _packViewGen = -1;
+
 async function loadPackView() {
+    const mode = CURRENT_MODE;      // 捕获：本次渲染/写回都属于这个包
+    const gen = _modeGen;
+    _packViewMode = mode;
+    _packViewGen = gen;
     let data;
     try {
-        const resp = await fetch(`/pack-files?mode=${encodeURIComponent(CURRENT_MODE)}`);
+        const resp = await fetch(`/pack-files?mode=${encodeURIComponent(mode)}`);
         data = await resp.json();
     } catch (e) { showToast("加载失败（网络）"); return; }
+    if (gen !== _modeGen) return;   // 模式已切换：丢弃本次结果，防止 A 的内容渲染进 B 的页面
     if (!data || !data.files) return;
 
     const presLabel = {sticker: "短信+表情包", narration: "短信+旁白", none: "纯短信"}[data.presentation] || data.presentation;
@@ -556,7 +570,7 @@ async function loadPackView() {
     if (hardEl) { hardEl.value = pro.hard ?? 6; document.getElementById("pv-pro-hard-v").textContent = hardEl.value; }
     if (softEl) { softEl.value = Math.round((pro.soft ?? 0.35) * 100); document.getElementById("pv-pro-soft-v").textContent = softEl.value + "%"; }
 
-    _loadPackStickers();
+    _loadPackStickers(mode);
 
     // 危险区：自建角色可删除；非自建显示恢复资产默认入口
     const danger = document.getElementById("pv-danger");
@@ -572,7 +586,7 @@ async function loadPackView() {
             try {
                 await fetch("/pack-asset/delete", {method: "POST",
                     headers: {"Content-Type": "application/json"},
-                    body: JSON.stringify({mode: CURRENT_MODE, slot})});
+                    body: JSON.stringify({mode, slot})});
                 showToast("已恢复默认");
                 loadPackView();
                 try { window.__modesReload && window.__modesReload(); } catch (e) {}
@@ -626,7 +640,7 @@ async function loadPackView() {
             try {
                 const r = await fetch("/character-file-update", {method: "POST",
                     headers: {"Content-Type": "application/json"},
-                    body: JSON.stringify({mode: CURRENT_MODE, filename: f.name, content})});
+                    body: JSON.stringify({mode, filename: f.name, content})});
                 const d = await r.json();
                 showToast(d.ok ? "已保存（下轮对话生效）" : ("保存失败：" + (d.error || "")));
                 if (d.ok) sum.textContent = (_PACK_PROMPT_LABELS[f.name] || f.name) + "（已修改）";
@@ -639,7 +653,7 @@ async function loadPackView() {
             try {
                 await fetch("/character-file/delete", {method: "POST",
                     headers: {"Content-Type": "application/json"},
-                    body: JSON.stringify({mode: CURRENT_MODE, filename: f.name})});
+                    body: JSON.stringify({mode, filename: f.name})});
                 showToast("已恢复默认");
                 loadPackView();
             } catch (e) { showToast("操作失败"); }
@@ -658,7 +672,8 @@ function _proScheduleSave() {
     _proSaveTimer = setTimeout(async () => {
         const msg = document.getElementById("pv-pro-msg");
         const payload = {
-            mode: CURRENT_MODE,
+            // F-3：写回"本页展示的包"，不用实时 CURRENT_MODE（切换后定时器仍会烧到新包上）
+            mode: _packViewMode || CURRENT_MODE,
             enabled: document.getElementById("pv-pro-enabled").checked,
             hard: parseInt(document.getElementById("pv-pro-hard").value) || 6,
             soft: (parseInt(document.getElementById("pv-pro-soft").value) || 35) / 100,
@@ -692,7 +707,8 @@ document.getElementById("pv-pro-soft")?.addEventListener("input", () => {
 // ═══════════════════════════════════════════
 // 详情页表情包区（本包可用 = 全局共享 + 本包专属；专属可增删启停）
 // ═══════════════════════════════════════════
-async function _loadPackStickers() {
+async function _loadPackStickers(mode = _packViewMode || CURRENT_MODE) {
+    const gen = _modeGen;
     const grid = document.getElementById("pv-stk-grid");
     if (!grid) return;
     grid.innerHTML = "";
@@ -702,8 +718,10 @@ async function _loadPackStickers() {
         const data = await resp.json();
         items = Array.isArray(data.stickers) ? data.stickers : [];
     } catch (e) { return; }
-    const usable = items.filter(s => !s.pack || s.pack === CURRENT_MODE);
+    if (gen !== _modeGen) return;   // 模式已切换：不把 A 的表情包渲染进 B 的格子
+    const usable = items.filter(s => !s.pack || s.pack === mode);
     for (const s of usable) {
+        if (gen !== _modeGen) return;
         const cell = document.createElement("div");
         cell.className = "pv-stk-item" + (s.enabled ? "" : " off");
         const img = document.createElement("img");
@@ -711,7 +729,7 @@ async function _loadPackStickers() {
             const url = await stickerSrc(s.file, IS_SERVER, API_BASE);
             if (url) img.src = url;
         } catch (e) {}
-        if (s.pack === CURRENT_MODE) {
+        if (s.pack === mode) {
             const pk = document.createElement("span");
             pk.className = "pk";
             pk.textContent = "专属";
@@ -730,11 +748,11 @@ async function _loadPackStickers() {
                 await fetch("/sticker-update", {method: "POST",
                     headers: {"Content-Type": "application/json"},
                     body: JSON.stringify({id: s.id, enabled: !s.enabled})});
-                _loadPackStickers();
+                _loadPackStickers(mode);
             } catch (e) {}
         };
         ops.appendChild(tgl);
-        if (s.pack === CURRENT_MODE && s.editable) {
+        if (s.pack === mode && s.editable) {
             const del = document.createElement("button");
             del.textContent = "×";
             del.title = "删除（仅专属）";
@@ -744,7 +762,7 @@ async function _loadPackStickers() {
                     await fetch("/sticker-delete", {method: "POST",
                         headers: {"Content-Type": "application/json"},
                         body: JSON.stringify({id: s.id})});
-                    _loadPackStickers();
+                    _loadPackStickers(mode);
                 } catch (e) {}
             };
             ops.appendChild(del);
@@ -776,7 +794,7 @@ document.getElementById("pv-stk-submit")?.addEventListener("click", async () => 
     fd.append("file", file);
     fd.append("category", category);
     fd.append("label", label);
-    fd.append("mode", CURRENT_MODE);   // 归属当前包
+    fd.append("mode", _packViewMode || CURRENT_MODE);   // 归属"本页展示的包"（F-3）
     try {
         const resp = await fetch("/add-sticker", {method: "POST", body: fd});
         const data = await resp.json();
@@ -787,7 +805,7 @@ document.getElementById("pv-stk-submit")?.addEventListener("click", async () => 
             msg.textContent = "已添加";
             document.getElementById("pv-stk-label").value = "";
             document.getElementById("pv-stk-file").value = "";
-            _loadPackStickers();
+            _loadPackStickers(_packViewMode || CURRENT_MODE);
         } else {
             msg.textContent = "失败：" + (data.error || "");
         }
@@ -805,7 +823,7 @@ function _packAssetUpload(slot) {
         if (f.size > 5 * 1024 * 1024) { showToast("图片过大（上限 5MB）"); return; }
         try {
             const fd = new FormData();
-            fd.append("mode", CURRENT_MODE);
+            fd.append("mode", _packViewMode || CURRENT_MODE);   // 本页展示的包（F-3）
             fd.append("slot", slot);
             fd.append("file", f, f.name || (slot + ".png"));
             const r = await fetch("/pack-asset", {method: "POST", body: fd});
