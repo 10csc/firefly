@@ -261,6 +261,14 @@ except ApiError as e:
 check("I2 不再重试（只尝试 1 次）", calls_i["n"] == 1)
 
 print("=== J. 单轮总预算：重试 delay 截断到 deadline（耗时不拖顶） ===")
+# 2026-09-13（阶段 0 顺带修 flaky）：这一段原来把 jitter 留在随机状态，指望"随机 sleep
+# 恰好把预算耗掉"。但 Full Jitter 抽到小值时，几次重试能在预算内全部跑完 → 循环正常结束并
+# 抛 code=network，J1 随机 FAIL（实测：整套连跑 3 次中 2 次失败，单跑 3 次全绿）。
+# 生产语义没变，变的是测试的确定性：把 jitter 固定成"远大于剩余预算"的值，
+# 于是 delay 必然被截断到剩余预算，预算耗尽即抛 timeout——这正是要守的那条不变量。
+#
+# 余量说明：deadline = t0 + 2.1 ⇒ 首次失败后剩余 = 0.1 - ε₁；delay 被截断到该值；
+# sleep 后 elapsed = 0.1 + ε₂（ε₂ > 0）⇒ 剩余 = -ε₂ < 0 ⇒ 必定抛 timeout，与随机数无关。
 
 
 def fake_post_down(url, **kw):
@@ -269,15 +277,16 @@ def fake_post_down(url, **kw):
 
 cj = _CompatClient("k", "https://deadline2.example/v1", caps={"thinking": False})
 t0 = time.time()
-cj._deadline = t0 + 2.5   # 剩余可用 = deadline-2 ≈ 0.5s，jitter delay 应被截断/放弃
+cj._deadline = t0 + 2.1   # 留 2s 收尾余量后仅剩 0.1s 可重试
 try:
-    with patch("modules.api_client.requests.post", side_effect=fake_post_down):
+    with patch("modules.api_client.requests.post", side_effect=fake_post_down), \
+         patch("modules.api_client._jitter_delay", return_value=10.0):
         cj.chat.completions.create(model="m", messages=[{"role": "user", "content": "hi"}])
     check("J1 预算耗尽抛错", False)
 except ApiError as e:
     check("J1 预算耗尽抛 code=timeout", e.code == "timeout")
 elapsed = time.time() - t0
-check("J2 总耗时不超 deadline+余量（%.2fs）" % elapsed, elapsed <= 2.5 + 1.5)
+check("J2 总耗时不超 deadline+余量（%.2fs）" % elapsed, elapsed <= 2.1 + 1.5)
 
 print(f"\n统计: PASS={PASS} FAIL={FAIL}")
 sys.exit(0 if FAIL == 0 else 1)

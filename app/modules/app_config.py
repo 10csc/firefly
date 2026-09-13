@@ -970,8 +970,14 @@ def get_client():
     ctx = _user_ctx.get()
     # 托管模式：服务器用运营者 Key 直发（用户无 Key，走 direct 全链路：服务器知识库注入真实资产）
     if ctx and ctx.get("proxy"):
-        key = os.environ.get("FIREFLY_PROXY_KEY", "").strip() or os.environ.get("DEEPSEEK_API_KEY", "").strip()
+        # C-2（2026-09-13）：托管 Key **只认 FIREFLY_PROXY_KEY**。
+        # 原来还回落 DEEPSEEK_API_KEY——那是运营者个人的按量计费主 Key，
+        # 一旦 FIREFLY_PROXY_KEY 忘记配置，托管模式的消耗会静默打到主余额上
+        # （账单口径与套餐额度彻底脱钩，且没有任何日志提示）。
+        # 宁可托管模式不可用（返回 None → 前端提示需要 Key），也不静默烧主余额。
+        key = os.environ.get("FIREFLY_PROXY_KEY", "").strip()
         if not key:
+            logger.warning("托管模式已启用但未配置 FIREFLY_PROXY_KEY，拒绝回落主 Key（C-2）")
             return None
         from modules.api_client import QuotaClient
         # 无论是否注册了配额钩子，托管模式一律走 QuotaClient：它会在每次 create 时
