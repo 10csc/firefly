@@ -33,7 +33,7 @@ _RETRY_AFTER_CAP = 60.0  # Retry-After 上限（秒）
 _COOLDOWN_SEC = 60.0     # 端点冷却时长（连续失败后）
 _MAX_RETRIES = _RETRY_MAX
 
-# 端点冷却表：base_url -> 冷却截止时间戳（进程级）
+# 端点冷却表：冷却键 -> 冷却截止时间戳（进程级）。键含用户作用域，见 _endpoint_key。
 _COOLDOWNS: dict[str, float] = {}
 _COOLDOWN_LOCK = threading.Lock()
 
@@ -103,7 +103,14 @@ def is_public_endpoint(base_url: str) -> bool:
 
 
 def _endpoint_key(base_url: str) -> str:
-    return base_url.rstrip("/")
+    """冷却键 = 端点 + **用户作用域**（C-6.4，2026-09-13）。
+
+    原来只按端点：服务器版多用户跑在同一进程里，A 账号的上游故障（Key 失效、配额耗尽、
+    上游抖动）会触发 60s 冷却，把 B 账号一起挡在门外——B 完全无辜，它用的是自己的 Key、
+    自己的上游账号。冷却表带 scope 后各账号互不连坐。
+    本地版 user_scope_key() 恒为空串，键退化成原来那个字符串，行为与改动前完全一致。"""
+    from modules.app_config import user_scope_key
+    return f"{base_url.rstrip('/')}|{user_scope_key()}"
 
 
 def _in_cooldown(base_url: str) -> bool:

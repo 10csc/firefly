@@ -37,7 +37,8 @@ def check(desc, cond):
 
 
 from modules.api_client import (_CompatClient, ApiError, relay_submit,
-                                _relay_heartbeats, _COOLDOWNS)
+                                _relay_heartbeats, _COOLDOWNS,
+                                _endpoint_key, _in_cooldown, _set_cooldown)
 
 
 class R:
@@ -114,7 +115,7 @@ try:
 except ApiError as e:
     check("C1 5xx 重试耗尽后抛错", e.code == "server_error")
 check("C2 重试 3 次（总 4 次尝试）", calls3["n"] == 4)
-check("C3 端点进入冷却", _COOLDOWNS.get("https://x.example/v1", 0) > time.time())
+check("C3 端点进入冷却", _COOLDOWNS.get(_endpoint_key("https://x.example/v1"), 0) > time.time())
 before = calls3["n"]
 try:
     with patch("modules.api_client.requests.post", side_effect=fake_post_500):
@@ -122,6 +123,30 @@ try:
 except ApiError as e:
     check("C4 冷却期快速失败 code=cooldown", e.code == "cooldown")
 check("C5 冷却期不再发请求", calls3["n"] == before)
+
+print("=== C2. 冷却按用户维度隔离（C-6.4，2026-09-13） ===")
+# 原状：_COOLDOWNS 只按端点做键 —— 服务器版多用户同一进程，A 账号的上游故障
+# （Key 失效/配额耗尽/上游抖动）触发 60s 冷却会把无辜的 B 账号一起挡住。
+_URL_MU = "https://multi-user.example/v1"
+_tokA = cfg.set_user_context(user_dir=_tmp / "uA")
+_keyA = _endpoint_key(_URL_MU)
+_set_cooldown(_URL_MU)                      # A 触发冷却
+_A_cooled = _in_cooldown(_URL_MU)
+cfg.reset_user_context(_tokA)
+_tokB = cfg.set_user_context(user_dir=_tmp / "uB")
+_keyB = _endpoint_key(_URL_MU)
+_B_cooled = _in_cooldown(_URL_MU)
+cfg.reset_user_context(_tokB)
+check("C6 账号 A 触发冷却后 A 处于冷却", _A_cooled is True)
+check("C7 账号 B 不受 A 的冷却影响（不连坐）", _B_cooled is False)
+check("C8 两个账号的冷却键不同", _keyA != _keyB)
+check("C9 冷却表里只有 A 的键（B 的键查不到）",
+      _keyA in _COOLDOWNS and _keyB not in _COOLDOWNS)
+check("C10 本地版键退化为 '端点|'（等价于改动前的纯端点键）",
+      _endpoint_key("https://local.example/v1") == "https://local.example/v1|")
+_set_cooldown("https://local.example/v1")
+check("C11 本地版冷却照常生效（单机单用户无感知）",
+      _in_cooldown("https://local.example/v1") is True)
 
 print("=== D. relay 心跳快速失败（>30s 无轮询） ===")
 _relay_heartbeats["u-test"] = time.time() - 60
@@ -237,7 +262,7 @@ try:
     check("H1 relay 重试耗尽抛错", False)
 except ApiError as e:
     check("H1 relay 重试耗尽抛 relay_timeout", e.code == "relay_timeout")
-check("H2 relay 失败不写冷却表（多用户不连坐）", "https://relay-nc.example/v1" not in _COOLDOWNS)
+check("H2 relay 失败不写冷却表（多用户不连坐）", _endpoint_key("https://relay-nc.example/v1") not in _COOLDOWNS)
 check("H3 relay 重试 2 次（总 3 次尝试）", attempts_h["n"] == 3)
 
 print("=== I. 单轮总预算：deadline 已过 → 首次失败即抛 timeout ===")
