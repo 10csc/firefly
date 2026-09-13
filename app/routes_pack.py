@@ -292,6 +292,8 @@ def create_pack(h):
         (cdir / "core.md").write_text(_PACK_CORE_TPL.format(char_name=cname, user_name=uname), encoding="utf-8")
         (cdir / "identity.md").write_text(_PACK_IDENTITY_TPL.format(char_name=cname, user_name=uname), encoding="utf-8")
         (cdir / "sms_samples.md").write_text(_PACK_SAMPLES_TPL.format(char_name=cname), encoding="utf-8")
+        # 阶段 3.2：包存在性以 packs.json 为权威 —— 先登记再重扫（顺序铁律：reload 是从清单读的）
+        cfg.pack_registry().register(pid, source="custom")
         cfg.reload_presets()
     except Exception as e:
         # R-09（2026-09-13）：建包中途失败必须把已建目录删掉。原来失败就撒手，
@@ -301,6 +303,7 @@ def create_pack(h):
         import shutil
         shutil.rmtree(pack_dir, ignore_errors=True)
         try:
+            cfg.pack_registry().unregister(pid)   # 3.2：清单里也不留半注册条目
             cfg.reload_presets()      # 目录已删，重扫一遍清掉可能的半注册状态
         except Exception:
             pass
@@ -381,6 +384,7 @@ def delete_pack(h):
         logger.info("清理孤儿包目录: %s", pid)
     import shutil
     shutil.rmtree(target, ignore_errors=True)
+    cfg.pack_registry().unregister(pid)   # 3.2：目录删除与清单注销成对出现
     cfg.reload_presets()
     logger.info("自建角色包删除: %s", pid)
     h._json({"ok": True, "id": pid})

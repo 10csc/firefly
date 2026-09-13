@@ -327,6 +327,12 @@ def _restore_full_snapshot(data: bytes, backup: bool = True) -> tuple[bool, str,
             return False, f"[{pid}] 自建包解压失败（未改动该包）: {e}", n
     if pack_stage:
         try:
+            # 阶段 3.2：包定义已落盘 → 先登记进 packs.json（清单是包存在性的权威），
+            # 再重扫；这样"快照里有、本机还没登记"的包由 manifest 接手，
+            # 不再依赖"扫目录恰好扫到"。
+            _reg = cfg.pack_registry()
+            for _pid in pack_stage:
+                _reg.register(_pid, source="imported")
             cfg.reload_presets()      # 让新包进入 PRESETS/MODES，后续 mode_root 才认得它们
         except Exception as e:
             logger.warning("恢复自建包后重扫注册表失败（该包数据将跳过）: %s", e)

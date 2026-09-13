@@ -274,6 +274,8 @@ def forge_finish(body: dict) -> dict:
     (cdir / "identity.md").write_text(identity or f"# {char_name} · 人际关系与认知边界\n", encoding="utf-8")
     (cdir / "sms_samples.md").write_text(samples or f"# {char_name} · 短信风格示例\n", encoding="utf-8")
     (cdir / "prompts" / "polisher.md").write_text(polisher or _EMERGENCY_PERSONA, encoding="utf-8")
+    # 阶段 3.2：登记进 packs.json 再重扫（清单是包存在性的权威）
+    cfg.pack_registry().register(pid, source="custom")
     cfg.reload_presets()
     logger.info("AI 建卡完成: %s（%s，搜索=%s）", pid, name, bool((s.get("search") or {}).get("abstract")))
     return {"ok": True, "id": pid, "name": name}

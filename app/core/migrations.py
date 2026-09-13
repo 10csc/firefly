@@ -263,5 +263,11 @@ def run_startup_init() -> dict:
         if not p.exists():
             p.mkdir(exist_ok=True)
             created += 1
+    # 包注册表（阶段 3.2）：启动时落一次盘（import 期只做内存自愈，避免"import 即写盘"）
+    try:
+        from core.presets import pack_registry
+        pack_registry().persist()
+    except Exception as e:
+        logger.warning("packs.json 初始化失败（继续启动）: %s", e)
     cleaned = _cleanup_stale_defaults()
     return {"dirs_created": created, "files_copied": 0, "stale_removed": cleaned}

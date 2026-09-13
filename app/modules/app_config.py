@@ -42,9 +42,9 @@ from core.config import (
     upsert_provider, user_has_key,
 )
 from core.presets import (
-    DEFAULT_MODE, PRESETS, PRESET_SCHEMA, _PRESET_ID_RE,
+    DEFAULT_MODE, PRESETS, PRESET_SCHEMA, PackRegistry, _PRESET_ID_RE,
     _clean_knowledge_dirs, _discover_presets, _parse_preset, char_name,
-    reload_presets, user_name,
+    pack_registry, reload_presets, user_name,
 )
 from core.migrations import (
     _DEFAULTS, _LEGACY_PRE_MOVE_ZIP, _backup_legacy_sources, _cleanup_stale_defaults,

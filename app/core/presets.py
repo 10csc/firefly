@@ -8,6 +8,7 @@
 import json
 import os
 import re
+import time
 import logging
 from pathlib import Path
 
@@ -109,6 +110,196 @@ def _parse_preset(fp: Path, expect_id: str) -> dict | None:
             "knowledge_dirs": knowledge_dirs, "schema": schema}
 
 
+# ── 包注册表（packs.json）：包存在性的唯一权威（阶段 3.2）──────────
+# 背景：原来"包存在性" = 启动期扫目录（进程态）。后果：
+#   ① 孤儿目录（建包中断残留）永远不可见、也没法清理；
+#   ② "快照里有、恢复端还没注册"的自建包要两阶段特判（阶段 0 的 R-01 用例）；
+#   ③ 哪些包该进快照/同步只能靠 cfg.MODES 猜。
+# 现在改为持久事实：`user_data/packs.json`。
+# 兼容与兜底：文件缺失/损坏/与目录不一致 → 从目录自愈重建（老安装零迁移成本）；
+# 旧客户端不读该文件，照常按 MODES 工作。
+_PACKS_FILE = "packs.json"
+PACK_STATES = ("active", "archived")
+
+
+def _now() -> str:
+    return time.strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _scan_custom_dirs() -> dict:
+    """扫用户自建区，返回 {pid: preset.json 路径}（**目录实况**，供注册表自愈比对）。"""
+    out = {}
+    try:
+        dirs = sorted(p for p in _paths.USER_DIR.iterdir() if p.is_dir())
+    except OSError:
+        return out
+    for d in dirs:
+        fp = d / "character" / "preset.json"
+        if fp.exists():
+            out[d.name] = fp
+    return out
+
+
+class PackRegistry:
+    """`user_data/packs.json` 的读写与自愈（包存在性的唯一权威）。
+
+    记录字段：id / source(bundled|custom|imported) / schema / name / char_name /
+    capabilities / state(active|archived) / slots / created_at / updated_at。
+    `slots` 供 3.3 维护卡定义三态（baseline/inherited/customized），本卡只建壳。
+
+    **内置包不入清单**：它们由发行版提供，扫描即可（清单只描述用户区，避免"升级换了内置包
+    却要迁移清单"的伪问题）。source=bundled 保留给将来"导入的内置副本"。
+    """
+
+    def __init__(self, fp: Path | None = None):
+        self.fp = Path(fp) if fp else (_paths.USER_DIR / _PACKS_FILE)
+        self.data: dict[str, dict] = {}
+
+    # ── 读（含自愈）──
+    def load(self, heal: bool = True, persist: bool = False) -> dict:
+        """读清单。
+
+        persist=False（默认）：自愈只在**内存**里做，不落盘 —— 因为本函数会被
+        `_discover_presets()` 在 **import 期**调用，而在 import 期写盘会破坏
+        "import 零文件系统副作用"（阶段 2.6 的验收）。落盘交给启动链
+        （`run_startup_init()` 里显式 `persist()`）与每次真实变更（register/unregister）。"""
+        raw = None
+        try:
+            if self.fp.exists():
+                raw = json.loads(self.fp.read_text(encoding="utf-8"))
+        except Exception as e:
+            logger.warning("packs.json 读取失败，将从目录自愈重建: %s", e)
+        packs = raw.get("packs") if isinstance(raw, dict) else None
+        self.data = ({str(k): dict(v) for k, v in packs.items() if isinstance(v, dict)}
+                     if isinstance(packs, dict) else {})
+        if heal:
+            self.heal(persist=persist)
+        return self.data
+
+    def persist(self) -> bool:
+        """把当前内存清单落盘（启动链用；变更点内部已各自 save）。"""
+        return self.save()
+
+    def save(self) -> bool:
+        """落盘（原子写）。失败返回 False 并告警——注册表写不进去不应该让主流程崩。"""
+        try:
+            from modules.storage import atomic_write_json
+            atomic_write_json(self.fp, {"schema": 1, "updated_at": _now(), "packs": self.data})
+            return True
+        except Exception as e:
+            logger.warning("packs.json 写入失败: %s", e)
+            return False
+
+    # ── 自愈：以**目录实况**为准重建/补齐 ──
+    def heal(self, persist: bool = True) -> dict:
+        """清单与目录比对：
+        - 目录里有合法 preset.json 但清单没有 → 补登记（source=custom）；
+        - 清单里有但目录已不存在 → 移除（包真没了，例如手工删目录）；
+        - 清单字段缺失（旧清单/手改）→ 用目录里的 preset 补齐。
+        差异写日志，便于用户/运维发现"包里多出来/少了什么"。
+        persist=False 时只改内存（import 期调用走这条，见 load 的说明）。"""
+        on_disk = _scan_custom_dirs()
+        added, removed, fixed = [], [], []
+        for pid, fp in on_disk.items():
+            if pid in self.data:
+                continue
+            p = _parse_preset(fp, pid)
+            if not p:
+                continue
+            self.data[pid] = self._entry(pid, p, source="custom")
+            added.append(pid)
+        for pid in list(self.data):
+            if pid not in on_disk:
+                self.data.pop(pid)
+                removed.append(pid)
+        for pid, fp in on_disk.items():
+            meta = self.data.get(pid)
+            if not meta or (meta.get("name") and meta.get("schema") is not None):
+                continue
+            p = _parse_preset(fp, pid)
+            if p:
+                self.data[pid] = self._entry(pid, p, source=meta.get("source", "custom"),
+                                            created_at=meta.get("created_at"))
+                fixed.append(pid)
+        if added or removed or fixed:
+            logger.warning("packs.json 自愈：新增 %s / 移除 %s / 补字段 %s",
+                           added or "-", removed or "-", fixed or "-")
+        if persist and (added or removed or fixed or not self.fp.exists()):
+            self.save()
+        return self.data
+
+    @staticmethod
+    def _entry(pid: str, parsed: dict, source: str = "custom",
+               created_at: str | None = None) -> dict:
+        return {
+            "id": pid,
+            "source": source,
+            "schema": parsed.get("schema", PRESET_SCHEMA),
+            "name": parsed.get("name") or pid,
+            "char_name": parsed.get("char_name") or "",
+            "capabilities": {"presentation": parsed.get("presentation", "sticker"),
+                             "knowledge_dirs": parsed.get("knowledge_dirs")},
+            "state": "active",
+            "slots": {},          # 3.3 填三态（baseline/inherited/customized）
+            "created_at": created_at or _now(),
+            "updated_at": _now(),
+        }
+
+    # ── 变更 ──
+    def register(self, pid: str, source: str = "custom", parsed: dict | None = None) -> dict | None:
+        """登记（幂等）。parsed=None 时从 `USER_DIR/{pid}/character/preset.json` 解析。"""
+        if parsed is None:
+            fp = _paths.USER_DIR / pid / "character" / "preset.json"
+            if not fp.exists():
+                fp = _paths.USER_DIR / pid / "preset.json"
+            parsed = _parse_preset(fp, pid) if fp.exists() else None
+        if not parsed:
+            logger.warning("注册包失败（preset.json 缺失或非法）: %s", pid)
+            return None
+        old = self.data.get(pid) or {}
+        entry = self._entry(pid, parsed, source=source, created_at=old.get("created_at"))
+        entry["slots"] = old.get("slots") or {}
+        entry["state"] = old.get("state", "active")
+        self.data[pid] = entry
+        self.save()
+        return entry
+
+    def unregister(self, pid: str) -> bool:
+        """注销（幂等）。返回是否真的删掉了一条。"""
+        if pid in self.data:
+            self.data.pop(pid)
+            self.save()
+            return True
+        return False
+
+    def get(self, pid: str) -> dict | None:
+        return self.data.get(pid)
+
+    def active_ids(self) -> list:
+        return sorted(k for k, v in self.data.items() if v.get("state", "active") == "active")
+
+    def all_ids(self) -> list:
+        """含 archived（快照/同步白名单用：归档 ≠ 丢保险，数据仍要进备份）。"""
+        return sorted(self.data)
+
+
+_REGISTRIES: dict[str, PackRegistry] = {}
+
+
+def pack_registry(fp: Path | None = None) -> PackRegistry:
+    """取当前数据根下的包注册表（按路径缓存：USER_DIR 可被测试替换，故用路径做键）。
+
+    首次访问会 `load()`（**内存自愈**，不落盘）；落盘由启动链
+    （`run_startup_init` → `persist()`）与登记/注销变更点负责。"""
+    key = str(fp or (_paths.USER_DIR / _PACKS_FILE))
+    reg = _REGISTRIES.get(key)
+    if reg is None:
+        reg = PackRegistry(Path(key))
+        reg.load(persist=False)
+        _REGISTRIES[key] = reg
+    return reg
+
+
 def _discover_presets(base: Path | None = None) -> dict:
     """扫描发现预设包：bundled（assets/character/{id}/preset.json）+ 本地版追加用户自建区
     （USER_DIR/{id}/character/preset.json；服务器版跳过——用户区属各账号，自定义整包不入全局注册表）。
@@ -127,17 +318,16 @@ def _discover_presets(base: Path | None = None) -> dict:
             p = _parse_preset(fp, d.name)
             if p:
                 presets[p["id"]] = p
-    # 用户自建区（仅本地版；测试注入 base 时跳过）
+    # 用户自建区（仅本地版；测试注入 base 时跳过）——**从 packs.json 读**（阶段 3.2）
     if base is None and not os.environ.get("FIREFLY_SERVER"):
-        try:
-            user_dirs = sorted(p for p in _paths.USER_DIR.iterdir() if p.is_dir())
-        except OSError:
-            user_dirs = []
-        for d in user_dirs:
-            fp = d / "character" / "preset.json"
+        reg = pack_registry()
+        # 只取 active 的（archived 包不进 MODES：3.5 的归档语义）；目录多出未注册的包
+        # 由 PackRegistry.heal() 补齐（自愈），不会因为"忘了登记"就消失
+        for pid in reg.active_ids():
+            fp = _paths.USER_DIR / pid / "character" / "preset.json"
             if not fp.exists():
                 continue
-            p = _parse_preset(fp, d.name)
+            p = _parse_preset(fp, pid)
             if not p:
                 continue
             if p["id"] in presets:
