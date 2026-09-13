@@ -57,6 +57,22 @@ check("A12 config/auth 不可同步", not st.is_syncable("config.json") and not 
 check("A13 未注册文字路径默认可同步（兼容现逻辑）", st.is_syncable("data/fav.json"))
 check("A14 文字类注册项可同步", st.is_syncable("data/conversation.jsonl") and not st.is_blob("data/conversation.jsonl"))
 
+print("=== A2. 通配注册项匹配（C-6.3，2026-09-13） ===")
+# 原状：get_type 对 character/*.md 按字面前缀 startswith("character/*.md") 比对，
+# 永远命不中任何真实路径 → 该项的 sync=newest 名存实亡（靠"未注册路径"兜底才没出事）。
+check("A15 character/core.md 命中 newest 策略", st.sync_policy("character/core.md") == "newest")
+check("A16 命中后仍非媒体/非敏感", not st.is_media("character/core.md")
+      and not st.is_sensitive("character/core.md"))
+check("A17 非 .md 扩展名不命中（x.exe 落到未注册兜底）", st.get_type("character/x.exe") is None)
+check("A18 `*` 不跨目录（子目录里的 .md 不命中）", st.get_type("character/sub/core.md") is None)
+check("A19 光杆扩展名不命中（.md 无文件名主干）", st.get_type("character/.md") is None)
+check("A20 目录本身不命中（character 不是文件）", st.get_type("character") is None)
+check("A21 其它注册项不受影响（前缀匹配语义不变）",
+      st.sync_policy("data/memory.md") == "newest" and st.sync_policy("config.json") == "exclude"
+      and st.sync_policy("data/conversation.jsonl") == "merge-jsonl")
+check("A22 同步判定结论不变（is_syncable 修复前后同为 True，故本次零行为变化）",
+      st.is_syncable("character/core.md") and st.is_syncable("character/x.exe"))
+
 print("=== B. 原子写 / 迁移一次性 / 路径审查 ===")
 fp = _tmp / "x.json"
 check("B1 原子写成功", st.atomic_write_json(fp, {"a": 1}) and json.loads(fp.read_text(encoding="utf-8"))["a"] == 1)

@@ -123,15 +123,45 @@ REGISTRY: dict[str, dict] = {
 }
 
 
+def _match_glob(pattern: str, rel: str) -> bool:
+    """注册表**通配项**匹配（C-6.3，2026-09-13）：`目录/*.ext` 形态 = 目录前缀 + 扩展名。
+
+    原来 get_type 对所有注册项一律按字面前缀 `rel.startswith("character/*.md")` 比对，
+    通配项**永远不可能命中**任何真实路径——`character` 这一项的 `sync=newest` 于是名存实亡
+    （实际落到"未注册路径"的兜底判定上，碰巧结论相同才没暴露）。
+    只实现注册表真正用到的这一种形态（`dir/*.ext`），不引入 fnmatch 的 `**`/`?`/字符集
+    等未被使用的语义——未使用的分支就是没人测的分支。
+    `*` 不跨目录（与 shell glob 一致）：`character/*.md` 不匹配 `character/sub/x.md`。"""
+    d, _, tail = pattern.rpartition("/")
+    if not tail.startswith("*."):
+        return False
+    ext = tail[1:]
+    name = rel
+    if d:
+        prefix = d + "/"
+        if not rel.startswith(prefix):
+            return False
+        name = rel[len(prefix):]
+    return "/" not in name and len(name) > len(ext) and name.endswith(ext)
+
+
 def get_type(relpath: str) -> dict | None:
-    """按相对路径匹配注册表项（用于导出/同步/备份的排除与策略查询）。"""
+    """按相对路径匹配注册表项（用于导出/同步/备份的排除与策略查询）。
+    非通配项按前缀匹配；含 `*` 的项走 _match_glob（目录前缀 + 扩展名）。"""
     rel = relpath.replace("\\", "/").lstrip("/")
     best = None
+    best_len = -1
     for key, spec in REGISTRY.items():
         prefix = spec["rel"].replace("{mode}/", "").replace("{mode}", "")
-        if prefix and (rel == prefix.rstrip("/") or rel.startswith(prefix)):
-            if best is None or len(prefix) > len(best["spec"]["rel"].replace("{mode}/", "")):
-                best = {"key": key, "spec": spec}
+        if not prefix:
+            continue
+        if "*" in prefix:
+            hit = _match_glob(prefix, rel)
+        else:
+            hit = rel == prefix.rstrip("/") or rel.startswith(prefix)
+        if hit and len(prefix) > best_len:
+            best = {"key": key, "spec": spec}
+            best_len = len(prefix)
     return best
 
 
