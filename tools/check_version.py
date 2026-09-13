@@ -36,7 +36,9 @@ def extract(path: str, pattern: str, group: int = 1):
     return m.group(group)
 
 sources = {
-    "app_config.APP_VERSION":  ("app/modules/app_config.py", r'APP_VERSION\s*=\s*"([^"]+)"'),
+    # 2026-09-13（阶段 2.1 拆分）：APP_VERSION 随职责迁到 app/core/config.py；
+    # 兼容层 app/modules/app_config.py 只 re-export，不再有定义（门禁必须跟着实现走）。
+    "core.config.APP_VERSION": ("app/core/config.py", r'APP_VERSION\s*=\s*"([^"]+)"'),
     "update.js CURRENT_VERSION": ("app/static/js/update.js",  r'CURRENT_VERSION\s*=\s*"([^"]+)"'),
     "android versionName":     ("android/app/build.gradle.kts", r'versionName\s*=\s*"([^"]+)"'),
     "android versionCode":     ("android/app/build.gradle.kts", r'versionCode\s*=\s*(\d+)'),
