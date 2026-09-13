@@ -426,6 +426,8 @@ def undo(h):
         # 撤回后回退 .memory_index：若整合游标 > 当前轮数（说明被撤回轮次
         # 已被记过数），必须压低游标，否则后续 rest 按 turn 号切片会把新的
         # 对话全部误判为"已整理过"而永远跳过（真 bug 修复）
+        # 阶段 3.6：memory_manager.verify_index() 已在 wake/rest 入口兜底自愈；
+        # 这里保留即时回写只是为了让"撤回后立刻休息"这一类路径不依赖兜底时机。
         try:
             from modules.memory_manager import _index_file
             from modules.conversation_store import count_user_turns
@@ -465,6 +467,7 @@ def clear_history(h):
             pass
         # 记忆整理进度必须同步归零：turn_count 已归零，旧 index 会让下次
         # 休息时把新对话全部误判为"已整理过"而跳过
+        # 阶段 3.6：verify_index() 已兜底；此处即时归零是为了"清完历史马上休息"不等兜底。
         try:
             from modules.memory_manager import _index_file
             fp = _index_file(mode)

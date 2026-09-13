@@ -38,9 +38,19 @@ logger = logging.getLogger(__name__)
 
 
 def _sync_mode_root(mode: str):
-    """同步数据根：服务器版=该用户目录（server_app 注入上下文）；本地版=USER_DIR/{mode}。"""
-    m = mode if mode in cfg.MODES else DEFAULT_MODE
-    return cfg.mode_root(m), m
+    """同步数据根：服务器版=该用户目录（server_app 注入上下文）；本地版=USER_DIR/{mode}。
+
+    3.8：白名单以 `cfg.backup_pack_ids()`（MODES ∪ packs.json 含 archived）为准。
+    归档包不在 MODES 里，而 `cfg.mode_root()` 对白名单外的 mode 会**静默回退默认包** ——
+    归档包若走回退，就会把默认包的数据当成自己的数据同步，双向写坏两边。
+    所以：白名单内的非 MODES 包直接定位 `{用户目录}/{id}`；白名单外仍按旧语义回退默认包
+    （兼容老客户端传任意 mode 串的既有行为）。"""
+    m = str(mode or "")
+    if m not in cfg.backup_pack_ids():
+        m = DEFAULT_MODE
+    if m in cfg.MODES:
+        return cfg.mode_root(m), m
+    return Path(cfg._user_ctx_dir() or cfg.USER_DIR) / m, m
 
 
 def sync_manifest(h):
@@ -200,7 +210,10 @@ def sync_now(h):
             raw = r.read()
         return raw if binary else json.loads(raw.decode("utf-8"))
 
-    modes = list(cfg.MODES) if mode in ("all", "") else ([mode] if mode in cfg.MODES else [DEFAULT_MODE])
+    # 3.8：白名单切 `cfg.backup_pack_ids()`（MODES ∪ 清单含 archived）—— 归档包的数据仍要同步
+    _allow = cfg.backup_pack_ids()
+    modes = (list(_allow) if mode in ("all", "")
+             else ([mode] if mode in _allow else [DEFAULT_MODE]))
     reports = {"uploaded": [], "downloaded": [], "merged": [], "skipped": [], "conflicts": 0, "modes": modes}
     for _m in modes:
         err = _sync_one_mode(call, _m, reports)
@@ -222,7 +235,15 @@ def _sync_one_mode(call, mode: str, reports: dict) -> str | None:
 
     try:
         # 1. 服务器清单
-        remote = call(f"/sync/manifest?mode={m}").get("files", {})
+        man = call(f"/sync/manifest?mode={m}")
+        # 3.8 护栏：服务端对"自己不认识"的 mode 会**静默回退默认包**（老语义兼容），
+        # 于是归档包/自建包在服务端会被解析成 story —— 若直接采信，就会把 story 的数据
+        # 合并进本地归档包目录（双向写坏）。服务端回话里带 mode 时，必须与请求一致。
+        remote_mode = str((man or {}).get("mode") or m)
+        if remote_mode != m:
+            return (f"服务端把 {m} 解析成 {remote_mode}（该包在服务端不可寻址），"
+                    f"已跳过以免写坏数据")
+        remote = (man or {}).get("files", {}) or {}
     except Exception as e:
         return f"连接服务器失败: {e}"
 

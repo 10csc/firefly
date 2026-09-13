@@ -209,8 +209,11 @@ def _import_zip_to_mode(data: bytes, mode: str, backup_prefix: str = "auto") -> 
 
 
 def _is_snapshot_zip(zf) -> bool:
-    """全包快照格式识别：顶层出现注册模式目录（{mode}/…）或 stickers/。
-    单包导出 zip 的条目相对模式根（data/…、character/…），不会出现这两个顶层。"""
+    """全包快照格式识别：顶层出现**已知包**目录（{id}/…）或 stickers/。
+    单包导出 zip 的条目相对模式根（data/…、character/…），不会出现这两个顶层。
+
+    3.8：已知包 = `cfg.backup_pack_ids()`（MODES ∪ packs.json 含 archived）。
+    只认 MODES 的旧写法会把"归档包的快照"误判成单包导出，进而把整包塞进当前模式。"""
     tops = set()
     for info in zf.infolist():
         if info.is_dir():
@@ -218,20 +221,26 @@ def _is_snapshot_zip(zf) -> bool:
         parts = info.filename.replace("\\", "/").split("/")
         if len(parts) > 1:
             tops.add(parts[0])
-    return bool(tops & set(cfg.MODES)) or "stickers" in tops
+    return bool(tops & set(cfg.backup_pack_ids())) or "stickers" in tops
 
 
 def _pack_restorable(top: str) -> bool:
     """快照顶层目录名是否可作为一个「自建角色包」恢复（R-01 修复的审查口）。
 
-    条件：目录名符合包 id 规则（^[a-z0-9_-]{1,32}$）**且**不在当前注册表 PRESETS 中。
-    后者是护栏：内置包（story/haruno）由发行版提供，不允许被快照覆盖
-    （否则一份构造的 zip 就能改写内置角色的设定）。
-    真正的合法性强校验在阶段 1 —— 暂存后必须存在 character/preset.json 并能被
-    _parse_preset 通过，才会换入。"""
+    条件：目录名符合包 id 规则（^[a-z0-9_-]{1,32}$）**且**不是当前可用/内置的包。
+    两处排除的理由不同：
+    - `pid in cfg.MODES`：当前可用的包走 by_mode 分支（模式数据根），语义与旧版逐字一致；
+    - `pid in cfg.PRESETS` 且非自建：内置包（story/haruno）由发行版提供，不允许被快照覆盖
+      （否则一份构造的 zip 就能改写内置角色的设定）。
+
+    3.8：清单已知的**归档**包（在 packs.json、不在 MODES/PRESETS）归本分支 —— 归档包的数据
+    仍要能恢复；真正的合法性强校验在阶段 1（暂存后必须存在 character/preset.json 且能被
+    `_parse_preset` 通过、并在清单里登记成功），所以这里放行不等于无条件换入。"""
     from modules.app_config import _PRESET_ID_RE
     pid = str(top or "").strip()
     if not pid or not _PRESET_ID_RE.fullmatch(pid):
+        return False
+    if pid in cfg.MODES:
         return False
     return pid not in cfg.PRESETS
 
@@ -325,6 +334,7 @@ def _restore_full_snapshot(data: bytes, backup: bool = True) -> tuple[bool, str,
         except Exception as e:
             _sh.rmtree(stage, ignore_errors=True)
             return False, f"[{pid}] 自建包解压失败（未改动该包）: {e}", n
+    _reg = None
     if pack_stage:
         try:
             # 阶段 3.2：包定义已落盘 → 先登记进 packs.json（清单是包存在性的权威），
@@ -336,9 +346,12 @@ def _restore_full_snapshot(data: bytes, backup: bool = True) -> tuple[bool, str,
             cfg.reload_presets()      # 让新包进入 PRESETS/MODES，后续 mode_root 才认得它们
         except Exception as e:
             logger.warning("恢复自建包后重扫注册表失败（该包数据将跳过）: %s", e)
-        # 未成功注册的包：清理暂存，避免半恢复状态
+        # 未成功注册的包：清理暂存，避免半恢复状态。
+        # 3.8：判据改成"清单里有没有"，不再是"在不在 MODES 里" —— 归档包不在 MODES，
+        # 但它是合法包，它的数据必须恢复（否则恢复归档包会静默丢数据）；
+        # 而清单里没有 = preset.json 非法/登记失败，那种才跳过。
         for pid in list(pack_stage):
-            if pid not in cfg.MODES:
+            if _reg is None or not _reg.get(pid):
                 logger.warning("自建包 %s 未通过注册表校验，跳过其用户数据", pid)
                 _sh.rmtree(pack_stage.pop(pid), ignore_errors=True)
 

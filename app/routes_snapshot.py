@@ -41,14 +41,18 @@ def _snap_name_ok(name) -> str:
 
 def build_full_snapshot_zip() -> bytes:
     """打包所有角色包 + 用户数据为 zip 字节（只读打包，不修改数据）。
-    内容：全部注册模式的模式目录（排除内部目录）+ stickers/ 用户添加表情包
-    （角色卡资源）+ _config.json（剥离 API Key，恢复时不自动还原）。"""
+    内容：全部注册模式 + 清单里**归档**的包（3.8：归档 ≠ 丢保险）+ stickers/ 用户添加表情包
+    （角色卡资源）+ _config.json（剥离 API Key，恢复时不自动还原）。
+
+    白名单取 `cfg.backup_pack_ids()`（MODES ∪ packs.json 含 archived），并用
+    `user_root/{id}` 直接定位包目录 —— 不走 `cfg.mode_root()`，因为后者对不在
+    MODES 里的包会**静默回退默认包**，那样归档包就会把别的包的数据打进快照。"""
     import io
     import zipfile
     user_root = _user_root()
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
-        for mode in cfg.MODES:
+        for mode in cfg.backup_pack_ids():
             root = user_root / mode
             if not root.is_dir():
                 continue

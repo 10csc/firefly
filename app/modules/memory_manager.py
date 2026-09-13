@@ -92,6 +92,44 @@ def migrate_legacy_memory(mode: str = DEFAULT_MODE) -> None:
     跑本地迁移没有意义（与 run_legacy_migration 的处置一致）。"""
     _migrate_legacy(mode)
 
+
+def _verify_index_file(idx_file: Path, mode: str = "") -> int:
+    """记忆游标自愈（阶段 3.6，按文件路径）：游标 > 真实用户轮数时压低并落盘。
+
+    为什么需要：`.memory_index` 的 `last_integrated_turn` 是"整理到第几轮"的唯一依据。
+    一旦偏大（撤回/清历史/换机恢复/任何新的写对话入口忘了同步回写），后续整理会以为
+    "没有新对话"而**永久跳过**——用户表现为"记忆再也不更新"，且全程没有任何报错。
+    现在 routes 的 undo / clear-history 仍各有即时回写（那是最快的），这里是兜底自愈。
+    返回修正后的游标；无需修正时原样返回（且**不写盘**）。"""
+    try:
+        from modules.conversation_store import count_user_turns
+        real = int(count_user_turns(mode=mode))
+    except Exception as e:
+        logger.warning("游标自愈跳过（读取用户轮数失败）: %s", e)
+        return -1
+    cur = 0
+    try:
+        if idx_file.exists():
+            cur = int(json.loads(idx_file.read_text(encoding="utf-8")).get("last_integrated_turn", 0))
+    except Exception:
+        cur = 0
+    if cur <= real:
+        return cur
+    logger.warning("记忆游标偏大（%d > 真实 %d 轮，mode=%s）→ 已压低，整理不再被永久跳过",
+                   cur, real, mode or "?")
+    try:
+        idx_file.parent.mkdir(parents=True, exist_ok=True)
+        idx_file.write_text(json.dumps({"last_integrated_turn": real}, ensure_ascii=False),
+                            encoding="utf-8")
+    except OSError as e:
+        logger.warning("游标自愈写入失败（下次仍会重试）: %s", e)
+    return real
+
+
+def verify_index(mode: str = DEFAULT_MODE) -> int:
+    """记忆游标自愈（按模式）：见 `_verify_index_file`。返回（可能的）修正后游标。"""
+    return _verify_index_file(_index_file(mode), mode)
+
 # memory.md 结构：
 # # 核心记忆头部（休息时整体重写）
 # <概括文本>
@@ -210,7 +248,8 @@ class MemoryManager:
 
         old_head = self.load_head()
         old_tail = self.load_tail()
-        last_integrated = self._read_index()
+        # 阶段 3.6：整理前先自愈游标 —— 游标偏大会让"新对话"判定为空、整理被永久跳过
+        last_integrated = _verify_index_file(self._idx_file, self._mode)
         # 新对话 = 第 last_integrated 轮之后的历史
         new_dialogue = self._slice_new_dialogue(full_history, last_integrated)
         if not new_dialogue.strip():
@@ -445,7 +484,12 @@ def wake(client=None, model: str = "deepseek-v4-flash-vision-exp", mode: str = D
     若 memory.md 不存在或为空，返回空字符串（首次启动、无记忆）。
     若检测到中断（index 存在但 memory.md 缺失），返回空串并记 error 计数——
     不抛异常，让会话以"无记忆"状态启动，避免一次中断锁死整个会话。
-    """
+
+    阶段 3.6：入口先做一次游标自愈（游标偏大 → 整理永久跳过，见 verify_index）。"""
+    try:
+        verify_index(mode)
+    except Exception as e:
+        logger.warning("wake: 游标自愈失败（继续）: %s", e)
     mm = MemoryManager(client, model=model, mode=mode) if client is not None else MemoryManager.__new__(MemoryManager)
     if client is not None:
         mm._client = client

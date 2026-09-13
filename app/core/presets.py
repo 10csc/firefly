@@ -283,6 +283,19 @@ class PackRegistry:
         return sorted(self.data)
 
 
+def backup_pack_ids() -> list:
+    """**备份/快照白名单**（架构重构 3.8）：存在数据的**全部**包 id。
+
+    = 内置/当前可用包（`MODES`，由发行版扫描） ∪ 清单全部条目（`packs.json`，**含 archived**）。
+
+    为什么要有这个函数：`MODES` 是**运行期**语义（只有 active 的包能聊天），
+    而快照/同步是**备份期**语义 —— 归档 ≠ 丢保险，用户按了归档的包，数据仍必须进快照，
+    否则"归档"就成了静默的数据删除。旧实现三处白名单都拿 `MODES` 当全集，正是这个漏。
+    默认模式排最前（顺序稳定，便于快照内容比对）。"""
+    ids = set(MODES) | set(pack_registry().all_ids())
+    return [DEFAULT_MODE] + sorted(i for i in ids if i != DEFAULT_MODE)
+
+
 _REGISTRIES: dict[str, PackRegistry] = {}
 
 
