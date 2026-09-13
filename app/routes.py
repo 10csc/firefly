@@ -119,22 +119,12 @@ def _chat_window_cleanup(now: float):
             _CHAT_WINDOWS.pop(k, None)
 
 
-def chat(h):
-    client = cfg.get_client()
-    if not client:
-        h._json({"reply": None, "error": "请先设置 API Key", "need_key": True})
-        return
-    # 服务器版 relay 模式：用户未带 Key → 立即返回 need_key（前端弹设置引导），
-    # 否则流水线每个 LLM 阶段 relay 等待 120s 超时（story 模式约 4 分钟）才报错
-    if cfg.relay_needs_key():
-        h._json({"reply": None, "error": "请先设置 API Key", "need_key": True})
-        return
+def _ingest_user_messages(h, body: dict, mode: str) -> tuple:
+    """把本请求携带的用户消息**即时写盘**，返回 (LLM 输入文本, 首轮识图 data URL 列表)。
 
-    body = _read_json(h)
-    session_id = body.get("session_id", "default")
-    hint = (body.get("hint") or "").strip()
-    mode, mode_fell_back = _body_mode_ex(body)
-
+    支持 text / sticker / image 三种消息对象与旧版纯字符串；表情包缺 path 时按 label 反查，
+    图片消息只把 img_id 与 desc 写进 jsonl（图片字节本地持有，不进历史/日志）。
+    （阶段 2.3 自 chat() 原样搬出，未改逻辑。）"""
     # 即时写盘：用户消息一发就记。
     # 前端分条发送（messages 数组）→ 分条写盘（刷新后显示多条），
     # LLM 侧用合并文本（\n 连接，保持一轮处理）。
@@ -208,50 +198,14 @@ def chat(h):
         user_input = (body.get("message") or "").strip()
         if user_input:
             _append_msg("user", {"type": "text", "content": user_input}, mode=mode)
+    return user_input, vision_urls
 
-    # 用户回应 → 主动性信号量复位（用户发送即解锁主动通道，接上响应式回复）
-    from modules.proactive import _active_reset
-    _active_reset(mode)
 
-    # 合并窗口入队：消息实时到达后端即安全；窗口按 (session, mode, 用户) 隔离
-    if not user_input:
-        # 空消息且无 hint：直接降级话术返回，不走 LLM 流水线（防无输入刷完整推理链）；
-        # 有 hint（打字中提示）继续走下方流程——typing 场景的产品功能
-        if not hint:
-            from orchestrator import _handle_direct
-            h._json({"messages": [{"type": "text", "content": m}
-                                  for m in _handle_direct("input:empty")]})
-            return
-        # 有 hint 的空消息：不进窗口，直接降级快速返回
-        from modules.proactive import reply_lock, reply_unlock
-        reply_lock(mode)
-        try:
-            session = get_session(session_id, mode)
-            with session["lock"]:
-                result = handle_chat("", session, client,
-                                     analyzer_model=cfg.eff_cfg("analyzer_model"),
-                                     organizer_model=cfg.eff_cfg("organizer_model"),
-                                     polisher_model=cfg.eff_cfg("polisher_model"),
-                                     retriever_model=cfg.eff_cfg("retriever_model"),
-                                     retriever_effort=cfg.eff_cfg("retriever_effort"),
-                                     analyzer_effort=cfg.eff_cfg("analyzer_effort"),
-                                     polisher_effort=cfg.eff_cfg("polisher_effort"),
-                                     organizer_effort=cfg.eff_cfg("organizer_effort"),
-                                     retriever_temperature=cfg.eff_cfg("retriever_temperature"),
-                                     polisher_temperature=cfg.eff_cfg("polisher_temperature"),
-                                     memory_head=session.get("memory_head", ""),
-                                     hint=hint,
-                                     mode=mode,
-                                     )
-            enriched = _write_replies(result, mode)
-            resp = {"messages": enriched}
-            if result.error_code:
-                resp["error_code"] = result.error_code
-            h._json(resp)
-        finally:
-            reply_unlock(mode)
-        return
+def _merge_window(session_id: str, mode: str, user_input: str, vision_urls: list) -> tuple:
+    """合并窗口：入队本批消息并等窗口结束，返回 (是否主请求, 合并输入, 合并后的图片)。
 
+    非主请求返回 (False, "", []) —— 消息已入队，回复由主请求带回，本请求立即返回。
+    （阶段 2.3 自 chat() 原样搬出，未改逻辑。）"""
     key = _chat_window_key(session_id, mode)
     with _CHAT_WINDOW_LOCK:
         _chat_window_cleanup(time.time())
@@ -275,8 +229,7 @@ def chat(h):
 
     if not is_primary:
         # 副请求：消息已入队，回复由主请求带回；立即返回，不挂起
-        h._json({"queued": True})
-        return
+        return False, "", []
 
     # 主请求：等待窗口结束（滑动 deadline；/chat/hint 重置延长，/chat/flush 立即结束；
     # /chat 自身达到 _CHAT_WINDOW_MAX_MSGS 上限也立即结束——0.8.1 连续消息最多合并 10 条）
@@ -293,17 +246,25 @@ def chat(h):
             win["cond"].wait(timeout=min(remaining, 1.0))
     user_input = "\n".join(merged_msgs)
     vision_images = vision_merge  # A9：本批首轮识图 base64 列表（orchestrator 按 caps.vision 决定）
+    return True, user_input, vision_images
 
-    # 回复通道锁（阻塞）：用户消息不可丢，等待本模式任何主动生成完成后再处理
-    # （按模式分锁：不阻塞其他模式的回复通道）
+
+def _run_pipeline(h, session_id: str, mode: str, client, user_input: str, hint: str,
+                  vision_images: list | None = None, mode_fell_back: bool = False,
+                  notify: bool = True) -> None:
+    """跑一轮完整流水线并回包：回复通道锁 → 会话锁 → handle_chat → 逐条写盘 → 响应。
+
+    notify：后台回复完成通知（安卓状态栏）。空消息+hint 的快速路径原本不通知，
+    为保持拆分前行为逐字一致，该路径传 notify=False（差异是历史遗留，清理另开卡）。
+    vision_images=None 表示**不传该参数**（保持 handle_chat 的默认值语义）。
+    （阶段 2.3 把 chat() 里两处几乎重复的调用合并到这里。）"""
     from modules.proactive import reply_lock, reply_unlock
     reply_lock(mode)
     try:
         session = get_session(session_id, mode)
         # 会话级锁：同会话操作串行（chat 耗时长，防 undo/rest 并发读写 ctx）
         with session["lock"]:
-            result = handle_chat(
-                user_input, session, client,
+            _kw = dict(
                 analyzer_model=cfg.eff_cfg("analyzer_model"),
                 organizer_model=cfg.eff_cfg("organizer_model"),
                 polisher_model=cfg.eff_cfg("polisher_model"),
@@ -317,12 +278,15 @@ def chat(h):
                 memory_head=session.get("memory_head", ""),
                 hint=hint,
                 mode=mode,
-                vision_images=vision_images,
             )
+            if vision_images is not None:
+                _kw["vision_images"] = vision_images
+            result = handle_chat(user_input, session, client, **_kw)
         # 即时写盘：流萤回复每条立刻记，并把 time 回传给前端
         enriched = _write_replies(result, mode)
-        # 后台回复完成 → 状态栏通知（安卓；PC/服务器版静默跳过）
-        _notify_reply_if_background(enriched)
+        if notify:
+            # 后台回复完成 → 状态栏通知（安卓；PC/服务器版静默跳过）
+            _notify_reply_if_background(enriched)
         resp = {"messages": enriched}
         if result.error_code:
             resp["error_code"] = result.error_code   # 错误分类（前端人话提示）
@@ -334,6 +298,52 @@ def chat(h):
         h._json(resp)
     finally:
         reply_unlock(mode)
+
+
+def chat(h):
+    """聊天主链（阶段 2.3 拆分后只剩编排）：
+    取客户端 → 解析请求 → 用户消息即时写盘（_ingest_user_messages）→ 主动性复位 →
+    空消息分流 → 合并窗口（_merge_window）→ 跑流水线（_run_pipeline）。"""
+    client = cfg.get_client()
+    if not client:
+        h._json({"reply": None, "error": "请先设置 API Key", "need_key": True})
+        return
+    # 服务器版 relay 模式：用户未带 Key → 立即返回 need_key（前端弹设置引导），
+    # 否则流水线每个 LLM 阶段 relay 等待 120s 超时（story 模式约 4 分钟）才报错
+    if cfg.relay_needs_key():
+        h._json({"reply": None, "error": "请先设置 API Key", "need_key": True})
+        return
+
+    body = _read_json(h)
+    session_id = body.get("session_id", "default")
+    hint = (body.get("hint") or "").strip()
+    mode, mode_fell_back = _body_mode_ex(body)
+
+    user_input, vision_urls = _ingest_user_messages(h, body, mode)
+
+    # 用户回应 → 主动性信号量复位（用户发送即解锁主动通道，接上响应式回复）
+    from modules.proactive import _active_reset
+    _active_reset(mode)
+
+    if not user_input:
+        # 空消息且无 hint：直接降级话术返回，不走 LLM 流水线（防无输入刷完整推理链）；
+        # 有 hint（打字中提示）继续走下方流程——typing 场景的产品功能
+        if not hint:
+            from orchestrator import _handle_direct
+            h._json({"messages": [{"type": "text", "content": m}
+                                  for m in _handle_direct("input:empty")]})
+            return
+        # 有 hint 的空消息：不进窗口，直接降级快速返回（历史行为：不触发后台通知）
+        _run_pipeline(h, session_id, mode, client, "", hint, notify=False)
+        return
+
+    is_primary, user_input, vision_images = _merge_window(session_id, mode, user_input, vision_urls)
+    if not is_primary:
+        # 副请求：消息已入队，回复由主请求带回；立即返回，不挂起
+        h._json({"queued": True})
+        return
+    _run_pipeline(h, session_id, mode, client, user_input, hint, vision_images, mode_fell_back)
+
 
 
 def chat_hint(h):
