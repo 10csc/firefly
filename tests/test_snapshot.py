@@ -261,7 +261,8 @@ html = (ROOT / "app" / "static" / "index.html").read_text(encoding="utf-8")
 check("I4 卡片样式已提为全局（#server-web-entry 不再裸渲染）",
       "\n.am-card{" in html and "#server-web-entry{margin:14px 10px 0}" in html)
 check("I5 角色详情页同步后台主动门控",
-      "S._hiddenEnabled = payload.hidden_enabled" in (ROOT / "app" / "static" / "js" / "panels.js").read_text(encoding="utf-8"))
+      "S._hiddenEnabled = payload.hidden_enabled" in
+      (ROOT / "app" / "static" / "js" / "panels" / "packs.js").read_text(encoding="utf-8"))
 
 # ══════════════════════════════════════════════════════════════════
 # 阶段 0 · 任务 0.2：快照恢复三回归（R-01 / R-02 / E-1）

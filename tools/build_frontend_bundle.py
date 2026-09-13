@@ -23,12 +23,15 @@ INDEX = ROOT / "app" / "static" / "index.html"
 # 拼接顺序 = 原 app.js 的章节顺序（单作用域，声明提升天然兼容，无循环导入问题）
 # 0.9.1 拆分：panels→panels/settings/update/sync，chat→chat_render/chat/chat_media/chat_history；
 # 各模块顶层只注册事件（跨模块引用全部发生在事件/函数调用期），家族内顺序无 TDZ 约束
+# 2.5 拆分：panels 按面板再拆成 js/panels/{packs,data,debug}.js（外壳仍是 js/panels.js）——
+#   子目录模块用相对路径登记（"panels/packs"），紧随外壳之后。
 ORDER = ["state", "util", "imgzip", "api",
-         "panels", "settings", "update", "sync",
+         "panels", "panels/packs", "panels/data", "panels/debug",
+         "settings", "update", "sync",
          "chat_render", "chat", "chat_media", "chat_history",
          "fix", "views", "proactive", "relay", "guide", "main"]
 
-# 不参与 bundle 的 js 模块名（写模块名，不带 .js；各自有独立加载方式，见 app/static/index.html）：
+# 不参与 bundle 的 js 模块名（写模块名，不带 .js，子目录用相对路径；各自有独立加载方式）：
 # - bundle：本脚本的产物，不能自我包含
 # - pc_nav：PC 双栏左侧导航，index.html 用独立 <script> 加载（petite-vue 挂载，桌面档才用）
 NON_BUNDLE = {"bundle", "pc_nav"}
@@ -39,13 +42,22 @@ except Exception:
     pass
 
 
+def _module_names() -> set:
+    """js/ 下（含一层子目录，如 js/panels/）的全部模块名，用相对路径表示。
+
+    2026-09-13（阶段 2.5）：panels 拆进子目录后，集合断言必须跟着递归，
+    否则新模块在门禁里"看不见"（门禁会把 bundle 漏模块放过去）。"""
+    return {p.relative_to(JS_DIR).with_suffix("").as_posix()
+            for p in JS_DIR.rglob("*.js")} - NON_BUNDLE
+
+
 def check_module_set() -> bool:
     """js/ 目录里的模块集合必须与 ORDER 逐字相等（错一个就 FAIL）。
 
     2026-09-13（门禁修复 D-3）：原来 ORDER 只是硬编码 18 项，新增 js 模块忘登记时
     bundle 会**静默漏掉**该模块（运行时才报 undefined，门禁全绿）。现在盘上多出
     未登记的模块 → 门禁 FAIL，逼着登记进 ORDER（或显式放进 NON_BUNDLE 并说明加载方式）。"""
-    actual = {p.stem for p in JS_DIR.glob("*.js")} - NON_BUNDLE
+    actual = _module_names()
     expected = set(ORDER)
     if len(ORDER) != len(expected):
         print(f"X ORDER 内有重复项: {sorted(ORDER)}")

@@ -23,7 +23,8 @@ except Exception:
     pass
 
 ROOT = Path(__file__).resolve().parent.parent
-PANELS = ROOT / "app" / "static" / "js" / "panels.js"
+# 2026-09-13（阶段 2.5）：包详情页从 js/panels.js 拆到 js/panels/packs.js，守卫跟着实现走
+PANELS = ROOT / "app" / "static" / "js" / "panels" / "packs.js"
 BUNDLE = ROOT / "app" / "static" / "js" / "bundle.js"
 PASS = FAIL = 0
 
