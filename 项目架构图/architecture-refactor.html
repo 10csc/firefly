@@ -1,0 +1,1034 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>流萤 Firefly · 架构重构蓝图 v0.9（数据与业务交互全景）</title>
+<!--
+  流萤项目架构重构可视化 · 自包含单文件（零 CDN、零构建、双击即开、完全离线可用）
+  数据来源：2026-09-13 对仓库 f:/CodeFile/firefly 的逐文件实读（HEAD=3a65e6a + 工作区），
+  每个节点/连线均可在代码中找到证据；不可验证处在页面内标注「不可见/信息不足」。
+  配套文档：docs/审计-角色卡架构-2026-09-10.md、docs/一期归档-架构重构/
+-->
+<style>
+:root{
+  --bg0:#060911;--bg1:#0a0e1a;--bg2:#0e1526;
+  --panel:rgba(17,23,43,.72);--panel-solid:#11172b;--panel-hi:rgba(26,34,60,.8);
+  --line:rgba(217,242,79,.14);--line-soft:rgba(148,163,205,.14);
+  --fire:#d9f24f;--warm:#ffd97a;--pink:#e8a0bf;--violet:#c084fc;--orange:#fb923c;
+  --cyan:#7dd3fc;--green:#7bd88f;--red:#ff6b6b;
+  --ink:#e9edf7;--dim:#9aa7c4;--faint:#5f6c8c;
+  --body:"Microsoft YaHei UI","Microsoft YaHei","PingFang SC","Noto Sans CJK SC",sans-serif;
+  --mono:Consolas,"JetBrains Mono","Cascadia Code",monospace;
+  --nav-w:228px;--radius:14px;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{background:var(--bg1);color:var(--ink);font-family:var(--body);font-size:14.5px;line-height:1.7;overflow-x:hidden}
+body::before{content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;background:
+  radial-gradient(1100px 620px at 85% -10%, rgba(192,132,252,.10), transparent 62%),
+  radial-gradient(900px 560px at 6% 14%, rgba(232,160,191,.07), transparent 60%),
+  radial-gradient(1000px 700px at 50% 115%, rgba(251,146,60,.06), transparent 60%),
+  linear-gradient(180deg,#070a13,#0a0e1a 40%,#080b15)}
+#layout{display:flex;min-height:100vh}
+/* ── 侧边导航 ── */
+#nav{width:var(--nav-w);flex:0 0 var(--nav-w);position:sticky;top:0;height:100vh;overflow-y:auto;
+  background:rgba(10,14,26,.92);border-right:1px solid var(--line-soft);padding:18px 12px}
+#nav .brand{font-size:15px;font-weight:700;color:var(--fire);padding:4px 10px 14px;letter-spacing:.5px}
+#nav .brand small{display:block;color:var(--faint);font-weight:400;font-size:11px;margin-top:2px}
+#nav button{display:block;width:100%;text-align:left;background:none;border:1px solid transparent;
+  color:var(--dim);font-family:var(--body);font-size:13.5px;padding:8px 10px;border-radius:9px;cursor:pointer;margin-bottom:2px}
+#nav button:hover{background:var(--panel-hi);color:var(--ink)}
+#nav button.on{background:var(--panel-hi);color:var(--fire);border-color:var(--line)}
+#nav .grp{margin:14px 8px 4px;font-size:11px;color:var(--faint);letter-spacing:1px}
+/* ── 主区 ── */
+#main{flex:1;min-width:0;padding:26px 30px 80px}
+.view{display:none;animation:fade .25s ease}
+.view.on{display:block}
+@keyframes fade{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+h1{font-size:24px;font-weight:700;margin-bottom:6px}
+h2{font-size:18px;color:var(--warm);margin:30px 0 12px;padding-left:10px;border-left:3px solid var(--warm)}
+h3{font-size:15px;color:var(--cyan);margin:18px 0 8px}
+.sub{color:var(--dim);margin-bottom:18px;max-width:1000px}
+.panel{background:var(--panel);border:1px solid var(--line-soft);border-radius:var(--radius);padding:16px 18px;margin-bottom:14px}
+.grid{display:grid;gap:12px}
+.g2{grid-template-columns:repeat(auto-fill,minmax(340px,1fr))}
+.g3{grid-template-columns:repeat(auto-fill,minmax(260px,1fr))}
+code,.mono{font-family:var(--mono);font-size:12.5px;background:rgba(125,211,252,.08);border:1px solid rgba(125,211,252,.16);border-radius:5px;padding:1px 6px;color:var(--cyan)}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th,td{border:1px solid var(--line-soft);padding:7px 9px;text-align:left;vertical-align:top}
+th{background:var(--panel-hi);color:var(--warm);font-weight:600;white-space:nowrap}
+tr:hover td{background:rgba(26,34,60,.4)}
+.tag{display:inline-block;font-size:11px;padding:1px 8px;border-radius:20px;border:1px solid;margin:1px 3px 1px 0;white-space:nowrap}
+.t-p0{color:var(--red);border-color:var(--red)}.t-p1{color:var(--warm);border-color:var(--warm)}
+.t-p2{color:var(--cyan);border-color:var(--cyan)}.t-p3{color:var(--dim);border-color:var(--faint)}
+.t-fixed{color:var(--green);border-color:var(--green)}.t-open{color:var(--orange);border-color:var(--orange)}
+.t-own{color:var(--violet);border-color:var(--violet)}
+.muted{color:var(--faint)}.small{font-size:12.5px}
+/* ── SVG 图 ── */
+.diagram{width:100%;overflow-x:auto;background:rgba(6,9,17,.6);border:1px solid var(--line-soft);border-radius:var(--radius);padding:6px}
+svg text{font-family:var(--body)}
+.node{cursor:pointer;transition:filter .15s}
+.node:hover{filter:brightness(1.35)}
+.edge{stroke:var(--faint);stroke-width:1.4;fill:none;marker-end:url(#arr)}
+.edge-lab{font-size:10.5px;fill:var(--dim)}
+/* ── 热力图 ── */
+.hbar{display:flex;align-items:center;gap:10px;padding:3px 6px;border-radius:7px}
+.hbar:hover{background:var(--panel-hi)}
+.hbar .nm{font-family:var(--mono);font-size:12px;width:340px;flex:0 0 340px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--dim)}
+.hbar .bar{height:14px;border-radius:4px;min-width:3px}
+.hbar .ln{font-family:var(--mono);font-size:11.5px;color:var(--faint);width:110px;flex:0 0 110px;text-align:right}
+/* ── 路线图 ── */
+.phase{border-left:3px solid var(--violet);padding:4px 0 14px 18px;position:relative;margin-left:8px}
+.phase::before{content:"";position:absolute;left:-8px;top:8px;width:13px;height:13px;border-radius:50%;background:var(--bg2);border:2px solid var(--violet)}
+.phase h3{margin-top:0}
+/* ── 状态机 ── */
+.fsm{display:inline-block;vertical-align:top;margin:0 14px 18px 0;min-width:330px}
+/* ── 过滤器 ── */
+.filters{margin:0 0 14px}
+.filters button{background:var(--panel);border:1px solid var(--line-soft);color:var(--dim);border-radius:20px;
+  padding:4px 14px;font-size:12.5px;cursor:pointer;margin-right:8px;font-family:var(--body)}
+.filters button.on{color:var(--fire);border-color:var(--fire)}
+/* ── 步骤流 ── */
+.steps{display:flex;flex-wrap:wrap;align-items:stretch;gap:0}
+.step{background:var(--panel-hi);border:1px solid var(--line-soft);border-radius:10px;padding:10px 12px;max-width:240px;font-size:12.8px}
+.step b{color:var(--warm);display:block;margin-bottom:3px;font-size:13px}
+.step .mono{display:block;margin-top:4px}
+.arrow{align-self:center;color:var(--fire);font-size:18px;padding:0 7px}
+.toc-note{font-size:12px;color:var(--faint);margin-top:10px}
+@media(max-width:900px){#nav{position:fixed;z-index:5;transform:translateX(-100%)}#main{padding:16px}}
+</style>
+</head>
+<body>
+<div id="layout">
+  <nav id="nav">
+    <div class="brand">流萤 · 架构重构蓝图<small>v0.9 · 2026-09-13 · HEAD 3a65e6a</small></div>
+    <div id="navbtns"></div>
+    <div class="toc-note">数据全部来自仓库实读证据；<br>灰色标注 = 不可见信息。</div>
+  </nav>
+  <main id="main"></main>
+</div>
+
+<script>
+"use strict";
+/* ════════════════ 数据层（全部来自代码实读，路径:行号可复核） ════════════════ */
+const D = {};
+
+/* 元信息 */
+D.meta = {
+  version: "0.8.1（线上）/ 工作区含 0.9 未发布改动",
+  head: "3a65e6a（已提交，含 2026-09-10 审计修复）",
+  stack: "Python 3.10+ 标准库 HTTP 服务（零框架）· 原生前端 ESM/bundle · Kotlin WebView 壳 · Chaquopy 内嵌 Python · SQLite",
+  ports: "本地 8765(127.0.0.1) · 服务器 8765(本机)+8766(管理,SSH隧道) · 公网 8787 网关",
+};
+
+/* 模块清单（行数为 2026-09-13 实测 wc -l） */
+D.modules = [
+  // [路径, 行数, 域, 职责]
+  ["app/server.py",214,"入口","HTTP 骨架/多开检测/启动（迁移+首启引导显式调用）"],
+  ["app/shared_http.py",112,"入口","ResponseMixin/UTF8/知识预载/优雅关闭"],
+  ["app/orchestrator.py",521,"编排","对话流水线：检索→分析→回复→组织；阶段进度；pipeline 观测"],
+  ["app/routes.py",782,"路由","聊天主链（合并窗口/hint/flush/rest/undo/清空/历史/主动性）+ 分发表聚合"],
+  ["app/routes_common.py",236,"路由","会话表/模式解析/回复写盘/图片配额"],
+  ["app/routes_config.py",338,"路由","配置/供应商/Key/modes/余额"],
+  ["app/routes_assets.py",324,"路由","表情包/图片上传/资产 index/收藏"],
+  ["app/routes_pack.py",339,"路由","角色包 CRUD/包文件编辑/包资产/建卡向导端点"],
+  ["app/routes_data.py",942,"路由","导出/导入/本地备份/快照恢复主体/同步 HTTP 编排"],
+  ["app/routes_snapshot.py",242,"路由","全包快照 CRUD + pre-restore"],
+  ["app/routes_fix.py",193,"路由","设定纠错 7 端点"],
+  ["app/routes_update.py",199,"路由","检查更新/下载（GitHub/Gitee 双源）"],
+  ["app/routes_auth.py",111,"路由","本地版→认证服务器代理"],
+  ["app/routes_relay.py",89,"路由","relay 中转三端点"],
+  ["app/modules/app_config.py",999,"内核","路径公式/配置状态/供应商/预设包注册表/用户上下文/包级配置/迁移+首启"],
+  ["app/modules/storage.py",215,"内核","原子写/数据类型注册表 REGISTRY/migrate_once"],
+  ["app/modules/llm_base.py",327,"内核","设定槽位加载/提示词渲染/JSON 解析/token 统计"],
+  ["app/modules/api_client.py",597,"内核","_CompatClient/RelayClient/QuotaClient、重试、超时、SSRF 防护"],
+  ["app/modules/sync_engine.py",255,"内核","清单扫描/行级合并/新者胜/冲突备份（纯函数）"],
+  ["app/modules/auth_store.py",113,"内核","本地 token 存取（auth.json）"],
+  ["app/modules/multipart.py",78,"内核","multipart 解析"],
+  ["app/modules/metrics.py",35,"内核","指标聚合"],
+  ["app/modules/vision.py",19,"内核","图片→data URL"],
+  ["app/modules/web_search.py",108,"领域·角色包","建卡向导联网搜索（四源兜底）"],
+  ["app/modules/analyzer.py",243,"领域·对话","分析器：意图+事实核查"],
+  ["app/modules/polisher.py",324,"领域·对话","回复器：全权生成短信"],
+  ["app/modules/organizer.py",366,"领域·对话","组织器：表情包调度/旁白演出"],
+  ["app/modules/llm_retriever.py",258,"领域·对话","LLM 子代理知识检索（整库注入→压缩摘要）"],
+  ["app/modules/context_manager.py",243,"领域·对话","上下文窗口/token 估算"],
+  ["app/modules/conversation_store.py",470,"领域·对话","conversation.jsonl 追加/分页/回灌/撤回"],
+  ["app/modules/memory_manager.py",454,"领域·记忆","rest 整理 memory.md/wake 加载/手账更新"],
+  ["app/modules/proactive.py",337,"领域·主动性","主动性 facade（gate+gen 汇聚）"],
+  ["app/modules/proactive_gate.py",459,"领域·主动性","门控/信号量/冷却/忽视计数"],
+  ["app/modules/proactive_gen.py",301,"领域·主动性","主动消息动机决策与生成"],
+  ["app/modules/setting_fix.py",568,"领域·纠错","纠错 Agent（对齐+提案+静态校验）"],
+  ["app/modules/setting_fix_store.py",381,"领域·纠错",".setting_fix/ 中间态存储"],
+  ["app/modules/pack_forge.py",279,"领域·角色包","AI 建卡向导状态机（内存会话）"],
+  ["app/modules/favorite_store.py",144,"领域·对话","收藏快照存储"],
+  ["app/tools/sticker_picker.py",428,"领域·表情包","表情包注册表/选择/迁移"],
+  ["server/server_app.py",658,"服务器","多用户入口/认证端点/托管配额钩子/管理台服务"],
+  ["server/db.py",444,"服务器","SQLite：users/sessions/proxy_usage/settings/notices + 顺序迁移"],
+  ["server/auth.py",258,"服务器","注册/登录/重置/限流/scrypt"],
+  ["server/mail.py",151,"服务器","QQ 邮箱验证码 SMTP"],
+  ["server/download_server.py",777,"服务器","8787 网关：下载白名单/反代/限流/统计"],
+  ["android/.../MainActivity.kt",554,"安卓壳","WebView/引擎启动/回落/权限/文件选择/下载/JS桥"],
+  ["android/.../KeepAliveService.kt",188,"安卓壳","前台服务保活/后台定时器/通知"],
+];
+
+/* 依赖边（from → to，标签） */
+D.deps = [
+  ["server.py","routes.py","分发"],["server.py","app_config","run_legacy_migration/run_startup_init"],
+  ["server_app.py","routes.py","复用全部业务路由"],["server_app.py","db/auth/mail","账号体系"],["server_app.py","app_config","用户上下文/配额钩子"],
+  ["MainActivity.kt","app/ (Chaquopy)","start_server.py 内嵌"],["MainActivity.kt","server :8787","回落/服务器模式"],
+  ["routes.py","orchestrator","handle_chat"],["routes.py","conversation_store","写盘/分页"],["routes.py","memory_manager","rest"],["routes.py","proactive","信号量"],
+  ["routes_data.py","sync_engine","纯函数合并"],["routes_data.py","storage","原子写/注册表"],["routes_snapshot.py","routes_data","_restore_full_snapshot"],
+  ["orchestrator","llm_retriever","知识摘要"],["orchestrator","analyzer","意图/核查"],["orchestrator","polisher","生成回复"],["orchestrator","organizer","表情包/旁白"],["orchestrator","context_manager","历史窗口"],
+  ["analyzer/polisher/organizer/retriever","llm_base","设定槽位/统计"],["analyzer/polisher/organizer/retriever","api_client","LLM 调用"],
+  ["memory_manager","app_config","mode_data_dir"],["proactive_gate","app_config","proactive_log"],
+  ["pack_forge","web_search","资料搜索"],["sticker_picker","app_config","USER_DIR/stickers"],
+  ["全部模块","app_config","USER_DIR/MODES/配置（唯一公式源）"],["routes_*/orchestrator","storage","原子写/REGISTRY 策略"],
+];
+
+/* 业务能力地图 */
+D.caps = [
+  {g:"对话核心",items:[
+    ["角色扮演对话","用户发消息→5s 合并窗口→四段流水线→多条约回","orchestrator.py:293 handle_chat","conversation.jsonl"],
+    ["知识检索","设定库整体注入 system→LLM 压缩摘要（缓存高命中）","llm_retriever.py:73 _load_knowledge","knowledge/ + database/dialogues_compiled/"],
+    ["图片消息","发图落盘 {mode}/images/，当轮原图注入回复器（原生识图）","routes_assets.py:23 upload_image","{mode}/images/（blob 同步）"],
+    ["引用与收藏","长按消息→引用快照进 jsonl/收藏进 favorites.json","conversation_store.py:48 sanitize_quote","favorites.json"],
+    ["撤回/清空","undo 撤最后一轮（游标回退）/clear-history 全清","routes.py:435/:469","conversation.jsonl + .memory_index"]]},
+  {g:"角色包（限界上下文）",items:[
+    ["预设包注册表","包=目录+preset.json；启动扫描 bundled+用户自建","app_config.py:385 _discover_presets","app/assets/character/{id}/ + user_data/{id}/character/"],
+    ["提示词槽位","core/identity/sms_samples/prompts/*.md 入包可编辑","llm_base.py:58 render_pack_prompt","{mode}/character/"],
+    ["自建角色","表单建包 / AI 搜索建卡向导（分步确认）","routes_pack.py:255 create_pack / pack_forge.py","user_data/custom_*/"],
+    ["开场演出","opening.json 首进自动演出","orchestrator.py:132 preset_opening","{mode}/character/opening.json"]]},
+  {g:"记忆与手账",items:[
+    ["休息整理","rest：LLM 重写 memory.md 头部+追加事实；游标 .memory_index","memory_manager.py rest()","{mode}/data/memory.md"],
+    ["起床加载","wake：读记忆头进会话","memory_manager.py wake()","memory.md 头部"],
+    ["流萤手账","重要约定以角色口吻记手账","memory_manager.py update_journal","{mode}/journal/手账.md"]]},
+  {g:"主动性",items:[
+    ["主动式/概率式/隐藏式","门控（hard/soft/概率+10min 静默窗）→生成→写盘","proactive_gate.py:305/:352/:416","proactive_log.jsonl + proactive.json"],
+    ["信号量","REPLY 通道锁 + ACTIVE 互斥 + 用户回应复位","proactive_gate.py:47-94","内存+proactive_log 重建"]]},
+  {g:"表情包",items:[
+    ["表情包调度","organizer 选 label→picker 取图；按包过滤","organizer.py:148 / sticker_picker.py","user_data/stickers/registry.json + 图片本体（本地策略）"]]},
+  {g:"设定纠错",items:[
+    ["纠错助手","描述问题→多轮对齐→提案（不生效）→应用（原子写+备份+回滚）","setting_fix.py:450/:519","{mode}/.setting_fix/"]]},
+  {g:"数据资产",items:[
+    ["本地备份","每模式 zip 留 10 份；导入前自动备份","routes_data.py:534 backup_create","user_data/backups/"],
+    ["全包快照","全部包+表情包+剥 Key 配置；每账号 5 份滚动；本地登录自动上云","routes_snapshot.py:42 build_full_snapshot_zip","{user_root}/snapshots/"],
+    ["增量同步","清单协商→行合并/新者胜/blob 整传；冲突备份","sync_engine.py + routes_data.py:780 sync_now",".sync_backups/"],
+    ["导出/导入","zip 导出（剥 Key）；导入自动识别单包/全包快照","routes_data.py:81/:478","zip 文件"]]},
+  {g:"账号与运营（服务器版）",items:[
+    ["注册/登录","QQ 邮箱验证码+QQ 群+install_id+scrypt+限流","server/auth.py","users/sessions 表"],
+    ["托管模式","运营者 Key 代发，全站每日池 5000 次记账","server_app.py:77-95 QuotaClient","proxy_usage 表"],
+    ["管理后台","8766 仅本机+令牌：用户/额度/最近请求/下载统计","server_app.py:526 AdminHandler","firefly.db + downloads.db"],
+    ["旧客户端闸门","已下线端点返回可读文案+邮件提醒（去重）","server_app.py:401 _old_client_refuse","notices 表"]]},
+  {g:"分发与更新",items:[
+    ["检查更新","GitHub→Gitee 双源；PC 静默安装器接管","routes_update.py:112","server/version.json + releases"],
+    ["下载网关","8787 白名单下载+反代+限流+Gitee 直链 resolve","download_server.py:684 _proxy","/opt/firefly-downloads/"]]},
+];
+
+/* 追溯矩阵：需求→能力→对象→数据→接口→代码 */
+D.trace = [
+  ["「和流萤发消息聊天」","对话流水线","Message/Turn（seq,who,type,content,quote）","{mode}/data/conversation.jsonl","POST /chat · /chat/hint · /chat/flush","routes.py:122 chat → orchestrator.handle_chat"],
+  ["「她懂剧情设定」","知识检索","KnowledgeSummary","knowledge/ · database/dialogues_compiled/（只读）","（内部，无端点）","llm_retriever.py"],
+  ["「她记得我们说过的话」","记忆整理/加载","MemoryHead/FactEntry","{mode}/data/memory.md + .memory_index","POST /rest · GET /wake-status · GET/POST /user-memory","memory_manager.py"],
+  ["「她有记手账的习惯」","手账","JournalDoc","{mode}/journal/手账.md","GET /journal · POST /save-journal","llm_base.load_journal / routes.py:60"],
+  ["「她会主动找我」","主动消息","ProactiveTurn（proactive 标记行）","{mode}/data/proactive_log.jsonl + proactive.json","POST /proactive-status","proactive_gate.py + proactive_gen.py"],
+  ["「发图给她看」","图片消息","ImageMsg（img_id+desc）","{mode}/images/ + jsonl 引子","POST /upload-image · GET /image","routes_assets.py:23/:188"],
+  ["「发表情包」","表情包","Sticker(label,category,enabled,pack)","user_data/stickers/registry.json（本体本地）","GET /stickers · POST /add-sticker","sticker_picker.py / organizer.py"],
+  ["「换一个角色/剧本」","角色包","CharacterPack(preset.json+槽位)","assets/character/{id}/ + user_data/{id}/","GET /modes · /pack-files · /pack-create","app_config.py:385 + routes_pack.py"],
+  ["「AI 帮我建个角色」","建卡向导","ForgeSession（内存）→CharacterPack","内存（30min TTL）→ user_data/custom_*/","POST /pack-forge/{start,next,finish}","pack_forge.py"],
+  ["「设定不对，帮我改」","设定纠错","FixProposal（六文件清单）","{mode}/.setting_fix/","POST /setting-fix/*","setting_fix.py + routes_fix.py"],
+  ["「换手机数据还在」","快照/同步","Snapshot zip / SyncManifest","{user_root}/snapshots/ + .sync_backups/","POST /snapshot/* · /sync/now","routes_snapshot.py + routes_data.py"],
+  ["「导出我的数据」","导出/备份","BackupZip（剥 Key）","user_data/backups/","GET /export-data · POST /backup/*","routes_data.py"],
+  ["「注册登录用云端」","账号体系","User/Session","firefly.db users/sessions","POST /auth/* · GET /auth/me","server/auth.py + db.py"],
+  ["「没 Key 也能聊」","托管模式","ProxyQuota","proxy_usage 表 + settings","X-API-Mode: proxy（/chat 等）","server_app.py:287 + api_client.QuotaClient"],
+  ["「管理员看运行情况」","管理后台","UserRow/RequestLog/DlStats","firefly.db + downloads.db","/admin/api/*（8766）","server_app.py:526"],
+  ["「App 提示更新」","版本更新","Release(tag,assets)","server/version.json","POST /check-update · /update-download","routes_update.py"],
+];
+
+/* 数据所有权矩阵 */
+D.ownership = [
+  // [数据, 路径, 所有者模块, 写入路径, 同步策略, 风险备注]
+  ["对话历史","{mode}/data/conversation.jsonl","conversation_store","append_message（chat/restore/sync）","merge-jsonl（seq 行合并）",""],
+  ["记忆存档","{mode}/data/memory.md","memory_manager","rest() / save_user_memory","newest（mtime）",""],
+  ["整理游标","{mode}/data/.memory_index","memory_manager","rest()/undo/clear-history","newest","undo/clear 手动回写（routes.py:446-460）"],
+  ["收藏","{mode}/data/favorites.json","favorite_store","add/delete_favorite","merge-favorites（并集）",""],
+  ["流水线日志","{mode}/data/pipeline.jsonl","orchestrator","_record_pipeline","merge-jsonl","_scope 字段做读取侧隔离"],
+  ["主动性日志/配置","{mode}/data/proactive_log.jsonl · proactive.json","proactive_gate / app_config(pack_cfg)","_append_log / set_pack_config","merge-jsonl / newest","配置读取=包级→全局→默认"],
+  ["手账","{mode}/journal/手账.md","memory_manager / llm_base","update_journal / save_journal","newest",""],
+  ["角色设定","{mode}/character/{core,identity,sms_samples}.md · prompts/*.md","character 包槽位（llm_base）","character_file_update（白名单 10 文件）","newest","bundled 兜底；未修改副本启动期清理"],
+  ["包清单","{mode}/character/preset.json","app_config(_parse_preset)","create_pack/forge_finish/快照恢复","newest","schema 字段已加（默认 1，宽进）"],
+  ["包资产","{mode}/character/assets/{avatar,cover}.* + opening.json","routes_pack","upload_pack_asset / delete","扩展名放行","服务器版 /assets/* 免登录（见问题 R-11）"],
+  ["知识库","knowledge/ · database/dialogues_compiled/","仓库内容（只读）","人工维护 + compile_dialogues.py","不同步","knowledge_dirs 无越界校验（R-10）"],
+  ["表情包","user_data/stickers/（注册表+本体）","sticker_picker","add_sticker/sticker-update/delete","metadata（本体本地）","换机图不在（只有元数据）"],
+  ["聊天图片","{mode}/images/","routes_assets","upload_image / sync blob","blob（整传不合并）","200MB/用户配额"],
+  ["全局配置","user_data/config.json","app_config","set_config/save_config","exclude（含 Key）","迁移备份留 5 份 .bak-*"],
+  ["用户配置覆盖","{uid}/settings.json（服务器版）","routes_config.set_config","原子写","exclude","无锁读改写（竞态，P2）"],
+  ["登录态","user_data/auth.json","auth_store","/auth/login 代理","exclude",""],
+  ["纠错中间态","{mode}/.setting_fix/","setting_fix_store","setting_fix_*","exclude",""],
+  ["本地备份","{user_root}/backups/*.zip","routes_data","backup_create / 导入前自动","不传输","auto-*/pre-restore-* 在 /import-data 路径不裁剪（C-3）"],
+  ["快照","{user_root}/snapshots/*.zip","routes_snapshot","snapshot_create/restore","不传输","上传不校验 PK 魔数（C-6.14）"],
+  ["账号库","{srv}/user_data/firefly.db","server/db.py","auth/register/login","—","schema v2；唯一有版本号迁移"],
+  ["网关库","/opt/firefly-downloads/downloads.db","download_server","下载/请求记录","—","requests.user 列 ALTER 原地升级"],
+];
+
+/* 接口清单（按域分组） */
+D.api = [
+  {g:"聊天主链",eps:[["POST","/chat · /chat/hint · /chat/flush","routes.py:122/339/356"],["POST","/rest · /undo · /clear-history","routes.py:373/435/469"],["GET","/history · /chat-stage · /wake-status","routes.py:564/517/589"],["POST","/proactive-status · /open-mode","routes.py:647/629"]]},
+  {g:"配置/供应商",eps:[["GET","/config · /models · /modes · /balance","routes_config.py"],["POST","/set-key · /set-config · /check-key","routes_config.py"]]},
+  {g:"角色包",eps:[["GET","/pack-files · /character-files","routes_pack.py:93"],["POST","/character-file-update · /character-file/delete","routes_pack.py:35/70"],["POST","/pack-create · /pack-delete · /pack-config","routes_pack.py:255/324/157"],["POST","/pack-asset · /pack-asset/delete","routes_pack.py:189/226"],["POST","/pack-forge/start · /next · /finish","pack_forge.py:179/214/246"]]},
+  {g:"资产/收藏/图片",eps:[["GET","/stickers · /image · /assets/index · /assets/raw","routes_assets.py"],["POST","/add-sticker · /sticker-update · /sticker-delete · /upload-image","routes_assets.py"],["GET","/favorites · POST /favorite · /favorites/delete","routes_assets.py:155-176"]]},
+  {g:"数据/备份/快照/同步",eps:[["GET","/export-data · /backups · /snapshot/list · /snapshot/download","routes_data/routes_snapshot"],["POST","/import-data · /backup/create|restore|delete","routes_data.py:478/534/599/623"],["POST","/snapshot/create|restore|delete","routes_snapshot.py"],["GET","/sync/manifest","routes_data.py:655"],["POST","/sync/import · /sync/export · /sync/now","routes_data.py:662/748/780"]]},
+  {g:"纠错",eps:[["GET","/setting-fix/status","routes_fix.py:34"],["POST","/setting-fix/message|start|apply|dismiss|rollback|reset","routes_fix.py"]]},
+  {g:"认证（服务器）",eps:[["POST","/auth/mail-send · /register · /login · /reset-send · /reset-password","server_app.py:327-380"],["POST","/auth/logout · /auth/verify","server_app.py:382-398"],["GET","/auth/me · /auth/state","server_app.py:505 / routes_auth.py:87"]]},
+  {g:"relay/托管",eps:[["POST","/relay/pending · /relay/result · /relay/proxy","routes_relay.py"],["—","X-API-Mode: proxy → QuotaClient（强制模型+配额）","api_client.py:414 / server_app.py:77"]]},
+  {g:"调试（本地版限定）",eps:[["GET","/metrics · /requests · /pipeline","routes.py:538/547/557（服务器版 403）"]]},
+  {g:"更新",eps:[["POST","/check-update · /update-download","routes_update.py:112/124"],["GET","/version.json（公开）","server/version.json"]]},
+  {g:"管理（8766 本机+令牌）",eps:[["GET","/admin/api/users · /downloads · /requests","server_app.py:550-577"],["POST","/admin/api/settings · /users/ban|unban|delete","server_app.py:592-617"]]},
+  {g:"网关 8787",eps:[["GET","/download/ 白名单 · /download/stats · /download/resolve","download_server.py"],["*","其余路径反代 127.0.0.1:8765（300/min/IP）","download_server.py:684"]]},
+];
+
+/* 迁移：现状 + 目标 */
+D.migrations = {
+  existing:[
+    ["平铺→story 分目录","user_data/{character,data}/ → story/{character,data}/；手账.md→journal/","app_config.run_legacy_migration（显式调用+迁移前 zip 备份+内容感知）","✅ 已含备份/幂等/中止"],
+    ["配置单 Key→多供应商","顶层 api_key/api_base → providers[]+active_provider","app_config._migrate_legacy_providers","✅ 迁移前备份 .bak-*(留5)"],
+    ["服务器 db schema","settings.schema_version：v1 占位 → v2 sessions token 哈希化","server/db.py _MIGRATIONS","✅ 全仓唯一版本号驱动"],
+    ["users 表列补齐","install_id/email 加列 + phone NOT NULL 重建表","db.ensure_auth_columns","⚠ ad-hoc，与「禁止 ad-hoc ALTER」注释自相矛盾"],
+    ["会话旧路径","app/data/conversation.jsonl → {mode}/data/","conversation_store._migrate_legacy","✅ move 一次"],
+    ["记忆旧路径","memory/data/ → {mode}/data/","memory_manager._migrate_legacy","⚠ 仍在 import 期执行（:85）"],
+    ["表情包默认集","老安装合并 bundled 默认 50 项+enabled","sticker_picker._migrate_enabled_defaults","✅"],
+    ["纠错旧文件清理","删除过期中间态（rmtree）","setting_fix.cleanup_legacy","⚠ 全仓唯一 rmtree 用户数据且无备份"],
+    ["旧客户端","/sync/upload|download 下线 → 410/200 文案+邮件提醒","server_app._old_client_refuse","✅ 范式应沿用"],
+    ["陈旧设定副本","与 bundled 逐字相同的用户副本→删除（内置更新可送达）","app_config._cleanup_stale_defaults","✅ 2026-09-10"],
+  ],
+  proposed:[
+    ["快照清单 _manifest.json","snapshot_version+packs[]+条目数+sha256+生成端版本；旧 zip 无 manifest 走现逻辑（向后兼容）","routes_snapshot.build_full_snapshot_zip + _restore_full_snapshot","P1"],
+    ["包清单 packs.json（方案B）","包存在性从进程态升为持久事实；快照/同步/恢复白名单改读清单；缺失时从目录自愈重建","app_config + routes_data + sync","P1（根治孤儿包/跨端）"],
+    ["db v3 迁移","sessions.expires_at 索引 + notices 索引；ensure_auth_columns 并入顺序迁移清单","server/db.py _MIGRATIONS","P2"],
+    ["auto 备份统一裁剪","auto-*/pre-restore-* 各留 N 份（/import-data 路径补裁剪）","routes_data._backup_current_mode","P1"],
+    ["迁移可视化","首启迁移结果写入 pipeline.jsonl + 前端数据面板显示「已迁移 N 项」","app_config + 前端 sync.js","P2"],
+  ]
+};
+
+/* 核心状态机 */
+D.fsm = [
+  {t:"聊天合并窗口（routes.py:101-336）",states:["空闲","收集中(5s滑动)","主请求等待","流水线处理","写盘返回"],
+   edges:[["空闲","收集中","首条消息到达"],["收集中","主请求等待","窗口重置/继续等"],["主请求等待","流水线处理","到期/flush/满10条"],["流水线处理","写盘返回","四段完成"],["写盘返回","空闲","_write_replies"]],
+   note:"副请求立即返回 queued；切后台 5s 自然到期兜底，消息已即时写盘不丢"},
+  {t:"主动性信号量（proactive_gate.py）",states:["REPLY 空闲","REPLY 占用","ACTIVE=0","ACTIVE=1","冷却/静默窗"],
+   edges:[["REPLY 空闲","REPLY 占用","chat/主动生成 try_lock"],["REPLY 占用","REPLY 空闲","完成 unlock"],["ACTIVE=0","ACTIVE=1","主动消息发出"],["ACTIVE=1","ACTIVE=0","用户回应 _active_reset / 超时恢复"],["冷却/静默窗","ACTIVE=0","10min 静默窗过期"]],
+   note:"重启后从 proactive_log 重建 ACTIVE；忽视计数驱动 hard 门控"},
+  {t:"快照/导入恢复（routes_data.py，2026-09-10 后）",states:["接收 zip","PK/安全校验","pre-restore 备份","阶段1 包定义","reload_presets","阶段2 数据(临时目录)","原子换入","完成/回滚"],
+   edges:[["接收 zip","PK/安全校验","startswith PK + _zip_safe_entries"],["PK/安全校验","pre-restore 备份","成功→跳逐包备份"],["pre-restore 备份","阶段1 包定义","自建包 character/ 先落地"],["阶段1 包定义","reload_presets","注册表重扫"],["reload_presets","阶段2 数据(临时目录)",".restore_tmp"],["阶段2 数据(临时目录)","原子换入","rename 三段式"],["原子换入","完成/回滚","失败保留 .restore_old"]],
+   note:"任一阶段失败：目标目录保持原样；备份失败即中止（/import-data）或回落逐包备份（/snapshot/restore）"},
+  {t:"会话生命周期（routes_common.py:38-69）",states:["无会话","创建(回灌+wake)","活跃","淘汰"],
+   edges:[["无会话","创建(回灌+wake)","首个请求 get_session"],["创建(回灌+wake)","活跃","hydrate_context+memory wake"],["活跃","淘汰","超 _SESSION_MAX=30 删最早"]],
+   note:"key=sid::mode::user_scope；会话级锁串行化 chat/rest/undo"},
+  {t:"同步合并（sync_engine.py）",states:["取远端清单","plan_sync","上传/合并","拉取/合并","收敛"],
+   edges:[["取远端清单","plan_sync","sha256 对比"],["plan_sync","上传/合并","本地独有+待合并"],["上传/合并","拉取/合并","服务器更新项拉回"],["拉取/合并","收敛","两端 sha 收敛（确定性排序）"]],
+   note:"jsonl 行合并（seq/sha 去重）；文档 mtime 新者胜；冲突→.sync_backups；blob 按 sha 整传"},
+  {t:"服务器会话 token（db.py v2）",states:["明文(旧库)","v2 迁移","sha256 落库","就地升级","过期清理"],
+   edges:[["明文(旧库)","v2 迁移","启动顺序迁移"],["v2 迁移","sha256 落库","UPDATE 改写"],["明文(旧库)","就地升级","get_session 命中旧行即改写"],["sha256 落库","过期清理","expires_at 过期删除"]],
+   note:"30 天有效+滚动续期（剩余<7天续）"},
+];
+
+/* 用户旅程/业务流程 */
+D.journeys = [
+  {t:"发送一条消息（本地版）",steps:[
+    ["前端 send()","消息分条 POST /chat（chat.js）"],
+    ["即时写盘","append_message 每条即写 conversation.jsonl"],
+    ["合并窗口","5s 滑动窗口合并（≤10 条）"],
+    ["Retriever","知识库整库注入→压缩摘要（有 knowledge_dirs 才跑）"],
+    ["Analyzer","意图+事实核查（思考档 high）"],
+    ["Polisher","角色设定+摘要+历史→多条短信（含识图注入）"],
+    ["Organizer","story=表情包 / haruno=旁白穿插"],
+    ["写盘+返回","_write_replies 逐条写 jsonl，前端渲染"]],
+   note:"单轮预算 210s；阶段超时 think 90s/non-think 30s；任一 LLM 失败→降级话术+error_code"},
+  {t:"休息整理记忆",steps:[
+    ["用户点「休息」","POST /rest"],["MemoryManager","全量历史+上次头部→LLM 整合"],["写 memory.md","头部重写+事实追加"],["更新手账","update_journal 近 100 条"],["刷新会话","memory_head 立即生效"]],note:"_resolve_today：服务器时间优先（0.8s 超时），本地时钟兜底"},
+  {t:"换机/重装迁移（快照链路）",steps:[
+    ["旧机：快照","build_full_snapshot_zip（全包+stickers+剥Key配置）"],["上云","本地版登录后自动转发认证服务器（5份滚动）"],["新机：登录","auth/login → Bearer token"],["拉取恢复","snapshot/download → _restore_full_snapshot 两阶段原子恢复"],["自建包复活","阶段1 先落 preset.json + reload_presets"],["校验","返回 files/ignored_packs；缓存全清重载"]],note:"失败兜底：pre-restore 快照 + .restore_old + backups/ 每模式 10 份"},
+  {t:"服务器版对话（relay/proxy）",steps:[
+    ["APP/浏览器","Bearer token + X-API-Key（localStorage 持有）"],["8765 server_app","_setup_user_context 注入用户目录/Key"],["relay","RelayClient 排队，APP 1s 轮询代发（服务器不持 Key）"],["或 proxy","QuotaClient 运营者 Key 直发（全站 5000 次/日池）"],["流水线","与本地版同一份 app/modules 代码"]],note:"⚠ proxy 仅凭请求头即入托管（quota_api_proxy 字段未启用）——见问题 C-2"},
+  {t:"AI 建卡向导",steps:[
+    ["「让 AI 帮我搭」","pack-forge/start"],["联网搜资料","web_search 四源兜底"],["分步生成","core→identity→sms_samples→polisher 提示词"],["逐步确认","每步草案可编辑"],["落包","forge_finish 写 custom_*/character/ + reload_presets"]],note:"会话内存 30min TTL，重启丢草案（R-13）"},
+];
+
+/* 数据流（泳道） */
+D.dataflow = {
+  lanes:["用户设备（PC exe / 安卓 APK）","云服务器（8787→8765/8766）","LLM 供应商（DeepSeek / OpenCode Go）"],
+  flows:[
+    ["对话(direct)","设备 app/ → 供应商","api_client._CompatClient，Key 在本地 config.json","0"],
+    ["对话(relay)","设备 ⇄ 服务器 ⇄ 设备APP代发","RelayClient：请求排队 /relay/pending，APP 轮询取走用用户 Key 调供应商，/relay/result 回写","1"],
+    ["对话(proxy)","服务器 → 供应商","QuotaClient（FIREFLY_PROXY_KEY，GO_BASE，强制 mimo-v2.5），proxy_usage 按日记账","1"],
+    ["同步","设备 ⇄ 服务器","/sync/manifest → plan → /sync/import ↑ → /sync/export ↓（行合并/新者胜/blob）","1"],
+    ["快照","设备 → 服务器","snapshot/create 本端打包→登录自动转发（每账号5份）","1"],
+    ["版本/下载","设备 ⇄ 8787","version.json + GitHub/Gitee 双源；/download/resolve→Gitee foruda 直链","1"],
+    ["认证","设备 ⇄ 服务器","本地版 routes_auth 代理 → /auth/*；token 存 auth.json（不同步）","1"],
+    ["邮件","服务器 → QQ SMTP","mail.py（FIREFLY_SMTP_USER/AUTH 环境变量）","1"],
+  ]
+};
+
+/* 问题清单（状态=当前工作区实证；fixed=2026-09-10 已修） */
+D.problems = [
+  // [id, 级别, 标题, 证据, 影响, 动作, 验收, 状态]
+  ["C-2","P0","托管(proxy)额度无账号授权","server_app.py:287 仅凭 X-API-Mode 头入托管；:77-85 只查全站池；db.py:29 quota_api_proxy 从未参与放行","任何登录账号可烧运营者 Key 至 5000 次/日池耗尽","仅 quota_api_proxy>0 或 admin 可用 proxy；配额检查加 user 维度；移除 DEEPSEEK_API_KEY 回落","普通账号带 proxy 头→403；授权账号只吃自己额度","open"],
+  ["E-2b","P0","FIREFLY_SERVER 仍用 setdefault","server_app.py:35 setdefault；:622 main() 才硬置——环境变量被置空串时 import 期 _discover_presets 会扫用户区","用户包可能注册成全局包，元数据经 /modes 全账号可见",":35 改无条件赋值并在 systemd 单元显式声明","构造 FIREFLY_SERVER='' 启动：注册表仅 bundled 两包","open"],
+  ["C-3","P1","/import-data 自动备份永不裁剪","routes_data.py:154 _backup_current_mode 产 auto-*/pre-restore-*；:559 裁剪只管 {mode}-* 手动备份","反复导入磁盘单调增长（服务器版计入账号磁盘无配额）","_backup_current_mode 后统一裁剪 auto/pre-restore 各留 N 份","连续导入 15 次，auto-* ≤ N","open"],
+  ["C-6.1","P1","clear-history 后主动性状态不复位","routes.py:503-504 _IGNORED.pop(mode)，但键是 (mode,scope) 元组（proactive_gate.py:32 _state_key）","pop 恒 no-op：忽视计数/隐藏冷却不复位","改按 _state_key 或遍历清该 mode 全部 scope 键","清空历史后 _ignored_count=0","open"],
+  ["C-6.14","P1","快照上传不校验内容","routes_snapshot.py:96-99 客户端上传 zip 不验 PK 魔数直接存；恢复侧上限 60MB < 上传 120MB","可存垃圾快照：存得下用不了","上传前校验 PK+可读 zip；两端上限对齐","非法文件上传→400","open"],
+  ["R-06","P2","知识库缓存无统一失效口","llm_retriever._KNOWLEDGE_CACHE key 仅 mode；routes_pack.py:49-52 只清 clear_cache+clear_samples_cache","将来 knowledge_dirs 支持用户目录时会踩坑；当前知识库为仓库只读，影响有限","收口到 clear_cache + user_scope_key","编辑后 _load_knowledge 返回新内容","open"],
+  ["C-6.3","P2","storage.get_type 对 glob 注册项失效","storage.py:126-135 对 {mode}/character/*.md 按字面前缀匹配永不命中","sync=newest 策略名存实亡（靠未注册兜底放行）","注册项改两段式（目录前缀+扩展名）匹配","单测 character/*.md 命中 newest","open"],
+  ["C-6.4","P2","API 冷却无用户维度","api_client.py:109-123 _COOLDOWNS 按端点全局","服务器版一用户触发 60s 冷却，全站连坐","key 加 user_scope_key","两账号互不冷却","open"],
+  ["C-6.12","P2","/set-config 服务器版无锁读改写","routes_config.py:38-72 get_user_overlay→改→atomic_write_json","同账号并发提交丢更新","settings.json 写路径加 per-user 锁","并发 2 写都生效","open"],
+  ["C-6.16","P2","主服务无连接/线程上限","ThreadingHTTPServer 无界；_relay_queues 无长度上限","单账号并发 /chat（210s 预算）可占满线程","限每用户并发 chat=1（会话锁已有）+ 全局信号量","压测 50 并发不挂","open"],
+  ["D-1","P2","check_version 在干净 clone 必 FAIL","tools/check_version.py 校验 server/ 两文件；.gitignore:41 /server/ 不进 git","新人/CI 跑不出 PASS","缺失文件显式 SKIP 而非 FAIL","干净 clone 跑输出 SKIP 且退出码 0","open"],
+  ["D-3","P2","bundle/资产同步门禁硬编码清单","build_frontend_bundle.py ORDER 18 项硬编码；sync_frontends.py ASSET_FILES 9 项","新增模块忘加即静默漏打包且 --check 仍 PASS","改「列目录断言集合相等」","新增 dummy.js → 门禁必失败","open"],
+  ["R-09","P2","孤儿包目录无法清理","user_data/custom_f447527f 空目录（2026-09-05 建包中断残留）；delete_pack 要求已注册","id 浪费，无用户可见入口","create_pack 失败回滚目录；delete_pack 支持未注册空壳","该目录可删","open"],
+  ["R-10","P2","knowledge_dirs 无越界校验","app_config.py:363-365 仅 strip；llm_retriever._source_dirs 直接 ROOT/d","手改 preset.json 可读仓库外文件注入提示词","拒绝 ../绝对路径/非仓库内","越界声明被拒+告警","open"],
+  ["F-6.3","P2","当前包不持久化","views.js localStorage 仅 ui-scale/theme/particles；/modes 的 default 前端未读","刷新/重开恒回 story","localStorage 存 last_mode 或读 default","刷新后保持当前包","open"],
+  ["F-3","P2","包详情页无代际保护","panels.js loadPackView 无 _modeGen 捕获；写回用点击时 CURRENT_MODE","快速切包时 A 的文案可写进 B","加 gen 捕获校验；写回用捕获 mode","A→B 快速切换后保存不错包","open"],
+  ["F-6.x","P3","前端十余处角色字面量未变量化","panels.js:256 硬编码「开拓者」；views/fix/guide 等 12+ 处「流萤/剧情模式」字面量","自建包调试面板/通知显示错称呼","随包变量化补齐","自建包 UI 无流萤字面量","open"],
+  ["R-03","P2","安卓后端副本入库漂移史","android/app/src/main/python/backend/ 为构建期 syncBackend 产物仍入库（曾 7 陈旧+4 缺失）","看仓库做判断会被误导","产物移出 git（gitignore + rm --cached）；tools/check_backend_sync.py（123 行，已新增）纳入发版清单","app/ 改动后门禁必失败","partial"],
+  ["X-1","P1","app_config.py 999 行上帝模块","路径/配置/供应商/注册表/用户上下文/包级配置/迁移/首启 8 职责一身","改动半径大；import 期副作用历史事故源","拆 core/{paths,userctx,config,presets,migrations}.py（行为不变）","全量测试 35/35 绿 + check 计数不变","open"],
+  ["X-2","P1","routes_data.py 942 行四职责混合","导出/备份/快照恢复/同步（客户端编排+服务端合并）同文件","942 行超 800 必须拆分线","拆 api/data_export.py + api/data_sync.py + domain/sync/restore.py","路由键集 oracle 对比不变","open"],
+  ["X-3","P2","chat() 单函数 ~215 行","routes.py:122-336 消息摄取/窗口/流水线调用三段耦合","函数 >80 行重点线","拆 ingest_messages / window_merge / run_pipeline 三函数","e2e_20turns 行为一致","open"],
+  ["X-4","P2","mode_root 读路径带 mkdir 副作用","app_config.py:465-471 getter 内 mkdir","「读」产生「写」，审计/测试易踩坑","getter 不建目录，写路径显式 ensure","无数据时读端点零新目录","open"],
+  ["X-5","P2","memory_manager import 期迁移残留","memory_manager.py:85 模块级 _migrate_legacy()","import 即改文件系统","移入 run_startup_init 链","import 零副作用","open"],
+  ["C-1","P0","跨账号会话内容泄漏（/pipeline）","orchestrator.get_pipeline_log 曾直接切全局 _PIPELINE_LOG","任何登录账号可拉他人最近 20 轮完整私聊","已改只读 per-user 落盘文件 + _scope 复核（orchestrator.py:251-280）","两账号互拉为空","fixed"],
+  ["R-01","P0","自建包快照恢复整包丢弃","routes_data.py 旧实现白名单=启动期 cfg.MODES","换机/重装自建包静默丢失","已改两阶段：先落 preset.json+reload_presets 后解数据（:330-393）","含未注册包快照在空环境恢复可用","fixed"],
+  ["R-02","P0","恢复非原子（rmtree 后解压）","旧 _import_zip_to_mode/_restore_full_snapshot","中途失败数据空窗","已改临时目录+rename 三段式 _swap_dir_into_place（:169-199）","注入异常旧数据完好","fixed"],
+  ["E-1","P0","backup=False 无条件","routes_snapshot 旧实现 pre-restore 失败仍跳逐包备份","双保险同时失效","已改 backup=not pre_ok（:226-239）","快照失败→逐包备份生效","fixed"],
+  ["R-04","P1","bundled 更新被首启拷贝永久遮蔽","旧 _DEFAULTS 预拷贝 + 用户副本无条件优先","内置包更新永远送不到老用户","已取消预拷贝+启动清理逐字相同副本（app_config.py:650-700）","bundled 变更未编辑用户读到新内容","fixed"],
+  ["R-05","P1","角色包无 schema 版本","设计有 version/bans 实现均无","未来格式变更无法迁移判别","已加只读 schema（默认 1 宽进，app_config.py:366-377）","无 schema 旧包零行为变化","fixed"],
+  ["R-07","P1","自建包进服务器模式静默回退 story","_body_mode 静默回退+同步灌 story 数据进自建包","人设突变+数据污染","已加 mode_fallback 显式标记（routes.py:331-333）；sync_import 校验 mode","/chat 响应带 mode_fallback","fixed"],
+  ["F-1","P0","前端无导出入口","曾全前端无 /export-data 调用","自建包无备份路径","已补导出入口（chat.js:240）","导出自建包 zip 空环境可恢复","fixed"],
+];
+
+/* 文件行数热力图数据（wc -l 实测，>800 红 /500-800 橙 /300-500 黄 /其余绿；bundle 为构建产物单独标记） */
+D.heatmap = [
+  ["app/static/js/bundle.js",4818,"构建产物（build_frontend_bundle.py 生成，非源码）","art"],
+  ["app/modules/app_config.py",999,"内核","hot"],["app/routes_data.py",942,"路由","hot"],
+  ["app/routes.py",782,"路由","warn"],["server/download_server.py",777,"服务器","warn"],
+  ["server/server_app.py",658,"服务器","warn"],["app/modules/api_client.py",597,"内核","warn"],
+  ["app/modules/setting_fix.py",568,"领域","warn"],["app/orchestrator.py",521,"编排","warn"],
+  ["app/modules/conversation_store.py",470,"领域","mid"],["app/modules/proactive_gate.py",459,"领域","mid"],
+  ["app/modules/memory_manager.py",454,"领域","mid"],["server/db.py",444,"服务器","mid"],
+  ["app/tools/sticker_picker.py",428,"领域","mid"],["app/modules/setting_fix_store.py",381,"领域","mid"],
+  ["app/modules/organizer.py",366,"领域","mid"],["app/routes_pack.py",339,"路由","mid"],
+  ["app/routes_config.py",338,"路由","mid"],["app/modules/proactive.py",337,"领域","mid"],
+  ["app/modules/llm_base.py",327,"内核","mid"],["app/routes_assets.py",324,"路由","mid"],
+  ["app/modules/polisher.py",324,"领域","mid"],["app/modules/proactive_gen.py",301,"领域","mid"],
+  ["app/modules/pack_forge.py",279,"领域","ok"],["app/modules/llm_retriever.py",258,"领域","ok"],
+  ["server/auth.py",258,"服务器","ok"],["app/modules/sync_engine.py",255,"内核","ok"],
+  ["app/modules/context_manager.py",243,"领域","ok"],["app/modules/analyzer.py",243,"领域","ok"],
+  ["app/routes_snapshot.py",242,"路由","ok"],["app/routes_common.py",236,"路由","ok"],
+  ["app/modules/storage.py",215,"内核","ok"],["app/server.py",214,"入口","ok"],
+  ["app/routes_update.py",199,"路由","ok"],["app/routes_fix.py",193,"路由","ok"],
+  ["android MainActivity.kt",554,"安卓壳","warn"],["android KeepAliveService.kt",188,"安卓壳","ok"],
+  ["server/mail.py",151,"服务器","ok"],["app/modules/favorite_store.py",144,"领域","ok"],
+  ["app/modules/auth_store.py",113,"内核","ok"],["app/shared_http.py",112,"入口","ok"],
+  ["app/routes_auth.py",111,"路由","ok"],["app/modules/web_search.py",108,"领域","ok"],
+  ["app/routes_relay.py",89,"路由","ok"],["app/modules/multipart.py",78,"内核","ok"],
+  ["app/modules/metrics.py",35,"内核","ok"],["app/modules/vision.py",19,"内核","ok"],
+  ["app/static/js/panels.js",824,"前端","hot"],["app/static/js/views.js",682,"前端","warn"],
+  ["app/static/js/chat.js",563,"前端","warn"],["app/static/js/settings.js",503,"前端","warn"],
+  ["app/static/js/fix.js",421,"前端","mid"],["app/static/js/api.js",299,"前端","ok"],
+  ["app/static/js/chat_render.js",287,"前端","ok"],["app/static/js/guide.js",248,"前端","ok"],
+  ["app/static/index.html",975,"前端","hot"],["app/static/style.css",1331,"前端","hot"],
+  ["tests/（35 文件合计）",6316,"测试 890 条 check","mid"],
+];
+
+/* 路线图 */
+D.roadmap = [
+  {ph:"阶段 0 · 保护网（0.5 周）",goal:"先测试后重构：给高风险路径补保护网",tasks:[
+    "R-01/R-02/E-1 回归测试固化（快照两阶段恢复/原子换入/备份中止）——tests/test_snapshot.py 扩",
+    "路由键集 oracle 快照（POST/GET 端点集合）+ 35 测试全量基线",
+    "check_backend_sync.py 纳入发版清单；D-1 的 SKIP 语义修掉",
+    "bundle ORDER / ASSET_FILES 改集合断言（D-3）"],
+   acc:"干净 clone 三门禁可跑；新增用例全绿",risk:"零行为变化",effort:"2-3 天"},
+  {ph:"阶段 1 · 低风险清理（1 周）",goal:"修开放 P1/P2 小项，统一规范",tasks:[
+    "C-2 托管授权（quota_api_proxy 生效）+ E-2b setdefault 改硬置",
+    "C-3 auto 备份裁剪；C-6.14 快照 PK 校验；C-6.1 主动性状态复位键",
+    "C-6.3 REGISTRY glob 匹配；C-6.4 冷却加用户维度；C-6.12 settings.json 写锁",
+    "F-6.3 当前包持久化；R-09 孤儿包清理；R-10 knowledge_dirs 越界校验"],
+   acc:"每任务一条回归测试；35+新增全绿",risk:"局部、可单独 revert",effort:"5 天"},
+  {ph:"阶段 2 · 模块边界（1-2 周）",goal:"上帝模块拆分（纯移动，零行为变化）",tasks:[
+    "app_config.py 999 → core/paths.py + core/userctx.py + core/config.py + core/presets.py + core/migrations.py",
+    "routes_data.py 942 → api/data_export.py + api/data_sync.py + domain/sync/restore.py",
+    "routes.py 782 → api/chat.py + api/debug.py + router.py（仅注册表）；chat() 拆三函数",
+    "server_app.py 658 → server/{auth_endpoints,admin,quota}.py；panels.js 824 按面板拆",
+    "import 期副作用清零（memory_manager:85、mode_root mkdir 改显式 ensure）"],
+   acc:"oracle 键集不变；35/35 绿；sync_frontends --check 一致",risk:"中——靠 oracle+全量测试兜底",effort:"8 天"},
+  {ph:"阶段 3 · 数据所有权（1 周）",goal:"REGISTRY 升级为所有权声明 + 迁移清单化",tasks:[
+    "REGISTRY 每行加 owner 字段（模块名）；导出/同步/备份只认注册表",
+    "快照 _manifest.json（版本+包清单+sha256），旧 zip 兼容",
+    "packs.json 包清单（方案 B）：存在性持久化，缺失自愈重建",
+    "db v3：ensure_auth_columns 并入顺序迁移"],
+   acc:"换机快照含自建包端到端测试通过",risk:"中——双写期+回退开关",effort:"5 天"},
+  {ph:"阶段 4 · 业务深化（按需求驱动）",goal:"用户需求反向校验后的增强",tasks:[
+    "服务器版自建包开放评估（packs.json 地基之上）",
+    "语音插件接入：capabilities.voice + domain/voice + REGISTRY 三行（详见视图⑮，前提：模型分发方式经用户拍板）",
+    "卡定义单独导出/分享（只打包 character/，不含互动数据）",
+    "包管理规范落地：删除两级化（归档/抹除+强制备份）、弱引用降级（详见视图⑭）",
+    "记忆分层（短期/长期/核心）——docs/需求设计.md 待讨论项",
+    "包级设置统一通道（消除 /set-config 与 /pack-config 双通道漂移 C-6.13）",
+    "前端包体验补齐：占位头像/浏览不切包/详情页代际保护"],
+   acc:"需求-能力-代码追溯矩阵逐行可映射",risk:"按项独立",effort:"按排期"},
+  {ph:"阶段 5 · 迁移与兼容专项",goal:"旧版数据自动迁移重组优先，兼容兜底",tasks:[
+    "本地端：版本检测（config/preset schema/文件状态）→ 备份 → 迁移链 → 校验 → 用户可见提示",
+    "服务器端：db 顺序迁移 + user_data/{uid} 布局冻结声明 + 回滚脚本",
+    "同步冲突：jsonl 行合并/mtime/blob 现有语义固化进文档+测试",
+    "旧客户端闸门范式沿用（_old_client_refuse 模板化）"],
+   acc:"0.6/0.7/0.8 老数据副本升级演练全过",risk:"迁移必带 pre-migrate 备份",effort:"持续"},
+  {ph:"阶段 6 · 收尾治理",goal:"文档/观测/门禁常态化",tasks:[
+    "docs/二期-服务化重构/ 新建实施文档（一期归档仅作历史）",
+    "观测：恢复失败率/ignored_packs/mode_fallback 计数进管理台",
+    "发版清单：check_version + sync_frontends + check_backend_sync + 全量测试 四门禁"],
+   acc:"发布 checklist 全绿；本 HTML 数据刷新",risk:"—",effort:"2 天+持续"},
+];
+
+/* 目标目录树 */
+D.targetTree = `firefly/
+├── app/                          # 本地版=服务器版共用内核（唯一事实源不变）
+│   ├── server.py                 # 仅入口：装配+启动（<150 行）
+│   ├── core/                     # 平台内核（不依赖领域）
+│   │   ├── paths.py              # ROOT/USER_DIR/resolve_asset（读路径零副作用）
+│   │   ├── userctx.py            # contextvars 用户上下文/overlay
+│   │   ├── config.py             # 配置加载/供应商/迁移（providers）
+│   │   ├── presets.py            # 角色包注册表/解析/schema
+│   │   ├── migrations.py         # 启动迁移链（统一入口+备份+报告）
+│   │   └── storage.py            # 原子写/REGISTRY（+owner 字段）
+│   ├── domain/                   # 业务域（限界上下文）
+│   │   ├── conversation/         # analyzer/polisher/organizer/retriever/context/store/orchestrator
+│   │   ├── memory/               # memory_manager/journal
+│   │   ├── proactive/            # gate/gen/facade
+│   │   ├── character/            # pack_forge/包槽位/资产
+│   │   ├── stickers/             # sticker_picker（从 tools/ 归位）
+│   │   └── fixer/                # setting_fix(+store)
+│   ├── infra/
+│   │   ├── llm/                  # api_client/llm_base/vision/web_search
+│   │   ├── sync/                 # sync_engine/restore 引擎
+│   │   └── http/                 # shared_http/multipart
+│   ├── api/                      # 控制器层（每域一文件，<350 行）
+│   │   ├── router.py             # 仅 POST_ROUTES/GET_ROUTES 注册
+│   │   ├── chat.py / pack.py / data_export.py / data_sync.py / …
+│   ├── assets/character/         # bundled 角色包（不变）
+│   └── static/                   # 前端唯一源（bundle 为产物）
+├── server/                       # 服务器版壳（auth/admin/quota/gateway 各自成文件）
+├── android/                      # Kotlin 壳（backend/ 产物移出 git）
+└── user_data/                    # 布局冻结：{uid?}/{pack}/{character,data,journal,images}`;
+
+/* 导航 */
+D.nav = [
+  ["grp","总览"],["overview","① 架构总览"],["deps","② 模块依赖图"],["caps","③ 业务能力地图"],
+  ["grp","交互"],["journeys","④ 用户旅程/流程"],["ownership","⑤ 数据所有权矩阵"],["dataflow","⑥ 数据流图"],["migration","⑦ 旧版→新版迁移"],["api","⑧ 接口/事件交互"],["fsm","⑨ 核心状态机"],
+  ["grp","治理"],["heatmap","⑩ 文件行数热力图"],["roadmap","⑪ 分阶段路线图"],["problems","⑫ 诊断问题清单"],["target","⑬ 目标架构与追溯"],
+  ["grp","扩展规划"],["packmgmt","⑭ 包管理与隔离规范"],["voice","⑮ 语音插件接入"],
+];
+</script>
+<script>
+"use strict";
+/* ════ 扩展规划数据（2026-09-13 增补：多卡管理 + 语音插件） ════ */
+
+/* 包管理与隔离 */
+D.packmgmt = {
+  registryJson:
+`user_data/{uid?}/packs.json   ← 唯一权威注册表（存在性持久化；目录是事实，清单是索引）
+{ "packs": [{
+    "id": "custom_f447527f",
+    "source": "custom",            // bundled | custom | imported
+    "schema": 1,                   // preset.json schema（宽进，高版本告警不拒绝）
+    "name": "…", "char_name": "…",
+    "capabilities": {"voice": false, "knowledge": false, "presentation": "sticker"},
+    "state": "active",             // active | archived（归档=不显示但数据保留）
+    "slots": {"core": "customized", "identity": "inherited"},   // baseline|inherited|customized
+    "created_at": "…", "updated_at": "…"
+}] }
+启动时扫描目录自愈重建清单；此后快照/同步/恢复/删除的白名单全部读清单，
+与进程态 cfg.MODES 解耦（根治 R-01 根因，而非只修症状）。`,
+  isolation: [
+    ["对话/记忆/手账/收藏/图片","包（{id}/data·journal·images）","❌ 永不","❌（uid 目录隔离）","conversation_store / memory_manager"],
+    ["卡定义（core/prompts/开场/头像）","包（{id}/character/）","❌","❌","llm_base.resolve_character_file"],
+    ["包级设置（主动性/语音）","包（{id}/data/proactive.json…）","❌","❌","app_config.pack_cfg（包级→全局→默认）"],
+    ["表情包","用户级共享 + 条目 pack 字段过滤","✅ 受控（空=全局共享）","❌","sticker_picker.py:45-55"],
+    ["全局配置（供应商/模型）","用户级","✅ 作为包级默认值","❌（settings.json overlay）","app_config / routes_config"],
+    ["语音引擎（ONNX 641M）","用户级","✅（引擎≠音色，音色在包内）","不适用（服务器版关闭）","domain/voice/"],
+    ["账号/会话/额度","服务器级","—","管理员只见元数据","server/db.py"],
+  ],
+  lifecycle: {
+    states:["创建（表单/AI向导）","active（在册）","编辑（三态标记）","archived（归档）","恢复/导出","抹除"],
+    edges:[["创建（表单/AI向导）","active（在册）","写模板+登记 packs.json（失败回滚目录）"],
+           ["active（在册）","编辑（三态标记）","白名单 10 文件 + clear_cache"],
+           ["编辑（三态标记）","active（在册）","保存生效"],
+           ["active（在册）","archived（归档）","从列表消失，数据保留，不参与同步"],
+           ["archived（归档）","恢复/导出","随时可逆"],
+           ["archived（归档）","抹除","输入包名确认 + 强制先落全包 zip 到 backups/"]],
+    note:"「不要这张卡」与「抹除全部回忆」是两个操作；现状 delete_pack（routes_pack.py:324）一次 confirm 直接 rmtree 连坐删除，必须改。弱引用降级：删/归档包时 stickers 里 pack=该 id 的条目自动转全局共享，不丢用户资产。"
+  },
+  rules:[
+    "「包」是最强隔离边界；只允许表情包与全局默认值跨越，且跨法显式声明（pack 字段/回落链）",
+    "禁止任何模块在 mode_root 公式之外拼别的包的路径（C-5 同步灌数据事故即隐式跨界）",
+    "卡定义与互动数据永远分开传输：分享=只导出 character/；快照=全包但剥 Key",
+    "派生数据（.memory_index/memory.md）必须能由 conversation.jsonl 重建，写对话时不许附带维护其他文件",
+  ]
+};
+
+/* 语音插件接入 */
+D.voice = {
+  premise:"研究已跑通：GPT-SoVITS V4 全链路 ONNX（7 组件，2.5G→641M INT8），PC+安卓真机音频正确（论文/流萤语音合成研究）。关键约束：模型为第三方整合包，作者声明禁止售卖、原声版权归 mihoyo → 语音资产永不进发行包/git，只能用户按需导入。",
+  slots:
+`assets/character/{id}/  或  user_data/{id}/character/
+├── preset.json     ← "capabilities": {"voice": true, "knowledge": true, "presentation": "sticker"}
+├── core.md / identity.md / prompts/…   （现有槽位，不动）
+└── voice/          ← 新增可选槽位（缺失=无语音，零迁移零崩溃）
+    ├── refs/       参考音频（每语气 1-3 条 wav + 参数 json）
+    └── voice.json  {engine:"gptsovits-onnx", emotions:{…}, params:{top_k…}}
+
+user_data/voice_engine/   ← 用户级引擎（ONNX 模型 641M，所有卡共享；引擎≠音色）`,
+  registry:[
+    ["voice_engine","voice_engine/","domain/voice/","exclude（不入快照/同步/导出）","体量+版权都不允许进传输链"],
+    ["voice_refs","{mode}/character/voice/","character 域","metadata（元数据随行，wav 本体本地）","与表情包 A0 铁律同语义，换机预期一致"],
+    ["voice_cache","{mode}/voice_cache/","domain/voice/","exclude + LRU 裁剪（如 200MB/包）","可再生数据，绝不进备份"],
+  ],
+  flow:[
+    ["polisher 产出文本","现有链路不动，写盘/返回前端"],
+    ["前端渲染","气泡出现播放按钮（仅 capabilities.voice=true 的包）"],
+    ["用户点击","POST /tts {seq, mode} → voice.synthesize(text, mode, emotion)"],
+    ["引擎懒加载","onnxruntime 可选依赖；import 失败/模型缺失 → 语音不可用，其余零影响"],
+    ["落缓存返回","voice_cache/{hash}.wav → 前端播放；重复点击直接命中"],
+  ],
+  constraints:[
+    "对话流水线零改动：语音是回复的渲染层旁路，不是生成层阶段",
+    "三处对齐现有机制：has_knowledge()→has_voice() 同款短路；render_pack_prompt 三段兜底→槽位缺失即无语音；自建包天然无语音自动降级",
+    "服务器版强制关闭（641M 模型+多用户合成算力不成立），与自建包 403 同一治理模式",
+    "安卓走同一 domain/voice/ 接口，引擎实现按 FIREFLY_ANDROID 平台分支（已有先例）",
+    "首次启用语音的 UI 必须展示模型来源与版权提示",
+  ],
+};
+</script>
+<script>
+"use strict";
+/* ════════════════ 渲染层 ════════════════ */
+const $m = document.getElementById("main");
+const esc = s => String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+const SEVC = {P0:"var(--red)",P1:"var(--warm)",P2:"var(--cyan)",P3:"var(--faint)"};
+
+function view(id, title, sub){
+  const v = document.createElement("section");
+  v.className = "view"; v.id = "v-"+id;
+  v.innerHTML = `<h1>${esc(title)}</h1><div class="sub">${sub}</div><div class="body"></div>`;
+  $m.appendChild(v);
+  return v.querySelector(".body");
+}
+
+/* SVG 小件 */
+function svgWrap(w,h,inner){
+  return `<div class="diagram"><svg viewBox="0 0 ${w} ${h}" width="100%" style="min-width:${Math.min(w,900)}px">
+  <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+  <path d="M0,0 L10,5 L0,10 z" fill="#8f9bc0"/></marker></defs>${inner}</svg></div>`;
+}
+function snode(x,y,w,h,t,sub,color){
+  return `<g class="node"><rect x="${x}" y="${y}" width="${w}" height="${h}" rx="10"
+    fill="rgba(26,34,60,.9)" stroke="${color||"rgba(217,242,79,.35)"}" stroke-width="1.3"/>
+    <text x="${x+w/2}" y="${y+(sub?h/2-4:h/2+4)}" text-anchor="middle" fill="#e9edf7" font-size="12.5" font-weight="600">${esc(t)}</text>
+    ${sub?`<text x="${x+w/2}" y="${y+h/2+14}" text-anchor="middle" fill="#9aa7c4" font-size="10.5">${esc(sub)}</text>`:""}
+    <title>${esc(t)}${sub?" — "+esc(sub):""}</title></g>`;
+}
+function sedge(x1,y1,x2,y2,lab,cls){
+  const mx=(x1+x2)/2, my=(y1+y2)/2;
+  return `<path class="edge ${cls||""}" d="M${x1},${y1} L${x2},${y2}"/>`+
+    (lab?`<text class="edge-lab" x="${mx}" y="${my-4}" text-anchor="middle">${esc(lab)}</text>`:"");
+}
+
+/* ① 架构总览 */
+function renderOverview(){
+  const b = view("overview","① 架构总览",
+    `三端同源：<code>app/</code> 是 PC 本地版、安卓内嵌（Chaquopy）、服务器版共同的唯一后端事实源；
+     前端 <code>app/static</code> 三端共用（服务器/安卓为同步副本）。
+     版本基线：线上 <code>v0.8.1</code>（versionCode 806），工作区含未发布的 0.9 改动。${D.meta.ports}。`);
+  let s = "";
+  // 设备列
+  s += snode(20,40,230,58,"PC 本地版 firefly.exe","PyInstaller · 127.0.0.1:8765","rgba(125,211,252,.5)");
+  s += snode(20,130,230,58,"安卓 APK（独立运行）","Kotlin 壳 + Chaquopy 内嵌 app/","rgba(125,211,252,.5)");
+  s += snode(20,220,230,58,"服务器版 APP / 浏览器","WebView 加载服务器前端","rgba(125,211,252,.5)");
+  // 设备内部
+  s += snode(300,40,240,58,"app/server.py + routes*","本地后端（单用户）");
+  s += snode(300,130,240,58,"start_server.py（内嵌）","FIREFLY_ANDROID=1 数据在内部存储");
+  s += snode(300,220,240,58,"file:// 前端 + 跨域 API","Key 在 localStorage");
+  // 服务器
+  s += snode(620,60,250,54,"8787 网关 download_server","下载白名单+反代+限流 300/min","rgba(217,242,79,.5)");
+  s += snode(620,140,250,54,"8765 server_app（仅本机）","认证/多用户/业务路由复用","rgba(217,242,79,.5)");
+  s += snode(620,220,250,54,"8766 AdminHandler（SSH 隧道）","本机+管理令牌双因子","rgba(217,242,79,.5)");
+  s += snode(620,300,250,54,"firefly.db + user_data/{uid}/","users/sessions/proxy_usage…","rgba(217,242,79,.5)");
+  // 外部
+  s += snode(950,40,230,54,"DeepSeek / OpenCode Go","direct / relay / proxy 三通道","rgba(251,146,60,.55)");
+  s += snode(950,130,230,54,"GitHub / Gitee Releases","检查更新+安装包资产","rgba(251,146,60,.55)");
+  s += snode(950,220,230,54,"QQ SMTP","注册/重置验证码+升级提醒","rgba(251,146,60,.55)");
+  s += snode(950,310,230,54,"/opt/firefly-downloads/","exe/apk/version.json","rgba(251,146,60,.55)");
+  // 边
+  s += sedge(250,69,300,69,"HTTP 同源");
+  s += sedge(250,159,300,159,"构建期 syncBackend 拷贝");
+  s += sedge(250,249,300,249,"FIREFLY_MODE=server");
+  s += sedge(540,249,620,95,"API 跨域（Bearer）");
+  s += sedge(540,69,620,95,"登录后同步/快照");
+  s += sedge(745,114,745,140,"反代");
+  s += sedge(745,194,745,220,"管理");
+  s += sedge(745,274,745,300,"读写");
+  s += sedge(870,87,950,67,"proxy/服务器侧 LLM");
+  s += sedge(540,60,950,60,"direct/relay（用户 Key）");
+  s += sedge(870,150,950,150,"releases/latest");
+  s += sedge(870,240,950,240,"发码");
+  s += sedge(870,330,950,330,"下载统计");
+  b.innerHTML = svgWrap(1200,410,s);
+  b.innerHTML += `<h2>部署形态对照（实读：readme.md / docs/部署说明.md / 审计报告 §3.3）</h2>
+  <table><tr><th>维度</th><th>PC 本地版</th><th>安卓本地版</th><th>服务器版</th></tr>
+  <tr><td>后端</td><td>app/ 直接运行</td><td>构建期 syncBackend 拷贝进 APK</td><td>scp 到 /opt/firefly/app</td></tr>
+  <tr><td>用户数据根</td><td>exe 同级 user_data/</td><td>$HOME/firefly_data/user_data（升级保留）</td><td>/opt/firefly/user_data/{uid}/</td></tr>
+  <tr><td>API Key</td><td>user_data/config.json</td><td>同左</td><td>用户浏览器 localStorage（relay）或运营者托管（proxy）</td></tr>
+  <tr><td>自建角色包</td><td>支持</td><td>支持（后端同源）</td><td>禁用（403，pack_forge/routes_pack）</td></tr>
+  <tr><td>更新</td><td>check-update + 安装器覆盖（user_data 排除）</td><td>APK 覆盖（versionCode 递增）</td><td>scp 即生效</td></tr></table>`;
+}
+
+/* ② 模块依赖图 */
+function renderDeps(){
+  const b = view("deps","② 模块依赖图",
+    `分层：入口 → 路由(api) → 编排 → 领域模块 → 内核/基础设施。<b>依赖规则（目标）</b>：只允许外层依赖内层；
+     领域模块之间不互相 import 对方存储；<code>app_config（拆后 core/）</code> 是唯一路径/配置公式源；
+     <code>storage.REGISTRY</code> 是唯一数据策略源。节点悬停看职责。`);
+  const layers = [
+    ["入口层",["server.py 214","server_app.py 658","MainActivity.kt 554"],"rgba(125,211,252,.5)"],
+    ["路由层 api/",["routes.py 782","routes_data.py 942","routes_pack.py 339","routes_config.py 338","routes_assets.py 324","routes_snapshot.py 242","routes_fix/update/auth/relay/common"],"rgba(232,160,191,.5)"],
+    ["编排层",["orchestrator.py 521","（阶段进度+pipeline 观测）"],"rgba(217,242,79,.5)"],
+    ["领域层 domain/",["analyzer 243","polisher 324","organizer 366","llm_retriever 258","conversation_store 470","context_manager 243","memory_manager 454","proactive ×3 (337+459+301)","setting_fix ×2 (568+381)","pack_forge 279","sticker_picker 428","favorite_store 144"],"rgba(192,132,252,.5)"],
+    ["内核 core/ + infra/",["app_config.py 999（待拆）","api_client.py 597","llm_base.py 327","sync_engine.py 255","storage.py 215","auth_store 113 / multipart 78 / metrics 35 / vision 19 / web_search 108"],"rgba(123,216,143,.5)"],
+    ["服务器专属",["db.py 444","auth.py 258","mail.py 151","download_server.py 777"],"rgba(251,146,60,.55)"],
+  ];
+  let s=""; const W=1200, colW=185, rowH=64;
+  const pos={};
+  layers.forEach(([name,mods,color],li)=>{
+    const x=20+li*colW;
+    s+=`<text x="${x+colW/2-10}" y="24" text-anchor="middle" fill="#ffd97a" font-size="13" font-weight="700">${esc(name)}</text>`;
+    mods.forEach((m,mi)=>{
+      const y=44+mi*rowH;
+      pos[m.split(" ")[0]]=[x,y];
+      s+=snode(x,y,colW-24,rowH-14,m.split(" ")[0],m.split(" ").slice(1).join(" "),color);
+    });
+  });
+  const E=[["server.py","routes.py"],["server_app.py","routes.py"],["MainActivity.kt","server.py"],
+    ["routes.py","orchestrator.py"],["routes_data.py","orchestrator.py"],
+    ["orchestrator.py","analyzer"],["orchestrator.py","polisher"],["orchestrator.py","organizer"],["orchestrator.py","llm_retriever"],
+    ["orchestrator.py","conversation_store"],["routes.py","memory_manager"],["routes.py","proactive"],["routes_pack.py","pack_forge"],
+    ["analyzer","llm_base.py"],["polisher","api_client.py"],["routes_data.py","sync_engine.py"],
+    ["orchestrator.py","app_config.py"],["routes.py","app_config.py"],["sync_engine.py","storage.py"],
+    ["server_app.py","db.py"],["server_app.py","auth.py"],["download_server.py","db.py"]];
+  const H=44+12*rowH+20;
+  E.forEach(([a,c])=>{
+    const pa=pos[a],pc=pos[c]; if(!pa||!pc) return;
+    s+=sedge(pa[0]+colW-24,pa[1]+25,pc[0],pc[1]+25);
+  });
+  b.innerHTML = svgWrap(W,H,s);
+  b.innerHTML += `<h2>已核实的依赖事实</h2><div class="panel small">`+
+   D.deps.map(d=>`<div><code>${esc(d[0])}</code> → <code>${esc(d[1])}</code> <span class="muted">${esc(d[2]||"")}</span></div>`).join("")+
+   `</div><div class="panel small"><b>循环依赖检查</b>：实读未发现模块间循环 import；约定「storage 不 import 业务模块」（storage.py:14 注释）已被遵守。
+   <b>已知越界</b>：<code>orchestrator</code> 直接读包槽位（可接受，属编排职责）；<code>routes.py</code> 直接改 memory_manager 游标文件（:446-460）——属逻辑泄漏，路线图阶段 2 收口为 memory_manager API。</div>`;
+}
+
+/* ③ 业务能力地图 */
+function renderCaps(){
+  const b = view("caps","③ 业务能力地图","从用户价值反推的能力 → 场景 → 代码落点 → 数据落点。全部条目来自代码实读。");
+  let h = `<div class="grid g2">`;
+  for(const g of D.caps){
+    h += `<div class="panel"><h3 style="margin-top:0">${esc(g.g)}</h3>`;
+    for(const [cap,scene,code,data] of g.items){
+      h += `<div style="margin-bottom:10px"><b style="color:var(--fire)">${esc(cap)}</b>
+        <div class="small muted">${esc(scene)}</div>
+        <div class="small">代码 <code>${esc(code)}</code> ｜ 数据 <code>${esc(data)}</code></div></div>`;
+    }
+    h += `</div>`;
+  }
+  b.innerHTML = h + "</div>";
+}
+
+/* ④ 用户旅程 */
+function renderJourneys(){
+  const b = view("journeys","④ 用户旅程 / 业务流程","每条流程的步骤名后附代码落点；失败兜底在流程下注明。");
+  let h="";
+  for(const j of D.journeys){
+    h += `<h2>${esc(j.t)}</h2><div class="steps">`;
+    j.steps.forEach((s,i)=>{
+      h += `<div class="step"><b>${i+1}. ${esc(s[0])}</b>${esc(s[1])}</div>`;
+      if(i<j.steps.length-1) h += `<div class="arrow">→</div>`;
+    });
+    h += `</div><div class="small muted" style="margin:6px 0 4px">兜底/约束：${esc(j.note)}</div>`;
+  }
+  b.innerHTML = h;
+}
+</script>
+<script>
+"use strict";
+/* ⑤ 数据所有权矩阵 */
+function renderOwnership(){
+  const b = view("ownership","⑤ 数据所有权矩阵",
+    `一张表/一个目录/一类文件只属于一个模块；跨模块协作只走接口/注册表/同步协议。
+     「同步策略」以 <code>storage.REGISTRY</code> 为唯一真相源（merge-jsonl / merge-favorites / newest / blob / metadata / exclude）。`);
+  let h = `<table><tr><th>数据</th><th>路径</th><th>所有者模块</th><th>写入路径</th><th>同步策略</th><th>风险/备注</th></tr>`;
+  for(const r of D.ownership){
+    h += `<tr><td><b>${esc(r[0])}</b></td><td><code>${esc(r[1])}</code></td><td><span class="tag t-own">${esc(r[2])}</span></td>
+      <td class="small">${esc(r[3])}</td><td class="small">${esc(r[4])}</td><td class="small muted">${esc(r[5])}</td></tr>`;
+  }
+  b.innerHTML = h + "</table>" + `<div class="panel small"><b>跨模块数据协作现状（实读结论）</b>：
+   ① 对话历史仅 <code>conversation_store</code> 写，orchestrator/routes 经 <code>append_message</code> 接口——合规；
+   ② 例外1：<code>routes.py:446-460</code> 直接改写 memory_manager 的 <code>.memory_index</code>（undo/clear 游标回退）——逻辑泄漏，阶段 2 收口；
+   ③ 例外2：<code>orchestrator._record_pipeline</code> 直接写 {mode}/data/pipeline.jsonl——可接受（自有数据），但注册表已声明；
+   ④ 服务器版多用户隔离靠 <code>contextvars</code> 用户目录注入（app_config.py:19-64），不落库的 Key 仅内存中转（server_app.py:288）。</div>`;
+}
+
+/* ⑥ 数据流图 */
+function renderDataflow(){
+  const b = view("dataflow","⑥ 数据流图（本地 / 服务器 / 同步）","三条通道：direct（本地直连）、relay（APP 代发，服务器不持 Key）、proxy（托管）。同步与快照走认证服务器。");
+  let s="";
+  const lanes=[[60,"用户设备（PC exe / 安卓 APK）"],[500,"云服务器 8787→8765"],[940,"LLM 供应商 / 外部服务"]];
+  lanes.forEach(([x,t])=>{ s+=snode(x,20,280,44,t,"","rgba(125,211,252,.45)"); });
+  const F=[
+    [200,940,300,"direct：_CompatClient（Key 在本地 config.json）",110],
+    [500,940,300,"proxy：QuotaClient 运营者 Key · proxy_usage 按日记账",170],
+    [500,940,300,"relay 回写：/relay/result（APP 1s 轮询代发）",230],
+    [940,500,300,"relay 下发：/relay/pending",290],
+    [200,500,300,"同步：manifest→import↑→export↓（行合并/新者胜/blob）",350],
+    [200,500,300,"快照上云：snapshot/create（每账号 5 份滚动）",410],
+    [200,500,300,"认证：/auth/*（本地版 routes_auth 代理）",470],
+    [940,500,300,"下载/更新：8787 /download + releases 双源",530],
+  ];
+  F.forEach(([x1,x2,dx,lab,y])=>{
+    const dir = x2>x1?1:-1;
+    s+=sedge(x1+ (dir>0?280:0),y, x2+(dir>0?0:280),y, lab);
+  });
+  b.innerHTML = svgWrap(1240,580,s);
+  b.innerHTML += `<table><tr><th>流</th><th>路径</th><th>机制与证据</th></tr>`+
+    D.dataflow.flows.map(f=>`<tr><td><b>${esc(f[0])}</b></td><td>${esc(f[1])}</td><td class="small">${esc(f[2])}</td></tr>`).join("")+"</table>";
+}
+
+/* ⑦ 迁移 */
+function renderMigration(){
+  const b = view("migration","⑦ 旧版 → 新版数据迁移",
+    `原则（docs/版本更新规范.md）：迁移幂等 + 按文件状态判断（非版本号）+ 先于默认拷贝 + 只 move 不删除（有例外，见表内 ⚠）。
+     服务器端与用户本地端分别列出；<b>优先迁移重组为新结构，兼容旧版仅作兜底</b>。`);
+  let h = `<h2>迁移流水线（目标标准形）</h2><div class="steps">`;
+  ["版本检测<br><span class='mono'>APP_VERSION · preset.schema · db schema_version · 文件状态</span>",
+   "备份<br><span class='mono'>pre-migrate zip（失败即中止）</span>",
+   "转换重组<br><span class='mono'>平铺→分目录 · 单Key→providers · 明文token→sha256</span>",
+   "写入新结构<br><span class='mono'>原子写 / 临时目录 rename</span>",
+   "校验<br><span class='mono'>条数/关键字段/启动日志</span>",
+   "清理或保留<br><span class='mono'>旧位置保留（move 类例外见表）</span>"].forEach((s,i,a)=>{
+    h+=`<div class="step">${s}</div>`; if(i<a.length-1) h+=`<div class="arrow">→</div>`;});
+  h += `</div><h2>存量迁移（已上线，实读）</h2><table><tr><th>迁移</th><th>内容</th><th>落点</th><th>评级</th></tr>`;
+  for(const m of D.migrations.existing) h+=`<tr><td><b>${esc(m[0])}</b></td><td class="small">${esc(m[1])}</td><td><code>${esc(m[2])}</code></td><td class="small">${esc(m[3])}</td></tr>`;
+  h += `</table><h2>新增迁移（本方案）</h2><table><tr><th>迁移</th><th>内容</th><th>落点</th><th>优先级</th></tr>`;
+  for(const m of D.migrations.proposed) h+=`<tr><td><b>${esc(m[0])}</b></td><td class="small">${esc(m[1])}</td><td><code>${esc(m[2])}</code></td><td><span class="tag t-p1">${esc(m[3])}</span></td></tr>`;
+  h += `</table><h2>触发时机 / 失败恢复 / 回滚</h2><div class="panel small">
+   <b>触发</b>：本地版=exe/APK 覆盖安装后首启（server.py main 显式调 run_legacy_migration + run_startup_init）；
+   服务器版=进程启动（db 顺序迁移）+ 运维手工（共享根迁移服务器永不自动跑）。<br>
+   <b>失败恢复</b>：迁移前备份存在 → 中止并保留原位；恢复快照走 pre-restore / .restore_old / backups/ 三层兜底。<br>
+   <b>回滚</b>：PC=旧版 exe 覆盖安装（user_data 排除）；安卓=旧 APK 覆盖（内部存储保留）；服务器=scp 旧 app/ + systemctl 重启（db 无 down 迁移——v 系列只进不退，靠 /opt/backups 每日 cron 兜底）。<br>
+   <b>不可见信息</b>：服务器 /opt/firefly 实际数据量与既有用户是否已建自建包（审计 G3）不可见——阶段 5 演练需先在服务器只读盘点。</div>`;
+  b.innerHTML = h;
+}
+
+/* ⑧ 接口/事件交互 */
+function renderApi(){
+  const b = view("api","⑧ 接口 / 事件交互",
+    `全部端点实读自 routes.py:694-782 分发表、server_app.py、download_server.py。本地版与服务器版共用同一分发表；服务器版在其上加 Bearer 认证与 per-user 上下文。`);
+  let h="";
+  for(const g of D.api){
+    h+=`<h3>${esc(g.g)}</h3><table><tr><th>方法</th><th>端点</th><th>实现</th></tr>`;
+    for(const e of g.eps) h+=`<tr><td>${esc(e[0])}</td><td><code>${esc(e[1])}</code></td><td class="small">${esc(e[2])}</td></tr>`;
+    h+=`</table>`;
+  }
+  h += `<h3>事件/异步机制（无消息队列，全为进程内+文件）</h3><div class="panel small">
+   · 聊天合并窗口：<code>_CHAT_WINDOWS</code> Condition 挂起/唤醒（routes.py:101-336）<br>
+   · 主动性轮询：前端 10s /proactive-status；安卓后台 KeepAliveService 10-30min 随机间隔<br>
+   · relay 队列：<code>api_client._relay_queues</code> 内存排队 + APP 1s 轮询<br>
+   · 邮件异步：旧客户端提醒 <code>threading.Thread(daemon=True)</code>（server_app.py:414）<br>
+   · 快照上云：snapshot/create 后同步转发（routes_snapshot.py:127）</div>`;
+  b.innerHTML = h;
+}
+
+/* ⑨ 状态机 */
+function renderFsm(){
+  const b = view("fsm","⑨ 核心状态机","项目无显式状态机框架；以下为从代码反推的实际状态流转（证据在标题行）。");
+  let h="";
+  for(const m of D.fsm){
+    h+=`<div class="panel fsm"><h3 style="margin-top:0">${esc(m.t)}</h3><div class="steps">`;
+    const st=m.states;
+    st.forEach((sname,i)=>{
+      const lab=(m.edges.find(e=>e[0]===st[i-1]&&e[1]===sname)||[])[2]||"";
+      h+=`<div class="step" style="max-width:200px"><b>${esc(sname)}</b>${lab?`<span class="small muted">触发：${esc(lab)}</span>`:""}</div>`;
+      if(i<st.length-1) h+=`<div class="arrow">→</div>`;
+    });
+    h+=`</div><div class="small muted" style="margin-top:6px">${esc(m.note)}</div></div>`;
+  }
+  b.innerHTML = h;
+}
+
+/* ⑩ 热力图 */
+function renderHeatmap(){
+  const b = view("heatmap","⑩ 文件行数热力图",
+    `阈值（Python/JS/Kotlin 通用，理由：本项目函数密度高、注释密）：<span class="tag t-p0">>800 必须拆分</span>
+     <span class="tag t-p1">500-800 重点</span><span class="tag t-p2">300-500 警告</span><span class="tag t-fixed"><300 健康</span>；
+     函数 >50 行警告 / >80 行重点（已知最大：routes.py chat() ≈215 行）。点击行尾标签可按域筛选。`);
+  const colors={hot:"var(--red)",warn:"var(--orange)",mid:"var(--warm)",ok:"var(--green)",art:"var(--faint)"};
+  let h=`<div class="filters" id="hf"></div><div id="hlist" class="panel">`;
+  const domains=["全部","路由","内核","领域","服务器","前端","安卓壳","入口","编排"];
+  b.innerHTML = h+"</div>";
+  const flt=b.querySelector("#hf");
+  domains.forEach((d,i)=>{
+    const btn=document.createElement("button"); btn.textContent=d; if(i===0)btn.className="on";
+    btn.onclick=()=>{ flt.querySelectorAll("button").forEach(x=>x.classList.remove("on")); btn.classList.add("on"); draw(d); };
+    flt.appendChild(btn);
+  });
+  function draw(d){
+    const list=b.querySelector("#hlist");
+    const rows=D.heatmap.filter(r=>d==="全部"||r[2].startsWith(d)||r[2].includes(d));
+    const max=Math.max(...rows.map(r=>r[1]),1);
+    list.innerHTML = rows.map(r=>`<div class="hbar"><span class="nm" title="${esc(r[0])}">${esc(r[0])}</span>
+      <span class="bar" style="width:${Math.max(3,Math.round(r[1]/max*560))}px;background:${colors[r[3]]}"></span>
+      <span class="ln">${r[1]} 行 ${r[3]==="art"?"（产物）":""}</span></div>`).join("")+
+      `<div class="small muted" style="margin-top:8px">拆分方案见 ⑬ 目标架构 与报告「超大文件拆分方案」。bundle.js / index.html / style.css 为前端产物或大静态件，其中 index.html(975) 与 style.css(1331) 建议随前端模块化一并切分。</div>`;
+  }
+  draw("全部");
+}
+
+/* ⑪ 路线图 */
+function renderRoadmap(){
+  const b = view("roadmap","⑪ 分阶段重构路线图","渐进式：保持行为不变、先测试后重构、每阶段可回滚。阶段 0-2 为纯工程；3 起涉及数据与业务。");
+  let h="";
+  for(const p of D.roadmap){
+    h+=`<div class="phase"><h3>${esc(p.ph)}</h3><div class="small muted">目标：${esc(p.goal)} ｜ 预计：${esc(p.effort)} ｜ 风险：${esc(p.risk)}</div>
+    <ul style="margin:8px 0 6px 18px">${p.tasks.map(t=>`<li class="small">${esc(t)}</li>`).join("")}</ul>
+    <div class="small"><b style="color:var(--green)">验收：</b>${esc(p.acc)}</div></div>`;
+  }
+  b.innerHTML = h;
+}
+
+/* ⑫ 问题清单 */
+function renderProblems(){
+  const b = view("problems","⑫ 诊断问题清单（按严重程度）",
+    `证据格式：文件:行号。<span class="tag t-fixed">fixed</span>=2026-09-10 审计后已修复（当前工作区实证）；
+     <span class="tag t-open">open</span>=仍开放；<span class="tag t-p2">partial</span>=部分修复。点击筛选。`);
+  b.innerHTML = `<div class="filters" id="pf"></div><div id="plist"></div>`;
+  const flt=b.querySelector("#pf");
+  const opts=["全部","P0","P1","P2","P3","未修复","已修复"];
+  opts.forEach((o,i)=>{
+    const btn=document.createElement("button"); btn.textContent=o; if(i===0)btn.className="on";
+    btn.onclick=()=>{flt.querySelectorAll("button").forEach(x=>x.classList.remove("on"));btn.classList.add("on");draw(o);};
+    flt.appendChild(btn);
+  });
+  function draw(o){
+    const rows=D.problems.filter(p=> o==="全部" || p[1]===o || (o==="未修复"&&p[7]==="open") || (o==="已修复"&&p[7]==="fixed"));
+    b.querySelector("#plist").innerHTML = rows.map(p=>`<div class="panel">
+      <div><span class="tag t-${p[1].toLowerCase()}">${p[1]}</span>
+      <span class="tag ${p[7]==="fixed"?"t-fixed":p[7]==="partial"?"t-p2":"t-open"}">${p[7]}</span>
+      <b> ${esc(p[0])} · ${esc(p[2])}</b></div>
+      <div class="small" style="margin-top:6px"><b>证据</b>：<code>${esc(p[3])}</code></div>
+      <div class="small"><b>影响</b>：${esc(p[4])}</div>
+      <div class="small"><b>动作</b>：${esc(p[5])}</div>
+      <div class="small muted"><b>验收</b>：${esc(p[6])}</div></div>`).join("") || `<div class="panel muted">无匹配项</div>`;
+  }
+  draw("全部");
+}
+
+/* ⑬ 目标架构与追溯 */
+function renderTarget(){
+  const b = view("target","⑬ 目标架构蓝图与追溯矩阵",
+    `风格判定：<b>模块化单体 + 三端同源</b>（不拆微服务——单人运维、零依赖铁律、安卓内嵌约束）。
+     一期归档方案 A（演进式加固）已验证此路径有效，本方案是其延续而非推翻。`);
+  let h = `<h2>目标目录树（业务域组织，反映现实业务）</h2><div class="panel"><pre class="mono" style="white-space:pre-wrap;background:none;border:none;color:var(--ink)">${esc(D.targetTree)}</pre></div>`;
+  h += `<h2>依赖规则（目标）</h2><div class="panel small">
+   ① 依赖方向：api → domain → core/infra，反向禁止；② 领域间不直接 import 对方存储，跨域只经 core/storage 注册表或显式服务函数；
+   ③ core 不得 import domain/api（storage.py:14 已有同款约定，推广为全局规则）；
+   ④ 数据所有权单一：所有权矩阵每行的「所有者模块」是唯一写入口；
+   ⑤ 服务器版 = 壳（认证/配额/管理）+ 复用 app/ 内核，禁止在 server/ 复制业务逻辑（现状已合规，固化进检查）。</div>`;
+  h += `<h2>文件迁移映射（旧 → 新）</h2><table><tr><th>旧路径</th><th>新路径</th><th>理由</th></tr>
+   <tr><td><code>app/modules/app_config.py</code></td><td><code>app/core/{paths,userctx,config,presets,migrations}.py</code></td><td>999 行 8 职责；按职责拆，import 兼容层过渡</td></tr>
+   <tr><td><code>app/routes_data.py</code></td><td><code>app/api/data_export.py + data_sync.py + infra/sync/restore.py</code></td><td>导出/备份/恢复/同步四职责分离</td></tr>
+   <tr><td><code>app/routes.py</code></td><td><code>app/api/chat.py + debug.py + router.py</code></td><td>主链与调试分离；router 仅注册</td></tr>
+   <tr><td><code>app/tools/sticker_picker.py</code></td><td><code>app/domain/stickers/</code></td><td>表情包是业务域不是工具</td></tr>
+   <tr><td><code>server/server_app.py</code></td><td><code>server/{auth_endpoints,admin,quota,app}.py</code></td><td>658 行混合认证/管理/配额</td></tr>
+   <tr><td><code>app/static/js/panels.js</code></td><td><code>js/panels/{packs,data,debug}.js</code></td><td>824 行多面板混合</td></tr>
+   <tr><td><code>android/app/src/main/python/backend/</code></td><td>（移出 git，gitignore）</td><td>构建产物入库=漂移源（R-03）</td></tr></table>`;
+  h += `<h2>追溯矩阵（用户需求 → 能力 → 对象 → 数据 → 接口 → 代码）</h2><table>
+   <tr><th>用户需求</th><th>业务能力</th><th>领域对象</th><th>数据表/文件</th><th>接口</th><th>代码</th></tr>`;
+  for(const r of D.trace) h+=`<tr><td>${esc(r[0])}</td><td>${esc(r[1])}</td><td class="small">${esc(r[2])}</td><td><code>${esc(r[3])}</code></td><td class="small">${esc(r[4])}</td><td class="small">${esc(r[5])}</td></tr>`;
+  h += `</table><div class="panel small"><b>需求↔代码不一致点（实读）</b>：
+   ① 「默认包可配置」后端有 <code>DEFAULT_MODE</code>/<code>/modes.default</code> 但前端不读、不持久化（F-6.3）——需求未闭环；
+   ② 「角色卡=可分发的包」后端已支持，但表情包本体不随快照（metadata 策略）与「包=完整角色」的用户预期冲突（R-14，需 UI 明示）；
+   ③ 需求设计文档待讨论项（好感/紧张/心情状态系统、记忆分层）无代码对应——保持「待讨论」状态，禁止未拍板先建。</div>`;
+  b.innerHTML = h;
+}
+
+/* ⑭ 包管理与隔离规范 */
+function renderPackmgmt(){
+  const b = view("packmgmt","⑭ 包管理与隔离规范",
+    `多角色卡时代的数据管理模型。核心：<b>packs.json 把「包的存在性」从进程态升为持久事实</b>；
+     「包」是最强隔离边界，只有显式声明的通道允许跨界。`);
+  let h = `<h2>唯一权威注册表 packs.json</h2><div class="panel"><pre class="mono" style="white-space:pre-wrap;background:none;border:none;color:var(--ink)">${esc(D.packmgmt.registryJson)}</pre></div>`;
+  h += `<h2>隔离矩阵</h2><table><tr><th>数据类别</th><th>作用域</th><th>跨包可见</th><th>跨用户可见（服务器版）</th><th>落点</th></tr>`;
+  for(const r of D.packmgmt.isolation)
+    h += `<tr><td><b>${esc(r[0])}</b></td><td>${esc(r[1])}</td><td>${esc(r[2])}</td><td>${esc(r[3])}</td><td class="small"><code>${esc(r[4])}</code></td></tr>`;
+  h += `</table><h2>包生命周期状态机（含两级删除）</h2><div class="steps">`;
+  const L = D.packmgmt.lifecycle, st = L.states;
+  st.forEach((sname,i)=>{
+    const lab=(L.edges.find(e=>e[0]===st[i-1]&&e[1]===sname)||[])[2]||"";
+    h += `<div class="step" style="max-width:210px"><b>${esc(sname)}</b>${lab?`<span class="small muted">${esc(lab)}</span>`:""}</div>`;
+    if(i<st.length-1) h += `<div class="arrow">→</div>`;
+  });
+  h += `</div><div class="small muted" style="margin:6px 0">${esc(L.note)}</div>`;
+  h += `<h2>隔离铁律</h2><div class="panel small">` + D.packmgmt.rules.map(r=>`· ${esc(r)}`).join("<br>") + `</div>`;
+  b.innerHTML = h;
+}
+
+/* ⑮ 语音插件接入 */
+function renderVoice(){
+  const b = view("voice","⑮ 语音插件接入（与核心的兼容方案）",
+    `定位：<b>语音是角色卡的属性（包级 capability），引擎是用户级可选外挂</b>。对话流水线零改动——语音是回复的渲染层旁路。`);
+  let h = `<div class="panel small"><b>前提事实：</b>${esc(D.voice.premise)}</div>`;
+  h += `<h2>槽位结构（卡内声明，引擎外挂）</h2><div class="panel"><pre class="mono" style="white-space:pre-wrap;background:none;border:none;color:var(--ink)">${esc(D.voice.slots)}</pre></div>`;
+  h += `<h2>REGISTRY 注册三行（导出/同步/备份自动获得正确排除行为）</h2><table>
+    <tr><th>逻辑类型</th><th>路径</th><th>所有者</th><th>同步/导出策略</th><th>理由</th></tr>`;
+  for(const r of D.voice.registry)
+    h += `<tr><td><code>${esc(r[0])}</code></td><td><code>${esc(r[1])}</code></td><td><span class="tag t-own">${esc(r[2])}</span></td><td class="small">${esc(r[3])}</td><td class="small muted">${esc(r[4])}</td></tr>`;
+  h += `</table><h2>运行时数据流（按需合成，不预生成）</h2><div class="steps">`;
+  D.voice.flow.forEach((s,i)=>{
+    h += `<div class="step" style="max-width:230px"><b>${i+1}. ${esc(s[0])}</b>${esc(s[1])}</div>`;
+    if(i<D.voice.flow.length-1) h += `<div class="arrow">→</div>`;
+  });
+  h += `</div><h2>硬约束</h2><div class="panel small">` + D.voice.constraints.map(r=>`· ${esc(r)}`).join("<br>") + `</div>`;
+  b.innerHTML = h;
+}
+
+/* ════════ 启动 ════════ */
+const RENDER = {overview:renderOverview,deps:renderDeps,caps:renderCaps,journeys:renderJourneys,
+  ownership:renderOwnership,dataflow:renderDataflow,migration:renderMigration,api:renderApi,
+  fsm:renderFsm,heatmap:renderHeatmap,roadmap:renderRoadmap,problems:renderProblems,target:renderTarget,
+  packmgmt:renderPackmgmt,voice:renderVoice};
+const navEl = document.getElementById("navbtns");
+D.nav.forEach(item=>{
+  if(item[0]==="grp"){ const g=document.createElement("div"); g.className="grp"; g.textContent=item[1]; navEl.appendChild(g); return; }
+  const btn=document.createElement("button"); btn.textContent=item[1]; btn.dataset.v=item[0];
+  btn.onclick=()=>{ navEl.querySelectorAll("button").forEach(x=>x.classList.remove("on")); btn.classList.add("on"); show(item[0]); };
+  navEl.appendChild(btn);
+});
+const done = {};
+function show(id){
+  document.querySelectorAll(".view").forEach(v=>v.classList.remove("on"));
+  if(!done[id]){ RENDER[id](); done[id]=true; }
+  document.getElementById("v-"+id).classList.add("on");
+  window.scrollTo(0,0);
+}
+navEl.querySelector("button").classList.add("on");
+show("overview");
+</script>
+</body>
+</html>
