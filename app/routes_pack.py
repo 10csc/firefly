@@ -276,21 +276,36 @@ def create_pack(h):
     if pid in cfg.PRESETS or (cfg.USER_DIR / pid).exists():
         h._json({"ok": False, "error": "包 id 已存在"}); return
     cdir = cfg.USER_DIR / pid / "character"
-    cdir.mkdir(parents=True, exist_ok=True)
-    (cdir / "preset.json").write_text(json.dumps({
-        "id": pid, "name": name, "char_name": cname, "user_name": uname,
-        "presentation": presentation,
-        "desc": str(body.get("desc") or "").strip()[:60],
-        "tagline": str(body.get("tagline") or "").strip()[:60],
-        "schema": cfg.PRESET_SCHEMA,
-    }, ensure_ascii=False, indent=2), encoding="utf-8")
-    from modules.polisher import _EMERGENCY_PERSONA
-    (cdir / "prompts").mkdir(exist_ok=True)
-    (cdir / "prompts" / "polisher.md").write_text(_EMERGENCY_PERSONA, encoding="utf-8")
-    (cdir / "core.md").write_text(_PACK_CORE_TPL.format(char_name=cname, user_name=uname), encoding="utf-8")
-    (cdir / "identity.md").write_text(_PACK_IDENTITY_TPL.format(char_name=cname, user_name=uname), encoding="utf-8")
-    (cdir / "sms_samples.md").write_text(_PACK_SAMPLES_TPL.format(char_name=cname), encoding="utf-8")
-    cfg.reload_presets()
+    pack_dir = cfg.USER_DIR / pid
+    try:
+        cdir.mkdir(parents=True, exist_ok=True)
+        (cdir / "preset.json").write_text(json.dumps({
+            "id": pid, "name": name, "char_name": cname, "user_name": uname,
+            "presentation": presentation,
+            "desc": str(body.get("desc") or "").strip()[:60],
+            "tagline": str(body.get("tagline") or "").strip()[:60],
+            "schema": cfg.PRESET_SCHEMA,
+        }, ensure_ascii=False, indent=2), encoding="utf-8")
+        from modules.polisher import _EMERGENCY_PERSONA
+        (cdir / "prompts").mkdir(exist_ok=True)
+        (cdir / "prompts" / "polisher.md").write_text(_EMERGENCY_PERSONA, encoding="utf-8")
+        (cdir / "core.md").write_text(_PACK_CORE_TPL.format(char_name=cname, user_name=uname), encoding="utf-8")
+        (cdir / "identity.md").write_text(_PACK_IDENTITY_TPL.format(char_name=cname, user_name=uname), encoding="utf-8")
+        (cdir / "sms_samples.md").write_text(_PACK_SAMPLES_TPL.format(char_name=cname), encoding="utf-8")
+        cfg.reload_presets()
+    except Exception as e:
+        # R-09（2026-09-13）：建包中途失败必须把已建目录删掉。原来失败就撒手，
+        # 留下一个**孤儿包目录**：没注册进 PRESETS（或只注册了一半），列表里看不见、
+        # 没有任何管理入口，却占着这个 id 让用户无法用同名重建（真实案例：
+        # user_data/custom_f447527f/ 只剩一个空 character/）。
+        import shutil
+        shutil.rmtree(pack_dir, ignore_errors=True)
+        try:
+            cfg.reload_presets()      # 目录已删，重扫一遍清掉可能的半注册状态
+        except Exception:
+            pass
+        logger.warning("自建角色包创建失败，已回滚目录 %s: %s", pid, e)
+        h._json({"ok": False, "error": f"创建失败（已回滚，未留下残留目录）: {e}"}); return
     logger.info("自建角色包创建: %s（%s）", pid, name)
     h._json({"ok": True, "id": pid, "name": name})
 
@@ -321,19 +336,51 @@ def pack_forge_finish(h):
     h._json(forge_finish(_read_json(h)))
 
 
+def _is_orphan_pack_dir(d: Path) -> bool:
+    """孤儿包目录判定（R-09，2026-09-13）：目录存在、不含任何文件，且除空的 character/ 外
+    没有别的子目录。
+
+    为什么要求这么严：这是"删除"分支的准入条件，只允许清掉**确定啥也没有**的残留
+    （建包中途失败、早期版本残留）。用户手工塞过东西的目录一律拒绝——
+    宁可留着让用户自己处理，也不能替用户删数据。"""
+    try:
+        if not d.is_dir():
+            return False
+        for p in d.rglob("*"):
+            if p.is_file():
+                return False
+            if p.is_dir() and p.relative_to(d).as_posix() != "character":
+                return False
+        return True
+    except OSError:
+        return False
+
+
 def delete_pack(h):
     """POST /pack-delete：删除自定义角色包（仅本地版；内置包 story/haruno 拒绝）。
-    连数据一起删（user_data/{id}/ 整个目录）——前端已二次确认。"""
+    连数据一起删（user_data/{id}/ 整个目录）——前端已二次确认。
+
+    R-09（2026-09-13）：不再要求"必须已注册"。孤儿包目录（建包中途失败/早期版本残留）
+    不在注册表里，前端列表看不见、没有任何管理入口，却占着 id 让用户无法同名重建——
+    允许在"确认啥也没有"（空目录或只剩空 character/）时清掉。"""
     if _is_server():
-        h._json({"ok": False, "error": "服务器版暂不支持"}); return
+        h._json({"ok": False, "error": "服务器版暂不支持自建角色包"}); return
     body = _read_json(h)
     pid = str(body.get("id") or "").strip()
     if not _PACK_ID_RE.fullmatch(pid):
         h._json({"ok": False, "error": "非法包 id"}); return
-    if not (cfg.PRESETS.get(pid) or {}).get("custom"):
-        h._json({"ok": False, "error": "内置包不能删除"}); return
+    target = cfg.USER_DIR / pid
+    p = cfg.PRESETS.get(pid) or {}
+    if pid in cfg.PRESETS:
+        if not p.get("custom"):
+            h._json({"ok": False, "error": "内置包不能删除"}); return
+    else:
+        # 未注册：只允许删"孤儿残留"，不碰可能有内容的目录
+        if not _is_orphan_pack_dir(target):
+            h._json({"ok": False, "error": "该包未注册且目录非空，为免误删数据已拒绝"}); return
+        logger.info("清理孤儿包目录: %s", pid)
     import shutil
-    shutil.rmtree(cfg.USER_DIR / pid, ignore_errors=True)
+    shutil.rmtree(target, ignore_errors=True)
     cfg.reload_presets()
     logger.info("自建角色包删除: %s", pid)
     h._json({"ok": True, "id": pid})
