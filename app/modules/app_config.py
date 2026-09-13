@@ -84,19 +84,19 @@ class _ShimModule(types.ModuleType):
         raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
     def __setattr__(self, name, value):
-        # 写：先落到真正持有它的 core 模块 —— 拆分前 cfg 与被调函数是**同一个命名空间**，
-        # 所以 `cfg.get_client = stub` 会连带影响模块内部对 get_client/get_api_key 的调用；
-        # 拆分后若只写在兼容层，core.config.get_client 内部的 get_api_key() 就吃不到补丁，
-        # 语义与拆分前不一致（多个测试靠这层补丁）。
+        # 写：落到**所有**持有该名字的 core 模块 —— 拆分前 cfg 与被调函数是同一个命名空间，
+        # 一次赋值就能影响全部调用点（`cfg.get_client = stub` 会连带影响模块内部对 get_client
+        # 的调用；`cfg.time = 假时钟` 同理）。只写兼容层或只写第一个模块都会让语义变味。
+        _hit = False
         for _m in _SOURCES:
             if hasattr(_m, name):
                 setattr(_m, name, value)
-                if name not in _FORWARD:
-                    # 显式 re-export 的名字：兼容层本地也要更新（读走本地属性）
-                    super().__setattr__(name, value)
-                return
-        super().__setattr__(name, value)
-        # 转发名保持「活读」：不落本地快照，读永远走 __getattr__ → core 模块当前值
+                _hit = True
+        if _hit and name not in _FORWARD:
+            # 显式 re-export 的名字：兼容层本地也要更新（读走本地属性）
+            super().__setattr__(name, value)
+        elif not _hit:
+            super().__setattr__(name, value)
 
 
 sys.modules[__name__].__class__ = _ShimModule
