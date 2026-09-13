@@ -433,7 +433,7 @@ def handle_chat(
                 mode=mode,
             ))
             if org_output.sticker_label:
-                from tools.sticker_picker import pick_sticker_by_label
+                from domain.stickers.picker import pick_sticker_by_label
                 entry = pick_sticker_by_label(org_output.sticker_label, mode)
                 if entry:
                     messages.append({"type": "sticker", "path": entry.file, "label": entry.label})

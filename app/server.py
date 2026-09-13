@@ -128,6 +128,12 @@ def main():
         migrate_legacy_memory()
     except Exception as e:
         print(f"  [WARN] memory 迁移异常（继续启动）：{e}", flush=True)
+    # 表情包注册表播种/迁移（阶段 2.7）：同样原在模块 import 期跑，改为启动链显式执行
+    try:
+        from domain.stickers.picker import migrate_sticker_seed
+        migrate_sticker_seed()
+    except Exception as e:
+        print(f"  [WARN] 表情包注册表迁移异常（继续启动）：{e}", flush=True)
     preload_knowledge()
 
     # 端口占用检查——防止旧进程残留导致请求路由到旧代码。

@@ -60,7 +60,7 @@ def _build_backup_zip(root: Path, mode: str) -> bytes:
         # 表情包元数据：{file名: {label, category, enabled, sha256}}——图片本体不打包。
         # 用户表情包目录与注册表在 USER_DIR/{uid}/stickers/（无模式维度，见 sticker_picker）
         try:
-            from tools.sticker_picker import _user_registry_file
+            from domain.stickers.picker import _user_registry_file
             meta = {}
             reg = _user_registry_file()
             sdir = reg.parent if reg is not None else None

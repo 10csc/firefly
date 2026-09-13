@@ -290,7 +290,7 @@ def generate_proactive(session: dict, client, mode: str = DEFAULT_MODE,
                 mode=mode,
             ))
             if org.sticker_label:
-                from tools.sticker_picker import pick_sticker_by_label
+                from domain.stickers.picker import pick_sticker_by_label
                 entry = pick_sticker_by_label(org.sticker_label, mode)
                 if entry:
                     messages.append({"type": "sticker", "path": entry.file, "label": entry.label})

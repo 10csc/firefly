@@ -58,6 +58,7 @@ _env.update({"FIREFLY_ANDROID": "1", "FIREFLY_DATA_DIR": str(_sandbox),
              "PYTHONUTF8": "1", "PYTHONIOENCODING": "utf-8"})
 _CHILD = ("import sys; sys.path.insert(0, r'{app}');\n"
           "import routes, orchestrator, modules.memory_manager as mm;\n"
+          "import domain.stickers.picker, tools.sticker_picker;\n"
           "import modules.app_config as cfg;\n"
           "print('DATA', cfg.USER_DIR)").format(app=str(ROOT / "app"))
 p = subprocess.run([sys.executable, "-c", _CHILD], capture_output=True, encoding="utf-8",

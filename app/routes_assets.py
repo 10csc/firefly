@@ -59,7 +59,7 @@ def add_sticker_route(h):
     # multipart/form-data 解析：本地版保存图片到 user_data/stickers/；
     # 服务器版（A2 媒体策略）只传输不保存：校验+哈希 → 仅注册文字元数据（file=local:<sha256>.<ext>，
     # 图片本体由前端存 WebView IndexedDB；其它设备无图 → 占位提示「（表情包已失效）」）
-    from tools.sticker_picker import add_sticker, StickerAddError
+    from domain.stickers.picker import add_sticker, StickerAddError
     # 局部绑定：call-time 从 routes 取，保持测试改写 routes.parse_multipart 的拦截面不变
     from routes import parse_multipart
     try:
@@ -104,7 +104,7 @@ def add_sticker_route(h):
         safe_name = f"user_{int(time.time())}_{secrets.token_hex(4)}{ext}"
         # 图片文件与注册表同作用域：服务器版写入 user_data/{uid}/stickers/（账号隔离），
         # 本地版退回 USER_DIR/stickers（行为不变）
-        from tools.sticker_picker import _user_registry_file
+        from domain.stickers.picker import _user_registry_file
         save_dir = _user_registry_file().parent
         save_dir.mkdir(parents=True, exist_ok=True)
         (save_dir / safe_name).write_bytes(file_info["data"])
@@ -119,7 +119,7 @@ def add_sticker_route(h):
 
 
 def sticker_update(h):
-    from tools.sticker_picker import update_sticker, StickerUpdateError
+    from domain.stickers.picker import update_sticker, StickerUpdateError
     body = _read_json(h)
     sid = (body.get("id") or "").strip()
     new_label = (body.get("label") or "").strip() or None
@@ -139,7 +139,7 @@ def sticker_update(h):
 
 
 def sticker_delete(h):
-    from tools.sticker_picker import delete_sticker, StickerDeleteError
+    from domain.stickers.picker import delete_sticker, StickerDeleteError
     body = _read_json(h)
     sid = (body.get("id") or "").strip()
     try:
@@ -219,7 +219,7 @@ def get_image(h):
 def get_stickers(h):
     # 返回表情包列表。?enabled=1 只返回启用项（聊天页选择面板）；
     # 不带参数返回全量（管理页，含停用项）。editable：当前用户可改/删的条目。
-    from tools.sticker_picker import list_all_stickers, _STICKERS_DEFAULT, editable_ids
+    from domain.stickers.picker import list_all_stickers, _STICKERS_DEFAULT, editable_ids
     qs = parse_qs(urlparse(h.path).query)
     enabled_only = qs.get("enabled", [""])[0] == "1"
     ids = editable_ids()

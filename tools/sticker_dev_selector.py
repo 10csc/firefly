@@ -2,7 +2,7 @@
 """表情包默认启用选择器（本地小工具，零依赖）
 
 用法：
-    python tools/sticker_selector.py
+    python tools/sticker_dev_selector.py
     → 浏览器打开 http://127.0.0.1:8767
 
 功能：

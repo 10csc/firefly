@@ -75,7 +75,7 @@ _ORGANIZER_SYSTEM_FALLBACK = """你是{char_name}的表情包助手。{char_name
 
 def _build_sticker_list(mode: str = "") -> str:
     """从注册表构建 label 清单（按分类分组）；按包过滤（全局共享 + 归属该包）。"""
-    from tools.sticker_picker import get_all_stickers
+    from domain.stickers.picker import get_all_stickers
     stickers = get_all_stickers(mode)
     by_cat: dict[str, list[str]] = {}
     for s in stickers.values():

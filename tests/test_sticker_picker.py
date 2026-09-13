@@ -8,8 +8,9 @@ except Exception:
     pass
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "app"))
 
-# 隔离 user_data：重定向必须在 import sticker_picker 之前——其模块级
-# _migrate_legacy_registry()（sticker_picker.py:61）会把 app 注册表拷进真实 user_data
+# 隔离 user_data：重定向必须在 import sticker_picker 之前。
+# 阶段 2.7 起模块**不再在 import 期迁移**（改为启动链显式调用 migrate_sticker_seed()），
+# 故这里 import 完显式补一次，保持与真实启动链一致的初始状态。
 import modules.app_config as cfg
 _tmp = tempfile.mkdtemp(prefix="firefly_test_stk_")
 cfg.USER_DIR = __import__("pathlib").Path(_tmp)
@@ -20,6 +21,8 @@ from tools.sticker_picker import (
     get_all_stickers, get_enabled_stickers, list_all_stickers, get_counters,
     add_sticker, update_sticker, StickerAddError, VALID_CATEGORIES,
 )
+import tools.sticker_picker as _sp_seed
+_sp_seed.migrate_sticker_seed()
 
 PASS, FAIL = 0, 0
 def check(desc, cond):
