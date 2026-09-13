@@ -263,5 +263,108 @@ check("I4 卡片样式已提为全局（#server-web-entry 不再裸渲染）",
 check("I5 角色详情页同步后台主动门控",
       "S._hiddenEnabled = payload.hidden_enabled" in (ROOT / "app" / "static" / "js" / "panels.js").read_text(encoding="utf-8"))
 
+# ══════════════════════════════════════════════════════════════════
+# 阶段 0 · 任务 0.2：快照恢复三回归（R-01 / R-02 / E-1）
+# 只追加用例，不改上面任何既有断言。
+# ══════════════════════════════════════════════════════════════════
+
+print("=== J. R-01 回归：快照里的未注册自建包必须完整落地并注册 ===")
+_pack_id = "custom_t01"
+snap_pack = _zip_bytes({
+    f"{_pack_id}/character/preset.json": json.dumps({
+        "id": _pack_id, "name": "测试自建包", "char_name": "测试角色",
+        "user_name": "测试用户", "presentation": "sticker"}, ensure_ascii=False),
+    f"{_pack_id}/character/core.md": "自建包核心设定",
+    f"{_pack_id}/data/conversation.jsonl":
+        '{"seq": 1, "who": "user", "type": "text", "content": "自建包对话"}\n',
+    "_config.json": '{"providers": []}',
+})
+check("J0 前置：恢复前该包未注册", _pack_id not in cfg.MODES)
+_ok, _err, _n = routes_data._restore_full_snapshot(snap_pack, backup=False)
+check("J1 恢复成功", _ok is True and not _err)
+_pack_dir = Path(cfg.USER_DIR) / _pack_id
+check("J2 包定义落位（preset.json 在盘上）", (_pack_dir / "character" / "preset.json").is_file())
+check("J3 包已进入注册表（reload_presets 生效）",
+      _pack_id in cfg.MODES and _pack_id in cfg.PRESETS)
+check("J4 包数据落位（对话文件在盘上）", (_pack_dir / "data" / "conversation.jsonl").is_file())
+check("J5 对话内容正确",
+      "自建包对话" in (_pack_dir / "data" / "conversation.jsonl").read_text(encoding="utf-8"))
+check("J6 中间目录已清理（无 .pack_stage / .pack_tmp 残留）",
+      not (Path(cfg.USER_DIR) / f"{_pack_id}.pack_stage").exists()
+      and not (Path(cfg.USER_DIR) / f"{_pack_id}.pack_tmp").exists())
+
+print("=== K. R-02/E-1 回归：恢复中途失败必须保持旧数据原样 ===")
+_story_root = cfg.mode_root("story")
+_story_conv = _story_root / "data" / "conversation.jsonl"
+_story_conv.parent.mkdir(parents=True, exist_ok=True)
+_story_conv.write_text('{"seq": 1, "content": "旧数据-必须原样"}\n', encoding="utf-8")
+snap_story = _zip_bytes({
+    "story/data/conversation.jsonl": '{"seq": 2, "content": "新数据-不该落地"}\n',
+})
+
+import shutil as _shmod
+
+_orig_cpf = _shmod.copyfileobj
+
+
+def _boom_cpf(src, out, *a, **k):
+    raise OSError("模拟磁盘满/IO 中断")
+
+
+_shmod.copyfileobj = _boom_cpf
+try:
+    _ok, _err, _n = routes_data._restore_full_snapshot(snap_story, backup=False)
+finally:
+    _shmod.copyfileobj = _orig_cpf
+check("K1 中途失败被如实报告", _ok is False and "未改动" in str(_err))
+check("K2 旧数据逐字未变", "旧数据-必须原样" in _story_conv.read_text(encoding="utf-8"))
+check("K3 无半写临时目录残留", not (_story_root.parent / "story.restore_tmp").exists())
+check("K4 未产生 .restore_old 脏目录", not (_story_root.parent / "story.restore_old").exists())
+
+# K5-K7：直接压 _swap_dir_into_place 的「换入失败 → 放回旧目录」回滚分支
+_swap_root = Path(cfg.USER_DIR) / "swap_probe"
+_swap_root.mkdir(parents=True, exist_ok=True)
+(_swap_root / "keep.txt").write_text("旧内容", encoding="utf-8")
+_err_swap = routes_data._swap_dir_into_place(Path(cfg.USER_DIR) / "swap_probe.import_tmp", _swap_root)
+check("K5 换入失败返回错误", bool(_err_swap))
+check("K6 换入失败后旧目录原样", (_swap_root / "keep.txt").read_text(encoding="utf-8") == "旧内容")
+check("K7 回滚后无 .restore_old 残留", not (Path(cfg.USER_DIR) / "swap_probe.restore_old").exists())
+_shmod.rmtree(_swap_root, ignore_errors=True)
+
+print("=== L. E-1 回归：恢复前快照失败 → 必须回落逐包备份（backup=True） ===")
+_lcalls = []
+_orig_build = routes_snapshot.build_full_snapshot_zip
+_orig_restore = routes_data._restore_full_snapshot
+
+
+def _rec_restore(data, backup=True):
+    _lcalls.append(backup)
+    return True, "", 0
+
+
+def _boom_build():
+    raise OSError("模拟快照打包失败（磁盘满）")
+
+
+_lsnap_dir = routes_snapshot._snapshots_dir()
+_lsnap_dir.mkdir(parents=True, exist_ok=True)
+_lsnap_name = "snapshot-20200101-000000.zip"
+(_lsnap_dir / _lsnap_name).write_bytes(b"PK\x03\x04fake")
+routes_snapshot.build_full_snapshot_zip = _boom_build
+routes_data._restore_full_snapshot = _rec_restore   # routes_snapshot 调用时逐次从模块取，patch 生效
+try:
+    h = FakeH({"name": _lsnap_name})
+    routes.snapshot_restore(h)
+finally:
+    routes_snapshot.build_full_snapshot_zip = _orig_build
+    routes_data._restore_full_snapshot = _orig_restore
+    try:
+        (_lsnap_dir / _lsnap_name).unlink()
+    except OSError:
+        pass
+check("L1 pre-restore 失败时以 backup=True 回落", _lcalls == [True])
+check("L2 响应 backup_ok=False 且恢复仍执行",
+      h.data.get("ok") is True and h.data.get("backup_ok") is False)
+
 print(f"\n统计: PASS={PASS} FAIL={FAIL}")
 sys.exit(0 if FAIL == 0 else 1)

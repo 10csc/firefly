@@ -26,12 +26,39 @@ STATIC = ROOT / "app" / "static"
 SERVER_FRONT = ROOT / "server" / "frontend"
 ANDROID_ASSETS = ROOT / "android" / "app" / "src" / "main" / "assets"
 
-# app/assets 中随 APK 打包的子集（服务器模式 file:// 引用的背景/字体/图标）
+# app/assets 根目录**文件**（不含 character/ stickers/ 子目录）必须是这两类的并集。
+# 2026-09-13（门禁修复 D-3）：原来 ASSET_FILES 是硬编码 9 项，新加的图标/背景如果忘了登记，
+# 网页端正常（直接读 app/assets）但 APK 里缺文件 → 手机服务器模式裂图，且门禁全绿。
+# 现在盘上出现未登记文件即 FAIL，逼着显式分类。
 ASSET_FILES = (
     "background.jpg", "StarRailFont.ttf",
     "icon_home.png", "icon_rest.png", "icon_trash.png", "icon_undo.png",
     "notice_speaker.png", "theme_moon.png", "theme_sun.png",
 )
+# 当前**无任何客户端引用**的历史遗留件（2026-09-13 全仓检索无引用：前端 html/css/js、
+# firefly.spec、package/firefly.iss、android 资源均未引用）。不入 APK；待阶段 1/6 清理。
+# 它们的价值是"必须被显式分类"——将来若真要用，登记进 ASSET_FILES 即可。
+ASSET_NOT_SHIPPED = ("icon.png", "icon_tip.svg", "img_header.png", "thumb.svg")
+
+
+def _check_asset_set() -> bool:
+    """app/assets 根目录文件集合断言（目录约定 + 集合比对）。"""
+    src_dir = ROOT / "app" / "assets"
+    if not src_dir.is_dir():
+        print(f"  X app/assets 目录不存在: {src_dir}")
+        return False
+    actual = {p.name for p in src_dir.iterdir() if p.is_file()}
+    expected = set(ASSET_FILES) | set(ASSET_NOT_SHIPPED)
+    unlisted = sorted(actual - expected)
+    missing = sorted(expected - actual)
+    if unlisted:
+        print(f"  X app/assets 下有未登记的资产（是否要随 APK 打包？）: {unlisted}")
+    if missing:
+        print(f"  X 已登记的资产在盘上不存在: {missing}")
+    if unlisted or missing:
+        print("  补救：要进 APK → 加进 ASSET_FILES；不进 APK → 加进 ASSET_NOT_SHIPPED")
+        return False
+    return True
 
 
 def _md5(fp: Path) -> str:
@@ -107,6 +134,10 @@ def sync(check_only: bool) -> int:
         return 1
     if check_only and "漂移" in rb.stdout:
         print(rb.stdout.strip())
+        return 1
+
+    # 0b) 资产清单断言：app/assets 根目录文件必须已被显式分类（进 APK / 不进 APK）
+    if not _check_asset_set():
         return 1
 
     # 1) server/frontend：三份共享前端文件（config.js/login.html/admin.html 为 server 独有，不动）

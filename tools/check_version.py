@@ -17,11 +17,18 @@ except Exception:
 
 ROOT = Path(__file__).resolve().parent.parent
 
-def extract(path: str, pattern: str, group: int = 1) -> str | None:
+# 文件缺失 ≠ 版本不一致。2026-09-13（门禁修复 D-1）：原来"文件缺失"直接 FAIL，
+# 导致干净 clone（无 server/version.json 等非检出文件）或按需裁剪的检出永远过不了门禁，
+# 门禁被绕过就失去意义。现在缺失只 SKIP 并显式报数，**文件在而版本号不一致仍 FAIL**。
+SKIP = object()
+
+
+def extract(path: str, pattern: str, group: int = 1):
+    """返回 str=提取成功；SKIP=文件缺失（本次未校验）；None=文件在但提取不到（真漂移）。"""
     fp = ROOT / path
     if not fp.exists():
-        print(f"  X 文件缺失: {path}")
-        return None
+        print(f"  - SKIP 文件缺失: {path}（本次不校验该项）")
+        return SKIP
     m = re.search(pattern, fp.read_text(encoding="utf-8"))
     if not m:
         print(f"  X 未找到版本号: {path}（pattern={pattern}）")
@@ -41,14 +48,24 @@ sources = {
 
 print("=== 版本一致性检查 ===")
 versions = {}
+skipped = []
 ok = True
 for name, (path, pat) in sources.items():
     v = extract(path, pat)
-    if v is None:
+    if v is SKIP:
+        skipped.append(name)
+    elif v is None:
         ok = False
     else:
         versions[name] = v
         print(f"  {name}: {v}")
+
+if skipped:
+    print(f"  本次未校验 {len(skipped)} 项（文件缺失，按 SKIP 处理）: {', '.join(skipped)}")
+if not versions:
+    # 全缺失时不能给出"PASS"——那等于门禁空转
+    print("\n  X 全部版本源均缺失，无法校验（非正常检出）")
+    ok = False
 
 # 一致性比较：版本号字符串（versionCode 是映射整数，单独走规则校验；
 # version.json tag 提取时已去 v 前缀，直接参与比较）

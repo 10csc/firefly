@@ -28,10 +28,38 @@ ORDER = ["state", "util", "imgzip", "api",
          "chat_render", "chat", "chat_media", "chat_history",
          "fix", "views", "proactive", "relay", "guide", "main"]
 
+# 不参与 bundle 的 js 模块名（写模块名，不带 .js；各自有独立加载方式，见 app/static/index.html）：
+# - bundle：本脚本的产物，不能自我包含
+# - pc_nav：PC 双栏左侧导航，index.html 用独立 <script> 加载（petite-vue 挂载，桌面档才用）
+NON_BUNDLE = {"bundle", "pc_nav"}
+
 try:
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 except Exception:
     pass
+
+
+def check_module_set() -> bool:
+    """js/ 目录里的模块集合必须与 ORDER 逐字相等（错一个就 FAIL）。
+
+    2026-09-13（门禁修复 D-3）：原来 ORDER 只是硬编码 18 项，新增 js 模块忘登记时
+    bundle 会**静默漏掉**该模块（运行时才报 undefined，门禁全绿）。现在盘上多出
+    未登记的模块 → 门禁 FAIL，逼着登记进 ORDER（或显式放进 NON_BUNDLE 并说明加载方式）。"""
+    actual = {p.stem for p in JS_DIR.glob("*.js")} - NON_BUNDLE
+    expected = set(ORDER)
+    if len(ORDER) != len(expected):
+        print(f"X ORDER 内有重复项: {sorted(ORDER)}")
+        return False
+    unlisted = sorted(actual - expected)
+    missing = sorted(expected - actual)
+    if unlisted:
+        print(f"X js/ 下有未登记进 ORDER 的模块（bundle 会漏掉它们）: {[n + '.js' for n in unlisted]}")
+    if missing:
+        print(f"X ORDER 登记了但盘上不存在（拼写错或文件被删）: {[n + '.js' for n in missing]}")
+    if unlisted or missing:
+        print("  补救：登记进 ORDER（要打进 bundle），或加进 NON_BUNDLE（独立加载，需说明）")
+        return False
+    return True
 
 
 def build() -> str:
@@ -67,6 +95,8 @@ def _style_ref() -> str:
 
 
 def main() -> int:
+    if not check_module_set():
+        return 1
     content = build()
     if "--check" in sys.argv:
         if not BUNDLE.exists():
