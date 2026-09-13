@@ -46,7 +46,7 @@ from modules.proactive_gate import (  # noqa: F401
     _reply_lock_for, _restore_active_semaphore, _restore_hidden_state,
     _state_key, _update_ignored,
     gate_open, get_counters, prob_gate_open,
-    reply_lock, reply_try_lock, reply_unlock,
+    reply_lock, reply_try_lock, reply_unlock, reset_states,
 )
 from modules.proactive_gen import (  # noqa: F401
     InputRejected, ProactiveError, ProactiveResult,

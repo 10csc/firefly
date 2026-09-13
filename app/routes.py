@@ -495,13 +495,15 @@ def clear_history(h):
         # proactive_log（主动判断记录）、pipeline（流水线日志）、
         # 内存信号量（ACTIVE 复位）+ 忽视计数清零
         try:
-            from modules.proactive import _log_file, _active_set, _IGNORED, _HIDDEN
+            from modules.proactive import _log_file, _active_set, reset_states
             fp = _log_file(mode)
             if fp.exists():
                 fp.unlink()
             _active_set(mode, 1)
-            _IGNORED.pop(mode, None)
-            _HIDDEN.pop(mode, None)   # 隐藏式冷却随历史清理重置
+            # C-6.1（2026-09-13）：这里原来写的是 _IGNORED.pop(mode) / _HIDDEN.pop(mode)，
+            # 而这些表的键是 (mode, 用户作用域) 元组 → 按字符串 pop 从来删不掉任何东西：
+            # 清了历史，降档惩罚与隐藏式冷却仍在（"清空后她依然不主动开口"）。
+            reset_states(mode)
         except Exception:
             pass
         try:

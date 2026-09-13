@@ -34,6 +34,25 @@ def _state_key(mode: str = DEFAULT_MODE):
     本地版无用户上下文，scope 恒为空串，行为与原来一致。"""
     return (mode, user_scope_key())
 
+
+def reset_states(mode: str = DEFAULT_MODE) -> None:
+    """清空该模式**全部用户作用域**下的主动状态（清除历史时调用，C-6.1，2026-09-13）。
+
+    修的是什么：`routes.clear_history` 原来写的是 `_IGNORED.pop(mode)` / `_HIDDEN.pop(mode)`，
+    但这些表的键是 `_state_key(mode)` = **(mode, 用户作用域) 元组**——按字符串 pop 永远删不掉
+    任何东西。用户清了历史，角色仍背着"连续被忽视 3 次"的降档惩罚和隐藏式冷却，
+    表现就是"清空历史后她依然不肯主动开口"。
+
+    只清语义上属于"关系重新开始"的两项：
+    - `_IGNORED`：忽视降档计数（惩罚必须归零）
+    - `_HIDDEN`：隐藏式冷却时间戳（同上）
+    **故意不清** `_ACTIVE` 与 `_PROB_LAST_CHECK`：它们是频控/互斥闸门，清了等于给
+    "反复清空历史来催主动消息"开后门。ACTIVE 的复位由既有的 `_active_set(mode, 1)` 负责。"""
+    with _lock:
+        for d in (_IGNORED, _HIDDEN):
+            for k in [k for k in d if isinstance(k, tuple) and k and k[0] == mode]:
+                d.pop(k, None)
+
 # ── 信号量 ──────────────────────────────────────────
 # REPLY（回复通道锁，按 mode 隔离）：响应式/主动式/概率式共用。
 #   响应式：阻塞获取（用户消息不可丢）；主动式/概率式：非阻塞（忙则放弃）。
