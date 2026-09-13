@@ -123,6 +123,14 @@ _IMPORT_MAX_TOTAL_BYTES = 100 * 1024 * 1024   # 包内解压总量上限
 
 _BACKUP_KEEP = 10                             # 每模式保留最近手动备份份数
 
+# 自动备份（auto-/pre-restore-）的滚动配额（C-3，2026-09-13）。
+# 原状：`_backup_current_mode` 只写不删，每次导入/恢复都在 backups/ 里堆一份全量 zip；
+# 而裁剪逻辑只认 `{mode}-*`（手动备份），于是自动备份**永久累积**——用户完全看不出来
+# （/backups 列表按设计不列自动备份），磁盘却一直被吃掉。
+# 口径与既有实现对齐：auto 与手动同配额（每模式 10 份）；pre-restore 与 snapshot 侧
+# 一致留 3 份（routes_snapshot.py 的 pre-restore 快照也是 3 份）。
+_AUTO_KEEP = {"auto": _BACKUP_KEEP, "pre-restore": 3}
+
 
 def _zip_safe_entries(zf) -> list[tuple[str, object]]:
     """zip slip 防御：拒绝绝对路径与 .. 穿越，只收普通文件；返回 [(name, info)]。
@@ -151,8 +159,28 @@ def _backup_dir(mode: str) -> Path:
     return cfg.mode_root(mode).parent / "backups"
 
 
+def _prune_auto_backups(bdir: Path, mode: str, prefix: str, keep: int, current: str) -> None:
+    """滚动裁剪 {prefix}-{mode}-*.zip，保留最近 keep 份（刚写入的 current 不参与淘汰）。
+
+    注意三点（都是踩过的坑）：
+    1. 不看别的模式——backups/ 是各模式共用的一个目录（{用户根}/backups），
+       若按 `{prefix}-*.zip` 全局裁剪，一个模式频繁导入会把别的模式的备份删掉；
+    2. 排除 current：同一秒内连建时基底名会被淘汰再复用，不排除就会自删刚写的那份；
+    3. 失败只告警——裁剪是清理动作，绝不能因为删不掉旧备份而让导入/恢复失败。"""
+    try:
+        olds = sorted(p.name for p in bdir.glob(f"{prefix}-{mode}-*.zip") if p.name != current)
+        for old in olds[:max(len(olds) + 1 - keep, 0)]:
+            try:
+                (bdir / old).unlink()
+            except OSError:
+                pass
+    except Exception as e:
+        logger.warning("自动备份裁剪失败（不影响本次备份）: %s", e)
+
+
 def _backup_current_mode(mode: str, prefix: str) -> None:
-    """把当前模式数据打成 zip 存到 backups/（导入/恢复前自动备份，防误操作）。空目录跳过。"""
+    """把当前模式数据打成 zip 存到 backups/（导入/恢复前自动备份，防误操作）。空目录跳过。
+    写入后按前缀滚动裁剪（C-3）：auto 留 _BACKUP_KEEP 份、pre-restore 留 3 份。"""
     root = cfg.mode_root(mode)
     if not any(root.rglob("*")):
         return
@@ -164,6 +192,9 @@ def _backup_current_mode(mode: str, prefix: str) -> None:
         for f in sorted(root.rglob("*")):
             if f.is_file():
                 zf.write(f, f.relative_to(root).as_posix())
+    keep = _AUTO_KEEP.get(prefix)
+    if keep:
+        _prune_auto_backups(_backup_dir(mode), mode, prefix, keep, fp.name)
 
 
 def _swap_dir_into_place(tmp: Path, root: Path) -> str:

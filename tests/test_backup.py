@@ -173,5 +173,73 @@ h = FakeH({"name": "xxx-20260101-000000.zip"})
 routes.backup_restore(h)
 check("F3 未知模式名拒绝", h.data.get("ok") is False and "模式" in h.data.get("error", ""))
 
+print("=== G. 自动备份统一裁剪（C-3，2026-09-13） ===")
+# 原状：_backup_current_mode 只写不删，裁剪只管 {mode}-*.zip（手动）→ auto-/pre-restore-
+# 永久累积且用户不可见（/backups 列表按设计不列自动备份）。这里钉死滚动配额。
+# 注意：自动备份文件名没有 _N 去重（同一秒连写会覆盖同一文件），所以必须用**可控时钟**
+# 造出"跨秒累积"的真实场景，否则每次调用都覆盖同一份、断言恒真等于没测。
+import routes_data as rd
+
+
+class _FakeClock:
+    """每次 strftime 递增 1 秒 → 每次自动备份文件名唯一（等价于真实跨秒累积）。"""
+
+    def __init__(self):
+        self.t = 0
+
+    def strftime(self, _fmt):
+        self.t += 1
+        return "20260101-%06d" % self.t
+
+
+_orig_time = rd.time
+rd.time = _FakeClock()
+
+har_root = cfg.mode_root("haruno")
+(har_root / "data").mkdir(parents=True, exist_ok=True)
+(har_root / "data" / "memory.md").write_text("春日手信", encoding="utf-8")
+
+try:
+    for _ in range(15):
+        rd._backup_current_mode("story", "auto")
+    auto_story = sorted(p.name for p in BACKUPS.glob("auto-story-*.zip"))
+    check("G1 连续 15 次自动备份后 auto-story 只留 10 份", len(auto_story) == 10)
+    check("G2 留下的是最近 10 份（淘汰最旧，按时间序）",
+          auto_story == ["auto-story-20260101-%06d.zip" % n for n in range(6, 16)])
+
+    # 其它模式/前缀不受影响（backups/ 是各模式共用的一个目录）
+    for _ in range(5):
+        rd._backup_current_mode("haruno", "auto")
+    check("G3 别的模式的 auto 备份不被误删", len(sorted(BACKUPS.glob("auto-haruno-*.zip"))) == 5)
+    check("G4 story 的 auto 数量未被 haruno 的活动改变",
+          len(sorted(BACKUPS.glob("auto-story-*.zip"))) == 10)
+
+    for _ in range(6):
+        rd._backup_current_mode("story", "pre-restore")
+    check("G5 pre-restore 留 3 份（与 snapshot 侧口径一致）",
+          len(sorted(BACKUPS.glob("pre-restore-story-*.zip"))) == 3)
+    check("G6 手动备份不受自动裁剪影响（E 段留下的 haruno-* 仍在）",
+          len(sorted(BACKUPS.glob("haruno-*.zip"))) == 10)
+
+    # 未知前缀不裁剪（防御：将来新增前缀时不会意外删东西）
+    for _ in range(4):
+        rd._backup_current_mode("story", "manual-x")
+    check("G7 未登记前缀不参与裁剪（4 份全留）",
+          len(sorted(BACKUPS.glob("manual-x-story-*.zip"))) == 4)
+finally:
+    rd.time = _orig_time
+
+# 空目录不产生备份（既有语义不能被裁剪逻辑带坏）
+# 注意：既有判定是 `not any(root.rglob("*"))`，**空子目录也算非空**（会打出一个空 zip），
+# 所以这里必须连目录一起清掉才算"真的空"——这是既有行为，本卡不改。
+import shutil as _sh
+for sub in sorted(har_root.iterdir()):
+    _sh.rmtree(sub, ignore_errors=True) if sub.is_dir() else sub.unlink(missing_ok=True)
+check("G8 前置：模式目录已清空（无文件也无子目录）", not any(har_root.rglob("*")))
+_before = len(list(BACKUPS.glob("auto-haruno-*.zip")))
+rd._backup_current_mode("haruno", "auto")
+check("G9 空目录仍跳过（不产生新备份）",
+      len(list(BACKUPS.glob("auto-haruno-*.zip"))) == _before)
+
 print(f"\n统计: PASS={PASS} FAIL={FAIL}")
 sys.exit(0 if FAIL == 0 else 1)
