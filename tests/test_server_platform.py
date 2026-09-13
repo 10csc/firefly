@@ -92,12 +92,20 @@ check("C3 MODES 同样不含自建包", "custom_t01" not in _lines.get("MODES", 
 
 print("=== D. 源码守卫：硬置取代 setdefault、main() 不再重复置 ===")
 src = (ROOT / "server" / "server_app.py").read_text(encoding="utf-8")
+app_src = (ROOT / "server" / "app.py").read_text(encoding="utf-8")
 check("D1 不再使用 setdefault 设平台标记",
       'setdefault("FIREFLY_SERVER"' not in src)
 check("D2 模块级硬置存在", 'os.environ["FIREFLY_SERVER"] = "1"' in src)
-check("D3 硬置行在 app_config 导入之前",
-      src.index('os.environ["FIREFLY_SERVER"] = "1"') < src.index("from modules import app_config"))
-_main = src[src.index("def main():"):]
+# 2026-09-13（阶段 2.4 拆分后）：入口只做硬置 + re-export，app_config 的导入搬进了 server/app.py。
+# 守卫意图不变 = **硬置必须早于任何会拉进 app_config 的导入**（现在是 `from app import ...`）。
+_hard = src.index('os.environ["FIREFLY_SERVER"] = "1"')
+_pull = src.find("from app import")
+check("D3 硬置行在拉入 app（进而 app_config）的导入之前", 0 <= _hard < _pull)
+check("D3b 入口不再直接导入 app_config（由 app.py 持有）",
+      "from modules import app_config" not in src)
+check("D3c app.py 确实持有 app_config 导入（硬置必须先于它）",
+      "from modules import app_config" in app_src)
+_main = app_src[app_src.index("def main():"):]
 check("D4 main() 里不再重复硬置（只留确认打印）",
       'os.environ["FIREFLY_SERVER"] = "1"' not in _main and "[平台] FIREFLY_SERVER=" in _main)
 
