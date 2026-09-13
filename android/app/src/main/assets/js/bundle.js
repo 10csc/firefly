@@ -3670,22 +3670,51 @@ const MODE_NAMES = { story: "剧情模式", haruno: "春日手信" };   // 默�
 const PRESET_MODES = [];   // /modes 清单（id/name/presentation/desc/tagline/cover/avatar/has_opening）
 let _modesLoaded = false;
 
+// ── 当前包持久化（F-6.3，2026-09-13）──
+// 原状：localStorage 只存 ui-scale/theme/particles，当前包从不落盘，而 /modes 的
+// `default` 字段前端也没读——于是切到 haruno 后一刷新就弹回 story，
+// 用户以为"我的角色卡丢了"。
+// 恢复顺序：last_mode → /modes.default → "story"；每个候选都必须在注册表里，否则继续回退。
+const _MODE_KEY = "firefly_last_mode";
+function _rememberMode(id) {
+    try { if (id) localStorage.setItem(_MODE_KEY, id); } catch (e) {}
+}
+function _savedMode() {
+    try { return localStorage.getItem(_MODE_KEY) || ""; } catch (e) { return ""; }
+}
+// 切包的唯一入口：校验 → 赋值 → 持久化。所有入口都走这里，
+// 避免"某些入口记得存、某些不存"（那会让持久化时灵时不灵）。
+function _applyMode(id) {
+    if (!id || !PRESET_MODES.some(m => m.id === id)) return false;
+    CURRENT_MODE = id;
+    _rememberMode(id);
+    return true;
+}
+// 面向用户的"进入某包"：非法/空 id 回退注册表首包，最后兜底 "story"
+function _switchMode(id) {
+    if (_applyMode(id)) return;
+    if (_applyMode(PRESET_MODES[0] && PRESET_MODES[0].id)) return;
+    CURRENT_MODE = "story";
+}
+
 function modeName(id) { return MODE_NAMES[id] || id; }
 function currentPreset() {
     return PRESET_MODES.find(m => m.id === CURRENT_MODE) || PRESET_MODES[0] || null;
 }
 function setCurrentMode(mode) {   // ESM 导出只读绑定，外部经此切换
-    if (PRESET_MODES.some(m => m.id === mode)) CURRENT_MODE = mode;
+    _applyMode(mode);
 }
 
 // 拉取预设包清单并渲染模式卡片（轮播 + PC 大卡）；失败兜底两内置包（与后端兜底一致）
 async function loadModes() {
     if (_modesLoaded) return;
     _modesLoaded = true;
+    let serverDefault = "";
     try {
         const resp = await fetch("/modes");
         const data = await resp.json();
         const list = Array.isArray(data.modes) ? data.modes : [];
+        serverDefault = typeof data.default === "string" ? data.default : "";
         if (list.length) {
             PRESET_MODES.splice(0, PRESET_MODES.length, ...list);
             for (const m of list) MODE_NAMES[m.id] = m.name || m.id;
@@ -3698,6 +3727,10 @@ async function loadModes() {
             {id: "haruno", name: "春日手信", presentation: "narration", desc: "", tagline: "",
              cover: "/assets/character/haruno/assets/cover.png", avatar: "/assets/character/haruno/assets/avatar.png", has_opening: true, char_name: "流萤"});
     }
+    // 启动恢复当前包（F-6.3）：候选逐个校验，全不合法才回退注册表首包
+    const pick = [_savedMode(), serverDefault, "story"].find(id => id && PRESET_MODES.some(m => m.id === id))
+        || (PRESET_MODES[0] && PRESET_MODES[0].id) || "story";
+    _applyMode(pick);
     renderModeCards();
     applyModeBranding();
     try { window.renderFixModes && window.renderFixModes(); } catch (e) {}   // 纠错页模式按钮随注册表刷新
@@ -3715,7 +3748,7 @@ window.__setCurrentMode = (mode) => setCurrentMode(mode);
 
 // 进入某包的管理页（卡片角标/轮播角标入口）：切到该包 + 打开角色包管理
 function managePack(mode) {
-    if (PRESET_MODES.some(m => m.id === mode)) CURRENT_MODE = mode;
+    _applyMode(mode);
     try { window.openMenuTab("pack"); } catch (e) {}
 }
 window.managePack = managePack;
@@ -3872,7 +3905,7 @@ function _updateCarouselChar() {
 // 角色编辑页（独立全屏）：切换目标包 + 打开；_packFrom 记录来源（cards=列表页 / 其他=首页）
 let _packFrom = "";
 function openPackView(mode, from) {
-    if (mode && PRESET_MODES.some(m => m.id === mode)) CURRENT_MODE = mode;
+    if (mode) _applyMode(mode);
     _packFrom = from || "";
     homeView.classList.remove("show");
     const cv = document.getElementById("cards-view");
@@ -3972,7 +4005,12 @@ function renderModeCards() {
     // 轮播图上叠加当前包的角色信息条（左下）
     _updateCarouselChar();
     carouselCount = PRESET_MODES.length;
-    if (carouselCount) goCarousel(0);
+    // 轮播初始位置跟随当前包（F-6.3 配套）：否则恢复成 haruno 后首页却显示 story 封面，
+    // 用户点封面进入会被 enterCarouselAction 记成 story，刚恢复的记忆立刻被覆盖。
+    if (carouselCount) {
+        const i = PRESET_MODES.findIndex(m => m.id === CURRENT_MODE);
+        goCarousel(i > 0 ? i : 0);
+    }
     const hm = document.getElementById("home-modes");
     if (hm) {
         hm.innerHTML = "";
@@ -4136,14 +4174,13 @@ async function openModeOpening() {
 // 轮播图功能入口：进入当前轮播位置对应的模式
 function enterCarouselAction() {
     const m = PRESET_MODES[carouselIndex];
-    CURRENT_MODE = (m && m.id) || "story";
+    _switchMode(m && m.id);
     showChat();
 }
 
 // PC 桌面模式大卡入口（home-modes）：与轮播图入口同语义，直接进入指定模式
 function enterMode(mode) {
-    if (!PRESET_MODES.some(m => m.id === mode)) mode = (PRESET_MODES[0] && PRESET_MODES[0].id) || "story";
-    CURRENT_MODE = mode;
+    _switchMode(mode);
     showChat();
 }
 window.enterMode = enterMode;
