@@ -150,7 +150,17 @@ routes.delete_pack(h)
 check("E3 不存在的未注册 id 拒绝（不是孤儿）", h.data.get("ok") is False)
 h = FakeH({"id": "custom_ok"})
 routes.delete_pack(h)
-check("E4 已注册自建包仍可正常删除",
+# 3.5（删除两级化）改口径：活跃包不再能一步删掉，必须先归档——原断言"直接可删"已不成立
+check("E4 活跃包直接删除被拒（3.5：先归档再抹除）",
+      h.data.get("ok") is False and _pdir.exists()
+      and "custom_ok" in cfg.PRESETS)
+h = FakeH({"id": "custom_ok"})
+routes.archive_pack(h)
+check("E4b 归档成功且数据仍在", h.data.get("ok") is True and _pdir.exists()
+      and "custom_ok" not in cfg.MODES)
+h = FakeH({"id": "custom_ok"})
+routes.delete_pack(h)
+check("E4c 归档后可抹除（清单与目录都没了）",
       h.data.get("ok") is True and not _pdir.exists() and "custom_ok" not in cfg.PRESETS)
 
 shutil.rmtree(_tmp, ignore_errors=True)

@@ -102,8 +102,8 @@ check("B2 兼容层只定义转发类", _own == ["_ShimModule"])
 check("B3 两张分发表定义在 api.router", hasattr(arouter, "POST_ROUTES") and hasattr(arouter, "GET_ROUTES"))
 check("B4 兼容层暴露的是同一批对象（不是副本）",
       routes.POST_ROUTES is arouter.POST_ROUTES and routes.GET_ROUTES is arouter.GET_ROUTES)
-check("B5 端点键集不变（57 POST / 28 GET，详见 test_routes_oracle）",
-      len(routes.POST_ROUTES) == 57 and len(routes.GET_ROUTES) == 28)
+check("B5 端点键集不变（59 POST / 28 GET，详见 test_routes_oracle）",
+      len(routes.POST_ROUTES) == 59 and len(routes.GET_ROUTES) == 28)
 
 print("=== C. monkeypatch：打桩 routes.parse_multipart 必须被运行时读到 ===")
 _old_pm = routes.parse_multipart
@@ -143,7 +143,7 @@ _CHILD = ("import sys; sys.path.insert(0, r'{app}');\n"
 for first in ("api.chat", "api.debug", "api.router"):
     p = subprocess.run([sys.executable, "-c", _CHILD.format(app=str(ROOT / "app"), first=first)],
                        capture_output=True, encoding="utf-8", errors="replace", cwd=str(ROOT))
-    check(f"E1 先导入 {first} 也能跑通", p.returncode == 0 and "OK 57 28" in (p.stdout or ""))
+    check(f"E1 先导入 {first} 也能跑通", p.returncode == 0 and "OK 59 28" in (p.stdout or ""))
     if p.returncode != 0:
         print("   ", (p.stdout or "") + (p.stderr or "")[-300:])
 

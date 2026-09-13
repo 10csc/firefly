@@ -270,4 +270,11 @@ def run_startup_init() -> dict:
     except Exception as e:
         logger.warning("packs.json 初始化失败（继续启动）: %s", e)
     cleaned = _cleanup_stale_defaults()
+    # 包槽位三态（阶段 3.3）：必须在清理**之后**刷新 —— 清理删掉的正是"与 bundled 逐字相同"
+    # 的副本，那些槽位应落到 inherited（副本存在过），而不是被当成"从未有过副本"的 baseline。
+    try:
+        from core.presets import pack_registry
+        pack_registry().refresh_slots()
+    except Exception as e:
+        logger.warning("包槽位三态刷新失败（继续启动）: %s", e)
     return {"dirs_created": created, "files_copied": 0, "stale_removed": cleaned}

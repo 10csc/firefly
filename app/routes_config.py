@@ -301,7 +301,10 @@ def get_config(h):
 
 def get_modes(h):
     """GET /modes：预设包清单（前端模式卡片/名称/封面/头像的数据源，角色预设化）。
-    每包返回 id/name/presentation/avatar/cover/has_opening；资产 URL 存在才给（空串=无）。"""
+    每包返回 id/name/presentation/avatar/cover/has_opening；资产 URL 存在才给（空串=无）。
+
+    3.5：追加 `archived` 列表（归档包：不进 `modes`，但有恢复/彻底删除入口，
+    否则归档 = 从界面上彻底消失，用户再也找不回来）。"""
     from modules.llm_base import resolve_character_file
 
     def _pack_asset_url(mode: str, fname: str) -> str:
@@ -330,7 +333,23 @@ def get_modes(h):
             "cover": _pack_asset_url(mode, "cover.png"),
             "has_opening": resolve_character_file("opening.json", mode).exists(),
         })
-    h._json({"modes": items, "default": cfg.DEFAULT_MODE})
+    # 归档区（3.5）：归档 = 不在 MODES 但数据与清单条目都在，界面必须给回程入口
+    archived = []
+    try:
+        for pid in cfg.pack_registry().all_ids():
+            meta = cfg.pack_registry().get(pid) or {}
+            if (meta.get("state") or "active") != "archived":
+                continue
+            archived.append({
+                "id": pid,
+                "name": meta.get("name") or pid,
+                "char_name": meta.get("char_name") or "",
+                "updated_at": meta.get("updated_at") or "",
+                "has_data": (cfg.pack_root(pid)).is_dir(),
+            })
+    except Exception as e:
+        logger.warning("归档包列表读取失败（不影响模式清单）: %s", e)
+    h._json({"modes": items, "default": cfg.DEFAULT_MODE, "archived": archived})
 
 
 def get_models(h):

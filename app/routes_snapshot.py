@@ -16,6 +16,8 @@ from pathlib import Path
 
 from modules import app_config as cfg
 from routes_common import _read_json, _is_server
+# 3.4：快照哈希口径与恢复端**共用同一实现**（别再各写一份）
+from infra.sync.restore import _pack_digest, _sha256_file
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +44,7 @@ def _snap_name_ok(name) -> str:
 def build_full_snapshot_zip() -> bytes:
     """打包所有角色包 + 用户数据为 zip 字节（只读打包，不修改数据）。
     内容：全部注册模式 + 清单里**归档**的包（3.8：归档 ≠ 丢保险）+ stickers/ 用户添加表情包
-    （角色卡资源）+ _config.json（剥离 API Key，恢复时不自动还原）。
+    （角色卡资源）+ _config.json（剥离 API Key，恢复时不自动还原）+ `_manifest.json`（3.4）。
 
     白名单取 `cfg.backup_pack_ids()`（MODES ∪ packs.json 含 archived），并用
     `user_root/{id}` 直接定位包目录 —— 不走 `cfg.mode_root()`，因为后者对不在
@@ -51,6 +53,7 @@ def build_full_snapshot_zip() -> bytes:
     import zipfile
     user_root = _user_root()
     buf = io.BytesIO()
+    digests: dict[str, list] = {}          # pid → [(rel, sha256)]
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
         for mode in cfg.backup_pack_ids():
             root = user_root / mode
@@ -63,11 +66,15 @@ def build_full_snapshot_zip() -> bytes:
                 if any(part in _EXPORT_EXCLUDE_DIRS for part in rel.parts):
                     continue
                 zf.write(fp, rel.as_posix())
+                digests.setdefault(mode, []).append(
+                    (rel.relative_to(mode).as_posix(), _sha256_file(fp)))
         sdir = user_root / "stickers"
+        sticker_digest = []
         if sdir.is_dir():
             for fp in sorted(sdir.rglob("*")):
                 if fp.is_file():
                     zf.write(fp, fp.relative_to(user_root).as_posix())
+                    sticker_digest.append((fp.relative_to(sdir).as_posix(), _sha256_file(fp)))
         try:
             import copy as _copy
             cfg_copy = _copy.deepcopy(cfg.config)
@@ -77,7 +84,44 @@ def build_full_snapshot_zip() -> bytes:
             zf.writestr("_config.json", json.dumps(cfg_copy, ensure_ascii=False, indent=1))
         except Exception:
             pass
+        try:
+            zf.writestr("_manifest.json", json.dumps(
+                _snapshot_manifest(digests, sticker_digest), ensure_ascii=False, indent=1))
+        except Exception as e:
+            logger.warning("快照 manifest 写入失败（快照本身仍可用）: %s", e)
     return buf.getvalue()
+
+
+def _snapshot_manifest(digests: dict, sticker_digest: list) -> dict:
+    """快照清单（3.4）：让"这份 zip 里有什么、是不是完整"变成可核对的事实，而不是靠解压猜。
+
+    字段：`snapshot_version`（清单格式版本）/ `app_version` / `created_at` /
+    `packs[{id,name,source,schema,files,sha256}]` / `stickers{files,sha256}`。
+    `source`/`name`/`schema` 取自包注册表（用户包）或预设表（内置包）。"""
+    packs = []
+    for pid in sorted(digests):
+        entries = digests[pid]
+        meta = {}
+        try:
+            meta = cfg.pack_registry().get(pid) or {}
+        except Exception:
+            meta = {}
+        preset = (cfg.PRESETS.get(pid) or {}) if hasattr(cfg, "PRESETS") else {}
+        packs.append({
+            "id": pid,
+            "name": meta.get("name") or preset.get("name") or pid,
+            "source": meta.get("source") or ("custom" if preset.get("custom") else "bundled"),
+            "schema": meta.get("schema", preset.get("schema", 1)),
+            "files": len(entries),
+            "sha256": _pack_digest(entries),
+        })
+    return {
+        "snapshot_version": 1,
+        "app_version": getattr(cfg, "APP_VERSION", "") or "",
+        "created_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "packs": packs,
+        "stickers": {"files": len(sticker_digest), "sha256": _pack_digest(sticker_digest)},
+    }
 
 
 def _prune_old(d: Path) -> None:
@@ -261,6 +305,7 @@ def snapshot_restore(h):
     # 2026-09-10 修复：原来恢复前快照「失败不阻断」，却仍以 backup=False 调用恢复主体，
     # 等于在"没有任何备份"的情况下执行破坏性覆盖（磁盘满/目录不可写时即触发）。
     # 现在改为：pre-restore 快照成功才跳过逐包备份；失败则回落到逐包备份。
+    _sum: dict = {}
     pre_ok = False
     try:
         pre = build_full_snapshot_zip()
@@ -274,7 +319,10 @@ def snapshot_restore(h):
         pre_ok = True
     except Exception as e:
         logger.warning("恢复前自动快照失败，改为逐包备份: %s", e)
-    ok, err, n = _restore_full_snapshot(data, backup=not pre_ok)
+    ok, err, n = _restore_full_snapshot(data, backup=not pre_ok, summary=_sum)
     if not ok:
         h._json({"ok": False, "error": err, "backup_ok": pre_ok}); return
-    h._json({"ok": True, "restored": name, "files": n, "backup_ok": pre_ok})
+    resp = {"ok": True, "restored": name, "files": n, "backup_ok": pre_ok}
+    if _sum.get("manifest"):
+        resp["manifest"] = _sum["manifest"]          # 3.4：把清单摘要回给前端
+    h._json(resp)

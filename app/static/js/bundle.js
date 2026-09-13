@@ -858,28 +858,27 @@ async function loadPackView() {
     }
     danger.appendChild(tools);
     if (data.custom) {
-        const delBtn = document.createElement("button");
-        delBtn.className = "pv-danger-btn";
-        delBtn.type = "button";
-        delBtn.textContent = `删除角色「${data.name}」（含人设与聊天记录）`;
-        delBtn.onclick = async () => {
-            if (!confirm(`确定删除角色「${data.name}」？\n人设、记忆、聊天记录会一起删除，不可恢复。`)) return;
-            if (!confirm("再确认一次：删除后无法恢复。确定删除？")) return;
-            try {
-                const r = await fetch("/pack-delete", {method: "POST",
-                    headers: {"Content-Type": "application/json"},
-                    body: JSON.stringify({id: data.mode})});
-                const d = await r.json();
-                if (d.ok) {
-                    showToast("已删除");
-                    await window.__modesReload();
-                    try { window.closePackView(); } catch (e) {}
-                } else {
-                    showToast("删除失败：" + (d.error || ""));
-                }
-            } catch (e) { showToast("网络错误"); }
-        };
-        danger.appendChild(delBtn);
+        // 活跃包的危险区主按钮 = 「归档」（3.5 一级：不删数据，可反悔）。
+        // 「彻底删除」**只在首页归档区**（views.js 的 _renderArchivedPacks）——那是二级操作，
+        // 需要输入包名确认，且后端强制先打一份快照。放在这里当主按钮会诱导手滑。
+        if ((data.state || "active") === "archived") {
+            const note = document.createElement("div");
+            note.style.cssText = "font-size:0.8em;color:var(--fg-muted)";
+            note.textContent = "该包已归档：请在首页「已归档」区选择恢复或彻底删除。";
+            danger.appendChild(note);
+        } else {
+            const archBtn = document.createElement("button");
+            archBtn.className = "pv-danger-btn";
+            archBtn.type = "button";
+            archBtn.textContent = `归档「${data.name}」（数据保留，可随时恢复）`;
+            archBtn.onclick = async () => {
+                // 动作实现与首页归档区共用（window.__packLifecycle，见 views.js）
+                if (!await window.__packLifecycle("archive", data.mode, data.name || data.mode)) return;
+                try { window.closePackView(); } catch (e) {}
+                await window.__modesReload();   // 重载后会切到合法包（归档包已不在清单里）
+            };
+            danger.appendChild(archBtn);
+        }
     }
 
     // 人设文案（可折叠编辑器：核心三件 + 用户设定 + 提示词六段，全部放权可编辑）
@@ -3705,6 +3704,9 @@ let _lastMode = null;   // 上次进入聊天时的模式（切换时重载历�
 let _modeGen = 0;       // 模式代际：切换时递增，飞行中的异步渲染/历史加载任务作废丢弃
 const MODE_NAMES = { story: "剧情模式", haruno: "春日手信" };   // 默认两内置；loadModes 后按注册表刷新
 const PRESET_MODES = [];   // /modes 清单（id/name/presentation/desc/tagline/cover/avatar/has_opening）
+// 归档包清单（3.5）：归档 = 不进 PRESET_MODES（不在 /modes 的 modes 里），但数据与清单条目都在。
+// 单独存一份是为了让首页能画出"已归档"区块——否则归档就等于把包弄丢：看不见、恢复不了。
+const ARCHIVED_PACKS = [];
 let _modesLoaded = false;
 
 // ── 当前包持久化（F-6.3，2026-09-13）──
@@ -3752,6 +3754,8 @@ async function loadModes() {
         const data = await resp.json();
         const list = Array.isArray(data.modes) ? data.modes : [];
         serverDefault = typeof data.default === "string" ? data.default : "";
+        const arch = Array.isArray(data.archived) ? data.archived : [];
+        ARCHIVED_PACKS.splice(0, ARCHIVED_PACKS.length, ...arch);
         if (list.length) {
             PRESET_MODES.splice(0, PRESET_MODES.length, ...list);
             for (const m of list) MODE_NAMES[m.id] = m.name || m.id;
@@ -4085,7 +4089,82 @@ function renderModeCards() {
             btn.append(img, edit, ov);
             hm.appendChild(btn);
         }
+        _renderArchivedPacks(hm);
     }
+}
+
+// 包生命周期动作（3.5）：归档 / 恢复 / 彻底删除 —— 首页归档区与包详情页**共用一套**调用与提示。
+// 为什么收在一处：三个动作的端点、确认文案、失败提示一旦两处各写一遍就会漂移，
+// 而漂移的后果是"按钮写着归档、实际调的是删除"这种灾难性不一致。
+// 返回 true 表示动作成功（调用方据此刷新列表/关闭详情页）。
+async function packLifecycle(action, id, label) {
+    const paths = {archive: "/pack-archive", restore: "/pack-restore", erase: "/pack-delete"};
+    const names = {archive: "归档", restore: "恢复", erase: "删除"};
+    const path = paths[action];
+    if (!path || !id) return false;
+    if (action === "archive") {
+        if (!confirm(`归档「${label}」？\n该包会从列表与聊天里隐藏，人设与聊天记录全部保留。`)) return false;
+    } else if (action === "restore") {
+        if (!confirm(`恢复「${label}」？`)) return false;
+    } else {
+        const typed = prompt(`彻底删除「${label}」后无法恢复（删除前会自动备份一份快照）。\n` +
+            `请输入包名以确认：`);
+        if (typed === null) return false;
+        if (typed.trim() !== label) { showToast("包名不匹配，已取消"); return false; }
+    }
+    try {
+        const r = await fetch(path, {method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({id})});
+        const d = await r.json();
+        if (!d.ok) { showToast(names[action] + "失败：" + (d.error || "")); return false; }
+        // 归档/删除后要重载（归档包不在清单里，留着旧视图只会显示别的包的数据）
+        showToast(action === "archive" ? "已归档（数据保留）" :
+            (action === "restore" ? "已恢复" : "已删除"));
+        return true;
+    } catch (e) { showToast("网络错误"); return false; }
+}
+window.__packLifecycle = packLifecycle;
+
+// 已归档区块（3.5）：每个归档包给「恢复」与「彻底删除」两个出口。
+// 彻底删除要**输入包名**确认（比 confirm 更难误触），后端还会在删除前强制打一份全量快照；
+// 恢复只是把 state 改回 active（数据一直没动）。
+function _renderArchivedPacks(container) {
+    if (!container || !ARCHIVED_PACKS.length) return;
+    const box = document.createElement("div");
+    box.id = "archived-packs";
+    box.style.cssText = "flex-basis:100%;margin-top:14px;padding:10px 12px;border:1px dashed #6666;" +
+        "border-radius:10px;font-size:0.8em;color:var(--fg-muted, #999)";
+    const title = document.createElement("div");
+    title.style.cssText = "margin-bottom:8px;font-weight:600";
+    title.textContent = `已归档（${ARCHIVED_PACKS.length}）—— 数据仍在，可随时恢复`;
+    box.appendChild(title);
+    for (const a of ARCHIVED_PACKS) {
+        const row = document.createElement("div");
+        row.style.cssText = "display:flex;align-items:center;gap:10px;padding:4px 0";
+        const nm = document.createElement("span");
+        nm.style.cssText = "flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap";
+        nm.textContent = a.char_name || a.name || a.id;
+        const back = document.createElement("button");
+        back.type = "button";
+        back.textContent = "恢复";
+        back.onclick = async () => {
+            if (await window.__packLifecycle("restore", a.id, a.name || a.id)) {
+                await window.__modesReload();
+            }
+        };
+        const kill = document.createElement("button");
+        kill.type = "button";
+        kill.textContent = "彻底删除";
+        kill.onclick = async () => {
+            if (await window.__packLifecycle("erase", a.id, a.name || a.id)) {
+                await window.__modesReload();
+            }
+        };
+        row.append(nm, back, kill);
+        box.appendChild(row);
+    }
+    container.appendChild(box);
 }
 
 // 聊天页/侧边栏的角色标识（头像/名字/签名）按当前包刷新

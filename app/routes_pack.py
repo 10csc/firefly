@@ -22,11 +22,13 @@ from routes_common import _read_json, _body_mode, _query_mode, _is_server
 logger = logging.getLogger(__name__)
 
 # 可经 API 编辑的包文件（用户设定 + 核心三件 + 六个提示词段）
+# 3.3：白名单与"槽位三态"的记录口径必须**同一份**（否则 API 能写的文件与能被标记的文件会漂移），
+# 故取自 `core.presets.PACK_SLOT_FILES`；下面两个元组只用于 /pack-files 的展示顺序。
 _PACK_PROMPT_FILES = ("prompts/polisher.md", "prompts/analyzer_extra.md",
                       "prompts/organizer_sticker.md", "prompts/organizer_narration.md",
                       "prompts/proactive_context.md", "prompts/env_suffix.md")
 _PACK_CORE_FILES = ("core.md", "identity.md", "sms_samples.md")
-_EDITABLE_FILES = frozenset({"用户设定.md"} | set(_PACK_CORE_FILES) | set(_PACK_PROMPT_FILES))
+_EDITABLE_FILES = frozenset(cfg.PACK_SLOT_FILES)
 
 _PACK_ASSET_SLOTS = ("avatar", "cover")   # 头像 / 封面
 _PACK_ID_RE = re.compile(r"^[a-z0-9_-]{1,32}$")
@@ -50,6 +52,12 @@ def character_file_update(h):
         clear_cache()
         from modules.polisher import clear_samples_cache
         clear_samples_cache()
+        # 3.3：用户真的写了内容 → 该槽位标记 customized（判定不再靠事后逐字比对，
+        # 否则 bundled 后续更新会把"用户改过"和"只是旧内容"混为一谈）
+        try:
+            cfg.pack_registry().mark_slot(mode, filename, "customized")
+        except Exception as e:
+            logger.warning("槽位三态标记失败（不影响保存）: %s", e)
         h._json({"ok": True, "filename": filename})
     except Exception as e:
         h._json({"ok": False, "error": f"保存失败: {e}"})
@@ -87,31 +95,46 @@ def delete_character_file(h):
         h._json({"ok": False, "error": f"删除失败: {e}"}); return
     from modules.llm_base import clear_cache
     clear_cache()
+    # 3.3：副本没了 → 读取回落到包自带内容，"已修改"随之消失（记 inherited 而不是 baseline：
+    # 该槽位确实被动过——用户副本存在过，这与"从未有过副本"的出厂状态不同）
+    try:
+        cfg.pack_registry().mark_slot(mode, filename, "inherited")
+    except Exception as e:
+        logger.warning("槽位三态标记失败（不影响删除）: %s", e)
     h._json({"ok": True, "filename": filename, "existed": existed})
 
 
 def get_pack_files(h):
     """GET /pack-files?mode=：包详情页数据——可编辑文案（用户副本优先，含是否已覆盖标记）
-    + 视觉资产当前 URL + 知识库文件清单（只读）。"""
+    + 视觉资产当前 URL + 知识库文件清单（只读）。
+
+    3.3：`customized` 不再每次现算 diff，而是读 packs.json 的 `slots` 三态
+    （`customized` ⇔ state==""customized""）。现算 diff 的毛病：bundled 内容一更新，
+    用户从没编辑过的旧副本就被判成"已修改"（且与 `_cleanup_stale_defaults` 的清理口径各写一份）。
+    清单里没有记录时（服务器版无清单 / 老盘数据）就地推导并回写，保证首屏即正确。"""
     from modules.llm_base import resolve_character_file
     mode = _query_mode(h)
+    reg = None
+    try:
+        reg = cfg.pack_registry()
+    except Exception as e:
+        logger.warning("pack_registry 不可用，槽位三态回退就地推导: %s", e)
     files = []
     for fname in _PACK_CORE_FILES + ("用户设定.md",) + _PACK_PROMPT_FILES:
         user_fp = cfg.mode_character_dir(mode) / fname
         fp = resolve_character_file(fname, mode)
         content = fp.read_text(encoding="utf-8") if fp.exists() else ""
-        # customized = 用户副本与 bundled 内容不同（首启拷贝不算用户修改）
-        customized = False
-        if user_fp.exists():
-            try:
-                user_text = user_fp.read_text(encoding="utf-8")
-                bundled_fp = cfg.bundled_character_dir(mode) / fname
-                bundled_text = bundled_fp.read_text(encoding="utf-8") if bundled_fp.exists() else ""
-                customized = user_text.strip() != bundled_text.strip()
-            except OSError:
-                customized = True
+        state = (reg.get_slot(mode, fname) if reg else None)
+        if state is None:
+            # 无记录（服务器版无清单 / 启动链还没跑）：就地推导，首屏即正确。
+            # persist=False —— 这是**读路径**，不写盘（2.6 的口径：读操作不改盘），
+            # 落盘交给启动链 `run_startup_init() → refresh_slots()` 与两个写路径。
+            from core.presets import slot_state_from_disk
+            state = slot_state_from_disk(mode, fname, None)
+            if reg is not None:
+                reg.mark_slot(mode, fname, state, persist=False)
         files.append({"name": fname, "content": content,
-                      "customized": customized})
+                      "customized": state == "customized", "slot_state": state})
     p = cfg.PRESETS.get(mode) or {}
 
     def _slot_url(slot: str) -> str:
@@ -132,9 +155,17 @@ def get_pack_files(h):
         for fp in sorted(d.rglob("*.md")):
             knowledge.append(str(fp.relative_to(d)))
 
+    # 包状态（3.5）：详情页据此决定给「归档」还是「恢复 / 彻底删除」。
+    # 未注册（服务器版 / 目录自愈还没登记）→ 按 active 呈现，不假装是归档包。
+    _meta = {}
+    try:
+        _meta = cfg.pack_registry().get(mode) or {}
+    except Exception:
+        _meta = {}
     h._json({
         "mode": mode, "name": p.get("name") or mode, "presentation": p.get("presentation", ""),
         "custom": bool(p.get("custom")),
+        "state": _meta.get("state") or ("active" if (p.get("custom") or mode in cfg.MODES) else ""),
         "files": files,
         "assets": {"avatar": _slot_url("avatar"), "cover": _slot_url("cover")},
         "knowledge": knowledge,
@@ -359,32 +390,148 @@ def _is_orphan_pack_dir(d: Path) -> bool:
         return False
 
 
-def delete_pack(h):
-    """POST /pack-delete：删除自定义角色包（仅本地版；内置包 story/haruno 拒绝）。
-    连数据一起删（user_data/{id}/ 整个目录）——前端已二次确认。
+def _pack_target(pid: str) -> Path:
+    """包数据目录（3.3 起用 `pack_root`：归档包不在 MODES，`mode_root` 会静默回退默认包）。"""
+    return cfg.pack_root(pid)
 
-    R-09（2026-09-13）：不再要求"必须已注册"。孤儿包目录（建包中途失败/早期版本残留）
-    不在注册表里，前端列表看不见、没有任何管理入口，却占着 id 让用户无法同名重建——
-    允许在"确认啥也没有"（空目录或只剩空 character/）时清掉。"""
+
+def _detach_pack_stickers(pid: str) -> int:
+    """把归属该包的表情包条目降级为全局共享（3.5）。失败不致命（返回 0 并告警）：
+    贴纸降级失败不该让归档/抹除整个操作失败——包的状态已经改了，日志留痕即可。"""
+    try:
+        from domain.stickers.picker import detach_pack
+        n = detach_pack(pid)
+        if n:
+            logger.info("表情包降级为全局共享: pack=%s 条目数=%d", pid, n)
+        return n
+    except Exception as e:
+        logger.warning("表情包降级失败（pack=%s）: %s", pid, e)
+        return 0
+
+
+def _force_pack_backup(pid: str) -> Path:
+    """抹除前的**强制保险**（3.5）：先打一份全量快照（3.8 的白名单含 archived，所以
+    "即将被抹除的这个包"一定在里面）落 `backups/`。
+
+    为什么是全量而不是"只备这个包"：单包 zip 的恢复入口要求该包当时存在（mode 必须合法），
+    包被抹除后恰恰不满足——而全量快照走的是"按包分发恢复"，新机器/空环境也能直接恢复，
+    是真正可用的保险。失败**抛异常**，由调用方中止删除（没备份成功就不许抹除）。
+    文件名前缀 `pack-erase-` 是刻意的：不进备份管理列表（`/backups` 只列 `{mode}-*.zip`），
+    也不被 auto-/pre-restore 的滚动裁剪碰到 —— 这份保险不会被自动淘汰。"""
+    import time as _time
+    from routes_snapshot import build_full_snapshot_zip
+    from infra.sync.restore import _backup_dir
+    data = build_full_snapshot_zip()
+    if not data.startswith(b"PK"):
+        raise OSError("快照打包结果不是 zip")
+    bdir = _backup_dir(cfg.DEFAULT_MODE)                  # {用户根}/backups（与模式目录平级）
+    bdir.mkdir(parents=True, exist_ok=True)
+    fp = bdir / f"pack-erase-{pid}-{_time.strftime('%Y%m%d-%H%M%S')}.zip"
+    fp.write_bytes(data)
+    if not fp.is_file() or fp.stat().st_size != len(data):
+        raise OSError("备份写入校验失败")
+    logger.info("抹除前强制备份: %s（%d 字节）", fp.name, len(data))
+    return fp
+
+
+def archive_pack(h):
+    """POST /pack-archive {id}：归档自建包（3.5 的"一级删除"）。
+
+    归档 ≠ 删除：清单条目与数据目录都留着，只是 `state=archived` → 不进 MODES
+    （模式列表/切换里消失）。这是本卡的核心行为变化：删包不再一步灭失数据。
+    副作用：该包专属的表情包条目降级为**全局共享**（贴纸是用户资产，包不在了也该继续可用）。"""
     if _is_server():
         h._json({"ok": False, "error": "服务器版暂不支持自建角色包"}); return
     body = _read_json(h)
     pid = str(body.get("id") or "").strip()
     if not _PACK_ID_RE.fullmatch(pid):
         h._json({"ok": False, "error": "非法包 id"}); return
-    target = cfg.USER_DIR / pid
+    reg = cfg.pack_registry()
+    meta = reg.get(pid)
+    if not meta:
+        if pid in cfg.PRESETS:
+            h._json({"ok": False, "error": "内置包不能归档"}); return
+        h._json({"ok": False, "error": "包不存在（清单里没有）"}); return
+    if not _pack_target(pid).is_dir():
+        h._json({"ok": False, "error": "包目录不存在，无法归档"}); return
+    changed = reg.set_state(pid, "archived")
+    detached = _detach_pack_stickers(pid)
+    cfg.reload_presets()          # 重扫：让 archived 立刻从 MODES 消失
+    if pid in cfg.MODES:
+        # 输出验证：归档后该包必须已不在可用列表里，否则状态与投影不一致（宁可报错也别假装成功）
+        h._json({"ok": False, "error": "归档后该包仍在可用列表（状态未生效）"}); return
+    logger.info("自建角色包归档: %s（贴纸降级 %d 条）", pid, detached)
+    h._json({"ok": True, "id": pid, "state": "archived",
+             "changed": changed, "stickers_detached": detached})
+
+
+def restore_pack(h):
+    """POST /pack-restore {id}：取消归档（archived → active）。数据本来就在，只是重新可见。"""
+    if _is_server():
+        h._json({"ok": False, "error": "服务器版暂不支持自建角色包"}); return
+    body = _read_json(h)
+    pid = str(body.get("id") or "").strip()
+    if not _PACK_ID_RE.fullmatch(pid):
+        h._json({"ok": False, "error": "非法包 id"}); return
+    reg = cfg.pack_registry()
+    if reg.get(pid) is None:
+        h._json({"ok": False, "error": "包不存在（清单里没有）"}); return
+    if not (_pack_target(pid) / "character" / "preset.json").is_file():
+        h._json({"ok": False, "error": "包定义缺失（character/preset.json）"}); return
+    changed = reg.set_state(pid, "active")
+    cfg.reload_presets()
+    if pid not in cfg.MODES:
+        h._json({"ok": False, "error": "取消归档后仍未进入可用列表（包定义非法？）"}); return
+    logger.info("自建角色包取消归档: %s", pid)
+    h._json({"ok": True, "id": pid, "state": "active", "changed": changed})
+
+
+def delete_pack(h):
+    """POST /pack-delete：**彻底删除**自定义角色包（仅本地版；内置包 story/haruno 拒绝）。
+
+    3.5 起改为**两级删除**的第二级：
+    - 只有 `state=archived` 的包才允许抹除（活跃包必须先归档 —— 归档不删数据，可反悔）；
+    - 抹除前**强制**打一份全量快照落 `backups/`（失败即中止，数据一个字节都不动）；
+    - 该包专属贴纸条目降级为全局共享。
+    连数据一起删（user_data/{id}/ 整个目录）——前端要求输入包名二次确认。
+
+    R-09（2026-09-13，保留）：不要求"必须已注册"的另一条分支仍在——孤儿包目录
+    （建包中途失败/早期版本残留）在"确认啥也没有"时可直接清掉。"""
+    if _is_server():
+        h._json({"ok": False, "error": "服务器版暂不支持自建角色包"}); return
+    body = _read_json(h)
+    pid = str(body.get("id") or "").strip()
+    if not _PACK_ID_RE.fullmatch(pid):
+        h._json({"ok": False, "error": "非法包 id"}); return
+    target = _pack_target(pid)
     p = cfg.PRESETS.get(pid) or {}
-    if pid in cfg.PRESETS:
-        if not p.get("custom"):
-            h._json({"ok": False, "error": "内置包不能删除"}); return
-    else:
+    meta = cfg.pack_registry().get(pid)
+    if pid in cfg.PRESETS and not p.get("custom"):
+        h._json({"ok": False, "error": "内置包不能删除"}); return
+    if meta is None:
         # 未注册：只允许删"孤儿残留"，不碰可能有内容的目录
         if not _is_orphan_pack_dir(target):
             h._json({"ok": False, "error": "该包未注册且目录非空，为免误删数据已拒绝"}); return
         logger.info("清理孤儿包目录: %s", pid)
+    elif (meta.get("state") or "active") != "archived":
+        # 已注册的自建包：必须已归档（归档不删数据、可随时恢复；抹除不可恢复）
+        h._json({"ok": False,
+                 "error": "请先「归档」再彻底删除——归档不删数据、可随时恢复；"
+                          "彻底删除不可恢复"}); return
+    backup_name = ""
+    if meta is not None:      # 只有"真删一个已归档的包"才需要保险（孤儿目录无数据可保）
+        try:
+            backup_name = _force_pack_backup(pid).name
+        except Exception as e:
+            logger.warning("抹除前强制备份失败，已中止删除 %s: %s", pid, e)
+            h._json({"ok": False, "error": f"备份失败，已中止删除（数据未动）: {e}"}); return
+    detached = _detach_pack_stickers(pid)
     import shutil
     shutil.rmtree(target, ignore_errors=True)
+    if _pack_target(pid).exists():
+        # 输出验证：目录必须真的没了，否则清单先注销会让"删不掉的包"彻底失联
+        h._json({"ok": False, "error": "目录删除失败（清单未改动，可重试）"}); return
     cfg.pack_registry().unregister(pid)   # 3.2：目录删除与清单注销成对出现
     cfg.reload_presets()
-    logger.info("自建角色包删除: %s", pid)
-    h._json({"ok": True, "id": pid})
+    logger.info("自建角色包彻底删除: %s（备份 %s，贴纸降级 %d 条）", pid, backup_name or "-", detached)
+    h._json({"ok": True, "id": pid, "backup": backup_name, "stickers_detached": detached})

@@ -338,7 +338,9 @@ _orig_build = routes_snapshot.build_full_snapshot_zip
 _orig_restore = routes_data._restore_full_snapshot
 
 
-def _rec_restore(data, backup=True):
+def _rec_restore(data, backup=True, summary=None):
+    # 3.4：真实签名多了可选 summary（回填快照清单摘要）；桩必须同签名，
+    # 否则"补丁生效但调用即 TypeError"，L 段会变成假绿/假红
     _lcalls.append(backup)
     return True, "", 0
 

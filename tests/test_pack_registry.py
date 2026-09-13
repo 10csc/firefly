@@ -151,7 +151,17 @@ check("E1 create_pack 后清单含该包", h.data.get("ok") is True
       and "custom_new" in pack_registry().all_ids() and "custom_new" in cfg.MODES)
 h = FakeH({"id": "custom_new"})
 routes.delete_pack(h)
-check("E2 delete_pack 后清单同步移除", h.data.get("ok") is True
+# 3.5（删除两级化）改口径：活跃包直接删不掉了，先归档再抹除；两步都要与清单同步
+check("E2 活跃包直接删除被拒（3.5：先归档）",
+      h.data.get("ok") is False and "custom_new" in pack_registry().all_ids())
+h = FakeH({"id": "custom_new"})
+routes.archive_pack(h)
+check("E2b 归档后清单仍在（只是 state=archived，且不在 MODES）",
+      h.data.get("ok") is True and "custom_new" in pack_registry().all_ids()
+      and "custom_new" not in cfg.MODES)
+h = FakeH({"id": "custom_new"})
+routes.delete_pack(h)
+check("E2c 抹除后清单同步移除", h.data.get("ok") is True
       and "custom_new" not in pack_registry().all_ids() and "custom_new" not in cfg.MODES)
 
 print("=== F. 快照恢复自建包 → 清单含该包（source=imported） ===")

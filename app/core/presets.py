@@ -121,6 +121,55 @@ def _parse_preset(fp: Path, expect_id: str) -> dict | None:
 _PACKS_FILE = "packs.json"
 PACK_STATES = ("active", "archived")
 
+# ── 卡定义槽位三态（阶段 3.3）────────────────────────────────────────
+# 病根：routes_pack.get_pack_files 原来每次都**现算** customized（用户副本 vs bundled 逐字比对）。
+# 于是"内置内容更新了、用户从未编辑过副本"会被误报成"已修改"——用户看到一堆莫名其妙的
+# "（已修改）"，而 _cleanup_stale_defaults 的清理口径又和它各写一份。
+# 现在把"是否用户改过"变成**记录**（packs.json 的 slots），比对只在没有记录时用来 bootstrap。
+#
+# 三态定义（与 3.3 卡/架构图 view⑤ 一致，语义边界写死在这里）：
+#   baseline   该槽位没有用户副本（用包自带内容，出厂状态）
+#   inherited  正在用包自带内容，但**曾经有/现在有**等价副本（删除副本、清理陈旧副本后回落）
+#   customized 用户副本与包自带内容不同 —— 用户真改过
+# 「未编辑副本 + bundled 后续更新」仍判 inherited：这正是本卡要修的那个误报。
+SLOT_STATES = ("baseline", "inherited", "customized")
+
+# 可编辑槽位（与 routes_pack 的 API 白名单同一份口径；键是**角色目录下的相对路径**）。
+# 架构图示例写的是短名（"core"），实现用相对路径：`prompts/` 下可能出现与根目录同名的文件，
+# 短名会歧义，而相对路径既能当键也能直接拼路径。
+PACK_SLOT_FILES = ("core.md", "identity.md", "sms_samples.md", "用户设定.md",
+                   "prompts/polisher.md", "prompts/analyzer_extra.md",
+                   "prompts/organizer_sticker.md", "prompts/organizer_narration.md",
+                   "prompts/proactive_context.md", "prompts/env_suffix.md")
+
+
+def _read_text(fp: Path) -> str:
+    try:
+        return fp.read_text(encoding="utf-8")
+    except OSError:
+        return ""
+
+
+def slot_state_from_disk(pid: str, rel: str, prev: str | None = None) -> str:
+    """按**盘上实况**推一个槽位的三态（只在没有记录时用作 bootstrap 判据）。
+
+    规则（顺序有意义）：
+    1. 用户副本存在、包自带副本不存在 → 自建包，用户副本即唯一定义 → customized；
+    2. 用户副本存在、两者都有 → 逐字（strip 后）相同即 inherited，否则 customized；
+    3. 用户副本不存在：曾经有过等价副本（prev=inherited/customized，例如"删除副本"或
+       启动清理）→ inherited；否则 baseline。"""
+    user_fp = _paths.pack_root(pid) / "character" / rel
+    bundled_fp = _paths.bundled_character_dir(pid) / rel
+    user_exists, bundled_exists = user_fp.exists(), bundled_fp.exists()
+    if user_exists:
+        if not bundled_exists:
+            return "customized"
+        return ("inherited" if _read_text(user_fp).strip() == _read_text(bundled_fp).strip()
+                else "customized")
+    if bundled_exists and prev in ("inherited", "customized"):
+        return "inherited"
+    return "baseline"
+
 
 def _now() -> str:
     return time.strftime("%Y-%m-%d %H:%M:%S")
@@ -154,6 +203,10 @@ class PackRegistry:
     def __init__(self, fp: Path | None = None):
         self.fp = Path(fp) if fp else (_paths.USER_DIR / _PACKS_FILE)
         self.data: dict[str, dict] = {}
+        # 内置包的槽位三态（3.3）：内置包按 3.2 的定论**不进 `packs`**（清单只描述用户区），
+        # 但它们的槽位同样需要"是否被用户改过"的记录（story 的 core.md 正是用户最常改的文件），
+        # 故单列一个顶层键存放，避免与"清单=用户包"的语义打架。
+        self.bundled_slots: dict[str, dict] = {}
 
     # ── 读（含自愈）──
     def load(self, heal: bool = True, persist: bool = False) -> dict:
@@ -172,6 +225,9 @@ class PackRegistry:
         packs = raw.get("packs") if isinstance(raw, dict) else None
         self.data = ({str(k): dict(v) for k, v in packs.items() if isinstance(v, dict)}
                      if isinstance(packs, dict) else {})
+        bs = raw.get("bundled_slots") if isinstance(raw, dict) else None
+        self.bundled_slots = ({str(k): dict(v) for k, v in bs.items() if isinstance(v, dict)}
+                              if isinstance(bs, dict) else {})
         if heal:
             self.heal(persist=persist)
         return self.data
@@ -184,7 +240,10 @@ class PackRegistry:
         """落盘（原子写）。失败返回 False 并告警——注册表写不进去不应该让主流程崩。"""
         try:
             from modules.storage import atomic_write_json
-            atomic_write_json(self.fp, {"schema": 1, "updated_at": _now(), "packs": self.data})
+            doc = {"schema": 1, "updated_at": _now(), "packs": self.data}
+            if self.bundled_slots:
+                doc["bundled_slots"] = self.bundled_slots
+            atomic_write_json(self.fp, doc)
             return True
         except Exception as e:
             logger.warning("packs.json 写入失败: %s", e)
@@ -275,12 +334,95 @@ class PackRegistry:
     def get(self, pid: str) -> dict | None:
         return self.data.get(pid)
 
+    def set_state(self, pid: str, state: str, persist: bool = True) -> bool:
+        """改包状态（active|archived，任务 3.5）。包不在清单里返回 False（不是异常）。
+
+        归档 = 清单里留条目 + 数据目录保留，只是 `state=archived` → 被 `active_ids()`
+        挡在 MODES 之外（列表/聊天里消失）。**归档不是删除**：3.8 的快照白名单仍含 archived，
+        所以归档包的数据照旧进备份。"""
+        if state not in PACK_STATES or pid not in self.data:
+            return False
+        meta = self.data[pid]
+        if meta.get("state", "active") == state:
+            return False
+        meta["state"] = state
+        meta["updated_at"] = _now()
+        if persist:
+            self.save()
+        return True
+
     def active_ids(self) -> list:
         return sorted(k for k, v in self.data.items() if v.get("state", "active") == "active")
 
     def all_ids(self) -> list:
         """含 archived（快照/同步白名单用：归档 ≠ 丢保险，数据仍要进备份）。"""
         return sorted(self.data)
+
+    # ── 卡定义槽位三态（3.3）──
+    def _slot_map(self, pid: str) -> dict | None:
+        """取该包的槽位容器：用户包 → `packs[pid].slots`；内置包 → `bundled_slots[pid]`。
+        包既不在清单、也不是当前模式 → None（调用方静默放过）。"""
+        if pid in self.data:
+            return self.data[pid].setdefault("slots", {})
+        if pid in MODES:
+            return self.bundled_slots.setdefault(pid, {})
+        return None
+
+    def get_slot(self, pid: str, rel: str) -> str | None:
+        if pid in self.data:
+            slots = (self.data[pid] or {}).get("slots")
+        else:
+            slots = self.bundled_slots.get(pid)
+        v = slots.get(rel) if isinstance(slots, dict) else None
+        return v if v in SLOT_STATES else None
+
+    def mark_slot(self, pid: str, rel: str, state: str, persist: bool = True) -> bool:
+        """记录一个槽位的三态（写入点专用：编辑→customized / 删除副本→inherited）。
+        包不在清单里也不是当前模式（例如服务器版无用户包）返回 False —— 不是错误，调用方照常放行。"""
+        if state not in SLOT_STATES:
+            return False
+        slots = self._slot_map(pid)
+        if slots is None or slots.get(rel) == state:
+            return False
+        slots[rel] = state
+        if pid in self.data:
+            self.data[pid]["updated_at"] = _now()
+        if persist:
+            self.save()
+        return True
+
+    def refresh_slots(self, pid: str | None = None, persist: bool = True) -> int:
+        """刷新槽位记录（run_startup_init 调用，也用于恢复包定义后的补齐）。
+
+        规则：**有记录且用户副本仍在 → 一切照旧**（这是本卡的关键：bundled 更新不翻转
+        inherited）；没记录、或副本已消失 → 按 `slot_state_from_disk` 重新推导。
+        覆盖对象 = 清单里的全部包（含 archived） + 当前模式里的内置包。
+        清单里已有的**未知槽位键**（更高版本/手工写的）原样保留，不删。
+        返回变更条数。"""
+        changed, touched = 0, []
+        for _pid in ([pid] if pid else (list(self.data) + [m for m in MODES if m not in self.data])):
+            slots = self._slot_map(_pid)
+            if slots is None:
+                continue
+            before = dict(slots)
+            for rel in PACK_SLOT_FILES:
+                prev = slots.get(rel)
+                user_fp = _paths.pack_root(_pid) / "character" / rel
+                if prev in SLOT_STATES and user_fp.exists():
+                    continue
+                st = slot_state_from_disk(_pid, rel, prev)
+                if st != prev:
+                    slots[rel] = st
+            if slots != before:
+                if _pid in self.data:
+                    self.data[_pid]["updated_at"] = _now()
+                changed += 1
+                touched.append(_pid)
+        if changed and persist:
+            self.save()
+        if changed:
+            logger.warning("包槽位三态刷新：%s", touched)
+        return changed
 
 
 def backup_pack_ids() -> list:

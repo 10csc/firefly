@@ -251,28 +251,27 @@ async function loadPackView() {
     }
     danger.appendChild(tools);
     if (data.custom) {
-        const delBtn = document.createElement("button");
-        delBtn.className = "pv-danger-btn";
-        delBtn.type = "button";
-        delBtn.textContent = `删除角色「${data.name}」（含人设与聊天记录）`;
-        delBtn.onclick = async () => {
-            if (!confirm(`确定删除角色「${data.name}」？\n人设、记忆、聊天记录会一起删除，不可恢复。`)) return;
-            if (!confirm("再确认一次：删除后无法恢复。确定删除？")) return;
-            try {
-                const r = await fetch("/pack-delete", {method: "POST",
-                    headers: {"Content-Type": "application/json"},
-                    body: JSON.stringify({id: data.mode})});
-                const d = await r.json();
-                if (d.ok) {
-                    showToast("已删除");
-                    await window.__modesReload();
-                    try { window.closePackView(); } catch (e) {}
-                } else {
-                    showToast("删除失败：" + (d.error || ""));
-                }
-            } catch (e) { showToast("网络错误"); }
-        };
-        danger.appendChild(delBtn);
+        // 活跃包的危险区主按钮 = 「归档」（3.5 一级：不删数据，可反悔）。
+        // 「彻底删除」**只在首页归档区**（views.js 的 _renderArchivedPacks）——那是二级操作，
+        // 需要输入包名确认，且后端强制先打一份快照。放在这里当主按钮会诱导手滑。
+        if ((data.state || "active") === "archived") {
+            const note = document.createElement("div");
+            note.style.cssText = "font-size:0.8em;color:var(--fg-muted)";
+            note.textContent = "该包已归档：请在首页「已归档」区选择恢复或彻底删除。";
+            danger.appendChild(note);
+        } else {
+            const archBtn = document.createElement("button");
+            archBtn.className = "pv-danger-btn";
+            archBtn.type = "button";
+            archBtn.textContent = `归档「${data.name}」（数据保留，可随时恢复）`;
+            archBtn.onclick = async () => {
+                // 动作实现与首页归档区共用（window.__packLifecycle，见 views.js）
+                if (!await window.__packLifecycle("archive", data.mode, data.name || data.mode)) return;
+                try { window.closePackView(); } catch (e) {}
+                await window.__modesReload();   // 重载后会切到合法包（归档包已不在清单里）
+            };
+            danger.appendChild(archBtn);
+        }
     }
 
     // 人设文案（可折叠编辑器：核心三件 + 用户设定 + 提示词六段，全部放权可编辑）

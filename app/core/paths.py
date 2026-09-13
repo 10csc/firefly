@@ -96,6 +96,16 @@ def mode_journal_dir(mode: str = None) -> Path:
     return mode_root(mode) / "journal"
 
 
+def pack_root(pid: str) -> Path:
+    """包数据根：与 mode_root 同公式，但**不做非法回退**（阶段 3.3 新增）。
+
+    为什么需要它：`mode_root()` 对不在 `MODES` 里的 id 会静默换成默认包（老语义：传坏值不炸）。
+    而"包"的概念比 MODES 宽 —— 归档包（3.5）在 packs.json 里但不在 MODES。若拿 `mode_root(归档id)`
+    去定位，就会读到/写坏 **默认包** 的目录（3.8 已在同步/快照链路上踩到同一个坑）。
+    调用方负责保证 pid 合法（注册表/`_PRESET_ID_RE` 校验过）。"""
+    return (_user_ctx_dir() or USER_DIR) / str(pid)
+
+
 def bundled_character_dir(mode: str = None) -> Path:
     """bundled 默认设定目录：{BASE_DIR}/assets/character/{mode}/（只读，退回路径）。
     开发：app/assets/character/；安卓：backend/app/assets/character/；frozen：_internal/assets/character/。

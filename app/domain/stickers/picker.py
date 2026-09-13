@@ -251,6 +251,46 @@ def add_sticker(file: str, category: str, label: str, pack: str = "") -> Sticker
     return entry
 
 
+# ── 包弱引用降级（任务 3.5）──────────────
+def detach_pack(pack_id: str) -> int:
+    """把归属某包的表情包条目转为**全局共享**（`pack` 置空），返回改动条数。
+
+    为什么不是删掉这些条目：贴纸是**用户资产**（用户自己上传的图），包归档/抹除不该连带销毁它；
+    条目上的 `pack` 只是"这条属于哪个包"的**弱引用**（见 modules/storage 的 stickers 归属）。
+    弱引用失效（包归档/被抹除）→ 降级为全局共享：仍然可见、仍然可用、不再绑定那个包。
+
+    只改当前用户的 registry 文件（服务器版按账号隔离；公共池不可改）。
+    文件不存在/无匹配/解析失败 → 返回 0（调用方只记日志，不让归档/删除失败）。"""
+    pid = str(pack_id or "")
+    if not pid:
+        return 0
+    with _lock:
+        fp = _user_registry_file()
+        if not fp.exists():
+            return 0
+        try:
+            doc = json.loads(fp.read_text(encoding="utf-8"))
+        except Exception as e:
+            logger.warning("registry.json 解析失败，跳过贴纸降级: %s", e)
+            return 0
+        items = doc.get("stickers") if isinstance(doc, dict) else None
+        if not isinstance(items, list):
+            return 0
+        n = 0
+        for it in items:
+            if isinstance(it, dict) and str(it.get("pack", "") or "") == pid:
+                it["pack"] = ""
+                n += 1
+        if n:
+            try:
+                fp.write_text(json.dumps({"stickers": items}, ensure_ascii=False, indent=2),
+                              encoding="utf-8")
+            except OSError as e:
+                logger.warning("registry.json 写回失败，贴纸未降级: %s", e)
+                return 0
+        return n
+
+
 # ── 列表（供前端管理表使用）──────────────
 def list_all_stickers() -> list[StickerEntry]:
     """返回全量表情包列表（默认 + 用户添加，所有包），按 id 排序，供前端管理表展示。"""

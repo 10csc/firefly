@@ -135,10 +135,14 @@ def import_data(h):
     except Exception:
         _is_snap = False
     if _is_snap:
-        ok, err, n = _restore_full_snapshot(data)
+        _sum: dict = {}
+        ok, err, n = _restore_full_snapshot(data, summary=_sum)
         if not ok:
             h._json({"ok": False, "error": err}); return
-        h._json({"ok": True, "files": n, "snapshot": True})
+        resp = {"ok": True, "files": n, "snapshot": True}
+        if _sum.get("manifest"):
+            resp["manifest"] = _sum["manifest"]      # 3.4：清单摘要（旧 zip 无此项）
+        h._json(resp)
         return
     mode = fields.get("mode", DEFAULT_MODE)
     if mode not in cfg.MODES:

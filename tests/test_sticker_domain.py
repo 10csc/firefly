@@ -134,7 +134,7 @@ if _hits:
 print("=== F. 端点 oracle 未受影响 ===")
 p = subprocess.run([sys.executable, str(ROOT / "tests" / "test_routes_oracle.py")],
                    capture_output=True, encoding="utf-8", errors="replace", cwd=str(ROOT))
-check("F1 路由 oracle 仍绿（57 POST / 28 GET）", p.returncode == 0)
+check("F1 路由 oracle 仍绿（59 POST / 28 GET）", p.returncode == 0)
 
 print(f"\n统计: PASS={PASS} FAIL={FAIL}")
 sys.exit(0 if FAIL == 0 else 1)
