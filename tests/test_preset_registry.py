@@ -83,5 +83,51 @@ with tempfile.TemporaryDirectory(prefix="firefly_test_preset_missing_") as tmp:
 print("=== D. 现有行为保持 ===")
 check("D1 非法 mode 回退默认", cfg.mode_root("不存在的模式") == cfg.mode_root("story"))
 
+print("=== E. knowledge_dirs 越界校验（R-10，2026-09-13） ===")
+print("--- E1 单元：_clean_knowledge_dirs 逐项判定 ---")
+_c = cfg._clean_knowledge_dirs
+check("E1 合法相对目录保留", _c(["knowledge", "database/dialogues_compiled"]) ==
+      ["knowledge", "database/dialogues_compiled"])
+check("E2 `..` 穿越被拒", _c(["../../etc"]) == [])
+check("E3 反斜杠穿越同样被拒", _c(["..\\..\\windows"]) == [])
+check("E4 绝对路径被拒", _c(["/etc/passwd"]) == [])
+check("E5 盘符路径被拒", _c(["C:/Windows"]) == [])
+check("E6 空串/纯斜杠丢弃", _c(["", "   ", "/"]) == [])
+check("E7 非字符串项丢弃（不炸）", _c(["knowledge", 123, None, {"a": 1}]) == ["knowledge"])
+check("E8 混合清单只留合法项（逐项跳过，不整包拒绝）",
+      _c(["knowledge", "../../etc", "/etc", "database/dialogues_compiled"]) ==
+      ["knowledge", "database/dialogues_compiled"])
+check("E9 前后空白被归一化", _c(["  knowledge  "]) == ["knowledge"])
+# 注意：**前导斜杠按"绝对路径"拒绝**，不再像旧实现那样 strip 掉。
+# 理由（实测）：Windows 下 `ROOT / "/etc/passwd"` 会得到 `\etc\passwd`（跳到盘根）——
+# 绝对路径确实能逃出仓库，必须拒；旧实现靠 strip("/") 变成相对路径"碰巧"安全。
+# 代价：手写 "/knowledge" 这种声明会失效（真实预设包都不带前导斜杠，story 用的是 "knowledge"）。
+check("E9b 前导斜杠=绝对路径，拒绝", _c(["/database/dialogues_compiled/"]) == [])
+check("E9c 尾部斜杠（相对路径）仍被归一化", _c(["database/dialogues_compiled/"]) ==
+      ["database/dialogues_compiled"])
+check("E10 非 list 返回 None（既有语义：=未声明）", _c("knowledge") is None and _c(None) is None)
+check("E11 空 list 返回 []（=声明了但没有可用目录）", _c([]) == [])
+
+print("--- E2 集成：坏声明不影响包加载 ---")
+with tempfile.TemporaryDirectory(prefix="firefly_test_preset_kd_") as tmp:
+    base = Path(tmp)
+    _mk_pack(base, "evil", dict(_VALID, id="evil",
+                               knowledge_dirs=["../../etc", "knowledge", "/etc", "C:/x"]))
+    _mk_pack(base, "good", dict(_VALID, id="good", knowledge_dirs=["knowledge"]))
+    _mk_pack(base, "nokd", dict(_VALID, id="nokd"))
+    presets = cfg._discover_presets(base)
+    check("E12 含越界声明的包仍能加载（不整包拒绝）", "evil" in presets)
+    check("E13 越界项被剔除，合法项保留",
+          presets.get("evil", {}).get("knowledge_dirs") == ["knowledge"])
+    check("E14 合法声明原样保留", presets.get("good", {}).get("knowledge_dirs") == ["knowledge"])
+    check("E15 未声明仍是 None", presets.get("nokd", {}).get("knowledge_dirs") is None)
+
+print("--- E3 真实注册表未被误伤 ---")
+check("E16 story 的知识库声明逐字不变（含空格/顺序）",
+      cfg.PRESETS["story"]["knowledge_dirs"] == ["knowledge", "database/dialogues_compiled"])
+check("E17 越界校验未把目录改成绝对/改序",
+      all(not d.startswith("/") and ".." not in d.split("/")
+          for d in (cfg.PRESETS["story"]["knowledge_dirs"] or [])))
+
 print(f"\n统计: PASS={PASS} FAIL={FAIL}")
 sys.exit(0 if FAIL == 0 else 1)

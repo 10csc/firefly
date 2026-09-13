@@ -338,6 +338,44 @@ _PRESET_ID_RE = re.compile(r"^[a-z0-9_-]{1,32}$")
 PRESET_SCHEMA = 1
 
 
+def _clean_knowledge_dirs(raw) -> list[str] | None:
+    """knowledge_dirs 入口校验（R-10，2026-09-13）：只收**仓库内**的相对目录。
+
+    原来只 `.strip().strip("/")`，于是 preset.json 里写 `../../任意目录` 或 `C:/x`
+    会被原样收下，llm_retriever 再 `ROOT / d` 直接去读——自建包是用户可编辑的，
+    等于把"读仓库外任意文件并注入提示词"的口子交给了包定义。
+    非法项**逐项跳过并告警**（不整包拒绝）：一个坏目录不该让整个角色包不可用。
+    判定与 sticker_picker 的 registry.json 路径校验同口径：拒绝绝对路径、盘符、`..`，
+    以及 resolve 后落在 ROOT 之外的目录（防符号链接绕出仓库）。"""
+    if not isinstance(raw, list):
+        return None
+    root = ROOT.resolve()
+    out: list[str] = []
+    for x in raw:
+        if not isinstance(x, str):
+            continue
+        s = x.strip()
+        if not s:
+            continue
+        # 注意判定顺序：**先判绝对路径，再归一化首尾斜杠**。
+        # 反过来（先 strip("/")）会把 "/etc/passwd" 变成 "etc/passwd"，
+        # 绝对路径检查就永远命不中——这是本卡实现时踩到的真实坑，测试 E4 钉死。
+        if s.startswith(("/", "\\")) or (len(s) >= 2 and s[1] == ":"):
+            logger.warning("预设包声明的知识库目录是绝对路径，已跳过: %r", x)
+            continue
+        d = s.strip("/").replace("\\", "/")
+        if not d or ".." in d.split("/"):
+            logger.warning("预设包声明的知识库目录越界，已跳过: %r", x)
+            continue
+        try:
+            (root / d).resolve().relative_to(root)
+        except (OSError, ValueError):
+            logger.warning("预设包声明的知识库目录不在仓库内，已跳过: %r", x)
+            continue
+        out.append(d)
+    return out
+
+
 def _parse_preset(fp: Path, expect_id: str) -> dict | None:
     """解析单个 preset.json 并校验（id 须等于目录名）。非法返回 None（告警不阻塞）。"""
     try:
@@ -360,9 +398,8 @@ def _parse_preset(fp: Path, expect_id: str) -> dict | None:
         logger.warning("预设包 %s 的 presentation 非法（%r），回退 sticker", pid, presentation)
         presentation = "sticker"
     # 知识库目录（可选）：包显式声明的仓库相对路径清单；不声明则用包内 knowledge/（存在才挂）
-    kd = data.get("knowledge_dirs")
-    knowledge_dirs = [str(x).strip().strip("/") for x in kd
-                      if isinstance(x, str) and str(x).strip()] if isinstance(kd, list) else None
+    # R-10：越界路径（../绝对/盘符/仓库外）逐项跳过并告警，见 _clean_knowledge_dirs
+    knowledge_dirs = _clean_knowledge_dirs(data.get("knowledge_dirs"))
     # 包格式版本（R-05，2026-09-10）：**只读前向兼容**——缺失视为当前版本 1；
     # 高于已知版本只告警、仍按已知规则解析（宽进），避免"新客户端建的包在老版本打不开"。
     # 注意：该字段必须同时写进两处写盘点（pack_forge.forge_finish、routes_pack.create_pack），
