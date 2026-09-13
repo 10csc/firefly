@@ -22,8 +22,8 @@ import types
 
 from core.paths import (
     AUTH_SERVER_DEFAULT, BASE_DIR, PORT, ROOT,
-    STATIC_DIR, bundled_character_dir, mode_character_dir, mode_data_dir,
-    mode_journal_dir, mode_root, resolve_asset,
+    STATIC_DIR, bundled_character_dir, ensure_mode_root, mode_character_dir,
+    mode_data_dir, mode_journal_dir, mode_root, resolve_asset,
 )
 from core.userctx import (
     _user_ctx, _user_ctx_dir, _user_overlay, get_user_overlay,

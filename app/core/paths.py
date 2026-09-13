@@ -62,10 +62,24 @@ def _resolve_mode(mode: str | None) -> str:
 
 
 def mode_root(mode: str = None) -> Path:
-    """模式数据根：{user_dir}/{mode}/（服务器版按用户隔离；本地版 = USER_DIR/{mode}）。非法 mode 回退 story（审查约束）。"""
+    """模式数据根：{user_dir}/{mode}/（服务器版按用户隔离；本地版 = USER_DIR/{mode}）。
+
+    **纯路径计算，不创建目录**（阶段 2.6）。历史上这里自带 mkdir，副作用是：
+    ① 纯读端点（GET /modes、/config）也会凭空建出 `user_data/{mode}/...`；
+    ② 任何 import 链路过它一次就在盘上落一堆空目录（"读操作改盘"）。
+    写路径请显式调 `ensure_mode_root()`；读路径直接用它。
+    非法 mode 仍按原语义回退默认包。"""
     m = _resolve_mode(mode)
     base = _user_ctx_dir() or USER_DIR
-    d = base / m
+    return base / m
+
+
+def ensure_mode_root(mode: str = None) -> Path:
+    """取模式数据根并**确保目录存在**（写路径专用，阶段 2.6 新增）。
+
+    把"创建目录"从"读路径的隐藏副作用"改成"写路径的显式一步"，
+    这样读代码时就能看出哪些操作会动盘。"""
+    d = mode_root(mode)
     d.mkdir(parents=True, exist_ok=True)
     return d
 

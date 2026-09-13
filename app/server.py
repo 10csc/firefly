@@ -121,6 +121,13 @@ def main():
                   f"清理未修改副本 {_init['stale_removed']} 个", flush=True)
     except Exception as e:
         print(f"  [WARN] 首启引导异常（继续启动）：{e}", flush=True)
+    # memory 历史文件迁移（阶段 2.6）：原在 memory_manager import 期自动跑，
+    # 使"import 即改盘"。现在只在启动链里显式执行一次（幂等）。
+    try:
+        from modules.memory_manager import migrate_legacy_memory
+        migrate_legacy_memory()
+    except Exception as e:
+        print(f"  [WARN] memory 迁移异常（继续启动）：{e}", flush=True)
     preload_knowledge()
 
     # 端口占用检查——防止旧进程残留导致请求路由到旧代码。

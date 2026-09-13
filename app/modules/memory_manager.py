@@ -82,7 +82,15 @@ def _migrate_legacy(mode: str = DEFAULT_MODE):
             pass
 
 
-_migrate_legacy()
+def migrate_legacy_memory(mode: str = DEFAULT_MODE) -> None:
+    """一次性迁移（**启动链显式调用**，阶段 2.6）。
+
+    旧行为：本模块 import 期直接调 `_migrate_legacy()` —— 于是"import memory_manager"
+    这个纯读动作会在盘上建出 `user_data/{mode}/data/`，并可能拷历史文件。
+    现改为由入口启动链在 `run_startup_init()` 之后显式调用（见 app/server.py main）。
+    服务器版**不调用**：各账号数据根是 per-user 目录，且 server 与本地共用同一 user_data 根，
+    跑本地迁移没有意义（与 run_legacy_migration 的处置一致）。"""
+    _migrate_legacy(mode)
 
 # memory.md 结构：
 # # 核心记忆头部（休息时整体重写）
