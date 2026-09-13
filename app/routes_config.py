@@ -5,6 +5,7 @@ set_key / set_config / check_key / get_config / get_models / get_balance。"""
 import json
 import logging
 import os
+import threading
 from urllib.parse import urlparse, parse_qs
 
 from modules import app_config as cfg
@@ -12,6 +13,41 @@ from modules import app_config as cfg
 from routes_common import _read_json, _is_server
 
 logger = logging.getLogger(__name__)
+
+# 用户设置覆盖的读-改-写串行化（C-6.12，2026-09-13）
+# 服务器版每请求一个线程（ThreadingHTTPServer），/set-config 是
+# 「读 settings.json → 改 → 整份写回」，同账号的两个并发请求会互相覆盖：
+# 后写的整份替换，前一个刚改的字段静默消失（前端 400ms 防抖 + 多设备同时改都能触发）。
+# 锁**按 uid 分**而不是全局：不同账号之间没有共享数据，不该给无关用户排队。
+_OVERLAY_LOCKS: dict[int, threading.Lock] = {}
+_OVERLAY_LOCKS_GUARD = threading.Lock()
+
+
+def _overlay_lock(uid: int) -> threading.Lock:
+    """取该用户的覆盖文件锁（懒建；键数量 = 活跃账号数，量级很小，不做过期回收）。"""
+    with _OVERLAY_LOCKS_GUARD:
+        lk = _OVERLAY_LOCKS.get(uid)
+        if lk is None:
+            lk = threading.Lock()
+            _OVERLAY_LOCKS[uid] = lk
+        return lk
+
+
+def _load_overlay_file(uid: int) -> dict:
+    """从磁盘读该用户的 settings.json（不存在/损坏 → 空覆盖，与请求入口同一口径）。
+
+    为什么必须在锁内**重新读盘**：请求入口（server_app._setup_user_context）已经把
+    overlay 装进了本请求的 contextvar，那是**请求开始时**的快照。若拿它当读-改-写基准，
+    并发下后到的请求会用自己的旧快照整份覆盖回去，锁就白加了（丢更新）。
+    只有重读磁盘才能拿到"上一个请求刚写进去的结果"。"""
+    try:
+        fp = cfg.USER_DIR / str(uid) / "settings.json"
+        if fp.exists():
+            ov = json.loads(fp.read_text(encoding="utf-8"))
+            return ov if isinstance(ov, dict) else {}
+    except Exception as e:
+        logger.warning("读取用户设置覆盖失败（按空覆盖继续）: %s", e)
+    return {}
 
 
 def set_key(h):
@@ -40,39 +76,42 @@ def set_config(h):
                       "retriever_temperature", "polisher_temperature",
                       "proactive_enabled", "proactive_hard", "proactive_soft",
                       "prob_reply_enabled", "prob_reply_value", "hidden_reply_enabled")
-        overlay = dict(cfg.get_user_overlay())
-        for key in _USER_KEYS:
-            if key not in body:
-                continue
-            if key.endswith("_model"):
-                overlay[key] = "mimo-v2.5" if is_proxy else cfg._clean_model(body[key], "deepseek-v4-flash-vision-exp")
-            elif key.endswith("_temperature"):
-                try:
-                    overlay[key] = max(0.0, min(2.0, float(body[key])))
-                except (TypeError, ValueError):
-                    pass
-            elif key.endswith("_effort"):
-                if body[key] in cfg.VALID_EFFORTS:
-                    overlay[key] = body[key]
-            elif key.startswith("proactive_hard"):
-                try:
-                    overlay[key] = max(1, min(10, int(body[key])))
-                except (TypeError, ValueError):
-                    pass
-            elif key in ("proactive_soft", "prob_reply_value"):
-                try:
-                    overlay[key] = max(0.0, min(1.0, float(body[key])))
-                except (TypeError, ValueError):
-                    pass
-            else:
-                overlay[key] = bool(body[key])
-        try:
-            from modules.storage import atomic_write_json
-            ov_path = cfg.USER_DIR / str(cfg.user_dir_id()) / "settings.json"
-            atomic_write_json(ov_path, overlay)
-            cfg.set_user_overlay(overlay)
-        except Exception as e:
-            logger.warning("用户设置覆盖保存失败: %s", e)
+        _uid = cfg.user_dir_id()
+        # C-6.12：整个「读盘 → 改 → 写盘」持该用户的锁，基准取锁内重读的结果
+        with _overlay_lock(_uid):
+            overlay = _load_overlay_file(_uid)
+            for key in _USER_KEYS:
+                if key not in body:
+                    continue
+                if key.endswith("_model"):
+                    overlay[key] = "mimo-v2.5" if is_proxy else cfg._clean_model(body[key], "deepseek-v4-flash-vision-exp")
+                elif key.endswith("_temperature"):
+                    try:
+                        overlay[key] = max(0.0, min(2.0, float(body[key])))
+                    except (TypeError, ValueError):
+                        pass
+                elif key.endswith("_effort"):
+                    if body[key] in cfg.VALID_EFFORTS:
+                        overlay[key] = body[key]
+                elif key.startswith("proactive_hard"):
+                    try:
+                        overlay[key] = max(1, min(10, int(body[key])))
+                    except (TypeError, ValueError):
+                        pass
+                elif key in ("proactive_soft", "prob_reply_value"):
+                    try:
+                        overlay[key] = max(0.0, min(1.0, float(body[key])))
+                    except (TypeError, ValueError):
+                        pass
+                else:
+                    overlay[key] = bool(body[key])
+            try:
+                from modules.storage import atomic_write_json
+                ov_path = cfg.USER_DIR / str(_uid) / "settings.json"
+                atomic_write_json(ov_path, overlay)
+                cfg.set_user_overlay(overlay)
+            except Exception as e:
+                logger.warning("用户设置覆盖保存失败: %s", e)
         h._json({
             "ok": True,
             "active_provider": cfg.config.get("active_provider", "deepseek"),
