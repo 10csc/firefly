@@ -366,5 +366,75 @@ check("L1 pre-restore 失败时以 backup=True 回落", _lcalls == [True])
 check("L2 响应 backup_ok=False 且恢复仍执行",
       h.data.get("ok") is True and h.data.get("backup_ok") is False)
 
+print("=== M. 上传快照内容校验 + 上限对齐（C-6.14，2026-09-13） ===")
+import routes_data as _rd
+
+_snap_count_before = len(list(routes_snapshot._snapshots_dir().glob("snapshot-*.zip")))
+
+
+def _upload(payload: bytes, fname="up.zip"):
+    raw, ctype = _multipart({}, {"file": (fname, payload)})
+    hh = FakeH(raw=raw, content_type=ctype)
+    routes.snapshot_create(hh)
+    return hh
+
+
+_h = _upload("这不是 zip，只是一段文本".encode("utf-8"))
+check("M1 非 zip（无 PK 魔数）被拒", _h.data.get("ok") is False and "PK" in str(_h.data.get("error", "")))
+
+_h = _upload(b"PK\x03\x04" + b"\x00" * 64)
+check("M2 有 PK 魔数但坏 zip 被拒",
+      _h.data.get("ok") is False and "解析失败" in str(_h.data.get("error", "")))
+
+_h = _upload(_zip_bytes({"../evil.txt": "x"}))
+check("M3 zip slip 条目被拒",
+      _h.data.get("ok") is False and "非法路径" in str(_h.data.get("error", "")))
+
+_h = _upload(_zip_bytes({}))
+check("M4 空 zip（无任何条目）被拒", _h.data.get("ok") is False)
+
+# 解压炸弹：单文件解压体积超 20MB 上限（压缩后很小）
+_bomb = io.BytesIO()
+with zipfile.ZipFile(_bomb, "w", zipfile.ZIP_DEFLATED) as _zf:
+    _zf.writestr("story/data/big.bin", b"\x00" * (21 * 1024 * 1024))
+_h = _upload(_bomb.getvalue())
+check("M5 解压炸弹（单文件超 20MB）被拒", _h.data.get("ok") is False)
+
+check("M6 坏数据一律不落盘（快照数未增加）",
+      len(list(routes_snapshot._snapshots_dir().glob("snapshot-*.zip"))) == _snap_count_before)
+
+_good = _zip_bytes({
+    "story/data/conversation.jsonl": '{"seq": 1, "who": "user", "type": "text", "content": "上传的合法快照"}\n',
+    "_config.json": '{"providers": []}',
+})
+_h = _upload(_good, "good.zip")
+check("M7 合法快照上传成功", _h.data.get("ok") is True and _h.data.get("name", "").endswith(".zip"))
+_upname = _h.data.get("name", "")
+check("M8 合法快照确实落盘",
+      bool(_upname) and (routes_snapshot._snapshots_dir() / _upname).is_file())
+# 落盘的那份能被恢复链路打开（校验不误杀）
+if _upname:
+    _ok, _err, _n = _rd._restore_full_snapshot(
+        (routes_snapshot._snapshots_dir() / _upname).read_bytes(), backup=False)
+    check("M9 通过校验的快照可被恢复", _ok is True)
+
+# 上传上限与恢复侧对齐（不能出现"能传不能恢复"的窗口）
+_seen = {}
+_real_pm = routes.parse_multipart
+
+
+def _spy_pm(h, **kw):
+    _seen.update(kw)
+    return _real_pm(h, **kw)
+
+
+routes.parse_multipart = _spy_pm
+try:
+    _upload(_good, "good2.zip")
+finally:
+    routes.parse_multipart = _real_pm
+check("M10 上传上限 == 恢复侧 _IMPORT_MAX_BYTES（60MB，原来 120MB）",
+      _seen.get("max_bytes") == _rd._IMPORT_MAX_BYTES == 60 * 1024 * 1024)
+
 print(f"\n统计: PASS={PASS} FAIL={FAIL}")
 sys.exit(0 if FAIL == 0 else 1)

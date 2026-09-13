@@ -86,17 +86,51 @@ def _prune_old(d: Path) -> None:
             pass
 
 
+def _validate_snapshot_zip(data: bytes) -> str:
+    """上传快照的内容校验（C-6.14，2026-09-13）。返回 "" 通过，否则人话错误文案。
+
+    为什么必须校验：上传分支原来只判"非空"，非 zip / 坏 zip 也会被 atomic_write 落盘成
+    合法的 `snapshot-*.zip`；等到用户真的去恢复时才发现打不开——而那时滚动配额可能已经把
+    旧的好快照淘汰掉了（等于用一份坏文件挤掉了真备份）。
+    这里做三件事：PK 魔数 → zip 可解析 → 条目安全（_zip_safe_entries：zip slip + 解压炸弹）。
+    格式层面的"像不像全包快照"（顶层 {mode}/ 或 stickers/）**故意不在这里判**——
+    那属于阶段 3 的包 manifest 范围，阶段 1 不收紧可接受的输入集合。"""
+    import io
+    import zipfile
+    from routes_data import _zip_safe_entries     # 延迟导入：routes_data ↔ routes_snapshot 互引
+    if not data.startswith(b"PK"):
+        return "不是有效的 zip 快照（缺少 PK 魔数）"
+    try:
+        zf = zipfile.ZipFile(io.BytesIO(data))
+    except Exception:
+        return "zip 解析失败（文件损坏？）"
+    try:
+        entries = _zip_safe_entries(zf)
+    except ValueError as e:
+        return str(e)
+    if not entries:
+        return "快照里没有任何文件"
+    return ""
+
+
 def snapshot_create(h):
     """POST /snapshot/create（multipart: 可选 file=zip 上传）。
     服务器版/同机：无 file 时本端直接打包全量。
     本地版：本端打包存本地 snapshots/ 后，已登录则自动转发认证服务器（换机可恢复）。"""
     from routes import parse_multipart
-    fields, files = parse_multipart(h, max_bytes=120 * 1024 * 1024)
+    from routes_data import _IMPORT_MAX_BYTES
+    # C-6.14：上传上限与恢复侧对齐（原来 120MB > 恢复侧 60MB，等于允许上传一份
+    # 永远恢复不了的文件）；并做内容校验，坏数据不进快照库。
+    fields, files = parse_multipart(h, max_bytes=_IMPORT_MAX_BYTES)
     fi = files.get("file")
     if fi is not None:
         data = fi["data"]
         if not isinstance(data, bytes) or not data:
             h._json({"ok": False, "error": "快照内容为空"}); return
+        _err = _validate_snapshot_zip(data)
+        if _err:
+            logger.warning("拒绝上传的快照（内容校验未过）: %s", _err)
+            h._json({"ok": False, "error": _err}); return
     else:
         try:
             data = build_full_snapshot_zip()
