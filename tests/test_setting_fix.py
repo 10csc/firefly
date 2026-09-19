@@ -61,7 +61,7 @@ class MockClient:
 
 def mock_resp(content):
     return SimpleNamespace(
-        model="deepseek-v4-flash", usage=None,
+        model="deepseek-flash", usage=None,
         choices=[MockChoice(content)],
     )
 
@@ -117,11 +117,11 @@ print("=== D. 对齐 Agent ===")
 align_json = '{"stage":"aligning","text":"这是剧情模式还是春日手信？","options":["剧情","春日"]}'
 client = MockClient(mock_resp(align_json))
 conv = [{"who": "user", "text": "她说自己还在医疗舱"}]
-out = sf.run_alignment(client, "story", conv, "她说自己还在医疗舱", "deepseek-v4-flash", "high")
+out = sf.run_alignment(client, "story", conv, "她说自己还在医疗舱", "deepseek-flash", "high")
 check("D1 对齐返回选项", out["stage"] == "aligning" and out["options"] == ["剧情", "春日"])
 check("D2 prompt 含六文件", "core.md" in client.chat.completions.calls[0]["messages"][1]["content"])
 out = sf.run_alignment(MockClient(mock_resp('{"stage":"ready","text":"明白了","options":[]}')),
-                       "story", [], "没问题", "deepseek-v4-flash", "high")
+                       "story", [], "没问题", "deepseek-flash", "high")
 check("D3 确认语强制 ready", out["stage"] == "ready")
 
 print("=== E. 提案 Agent ===")
@@ -129,10 +129,10 @@ old_line = "不是因为萤火虫短暂，是因为萤火虫很美。"
 prop_json = ('{"kind":"proposal","diagnosis":"改正名字说明","changes":['
              '{"file":"core.md","op":"replace","old":"' + old_line + '",'
              '"new":"不是因为萤火虫短暂，是因为萤火虫很美，也为了纪念那个夜晚。","reason":"纠正"}]}')
-out = sf.run_proposal(MockClient(mock_resp(prop_json)), "story", conv, "deepseek-v4-flash", "high")
+out = sf.run_proposal(MockClient(mock_resp(prop_json)), "story", conv, "deepseek-flash", "high")
 check("E1 提案通过", out.get("ok") and out.get("kind") == "proposal")
 out = sf.run_proposal(MockClient(mock_resp('{"kind":"no_fix","diagnosis":"不需要改","changes":[]}')),
-                      "story", conv, "deepseek-v4-flash", "high")
+                      "story", conv, "deepseek-flash", "high")
 check("E2 no_fix 返回说明", out.get("kind") == "no_fix" and out.get("diagnosis"))
 
 print("=== F. 旧数据清理 ===")

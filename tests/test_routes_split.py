@@ -34,14 +34,14 @@ from api import router as arouter
 PASS = FAIL = 0
 
 
-def check(desc, cond):
+def check(desc, cond, extra=""):
     global PASS, FAIL
     if cond:
         PASS += 1
-        print(f"  V {desc}")
+        print(f"  V {desc}" + (f"   {extra}" if extra else ""))
     else:
         FAIL += 1
-        print(f"  X {desc}")
+        print(f"  X {desc}" + (f"   {extra}" if extra else ""))
 
 
 # 拆分前 routes.py 的 34 个顶层定义/赋值
@@ -50,8 +50,10 @@ BEFORE_DEFS = [
     "_CHAT_WINDOW_MAX", "_CHAT_WINDOW_MAX_MSGS", "_CHAT_WINDOW_SEC", "_chat_window_cleanup", "_chat_window_key",
     "_ingest_user_messages", "_merge_window", "_resolve_today", "_run_pipeline", "chat",
     "chat_flush", "chat_hint", "clear_history", "get_chat_stage", "get_history",
-    "get_journal", "get_metrics", "get_pipeline", "get_requests", "get_time",
-    "get_user_memory", "get_wake_status", "logger", "open_mode", "proactive_status",
+    "get_archive", "get_journal", "get_memory_status", "get_metrics", "get_pipeline",
+    "get_requests", "get_time",
+    "get_user_memory", "get_wake_status", "logger", "memory_action", "open_mode",
+    "proactive_status",
     "rest", "save_journal", "save_user_memory", "undo",
 ]
 
@@ -67,8 +69,8 @@ BEFORE_IMPORTS = [
     "create_pack", "delete_character_file", "delete_favorite_route", "delete_pack", "delete_pack_asset",
     "export_data", "get_balance", "get_character_files", "get_config", "get_favorites",
     "get_image", "get_latest_release", "get_models", "get_modes", "get_pack_files",
-    "get_session", "get_stickers", "handle_chat", "import_data", "pack_forge_finish",
-    "pack_forge_next", "pack_forge_start", "parse_multipart", "parse_qs", "relay_pending",
+    "get_session", "get_stickers", "handle_chat", "import_data",
+    "parse_multipart", "parse_qs", "relay_pending",
     "relay_proxy", "relay_result", "sessions", "set_config", "set_key",
     "set_pack_config", "setting_fix_apply", "setting_fix_dismiss", "setting_fix_message", "setting_fix_reset",
     "setting_fix_rollback", "setting_fix_start", "setting_fix_status", "snapshot_create", "snapshot_delete",
@@ -102,8 +104,28 @@ check("B2 兼容层只定义转发类", _own == ["_ShimModule"])
 check("B3 两张分发表定义在 api.router", hasattr(arouter, "POST_ROUTES") and hasattr(arouter, "GET_ROUTES"))
 check("B4 兼容层暴露的是同一批对象（不是副本）",
       routes.POST_ROUTES is arouter.POST_ROUTES and routes.GET_ROUTES is arouter.GET_ROUTES)
-check("B5 端点键集不变（59 POST / 28 GET，详见 test_routes_oracle）",
-      len(routes.POST_ROUTES) == 59 and len(routes.GET_ROUTES) == 28)
+def _oracle_counts() -> tuple:
+    """从 `test_routes_oracle.py` **读出**端点数量 —— 端点数只有那一处真相源。
+
+    2026-09-19：这里原先写死 `70 / 39`，加两个公告端点后本文件三处断言一起假失败。
+    这正是项目里反复踩的"写死数字 → 每次合理变更都报假警"（同 config.py 的版本号）。
+    改成 AST 解析 oracle 的集合字面量：以后新增端点只需改 oracle 一处。
+    """
+    import ast
+    src = (ROOT / "tests" / "test_routes_oracle.py").read_text(encoding="utf-8")
+    out = {}
+    for node in ast.parse(src).body:
+        if (isinstance(node, ast.Assign) and isinstance(node.targets[0], ast.Name)
+                and node.targets[0].id in ("EXPECTED_POST", "EXPECTED_GET")):
+            out[node.targets[0].id] = len(ast.literal_eval(node.value))
+    return out.get("EXPECTED_POST", 0), out.get("EXPECTED_GET", 0)
+
+
+_N_POST, _N_GET = _oracle_counts()
+
+check(f"B5 端点键集不变（{_N_POST} POST / {_N_GET} GET，数量取自 test_routes_oracle）",
+      len(routes.POST_ROUTES) == _N_POST and len(routes.GET_ROUTES) == _N_GET,
+      f"实际 {len(routes.POST_ROUTES)} / {len(routes.GET_ROUTES)}")
 
 print("=== C. monkeypatch：打桩 routes.parse_multipart 必须被运行时读到 ===")
 _old_pm = routes.parse_multipart
@@ -143,7 +165,7 @@ _CHILD = ("import sys; sys.path.insert(0, r'{app}');\n"
 for first in ("api.chat", "api.debug", "api.router"):
     p = subprocess.run([sys.executable, "-c", _CHILD.format(app=str(ROOT / "app"), first=first)],
                        capture_output=True, encoding="utf-8", errors="replace", cwd=str(ROOT))
-    check(f"E1 先导入 {first} 也能跑通", p.returncode == 0 and "OK 59 28" in (p.stdout or ""))
+    check(f"E1 先导入 {first} 也能跑通", p.returncode == 0 and f"OK {_N_POST} {_N_GET}" in (p.stdout or ""))
     if p.returncode != 0:
         print("   ", (p.stdout or "") + (p.stderr or "")[-300:])
 

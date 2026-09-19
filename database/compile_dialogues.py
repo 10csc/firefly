@@ -6,7 +6,7 @@
              脚本按锚点在源文件中定位切块 → 原文逐字零损耗
   阶段2 压缩：keep=false 的场景块逐块压缩成摘要（超长块分段递进压缩）
              keep=true 的场景块原样保留
-  组装：database/dialogues_compiled/<名>_draft.md，人工审核后去掉 _draft，
+  组装：app/assets/character/story/knowledge/dialogues/<名>_draft.md，人工审核后去掉 _draft，
         再跑 memory/rag/build_index.py 入索引
 
 用法：
@@ -20,7 +20,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 DLG_DIR = ROOT / "database" / "dialogues"
-OUT_DIR = ROOT / "database" / "dialogues_compiled"
+# 2026-09-14：压缩产物归位进 story 角色包（随包检索），不再落 database/
+OUT_DIR = ROOT / "app" / "assets" / "character" / "story" / "knowledge" / "dialogues"
 
 COMPRESS_CHARS = 4000      # 单次压缩输入上限，超长块分段递进压缩
 MIN_COMPRESS_CHARS = 200   # 低于此长度的场景摘要比原文还长，直接保留原文

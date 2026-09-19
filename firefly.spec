@@ -24,8 +24,8 @@ a = Analysis(
         (str(ROOT / "app/config.json"), "."),
         # 角色设定 + 表情包注册表源
         (str(ROOT / "app/assets"), "assets"),
-        # 知识层（LLM 子代理检索读取，无本地模型）
-        (str(ROOT / "knowledge"), "knowledge"),
+        # 知识层在 2026-09-14 归位进角色包（assets/character/story/knowledge/，
+        # 随上面的 assets 条目一并入包，不再单独列 datas）
         # 原始资料库（wiki 抓取物，仅查证）
         (str(ROOT / "database"), "database"),
         # 注意：docs/ 是开发/运维内部文档（含生产 IP、运维流程、协作记忆），

@@ -111,9 +111,22 @@ REGISTRY: dict[str, dict] = {
     "journal":         {"rel": "{mode}/journal/手账.md", "format": "markdown",
         "owner": "modules.memory_manager",
                         "media": False, "sensitive": False, "sync": "newest"},
+    "memory_archive":  {"rel": "{mode}/data/archive/", "format": "markdown",
+        "owner": "modules.memory_archive",
+                        "media": False, "sensitive": False, "sync": "newest",
+                        "note": "历史归档（P2，2026-09-18）：按月分片、只增不改的已发生事实；"
+                                "同 memory.md 属聊天产物 → 清除历史时一并删；检索器按需读"},
     "character":       {"rel": "{mode}/character/*.md", "format": "markdown",
         "owner": "routes_pack",
                         "media": False, "sensitive": False, "sync": "newest"},
+    "knowledge":       {"rel": "{mode}/character/knowledge/", "format": "markdown",
+        "owner": "routes_pack",
+                        "media": False, "sensitive": False, "sync": "newest",
+                        "note": "角色包知识库（五域结构；用户副本覆盖 bundled，写后清检索缓存）"},
+    "pack_memory":     {"rel": "{mode}/character/memory/default.md", "format": "markdown",
+        "owner": "routes_pack",
+                        "media": False, "sensitive": False, "sync": "newest",
+                        "note": "出厂记忆（角色开局记忆基座；运行时 memory.md 优先，它兜底）"},
     "stickers":        {"rel": "stickers/", "format": "binary+registry",
         "owner": "domain.stickers.picker",
                         "media": True, "sensitive": False, "sync": "metadata",
@@ -133,6 +146,13 @@ REGISTRY: dict[str, dict] = {
         "owner": "modules.setting_fix_store",
                         "media": False, "sensitive": False, "sync": "exclude",
                         "note": "设定纠错中间态（本地工作区，不进同步）"},
+    # ── 语音插件（独立子系统 app/voice/，见 docs/工具/tts.md）──
+    "voice_cache":     {"rel": "{mode}/data/voice/", "format": "binary",
+        "owner": "voice.store",
+                        "media": True, "sensitive": False, "sync": "exclude",
+                        "note": "生成的语音 v{seq}.wav。**必须 exclude**：语音只在本地、不经服务器。"
+                                "清理：清历史→purge_all、撤回→purge_after（api/chat_ops 挂钩）；"
+                                "卸载软件随 user_data 清空、覆盖升级不动。"},
 }
 
 

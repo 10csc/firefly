@@ -5,14 +5,22 @@
 以"流萤休息/起床"为整理时机：休息时 LLM 重写头部概括+追加尾部事实，起床时加载头部。
 """
 
-import json, logging, os, threading
+import json, logging, threading
 from pathlib import Path
 from dataclasses import dataclass
 
-from modules.app_config import ROOT, USER_DIR, mode_data_dir, mode_journal_dir, DEFAULT_MODE, char_name, user_name
+from modules.app_config import DEFAULT_MODE, char_name, user_name
+from modules.storage import atomic_write_text   # B2/B5（审计 2026-09-15）：记忆/手账/游标统一原子写
 
 logger = logging.getLogger(__name__)
 _lock = threading.Lock()
+# 整理串行锁（与计数器用的 _lock 分开，避免长事务持锁期间计数器取不到）：
+# 手动「休息」与后台自动整理不能同时写 memory.md / .memory_index。
+_REST_SERIAL_LOCK = threading.Lock()
+
+# 尾部"（已完成）"条目保留条数上限（2026-09-18）。见 _compose_memory_text docstring：
+# 尾部只是喂给 rest 的输入，不是唯一真相源（历史归档另有留底），所以可以裁剪。
+_TAIL_DONE_KEEP = 40
 
 
 # ── 异常 ──────────────────────────────────────────
@@ -32,103 +40,23 @@ class RestResult:
     error: str = ""
 
 
-# ── 文件路径（按模式隔离）──────────────────────────
-# 用户记忆 = 运行时动态数据，必须放 user_data（与 conversation.jsonl 同级）：
-# 仓库内位置在打包(frozen)时位于 exe 内部 _internal/，更新安装包即被覆盖。
-# 统一从 app_config 取 USER_DIR/ROOT（frozen / android / 开发 三平台同一公式）。
-def _memory_file(mode: str = DEFAULT_MODE) -> Path:
-    return mode_data_dir(mode) / "memory.md"
+# ── 文件路径/迁移/游标自愈 ─────────────────────────
+# 阶段 2.8：实现抽至 modules/memory_files.py；此处 re-export 保持消费方
+# （api/chat、api/debug、server.py、tests 的 `from modules.memory_manager import _index_file` 等）零改动。
+from modules.memory_files import (   # noqa: F401
+    _memory_file, _index_file, _journal_file,
+    _verify_today, _migrate_legacy, migrate_legacy_memory,
+    _verify_index_file, verify_index,
+)
 
-
-def _index_file(mode: str = DEFAULT_MODE) -> Path:
-    return mode_data_dir(mode) / ".memory_index"
-
-
-def _journal_file(mode: str = DEFAULT_MODE) -> Path:
-    # 与 llm_base 手账同一位置：{mode}/journal/手账.md
-    return mode_journal_dir(mode) / "手账.md"
-
-
-_JOURNAL_LEGACY = ROOT / "knowledge" / "story" / "手账.md"
-
-
-def _verify_today(today) -> str:
-    """today 审查：合法 YYYY-MM-DD 字符串直接采用；非法/缺省 → 本机时钟（兜底）。
-    routes 层负责「服务器时间优先、本地兜底」的解析（见 routes._resolve_today）。"""
-    import re as _re
-    from datetime import datetime as _dt
-    if isinstance(today, str):
-        t = today.strip()
-        if _re.fullmatch(r"\d{4}-\d{2}-\d{2}", t):
-            return t
-    return _dt.now().strftime("%Y-%m-%d")
-
-
-def _migrate_legacy(mode: str = DEFAULT_MODE):
-    """一次性迁移：旧位置（memory/data/）有文件且 {mode} 无 → 拷贝。
-    之后只读写 {mode}，旧文件保留不删（防误删历史数据）。
-    旧目录 memory/data/ 已随结构整理移除，exists 检查自然跳过。"""
-    legacy_dir = ROOT / "memory" / "data"
-    try:
-        _memory_file(mode).parent.mkdir(parents=True, exist_ok=True)
-    except OSError:
-        return
-    for legacy, target in ((legacy_dir / "memory.md", _memory_file(mode)),
-                           (legacy_dir / ".memory_index", _index_file(mode))):
-        try:
-            if legacy.exists() and not target.exists():
-                target.write_text(legacy.read_text(encoding="utf-8"), encoding="utf-8")
-        except OSError:
-            pass
-
-
-def migrate_legacy_memory(mode: str = DEFAULT_MODE) -> None:
-    """一次性迁移（**启动链显式调用**，阶段 2.6）。
-
-    旧行为：本模块 import 期直接调 `_migrate_legacy()` —— 于是"import memory_manager"
-    这个纯读动作会在盘上建出 `user_data/{mode}/data/`，并可能拷历史文件。
-    现改为由入口启动链在 `run_startup_init()` 之后显式调用（见 app/server.py main）。
-    服务器版**不调用**：各账号数据根是 per-user 目录，且 server 与本地共用同一 user_data 根，
-    跑本地迁移没有意义（与 run_legacy_migration 的处置一致）。"""
-    _migrate_legacy(mode)
-
-
-def _verify_index_file(idx_file: Path, mode: str = "") -> int:
-    """记忆游标自愈（阶段 3.6，按文件路径）：游标 > 真实用户轮数时压低并落盘。
-
-    为什么需要：`.memory_index` 的 `last_integrated_turn` 是"整理到第几轮"的唯一依据。
-    一旦偏大（撤回/清历史/换机恢复/任何新的写对话入口忘了同步回写），后续整理会以为
-    "没有新对话"而**永久跳过**——用户表现为"记忆再也不更新"，且全程没有任何报错。
-    现在 routes 的 undo / clear-history 仍各有即时回写（那是最快的），这里是兜底自愈。
-    返回修正后的游标；无需修正时原样返回（且**不写盘**）。"""
-    try:
-        from modules.conversation_store import count_user_turns
-        real = int(count_user_turns(mode=mode))
-    except Exception as e:
-        logger.warning("游标自愈跳过（读取用户轮数失败）: %s", e)
-        return -1
-    cur = 0
-    try:
-        if idx_file.exists():
-            cur = int(json.loads(idx_file.read_text(encoding="utf-8")).get("last_integrated_turn", 0))
-    except Exception:
-        cur = 0
-    if cur <= real:
-        return cur
-    logger.warning("记忆游标偏大（%d > 真实 %d 轮，mode=%s）→ 已压低，整理不再被永久跳过",
-                   cur, real, mode or "?")
-    try:
-        idx_file.parent.mkdir(parents=True, exist_ok=True)
-        idx_file.write_text(json.dumps({"last_integrated_turn": real}, ensure_ascii=False),
-                            encoding="utf-8")
-    except OSError as e:
-        logger.warning("游标自愈写入失败（下次仍会重试）: %s", e)
-    return real
-
-
-def verify_index(mode: str = DEFAULT_MODE) -> int:
-    """记忆游标自愈（按模式）：见 `_verify_index_file`。返回（可能的）修正后游标。"""
-    return _verify_index_file(_index_file(mode), mode)
+# re-export 面（pyflakes 的"已使用"标记；server.py 启动链与 tests 经此取 migrate_legacy_memory）
+__all__ = [
+    "MemoryManager", "RestResult", "MemoryManagerError", "InputRejected", "OutputInvalid",
+    "wake", "get_counters",
+    "_memory_file", "_index_file", "_journal_file",
+    "_verify_today", "_migrate_legacy", "migrate_legacy_memory",
+    "_verify_index_file", "verify_index",
+]
 
 # memory.md 结构：
 # # 核心记忆头部（休息时整体重写）
@@ -190,7 +118,7 @@ _JOURNAL_PROMPT = r"""你是{char_name}。你在整理自己的手账。以第�
 
 # ── 核心类 ────────────────────────────────────────
 class MemoryManager:
-    def __init__(self, client, model: str = "deepseek-v4-flash-vision-exp",
+    def __init__(self, client, model: str = "deepseek-flash",
                  mode: str = DEFAULT_MODE,
                  memory_file: Path | None = None, index_file: Path | None = None):
         if client is None: raise InputRejected("client 不能为 None")
@@ -202,14 +130,33 @@ class MemoryManager:
         self._mem_file.parent.mkdir(parents=True, exist_ok=True)
 
     def load_head(self) -> str:
-        """加载头部概括（进 reply prompt 会话稳定层）。无文件返回空。"""
-        if not self._mem_file.exists(): return ""
-        content = self._mem_file.read_text(encoding="utf-8")
+        """加载头部概括（进 reply prompt 会话稳定层）。
+
+        回落链（2026-09-15，记忆库入包）：运行时 memory.md → 包内 memory/default.md
+        （出厂记忆）。运行时文件不存在/无头部时，用包出厂记忆的「核心记忆」段起步——
+        这样新建角色也有"角色开局就记得的事"，而不是空白开局。"""
+        content = ""
+        if self._mem_file.exists():
+            content = self._mem_file.read_text(encoding="utf-8")
         # 头部 = "# 核心记忆头部" 到 "# 事实与任务" 之间
         start = content.find("# 核心记忆头部")
         end = content.find("# 事实与任务")
-        if start < 0 or end < 0: return ""
-        return content[start:end].strip()
+        if start >= 0 and end >= 0:
+            return content[start:end].strip()
+        # 回落：包内出厂记忆（用户副本 → bundled，与知识库同哲学）
+        try:
+            from modules.app_config import mode_character_dir, bundled_character_dir
+            for base in (mode_character_dir(self._mode) / "memory" / "default.md",
+                         bundled_character_dir(self._mode) / "memory" / "default.md"):
+                if base.is_file():
+                    c = base.read_text(encoding="utf-8")
+                    s = c.find("## 核心记忆")
+                    e = c.find("## 既定事实")
+                    if s >= 0:
+                        return c[s:e if e >= 0 else None].strip()
+        except Exception:
+            pass
+        return ""
 
     def load_tail(self) -> str:
         if not self._mem_file.exists(): return ""
@@ -226,14 +173,42 @@ class MemoryManager:
         except Exception: return 0
 
     def _write_index(self, turn: int):
-        self._idx_file.write_text(
-            json.dumps({"last_integrated_turn": turn}, ensure_ascii=False), encoding="utf-8")
+        # B2（审计 2026-09-15）：游标文件同样原子写——截断的 .memory_index 虽然
+        # 有 _verify_index_file 自愈兜底，但没必要留这个窗口
+        atomic_write_text(self._idx_file,
+                          json.dumps({"last_integrated_turn": turn}, ensure_ascii=False))
 
-    def rest(self, full_history: list, current_turn_count: int, today: str | None = None) -> RestResult:
-        """休息时整理。full_history = context_manager.get_full() 全量历史。
-        today：整理日（YYYY-MM-DD，服务器时间优先/本地兜底由 routes 解析后传入）；
-        缺省用本机时钟。流程：审查 → 读旧记忆 → LLM 整理 → 验证 → 原子落盘 → 更新 index
+    def rest(self, full_history: list, current_turn_count: int, today: str | None = None,
+             keep_turns: int | None = None) -> RestResult:
+        """整理：把活跃窗口里**除最近 keep_turns 轮以外**的对话搬出窗口。
+
+        full_history = **盘上全量**历史（`conversation_store.load_all`）。
+        keep_turns：整理后仍留在活跃窗口的轮数（用户口径：压缩后分析器/回复器照样看近 30 轮
+          完整对话）。`None` = 用 `auto_rest.keep_turns()`；显式 `0` = 全部搬走（全量整理）。
+        today：整理日（YYYY-MM-DD，服务器时间优先/本地兜底由 routes 解析后传入）。
+
+        整理做两件事（**原文留底 + 压缩摘要**，用户 2026-09-18 口径）：
+        1. 搬走的那段**原文**追加进历史对话存档 `{mode}/data/archive/YYYY-MM.md`
+           （只进检索器）；
+        2. 同一段原文交给 LLM 压缩进 `memory.md` 头部（只进回复器）。
+        游标 `last_integrated_turn` 推进到 `current_turn_count - keep_turns`。
+
+        2026-09-18：本方法串行化（见 `_rest_locked`）。手动「让流萤休息」与后台
+        *自动整理*（modules/auto_rest.py）会同时写 memory.md / .memory_index，
+        并发时后写者覆盖前者的成果、游标互相错位。拿不到锁就**跳过本轮**——
+        整理不是实时性任务，下一次触发会补上。
         """
+        if not _REST_SERIAL_LOCK.acquire(blocking=False):
+            logger.info("已有整理在进行，跳过本轮（mode=%s）", self._mode)
+            return RestResult(True, self.load_head(), [], [], 0, "已有整理在跑，跳过")
+        try:
+            return self._rest_locked(full_history, current_turn_count, today, keep_turns)
+        finally:
+            _REST_SERIAL_LOCK.release()
+
+    def _rest_locked(self, full_history: list, current_turn_count: int,
+                     today: str | None = None, keep_turns: int | None = None) -> RestResult:
+        """rest 的实际实现（持有 _REST_SERIAL_LOCK）。拆分原因见 rest 的 docstring。"""
         global _REST_COUNT, _REST_ERRORS
         with _lock: _REST_COUNT += 1
         today = _verify_today(today)
@@ -250,31 +225,97 @@ class MemoryManager:
         old_tail = self.load_tail()
         # 阶段 3.6：整理前先自愈游标 —— 游标偏大会让"新对话"判定为空、整理被永久跳过
         last_integrated = _verify_index_file(self._idx_file, self._mode)
-        # 新对话 = 第 last_integrated 轮之后的历史
-        new_dialogue = self._slice_new_dialogue(full_history, last_integrated)
+        # B9（审计 2026-09-15）：None = 对话历史读不出来（无法验证游标）——跳过本轮
+        # 整理而非把 None/-1 当切片下界（后者会把全量历史喂给 LLM）
+        if last_integrated is None:
+            with _lock: _REST_ERRORS += 1
+            logger.error("游标自愈不可用（对话历史读取失败），跳过本轮整理，下轮重试")
+            return RestResult(False, old_head, [], [], 0, "游标自愈不可用，跳过本轮整理")
+
+        # 要归档的区间 =（last_integrated, archive_end]，其中 archive_end = 总轮数 − 保留轮数。
+        # 活跃窗口不足 keep 轮时 archive_end <= last_integrated → 没有可搬走的，直接跳过。
+        if keep_turns is None:
+            try:
+                from modules.auto_rest import keep_turns as _keep
+                keep_turns = _keep()
+            except Exception:
+                keep_turns = 30
+        archive_end = max(0, int(current_turn_count) - max(0, int(keep_turns)))
+        if archive_end <= last_integrated:
+            return RestResult(True, old_head, [], [], last_integrated,
+                              f"活跃窗口不足 {keep_turns} 轮，无需整理")
+        new_dialogue = self._slice_dialogue(full_history, last_integrated, archive_end)
         if not new_dialogue.strip():
             return RestResult(True, old_head, [], [], last_integrated, "无新对话，跳过")
 
         # 2. LLM 整理
+        res = self._integrate(new_dialogue, old_head, old_tail, today)
+        if not res.success:
+            with _lock: _REST_ERRORS += 1
+            return res
+
+        # 3. 游标推进 + 原文进历史存档（只进检索器）
+        self._write_index(archive_end)
+        try:
+            from modules.memory_archive import append_archive
+            append_archive(self._mode, new_dialogue,
+                           turn_from=last_integrated + 1, turn_to=archive_end, today=today)
+        except Exception as e:
+            # 存档失败不回滚记忆：记忆已经写盘了，存档下次整理会连同新内容一起补
+            logger.warning("rest：历史存档写入失败（记忆本身已保存）: %s", e)
+        return RestResult(True, res.new_head, res.added_entries, res.resolved_entries, archive_end)
+
+    def _integrate(self, new_dialogue: str, old_head: str, old_tail: str,
+                   today: str) -> RestResult:
+        """把一段对话原文整合进 memory.md（rest 与 compress_text 共用）。
+
+        只做 LLM 调用 + 校验 + 原子落盘，**不动游标、不写存档**——调用方决定这两件事。
+        """
         try:
             raw = self._call_llm(old_head, old_tail, new_dialogue, today)
             parsed = self._validate_output(raw)
             parsed = self._sanitize_added_dates(parsed, today, new_dialogue)
         except OutputInvalid as e:
             logger.error("记忆整理 LLM 输出异常: %s", e)
-            with _lock: _REST_ERRORS += 1
-            return RestResult(False, old_head, [], [], last_integrated, str(e))
+            return RestResult(False, old_head, [], [], 0, str(e))
         except Exception as e:
             logger.error("记忆整理 API 失败: %s", e)
-            with _lock: _REST_ERRORS += 1
-            return RestResult(False, old_head, [], [], last_integrated, str(e))
-
-        # 3. 原子落盘（A2 收口：统一 storage.atomic_write_text）
+            return RestResult(False, old_head, [], [], 0, str(e))
+        # 原子落盘（A2 收口：统一 storage.atomic_write_text）
         new_content = self._compose_memory_text(parsed.new_head, old_tail, parsed)
-        from modules.storage import atomic_write_text
-        atomic_write_text(self._mem_file, new_content)
-        self._write_index(current_turn_count)
-        return RestResult(True, parsed.new_head, parsed.added, parsed.resolved, current_turn_count)
+        # B2（审计 2026-09-15）：原子写返回值必须检查——写盘失败若仍推进游标并报成功，
+        # 本轮 LLM 整理产物永久丢失（下次从 current_turn_count 之后切片，永不补回），
+        # 前端还显示"记忆已更新"。
+        if not atomic_write_text(self._mem_file, new_content):
+            logger.error("memory.md 原子写失败（本轮整理丢弃，游标未推进，下轮重试）: %s",
+                         self._mem_file)
+            return RestResult(False, old_head, [], [], 0, "memory.md 写盘失败")
+        return RestResult(True, parsed.new_head, parsed.added, parsed.resolved, 0)
+
+    def compress_text(self, text: str, today: str | None = None) -> RestResult:
+        """把一段**对话原文**压缩进 memory.md 头部（设定文件页「AI 压缩」按钮用）。
+
+        与 rest 的区别：不切历史、不推进游标、不写存档——输入就是调用方给的那段原文
+        （例如历史对话存档里某个月）。用途："用户想把某段旧记录主动压进记忆"。
+        同样持串行锁：不能与 rest 并发写 memory.md。
+        """
+        body = str(text or "").strip()
+        if not body:
+            raise InputRejected("compress_text：内容为空")
+        if not _REST_SERIAL_LOCK.acquire(blocking=False):
+            return RestResult(False, self.load_head(), [], [], 0, "已有整理在跑，请稍后重试")
+        try:
+            today_v = _verify_today(today)
+            old_head = self.load_head()
+            old_tail = self.load_tail()
+            res = self._integrate(body, old_head, old_tail, today_v)
+            if not res.success:
+                with _lock:
+                    global _REST_ERRORS
+                    _REST_ERRORS += 1
+            return res
+        finally:
+            _REST_SERIAL_LOCK.release()
 
     def update_journal(self, new_dialogue) -> bool:
         """用新对话更新手账。以流萤口吻更新两个栏目。
@@ -289,8 +330,9 @@ class MemoryManager:
                 lines.append(f"{role}: {m.get('content', '')}")
             new_dialogue = "\n".join(lines)
         old_journal = ""
+        # 2026-09-15：legacy 手账回退链移除（见 llm_base 同款注记）
         jf = _journal_file(self._mode)
-        src = jf if jf.exists() else (_JOURNAL_LEGACY if self._mode == DEFAULT_MODE else None)
+        src = jf
         if src is not None and src.exists():
             old_journal = src.read_text(encoding="utf-8").strip()
         try:
@@ -310,7 +352,11 @@ class MemoryManager:
             if not new_content or f"我和{user_name(self._mode)}聊了什么" not in new_content:
                 return False
             jf.parent.mkdir(parents=True, exist_ok=True)
-            jf.write_text(new_content, encoding="utf-8")
+            # B5（审计 2026-09-15）：手账唯一副本改原子写——裸写崩溃即手账全损，
+            # 用户手改过的内容无法恢复（同模块 memory.md 早已原子写，此处漏了）
+            if not atomic_write_text(jf, new_content):
+                logger.error("手账原子写失败: %s", jf)
+                return False
             return True
         except Exception as e:
             logger.error("手账更新失败: %s", e)
@@ -324,16 +370,24 @@ class MemoryManager:
         return self.load_head()
 
     def _slice_new_dialogue(self, history: list, last_turn: int) -> str:
-        """切片：第 last_turn 轮之后的历史转文本。
+        """切片：第 last_turn 轮之后的历史转文本（保留为公共口径，等价于 `_slice_dialogue(h, last_turn, 0)`）。"""
+        return self._slice_dialogue(history, last_turn, 0)
+
+    def _slice_dialogue(self, history: list, from_turn: int, to_turn: int = 0) -> str:
+        """切片：(from_turn, to_turn] 轮区间转文本；to_turn=0 表示不设上界。
+
         按 user 消息数计轮次——历史中夹杂的 system 行为消息不影响切片位置。
         每行带消息时间标记 `[YYYY-MM-DD HH:MM]`（记忆整理日期必须从真实消息时间取，
-        否则 LLM 只能猜测/照抄模板示例日期——2026-08-22 线上 bug 根因）。"""
+        否则 LLM 只能猜测/照抄模板示例日期——2026-08-22 线上 bug 根因）。
+        上界的用途：整理只搬走"活跃窗口里除最近 keep_turns 轮以外"的部分，
+        保留的那几十轮**留在活跃窗口**，不进存档也不进压缩（避免重复与信息错位）。
+        """
         lines = []
         turn = 0
         for m in history:
             if m.get("role") == "user":
                 turn += 1
-            if turn <= last_turn:
+            if turn <= from_turn or (to_turn and turn > to_turn):
                 continue
             role = user_name(self._mode) if m.get("role") == "user" else (char_name(self._mode) if m.get("role") == "assistant" else "（行为）")
             ts = str(m.get("time") or "").strip()
@@ -428,42 +482,82 @@ class MemoryManager:
         return parsed
 
     def _compose_memory_text(self, new_head, old_tail, parsed) -> str:
-        """组装新 memory.md：新头部 + 处理后的尾部（resolved 标记完成 + added 追加）"""
+        """组装新 memory.md：新头部 + 处理后的尾部。
+
+        尾部处理（2026-09-18 P1 增强）：
+        1. `resolved` 条目行尾标（已完成），**保留不删**（历史可追溯）；
+        2. **去重**：同一条事实（同日期同文本）不重复追加——原先每轮整理都会把
+           LLM 复述的旧事实再追加一遍，尾部只增不减；
+        3. **分节标题只写一次**：原先每条 entry 前都写一个 `## 承诺/偏好/事件`，
+           整理十次就有十个标题，文件越读越乱；
+        4. **已完成条目上限**：只留最近 `_TAIL_DONE_KEEP` 条。这条**不丢信息**——
+           P2 的历史归档（modules/memory_archive.py）已把每条事实按日期留底，
+           tail 只是喂给 rest 的输入缓存，不是唯一真相源。
+        """
         lines = ["# 核心记忆头部", "", new_head, "", "# 事实与任务（追加区）", ""]
-        # 旧尾部去掉头部标题行（避免重复）
+
+        # 旧尾部按原分节收进三个桶 —— **分节标题不再原样累积**（原先每条新 entry 前
+        # 都写一个 `## 承诺/偏好/事件`，整理十次就有十个标题，文件越读越乱）。
+        # 顺带把 resolved 条目行尾标（已完成），保留历史可追溯。
+        buckets = {"承诺": [], "偏好": [], "事件": []}
+        loose = []          # 非条目、非分节的行（历史残片）：原样保留，绝不静默丢内容
+        cur = "事件"
+        resolved_texts = [r.get("text", "").strip()
+                          for r in parsed.resolved if isinstance(r, dict)]
         if old_tail:
-            old_body = old_tail.replace("# 事实与任务", "").replace("# 事实与任务（追加区）", "").strip()
-            if old_body:
-                # 对 resolved 条目在行尾加（已完成）标记，保留历史可追溯
-                resolved_texts = [r.get("text", "").strip() for r in parsed.resolved if isinstance(r, dict)]
-                for raw_line in old_body.split("\n"):
-                    line = raw_line.rstrip()
-                    if not line:
-                        lines.append("")
-                        continue
-                    # 匹配 "- [日期] 内容" 形式的条目行
-                    matched = False
-                    if line.startswith("- "):
-                        for rt in resolved_texts:
-                            if rt and rt in line and "已完成" not in line:
-                                lines.append(f"{line}（已完成）")
-                                matched = True
-                                break
-                    if not matched:
-                        lines.append(line)
-                # 确保尾部有空行分隔
-                if lines and lines[-1]:
-                    lines.append("")
-        # 追加新条目
+            # B3（审计 2026-09-15）：先削长标题再削短标题——顺序反了时第一次 replace
+            # 把「# 事实与任务（追加区）」削成「（追加区）」，第二次再也匹配不到，
+            # 残片被写回 memory.md 并逐次累积污染
+            old_body = (old_tail.replace("# 事实与任务（追加区）", "")
+                        .replace("# 事实与任务", "").strip())
+            for raw_line in old_body.split("\n"):
+                line = raw_line.rstrip()
+                if not line:
+                    continue
+                if line.startswith("## "):
+                    name = line[3:].strip()
+                    cur = name if name in buckets else "事件"
+                    continue
+                if not line.startswith("- "):
+                    loose.append(line)
+                    continue
+                for rt in resolved_texts:
+                    if rt and rt in line and "已完成" not in line:
+                        line = f"{line}（已完成）"
+                        break
+                buckets[cur].append(line)
+
+        # 已完成条目裁剪（只留最近 N 条；见 docstring 第 4 点）
+        for sec in ("承诺", "偏好", "事件"):
+            rows = buckets[sec]
+            done_idx = [i for i, ln in enumerate(rows) if "（已完成）" in ln]
+            if len(done_idx) > _TAIL_DONE_KEEP:
+                drop = set(done_idx[:len(done_idx) - _TAIL_DONE_KEEP])
+                buckets[sec] = [ln for i, ln in enumerate(rows) if i not in drop]
+
+        # 追加新条目：按类型分组、去掉与旧条目重复的
+        existing = {ln.strip() for rows in buckets.values() for ln in rows}
         for entry in parsed.added:
             if not isinstance(entry, dict):
                 continue
-            t = entry.get("type", "事件")
-            text = entry.get("text", "")
-            date = entry.get("date", "")
-            section = "## 承诺" if t == "承诺" else "## 偏好" if t == "偏好" else "## 事件"
-            lines.append(f"{section}")
-            lines.append(f"- [{date}] {text}")
+            t = str(entry.get("type") or "事件")
+            text = str(entry.get("text") or "").strip()
+            if not text:
+                continue
+            line = f"- [{str(entry.get('date') or '').strip()}] {text}"
+            if line in existing:
+                continue          # 去重：同一条事实不重复追加
+            existing.add(line)
+            buckets["承诺" if t == "承诺" else "偏好" if t == "偏好" else "事件"].append(line)
+
+        for sec in ("承诺", "偏好", "事件"):
+            if not buckets[sec]:
+                continue
+            lines.append(f"## {sec}")
+            lines.extend(buckets[sec])
+            lines.append("")
+        if loose:
+            lines.extend(loose)
             lines.append("")
         return "\n".join(lines)
 
@@ -478,7 +572,7 @@ def get_counters() -> dict:
         return {"rest_count": _REST_COUNT, "rest_errors": _REST_ERRORS}
 
 
-def wake(client=None, model: str = "deepseek-v4-flash-vision-exp", mode: str = DEFAULT_MODE) -> str:
+def wake(client=None, model: str = "deepseek-flash", mode: str = DEFAULT_MODE) -> str:
     """模块级起床入口：加载 {mode} 头部到会话。
 
     若 memory.md 不存在或为空，返回空字符串（首次启动、无记忆）。

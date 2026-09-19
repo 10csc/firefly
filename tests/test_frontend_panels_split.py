@@ -83,9 +83,15 @@ check("C1 包详情页在 packs.js（loadPackView/_packViewMode/专属表情包/
 check("C2 外壳只**调用**面板 loader，不含它们的定义",
       "function loadPackView" not in shell and "function loadPackView" not in shell
       and not re.search(r"function\s+load(RequestLog|Pipeline|Favorites|CharFiles|Journal|UserMemory)\b", shell))
-check("C3 资料面板在 data.js（状态/收藏/记忆/设定文件/手账）",
+check("C3 资料面板在 data.js（状态/收藏/记忆/手账）",
       all(k in data for k in ("loadStateTab", "loadFavorites", "loadUserMemory",
-                              "loadCharFiles", "loadJournal")))
+                              "loadJournal")))
+# C3b（2026-09-18）：loadCharFiles 已随「用户设定」编辑器从设定文件页一起去掉——
+# 它属角色卡管理域（PACK_STRUCTURE 的 persona slot），且不是聊天产物。
+# 断言用"定义/调用点"而非裸字符串（注释里提到这个名字是允许的）。
+_C3B_DEAD = re.compile(r"function\s+loadCharFiles\b|\bloadCharFiles\s*\(|user-setting-editor")
+check("C3b 设定文件页不再重复渲染用户设定（loadCharFiles 已移除）",
+      not _C3B_DEAD.search(data) and not _C3B_DEAD.search(shell))
 check("C4 调试面板在 debug.js（请求记录/流水线）",
       "loadRequestLog" in debug and "loadPipeline" in debug and "_stageBlock" in debug)
 check("C5 外壳保留 tab 切换与菜单骨架",
@@ -103,7 +109,16 @@ check("D3 三个面板模块紧跟外壳之后（拼接顺序）",
       bfb.ORDER.index("panels") + 1 == bfb.ORDER.index("panels/packs")
       and bfb.ORDER.index("panels/data") == bfb.ORDER.index("panels/packs") + 1
       and bfb.ORDER.index("panels/debug") == bfb.ORDER.index("panels/data") + 1)
-check("D4 NON_BUNDLE 仍只排除 bundle/pc_nav", bfb.NON_BUNDLE == {"bundle", "pc_nav"})
+check("D7 _module_names() 排除的正是 NON_BUNDLE", bfb._module_names() == set(bfb.ORDER))
+# D4（2026-09-19 改写）：原来断言 `NON_BUNDLE == {"bundle","pc_nav"}` 这种**写死集合**——
+# PC 重构把 pc_nav 换成 pc_shell 就假失败了一次（同类问题见 docs/错误总结.md #12）。
+# 现在断言的是**性质**：NON_BUNDLE 必须 = bundle ∪ index.html 里用独立 <script> 加载的那些模块。
+_htm = (ROOT / "app" / "static" / "index.html").read_text(encoding="utf-8")
+_sep = set(re.findall(r'<script src="js/([A-Za-z0-9_/]+)\.js', _htm)) | {"bundle"}
+check(f"D4 NON_BUNDLE = bundle + index.html 独立加载的模块 {sorted(_sep)}",
+      bfb.NON_BUNDLE == _sep)
+check("D5 index.html 引用的独立脚本都在盘上",
+      all((ROOT / "app" / "static" / "js" / (n + ".js")).is_file() for n in _sep))
 
 print("=== E. bundle 三副本 ===")
 _markers = [f"/* ── 来源：js/panels/{n}.js ── */" for n in ("packs", "data", "debug")]

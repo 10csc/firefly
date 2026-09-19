@@ -2,7 +2,7 @@
 import { S, SESSION_ID, inputEl, sendBtn } from "./state.js";
 import { _inflight } from "./chat.js";
 import { renderMessages } from "./chat_render.js";
-import { CURRENT_MODE, _modeGen, appView } from "./views.js";
+import { CURRENT_MODE, _modeGen, appView, currentPreset, charName } from "./views.js";
 
 // ═══════════════════════════════════════════
 // 主动性轮询 — 流萤在合适的时候主动找开拓者说话
@@ -34,7 +34,7 @@ async function _renderProactiveWithThink(data) {
     S.waiting = true;
     inputEl.disabled = true; sendBtn.disabled = true;
     const statusEl = document.querySelector("#header .status");
-    const defaultStatus = "会找到的，属于我的梦...";   // 固定简介（防快照污染）
+    const defaultStatus = (currentPreset() || {}).tagline || "会找到的，属于我的梦...";   // 随当前角色包签名（原来是硬编码流萤签名）
     if (statusEl) statusEl.textContent = "对方正在输入...";
     const thinkMs = 2000 + Math.floor(Math.random() * 3000);
     await new Promise(r => setTimeout(r, thinkMs));
@@ -88,7 +88,7 @@ export function _notifyFirefly(messages) {
         if (window.FireflyJs && window.FireflyJs.notify && Array.isArray(messages)) {
             const texts = messages.filter(m => m && m.type === "text" && m.content)
                                   .map(m => m.content);
-            if (texts.length) window.FireflyJs.notify("流萤 · AI", texts.join("\n").slice(0, 200));
+            if (texts.length) window.FireflyJs.notify((charName() || "角色") + " · AI", texts.join("\n").slice(0, 200));
         }
     } catch (e) {}
 }
@@ -100,4 +100,12 @@ window.__serverProactive = async function () {
     await checkProactive();
 };
 
-setInterval(checkProactive, _PROACTIVE_INTERVAL);
+// 10s 轮询 + 抖动（2026-09-19 压测）：原来是固定 10s 的 setInterval。
+// 固定周期会让所有客户端在同一秒对齐（惊群）；加 0-5s 抖动把负载摊平，
+// 首次延迟也保持 10s 量级（避免刚进页面就判定"该主动了"）。
+(function _proactiveLoop() {
+    setTimeout(() => {
+        checkProactive();
+        _proactiveLoop();
+    }, _PROACTIVE_INTERVAL + Math.random() * 5000);
+})();

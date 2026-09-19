@@ -131,7 +131,7 @@ _EMERGENCY_PERSONA = """你是{char_name}。你正在用手机给{user_name}发�
 
 # ── 回复器类 ──────────────────────────────────────
 class Polisher:
-    def __init__(self, client, model: str = "deepseek-v4-flash-vision-exp",
+    def __init__(self, client, model: str = "deepseek-flash",
                  effort: str = "high", temperature: float = 0.5, mode: str = "story"):
         self._client = client
         self._model = model

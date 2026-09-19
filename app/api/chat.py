@@ -3,27 +3,25 @@
 
 - 合并窗口：消息发送即达后端（即时写盘，不丢），后端按 (session, mode, 用户) 5 秒滑动窗口合并；
   主请求挂起等窗口结束再跑流水线，副请求立即返回 {"queued": true}（回复由主请求带回）。
-- 端点：/chat、/chat/hint、/chat/flush、/rest、/undo、/clear-history、/history、
-  /open-mode、/proactive-status、/chat-stage、/wake-status、/save-journal。
+- 端点：/chat、/chat/hint、/chat/flush、/history、/chat-stage、/save-journal。
+  （/rest、/undo、/clear-history、/open-mode、/proactive-status、/wake-status、/time
+  在阶段 2.8 移至 api/chat_ops.py，经本模块 re-export。）
 
 chat() 本身只是编排壳：_ingest_user_messages（写盘）→ 主动性复位 → 空消息分流 →
 _merge_window（窗口）→ _run_pipeline（流水线）。
 """
 
-import json
 import logging
 import threading
 import time
 from urllib.parse import urlparse, parse_qs
-from modules.context_manager import ContextManager
 
 from modules import app_config as cfg
 from modules.app_config import DEFAULT_MODE
 from orchestrator import handle_chat
-from routes_auth import _auth_server_base
 from routes_common import (
     _CONTENT_MAX, _SESSIONS_LOCK, _body_mode, _body_mode_ex,
-    _is_server, _load_image_data_url, _notify_reply_if_background, _query_mode,
+    _load_image_data_url, _notify_reply_if_background, _query_mode,
     _read_json, _session_key, _write_replies, get_session,
     sessions,
 )
@@ -45,7 +43,12 @@ def save_journal(h):
     from modules.app_config import mode_journal_dir
     fp = mode_journal_dir(mode) / "手账.md"
     fp.parent.mkdir(parents=True, exist_ok=True)
-    fp.write_text(content, encoding="utf-8")
+    # B5（审计 2026-09-15）：手账唯一副本改原子写（memory_manager.update_journal
+    # 同款修复）——裸写崩溃即手账全损，用户手改内容无法恢复
+    from modules.storage import atomic_write_text
+    if not atomic_write_text(fp, content):
+        h._json({"ok": False, "error": "写盘失败，手账未保存（请重试）"})
+        return
     reload_journal(mode)
     h._json({"ok": True})
 
@@ -223,6 +226,23 @@ def _merge_window(session_id: str, mode: str, user_input: str, vision_urls: list
     return True, user_input, vision_images
 
 
+def _refresh_memory_head(mode: str, head: str) -> None:
+    """自动整理完成后的回调：刷新本进程内所有同 mode 会话的 memory_head。
+
+    为什么需要：`session["memory_head"]` 在会话创建时快照一次，之后只有手动 rest
+    才更新。自动整理跑在后台线程里，不改的话当前会话到进程结束前都还在用旧摘要
+    （表现：用户觉得"整理完了但她好像没记住"）。
+    放这里而不是 auto_rest 里，是因为 modules/ 不应反向依赖 routes/api 层。
+    """
+    try:
+        from routes_common import sessions
+        for s in sessions.values():
+            if isinstance(s, dict) and s.get("mode") == mode:
+                s["memory_head"] = head
+    except Exception as e:
+        logger.debug("刷新 memory_head 失败（下次进聊天自然生效）: %s", e)
+
+
 def _run_pipeline(h, session_id: str, mode: str, client, user_input: str, hint: str,
                   vision_images: list | None = None, mode_fell_back: bool = False,
                   notify: bool = True) -> None:
@@ -258,9 +278,19 @@ def _run_pipeline(h, session_id: str, mode: str, client, user_input: str, hint: 
             result = handle_chat(user_input, session, client, **_kw)
         # 即时写盘：流萤回复每条立刻记，并把 time 回传给前端
         enriched = _write_replies(result, mode)
+        # 自动记忆整理（P1，2026-09-18）：够阈值就在**后台线程**整理，不占用户等待。
+        # 放在写盘之后 —— 用户已经拿到回复，整理晚一点完成无所谓。
+        # 成本：每达到阈值（默认 10 轮）2 次 LLM 调用（记忆 + 手账），与手动"休息"同价。
+        try:
+            from modules import auto_rest
+            # client 必须在**本请求线程**里取好传进去：服务器版 cfg.get_client() 依赖
+            # 线程本地的用户上下文，后台线程里是空的（会取错客户端）。
+            auto_rest.maybe_schedule(mode, on_done=_refresh_memory_head, client=client)
+        except Exception as e:
+            logger.warning("自动整理排程异常（忽略，不影响聊天）: %s", e)
         if notify:
             # 后台回复完成 → 状态栏通知（安卓；PC/服务器版静默跳过）
-            _notify_reply_if_background(enriched)
+            _notify_reply_if_background(enriched, mode)
         resp = {"messages": enriched}
         if result.error_code:
             resp["error_code"] = result.error_code   # 错误分类（前端人话提示）
@@ -353,155 +383,6 @@ def chat_flush(h):
     h._json({"ok": True})
 
 
-def rest(h):
-    client = cfg.get_client()
-    if not client:
-        h._json({"ok": False, "error": "未设置 API Key"})
-        return
-    body = _read_json(h)
-    mode = _body_mode(body)
-    session = get_session(body.get("session_id", "default"), mode)
-    with session["lock"]:
-        from modules.memory_manager import MemoryManager
-        mm = MemoryManager(client, cfg.MODEL, mode=mode)
-        full_history = session["context"].get_full()
-        result = mm.rest(full_history, session["context"].turn_count,
-                         today=_resolve_today())
-        # 休息成功后也更新手账
-        if result.success:
-            mm.update_journal(full_history[-100:])
-            from modules.llm_base import reload_journal
-            reload_journal(mode)
-            # 立即刷新当前会话的 memory_head：新头部随下一条消息生效，
-            # 不再等进程重启 / 30 会话淘汰（真 bug 修复）
-            session["memory_head"] = mm.load_head()
-    # skipped：无新对话可整理（LLM 未运行，added/resolved 均为 0——前端显示"没有新内容"而非"记忆已更新"）
-    skipped = bool(result.error) and result.success
-    h._json({"ok": result.success, "added": len(result.added_entries),
-             "resolved": len(result.resolved_entries), "error": result.error,
-             "skipped": skipped,
-             # 0.8.1：文件级结果（弹窗文案用真实变化，LLM 的 added/resolved 数组可能为空
-             # 但头部/手账仍更新了——只报"新增0条"会误导用户）
-             "head_changed": bool(result.new_head.strip()),
-             "journal_updated": True})
-
-
-def get_time(h):
-    """GET /time：服务器时钟（YYYY-MM-DD + 时间戳）。
-    记忆整理等需要"今天"的场合用它做权威时钟（本地版经后端转发到认证服务器；
-    _resolve_today：服务器优先、不可达时本地时钟兜底）。"""
-    h._json({"ok": True, "date": time.strftime("%Y-%m-%d"),
-             "ts": int(time.time())})
-
-
-def _resolve_today() -> str:
-    """rest 等场景的"今天"：服务器时间优先，本地设备时钟兜底。
-    - 服务器版：进程就在业务服务器上，取本机时钟即服务器时间（无网络往返）；
-    - 本地版：请求认证服务器 /time（0.8s 超时），成功用服务器日期，失败用设备时钟
-      （离线宽限内 rest 仍可用）。"""
-    if _is_server():
-        return time.strftime("%Y-%m-%d")
-    import urllib.request
-    try:
-        req = urllib.request.Request(_auth_server_base() + "/time")
-        with urllib.request.urlopen(req, timeout=0.8) as r:
-            data = json.loads(r.read().decode("utf-8"))
-        d = str(data.get("date", "") or "").strip()
-        import re as _re
-        if _re.fullmatch(r"\d{4}-\d{2}-\d{2}", d):
-            return d
-    except Exception:
-        pass
-    return time.strftime("%Y-%m-%d")
-
-
-def undo(h):
-    body = _read_json(h)
-    mode = _body_mode(body)
-    session = get_session(body.get("session_id", "default"), mode)
-    with session["lock"]:
-        result = session["context"].pop_last_turn()
-        from modules.conversation_store import remove_last_turn
-        removed = remove_last_turn(mode=mode)
-        # 撤回后回退 .memory_index：若整合游标 > 当前轮数（说明被撤回轮次
-        # 已被记过数），必须压低游标，否则后续 rest 按 turn 号切片会把新的
-        # 对话全部误判为"已整理过"而永远跳过（真 bug 修复）
-        # 阶段 3.6：memory_manager.verify_index() 已在 wake/rest 入口兜底自愈；
-        # 这里保留即时回写只是为了让"撤回后立刻休息"这一类路径不依赖兜底时机。
-        try:
-            from modules.memory_manager import _index_file
-            from modules.conversation_store import count_user_turns
-            fp = _index_file(mode)
-            if fp.exists():
-                idx = json.loads(fp.read_text(encoding="utf-8"))
-                last_turn = int(idx.get("last_integrated_turn", 0))
-                # 以文件为准：重启后内存 context 只回灌近期轮次，
-                # session["context"].turn_count 小于真实进度会把游标误压低；
-                # 注意必须用用户轮数（与游标同口径），不可用消息总行数
-                cur_turn = count_user_turns(mode=mode)
-                if last_turn > cur_turn:
-                    idx["last_integrated_turn"] = cur_turn
-                    fp.write_text(json.dumps(idx, ensure_ascii=False), encoding="utf-8")
-        except Exception as e:
-            logger.warning("撤回后记忆游标回退失败: %s", e)
-    # 以文件为准：重启后内存 context 为空但文件仍有历史，文件删成功就算成功
-    if removed > 0 or result is not None:
-        h._json({"ok": True, "removed_turn": 1, "files_removed": removed})
-    else:
-        h._json({"ok": False, "error": "没有可撤回的轮次"})
-
-
-def clear_history(h):
-    body = _read_json(h)
-    mode = _body_mode(body)
-    session = get_session(body.get("session_id", "default"), mode)
-    with session["lock"]:
-        session["context"] = ContextManager()
-        # 清空持久化文件
-        from modules.conversation_store import conv_file
-        try:
-            fp = conv_file(mode)
-            if fp.exists():
-                fp.write_text("", encoding="utf-8")
-        except Exception:
-            pass
-        # 记忆整理进度必须同步归零：turn_count 已归零，旧 index 会让下次
-        # 休息时把新对话全部误判为"已整理过"而跳过
-        # 阶段 3.6：verify_index() 已兜底；此处即时归零是为了"清完历史马上休息"不等兜底。
-        try:
-            from modules.memory_manager import _index_file
-            fp = _index_file(mode)
-            if fp.exists():
-                fp.write_text(
-                    json.dumps({"last_integrated_turn": 0}, ensure_ascii=False),
-                    encoding="utf-8")
-        except Exception:
-            pass
-        # 会话聊天产生的数据全部随历史清理（除配置/已写进设定文件的）：
-        # proactive_log（主动判断记录）、pipeline（流水线日志）、
-        # 内存信号量（ACTIVE 复位）+ 忽视计数清零
-        try:
-            from modules.proactive import _log_file, _active_set, reset_states
-            fp = _log_file(mode)
-            if fp.exists():
-                fp.unlink()
-            _active_set(mode, 1)
-            # C-6.1（2026-09-13）：这里原来写的是 _IGNORED.pop(mode) / _HIDDEN.pop(mode)，
-            # 而这些表的键是 (mode, 用户作用域) 元组 → 按字符串 pop 从来删不掉任何东西：
-            # 清了历史，降档惩罚与隐藏式冷却仍在（"清空后她依然不主动开口"）。
-            reset_states(mode)
-        except Exception:
-            pass
-        try:
-            from modules.app_config import mode_data_dir
-            fp = mode_data_dir(mode) / "pipeline.jsonl"
-            if fp.exists():
-                fp.unlink()
-        except Exception:
-            pass
-    h._json({"ok": True})
-
-
 def get_chat_stage(h):
     """流水线阶段进度（前端等待回复时轮询）：?sid=&mode= → {"stage": "retriever"|...|null, "waited": 秒}。
     只读不创建会话；查不到会话返回 null（前端回退默认"对方正在输入…"）。
@@ -548,72 +429,15 @@ def get_history(h):
     h._json({"messages": msgs, "total": total, "has_more": has_more})
 
 
-def get_wake_status(h):
-    from modules.memory_manager import _index_file, _memory_file
-    mode = _query_mode(h)
-    interrupted = _index_file(mode).exists() and not _memory_file(mode).exists()
-    h._json({"interrupted": interrupted, "has_memory": _memory_file(mode).exists()})
+# ── 操作端点（阶段 2.8 抽至 api/chat_ops.py；此处 re-export，router/routes 兼容层不变）──
+from api.chat_ops import (   # noqa: F401,E402
+    clear_history, get_wake_status, open_mode, proactive_status, rest, undo,
+    get_time, _resolve_today,
+)
 
-
-def open_mode(h):
-    """模式开场演出：包内存在 opening.json 且首次进入时返回自动首条消息（旁白+角色的话）。
-
-    幂等保护：会话已有历史时不再重复开场（重进不重演）。
-    """
-    body = _read_json(h)
-    mode = _body_mode(body)
-    from modules.llm_base import resolve_character_file
-    if resolve_character_file("opening.json", mode).exists():
-        from modules.conversation_store import get_total_count
-        if get_total_count(mode=mode) == 0:
-            from orchestrator import preset_opening
-            msgs = preset_opening(mode)
-            h._json({"messages": msgs, "opened": True})
-            return
-    h._json({"messages": [], "opened": False})
-
-
-def proactive_status(h):
-    """主动性检查入口：REPLY 预占用 → 主动式/概率式串联判断 → 生成 → 写盘。
-
-    前端轮询调用（空闲时）；每次调用都是独立判断，门控不通过则零成本返回
-    {"messages": []}。生成的主动消息直接写盘，返回 messages 供前端即时渲染
-    （与 /chat 返回格式一致）。
-
-    信号量：REPLY 非阻塞预占用（忙碌则放弃）；ACTIVE 在 proactive 模块内
-    管理（主动式/概率式互斥 + 用户回应复位 + 超时恢复）。
-    """
-    client = cfg.get_client()
-    if not client or cfg.relay_needs_key():
-        # 服务器版 relay 模式用户未带 Key：零成本返回，避免轮询线程空等 120s relay 超时
-        h._json({"messages": []}); return
-    body = _read_json(h)
-    mode = _body_mode(body)
-    session_id = body.get("session_id", "default")
-
-    from modules.proactive import check_and_generate, reply_try_lock, reply_unlock
-    if not reply_try_lock(mode):
-        h._json({"messages": []}); return   # 回复通道忙（响应式生成中/其他主动生成中）
-    try:
-        session = get_session(session_id, mode)
-        with session["lock"]:
-            result = check_and_generate(
-                session, client, mode=mode,
-                enabled=bool(cfg.pack_cfg(mode, "proactive_enabled", True)),
-                hard=cfg.pack_cfg(mode, "proactive_hard", 6),
-                soft=cfg.pack_cfg(mode, "proactive_soft", 0.35),
-                prob_enabled=bool(cfg.pack_cfg(mode, "prob_reply_enabled", True)),
-                prob_value=cfg.pack_cfg(mode, "prob_reply_value", 0.10),
-                polisher_model=cfg.eff_cfg("polisher_model"),
-                polisher_effort=cfg.eff_cfg("polisher_effort"),
-                polisher_temperature=cfg.eff_cfg("polisher_temperature"),
-                organizer_model=cfg.eff_cfg("organizer_model"),
-                organizer_effort=cfg.eff_cfg("organizer_effort"),
-                memory_head=session.get("memory_head", ""),
-            )
-    finally:
-        reply_unlock(mode)
-    if not result.messages or result.discarded:
-        h._json({"messages": [], "reason": result.reason_type})
-        return
-    h._json({"messages": result.messages, "proactive": True})
+# re-export 面（pyflakes 已使用标记；router/routes 兼容层经此处取全部端点）
+__all__ = [
+    "save_journal", "chat", "chat_hint", "chat_flush", "get_chat_stage", "get_history",
+    "clear_history", "get_wake_status", "open_mode", "proactive_status", "rest", "undo",
+    "get_time", "_resolve_today",
+]

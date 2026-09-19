@@ -48,7 +48,11 @@ def get_session(sid: str, mode: str = DEFAULT_MODE) -> dict:
             memory_head = memory_wake(client, cfg.MODEL, mode) if client else ""
             ctx = ContextManager()
             try:
-                n = hydrate_context(ctx, mode=mode)
+                # 回灌 = 活跃窗口上限（默认 100 轮）：分析器/回复器要读"自上次整理以来"
+                # 的完整对话，重启后必须把窗口整体恢复，而不是只捞一小段
+                # （2026-09-18 用户口径；窗口值由 modules/auto_rest 单点管理）。
+                from modules.auto_rest import window_max
+                n = hydrate_context(ctx, max_turns=max(1, window_max()), mode=mode)
                 if n:
                     logger.info("会话 %s[%s] 回灌 %d 轮历史", sid, mode, n)
             except Exception as e:
@@ -159,16 +163,22 @@ def _write_replies(result, mode: str) -> list:
     return enriched
 
 
-def _notify_reply_if_background(enriched: list):
+def _notify_reply_if_background(enriched: list, mode: str = DEFAULT_MODE):
     """后台回复完成通知（安卓）：App 不在前台则状态栏提醒（复用隐藏式通知通道）。
-    PC/服务器版无 com.firefly.android 模块，try/except 静默跳过。"""
+    PC/服务器版无 com.firefly.android 模块，try/except 静默跳过。
+
+    mode：通知标题要带角色名（角色卡化），调用方必须把当前 mode 传进来
+    —— 早期版本没有这个参数、标题写死「流萤」。
+    """
     try:
         from com.firefly.android import KeepAliveService
         if not KeepAliveService.isAppForeground():
             texts = [r.get("content", "") for r in enriched if r.get("type") == "text"]
             if texts:
-                # 通知标题带 AI 标识（防"半夜收到真人消息"误解；角色扮演合规）
-                KeepAliveService.notify("流萤 · AI", "\n".join(texts)[:200])
+                # 通知标题带 AI 标识（防"半夜收到真人消息"误解；角色扮演合规）。
+                # 2026-09-18：角色名从预设包取（原写死「流萤」，自建包通知会顶着别人的名字）。
+                from modules.app_config import char_name as _char_name
+                KeepAliveService.notify(f"{_char_name(mode)} · AI", "\n".join(texts)[:200])
     except Exception:
         pass
 

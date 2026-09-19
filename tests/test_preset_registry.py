@@ -48,8 +48,9 @@ check("A3 story 包 presentation=sticker", cfg.PRESETS["story"]["presentation"] 
 check("A4 haruno 包 presentation=narration", cfg.PRESETS["haruno"]["presentation"] == "narration")
 check("A5 包角色名/用户称呼",
       cfg.PRESETS["story"]["char_name"] == "流萤" and cfg.PRESETS["haruno"]["user_name"] == "开拓者")
-check("A6 story 包 knowledge_dirs 声明",
-      cfg.PRESETS["story"]["knowledge_dirs"] == ["knowledge", "database/dialogues_compiled"])
+# 2026-09-14：story 知识层归位包内（assets/character/story/knowledge/），不再声明 knowledge_dirs
+check("A6 story 包知识层在包内（不声明 knowledge_dirs，回落包内 knowledge/）",
+      cfg.PRESETS["story"]["knowledge_dirs"] is None)
 check("A7 haruno 包无 knowledge_dirs", cfg.PRESETS["haruno"]["knowledge_dirs"] is None)
 
 print("=== B. 扫描校验（临时目录注入） ===")
@@ -123,11 +124,13 @@ with tempfile.TemporaryDirectory(prefix="firefly_test_preset_kd_") as tmp:
     check("E15 未声明仍是 None", presets.get("nokd", {}).get("knowledge_dirs") is None)
 
 print("--- E3 真实注册表未被误伤 ---")
-check("E16 story 的知识库声明逐字不变（含空格/顺序）",
-      cfg.PRESETS["story"]["knowledge_dirs"] == ["knowledge", "database/dialogues_compiled"])
-check("E17 越界校验未把目录改成绝对/改序",
-      all(not d.startswith("/") and ".." not in d.split("/")
-          for d in (cfg.PRESETS["story"]["knowledge_dirs"] or [])))
+# 2026-09-14：story 已无 knowledge_dirs 声明（包内归位）；改为校验包内知识层存在且被检索器挂上
+check("E16 story 包内 knowledge/ 存在且非空",
+      (cfg.BASE_DIR / "assets" / "character" / "story" / "knowledge").is_dir())
+from modules.llm_retriever import _source_dirs, has_knowledge   # noqa: E402
+check("E17 story 检索源 = 包内 knowledge/",
+      any(str(d).replace("\\", "/").endswith("assets/character/story/knowledge") for d in _source_dirs("story"))
+      and has_knowledge("story"))
 
 print(f"\n统计: PASS={PASS} FAIL={FAIL}")
 sys.exit(0 if FAIL == 0 else 1)

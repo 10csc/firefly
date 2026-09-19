@@ -4,159 +4,15 @@
 import { API_BASE, IS_SERVER } from "./api.js";
 import { S } from "./state.js";
 import { escapeHtml, idbSaveMedia, showToast, stickerSrc } from "./util.js";
+import { uiSelectEnhance } from "./ui_select.js";
+import { loadPackTree } from "./pack_tree.js";
+import { TB_AVATARS, tbChoice } from "../panels.js";
 import { CURRENT_MODE } from "./views.js";
 
-// ═══════════════════════════════════════════
-// 表情包管理
-// ═══════════════════════════════════════════
-const stickerAddBtn = document.getElementById("sticker-add-btn");
-const stickerAddForm = document.getElementById("sticker-add-form");
-if (stickerAddBtn) stickerAddBtn.addEventListener("click", () => {
-    stickerAddForm.style.display = stickerAddForm.style.display === "none" ? "flex" : "none";
-});
 
-document.getElementById("sticker-submit").addEventListener("click", async () => {
-    const file = document.getElementById("sticker-file").files[0];
-    const category = document.getElementById("sticker-category").value;
-    const label = document.getElementById("sticker-label").value.trim();
-    const msg = document.getElementById("sticker-add-msg");
-    if (!file) { msg.textContent = "请先选择图片"; return; }
-    if (!label) { msg.textContent = "请填写含义描述"; return; }
-    const fd = new FormData(); fd.append("file", file); fd.append("category", category); fd.append("label", label);
-    fd.append("mode", CURRENT_MODE);   // 归属当前包（阶段6）
-    try {
-        const resp = await fetch("/add-sticker", { method: "POST", body: fd });
-        const data = await resp.json();
-        if (data.ok) {
-            // A2 媒体本地策略（服务器版）：图片本体存本机 IndexedDB（key=内容哈希），
-            // 服务器只保留文字元数据（label/category/哈希）；上传后立即本地化
-            if (data.local && data.file && file instanceof Blob) {
-                await idbSaveMedia(String(data.file).slice("local:".length), file);
-                msg.textContent = "已添加：" + data.label + "（图片仅存本机）";
-            } else {
-                msg.textContent = "已添加：" + data.label;
-            }
-            document.getElementById("sticker-file").value = "";
-            document.getElementById("sticker-label").value = "";
-            loadStickerList();
-        } else msg.textContent = "失败：" + (data.error || "未知");
-    } catch(e) { msg.textContent = "网络错误"; }
-});
+// （A7c 运行模式切换已删除：本地优先 + 失败自动回落服务器——保留此注记防旧代码复活）
 
-document.getElementById("sticker-manage-btn").addEventListener("click", () => {
-    const panel = document.getElementById("sticker-manage-panel");
-    panel.style.display = panel.style.display === "none" ? "flex" : "none";
-    if (panel.style.display !== "none") loadStickerList();
-});
-
-async function loadStickerList() {
-    const msg = document.getElementById("sticker-manage-msg");
-    const list = document.getElementById("sticker-list");
-    msg.textContent = "加载中…";
-    try {
-        const resp = await fetch("/stickers");
-        const data = await resp.json();
-        const stickers = data.stickers || [];
-        msg.textContent = `共 ${stickers.length} 个`;
-        // A2：缩略图异步解析（local: 引用 → IndexedDB；无图显示占位块）
-        const rows = await Promise.all(stickers.map(async s => {
-            const src = await stickerSrc(s.file, IS_SERVER, API_BASE);
-            const thumb = src
-                ? `<img class="stk-thumb" src="${escapeHtml(src)}" loading="lazy" onerror="this.style.opacity=0.2">`
-                : `<div class="stk-thumb" style="display:flex;align-items:center;justify-content:center;opacity:0.35;font-size:0.6em">无图</div>`;
-            return `
-        <div class="sticker-row" data-id="${escapeHtml(s.id)}">
-            <div class="stk-head">
-                ${thumb}
-                <button class="stk-toggle ${s.enabled ? "on" : ""}" data-on="${s.enabled ? "1" : ""}" ${(s.editable || s.is_default) ? "" : "disabled"}>${s.enabled ? "启用中" : "已停用"}</button>
-            </div>${s.pack ? `<div style="font-size:0.62em;color:var(--fg-accent);margin-top:2px">专属：${escapeHtml(s.pack)}</div>` : ""}
-            <div class="stk-main">
-                <select class="stk-cat-sel" ${(s.editable || s.is_default) ? "" : "disabled"}>
-                    <option value="可爱" ${s.category==="可爱"?"selected":""}>可爱</option>
-                    <option value="帅气" ${s.category==="帅气"?"selected":""}>帅气</option>
-                </select>
-                <input class="stk-label-input" type="text" value="${escapeHtml(s.label)}" maxlength="120" ${(s.editable || s.is_default) ? "" : "readonly"}>
-                <div class="stk-actions">
-                    <button class="stk-save" disabled>保存</button>
-                    <button class="stk-del" ${(s.is_default || !s.editable) ? "disabled" : ""}>删</button>
-                </div>
-            </div>
-        </div>`;
-        }));
-        list.innerHTML = rows.join("");
-        list.querySelectorAll(".sticker-row").forEach(row => {
-            const id = row.dataset.id;
-            const inp = row.querySelector(".stk-label-input");
-            const cat = row.querySelector(".stk-cat-sel");
-            const save = row.querySelector(".stk-save");
-            const del = row.querySelector(".stk-del");
-            const toggle = row.querySelector(".stk-toggle");
-            const origLabel = inp.value;
-            const origCat = cat.value;
-
-            function checkChanged() {
-                save.disabled = (inp.value.trim() === origLabel && cat.value === origCat) || (!inp.value.trim() && !cat.value);
-            }
-            inp.addEventListener("input", checkChanged);
-            cat.addEventListener("change", checkChanged);
-
-            toggle.addEventListener("click", async () => {
-                const next = toggle.dataset.on !== "1";
-                toggle.disabled = true;
-                try {
-                    const r = await fetch("/sticker-update", {
-                        method:"POST",
-                        headers:{"Content-Type":"application/json"},
-                        body:JSON.stringify({id, enabled: next}),
-                    });
-                    const d = await r.json();
-                    if (d.ok) {
-                        toggle.dataset.on = next ? "1" : "";
-                        toggle.classList.toggle("on", next);
-                        toggle.textContent = next ? "启用中" : "已停用";
-                        msg.textContent = next ? "已启用：" + d.label : "已停用：" + d.label;
-                    }
-                } catch(e) {}
-                toggle.disabled = false;
-            });
-
-            save.addEventListener("click", async () => {
-                const label = inp.value.trim();
-                const category = cat.value;
-                try {
-                    const r = await fetch("/sticker-update", {
-                        method:"POST",
-                        headers:{"Content-Type":"application/json"},
-                        body:JSON.stringify({id, label: label || undefined, category}),
-                    });
-                    const d = await r.json();
-                    if (d.ok) {
-                        inp.value = d.label;
-                        cat.value = d.category;
-                        save.textContent="已存"; save.disabled=true;
-                        msg.textContent="已更新："+d.label;
-                    }
-                } catch(e) {}
-            });
-            del.addEventListener("click", async () => {
-                if (!confirm("确认删除？")) return;
-                try {
-                    await fetch("/sticker-delete", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({id}) });
-                    row.remove();
-                } catch(e) {}
-            });
-        });
-    } catch(e) { msg.textContent = "加载失败"; }
-}
-
-// ═══════════════════════════════════════════
-// 运行模式切换（A7c 已删除）：本地优先 + 后端失败自动回落服务器——无手动切换入口。
-// 保留此注释防止旧代码/测试引用复活。
-// ═══════════════════════════════════════════
-
-// ═══════════════════════════════════════════
-// 角色编辑页（全屏 #pack-view：封面横幅 + 大头像 + 人设文案编辑 + 自建角色删除）
-// ═══════════════════════════════════════════
+// ═══ 角色编辑页（全屏 #pack-view：封面横幅 + 大头像 + 人设文案编辑 + 自建角色删除）═══
 const _PACK_PROMPT_LABELS = {
     "core.md": "核心设定（身份/经历/价值观）",
     "identity.md": "人际关系与认知边界",
@@ -170,11 +26,9 @@ const _PACK_PROMPT_LABELS = {
 };
 
 // F-3（2026-09-13）包详情页的两个捕获量：
-// - _packViewMode：本页展示的是哪个包。所有写回（保存文案 / 换资产 / 恢复默认 / 加表情包 /
-//   主动消息配置）一律用它，**不读实时的 CURRENT_MODE** —— 原来 A→B 快速切换后，
-//   A 页残留的"保存"会把 A 的文案写进 B（请求发出时 CURRENT_MODE 已经是 B）。
-// - _packViewGen：进入本页时的模式代际。await 之后一旦模式已切换就丢弃本次结果，
-//   不把 A 的数据渲染进 B 的页面（范式与 chat_history.loadHistory 一致）。
+// - _packViewMode：本页展示的是哪个包。所有写回一律用它，**不读实时的 CURRENT_MODE** ——
+//   原来 A→B 快速切换后，A 页残留的"保存"会把 A 的文案写进 B。
+// - _packViewGen：进入本页时的模式代际，await 后模式已切换就丢弃本次结果。
 let _packViewMode = "";
 let _packViewGen = -1;
 
@@ -194,9 +48,16 @@ async function loadPackView() {
     const presLabel = {sticker: "短信+表情包", narration: "短信+旁白", none: "纯短信"}[data.presentation] || data.presentation;
     const t = Date.now();
     const coverEl = document.getElementById("pv-cover");
-    if (coverEl && data.assets && data.assets.cover) coverEl.src = data.assets.cover + "?t=" + t;
+    // F-5：无封面/头像的包必须清掉旧 src——否则详情页沿用上一个包的图（"看起来还是流萤"）
+    if (coverEl) {
+        if (data.assets && data.assets.cover) coverEl.src = data.assets.cover + "?t=" + t;
+        else coverEl.removeAttribute("src");
+    }
     const avatarEl = document.getElementById("pv-avatar");
-    if (avatarEl && data.assets && data.assets.avatar) avatarEl.src = data.assets.avatar + "?t=" + t;
+    if (avatarEl) {
+        if (data.assets && data.assets.avatar) avatarEl.src = data.assets.avatar + "?t=" + t;
+        else avatarEl.removeAttribute("src");
+    }
     document.getElementById("pv-name").textContent = "";
     document.getElementById("pv-scene").textContent = data.name || data.mode;
     document.getElementById("pv-pres").textContent = presLabel;
@@ -227,17 +88,33 @@ async function loadPackView() {
 
     _loadPackStickers(mode);
 
-    // 危险区：自建角色可删除；非自建显示恢复资产默认入口
-    const danger = document.getElementById("pv-danger");
-    danger.innerHTML = "";
-    const tools = document.createElement("div");
-    tools.style.cssText = "margin-top:16px;font-size:0.75em;color:var(--fg-muted);display:flex;gap:14px";
-    for (const [slot, label] of [["avatar", "恢复头像默认"], ["cover", "恢复封面默认"]]) {
-        const a = document.createElement("a");
-        a.textContent = label;
-        a.style.cssText = "cursor:pointer;text-decoration:underline";
+    // 用户形象区（05）：称呼 + 用户头像，数据来自 /modes（经 __getPresets 桥）
+    try {
+        const mods = (window.__getPresets && window.__getPresets()) || [];
+        const pm = mods.find(m => m.id === mode) || {};
+        const nameInp = document.getElementById("pv-user-name");
+        if (nameInp) nameInp.value = pm.user_name || "";
+        const uav = document.getElementById("pv-user-avatar");
+        if (uav) {
+            // 预览回落链：包头像 → 全局内置形象（穹/星）——空 src 会显示破图+alt，必须给兜底
+            const tbNow = (() => { try { return localStorage.getItem("tb_avatar") || "穹"; } catch (e) { return "穹"; } })();
+            uav.src = pm.user_avatar ? pm.user_avatar + "?t=" + t : TB_AVATARS[tbNow];
+            document.querySelectorAll(".pv-id-choice").forEach(x => x.classList.toggle("on", !pm.user_avatar && x.dataset.key === tbNow));
+        }
+        const resetLink = document.getElementById("pv-user-avatar-reset");
+        if (resetLink) resetLink.style.display = pm.user_avatar ? "" : "none";
+    } catch (e) {}
+    try { loadPackTree(mode); } catch (e) {}   // 角色卡管理树（数据驱动，2026-09-15）
+
+    // 角色形象「恢复默认」—— 2026-09-19 从"危险区"挪到顶部大图旁。
+    // 理由：它只是撤销用户自己换的图，**不是危险操作**；而官方包又不能删除，
+    // 于是"危险区"对官方包既没内容也没存在理由。形象相关的操作现在全在顶部一处。
+    for (const [slot, elId, label] of [["avatar", "pv-asset-reset-avatar", "恢复默认头像"],
+                                       ["cover", "pv-asset-reset-cover", "恢复默认封面"]]) {
+        const a = document.getElementById(elId);
+        if (!a) continue;
         a.onclick = async () => {
-            if (!confirm(`${label}？（删除你的修改）`)) return;
+            if (!confirm(`${label}？（删除你换的图，回落到角色卡自带的）`)) return;
             try {
                 await fetch("/pack-asset/delete", {method: "POST",
                     headers: {"Content-Type": "application/json"},
@@ -247,9 +124,14 @@ async function loadPackView() {
                 try { window.__modesReload && window.__modesReload(); } catch (e) {}
             } catch (e) { showToast("操作失败"); }
         };
-        tools.appendChild(a);
     }
-    danger.appendChild(tools);
+
+    // 危险区（2026-09-19 重排）：
+    //   · 「恢复头像默认 / 恢复封面默认」**不是危险操作**，已挪到顶部大图旁（.pv-asset-ops）；
+    //   · 官方（内置）包不能归档/删除 ⇒ 这个区对它们**完全不渲染**（见 pack_tree.js 的 danger 分支），
+    //     所以这里只在自建包时才会有内容。
+    const danger = document.getElementById("pv-danger");
+    danger.innerHTML = "";
     if (data.custom) {
         // 活跃包的危险区主按钮 = 「归档」（3.5 一级：不删数据，可反悔）。
         // 「彻底删除」**只在首页归档区**（views.js 的 _renderArchivedPacks）——那是二级操作，
@@ -274,48 +156,6 @@ async function loadPackView() {
         }
     }
 
-    // 人设文案（可折叠编辑器：核心三件 + 用户设定 + 提示词六段，全部放权可编辑）
-    const promptsBox = document.getElementById("pv-prompts");
-    promptsBox.innerHTML = "";
-    for (const f of data.files) {
-        const det = document.createElement("details");
-        const sum = document.createElement("summary");
-        sum.textContent = (_PACK_PROMPT_LABELS[f.name] || f.name) + (f.customized ? "（已修改）" : "");
-        const ta = document.createElement("textarea");
-        ta.value = f.content || "";
-        const btnRow = document.createElement("div");
-        btnRow.className = "btn-row";
-        btnRow.style.marginTop = "6px";
-        const saveBtn = document.createElement("button");
-        saveBtn.type = "button"; saveBtn.textContent = "保存";
-        saveBtn.onclick = async () => {
-            const content = ta.value;
-            if (!content.trim()) { showToast("内容不能为空（要恢复默认请用下方小字）"); return; }
-            try {
-                const r = await fetch("/character-file-update", {method: "POST",
-                    headers: {"Content-Type": "application/json"},
-                    body: JSON.stringify({mode, filename: f.name, content})});
-                const d = await r.json();
-                showToast(d.ok ? "已保存（下轮对话生效）" : ("保存失败：" + (d.error || "")));
-                if (d.ok) sum.textContent = (_PACK_PROMPT_LABELS[f.name] || f.name) + "（已修改）";
-            } catch (e) { showToast("网络错误"); }
-        };
-        const rstBtn = document.createElement("button");
-        rstBtn.type = "button"; rstBtn.textContent = "恢复默认";
-        rstBtn.onclick = async () => {
-            if (!confirm("恢复该文案为默认？（删除你的修改）")) return;
-            try {
-                await fetch("/character-file/delete", {method: "POST",
-                    headers: {"Content-Type": "application/json"},
-                    body: JSON.stringify({mode, filename: f.name})});
-                showToast("已恢复默认");
-                loadPackView();
-            } catch (e) { showToast("操作失败"); }
-        };
-        btnRow.append(saveBtn, rstBtn);
-        det.append(sum, ta, btnRow);
-        promptsBox.appendChild(det);
-    }
 }
 window.loadPackView = loadPackView;
 
@@ -467,8 +307,7 @@ document.getElementById("pv-stk-submit")?.addEventListener("click", async () => 
 });
 
 // 头像/封面上传（复用图片压缩，选文件后上传为包资产）
-function _packAssetUpload(slot) {
-    const inp = document.createElement("input");
+function _packAssetUpload(slot) {    const inp = document.createElement("input");
     inp.type = "file";
     inp.accept = "image/png,image/jpeg,image/webp";
     inp.onchange = async () => {
@@ -494,3 +333,42 @@ function _packAssetUpload(slot) {
     };
     inp.click();
 }
+
+// ═══ 用户形象区接线（05：每包独立的用户称呼 + 头像）═══
+document.getElementById("pv-user-name-save")?.addEventListener("click", async () => {
+    const msg = document.getElementById("pv-user-msg");
+    const v = document.getElementById("pv-user-name").value.trim();
+    try {
+        const r = await fetch("/pack-config", {method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({mode: _packViewMode || CURRENT_MODE, user_name: v})});
+        const d = await r.json();
+        if (d.ok) {
+            if (msg) msg.textContent = "已保存（称呼：" + (d.user_name || "默认") + "）";
+            try { window.__modesReload && window.__modesReload(); } catch (e) {}   // /modes 携带新称呼
+        } else if (msg) msg.textContent = "保存失败：" + (d.error || "");
+    } catch (e) { if (msg) msg.textContent = "网络错误"; }
+});
+document.getElementById("pv-user-avatar-edit")?.addEventListener("click", () => _packAssetUpload("user_avatar"));
+document.getElementById("pv-user-avatar-reset")?.addEventListener("click", async () => {
+    if (!confirm("恢复默认用户头像？（删除你上传的头像，回落到内置形象）")) return;
+    try {
+        const r = await fetch("/pack-asset/delete", {method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({mode: _packViewMode || CURRENT_MODE, slot: "user_avatar"})});
+        const d = await r.json();
+        if (d.ok) { showToast("已恢复默认"); loadPackView(); try { window.__modesReload && window.__modesReload(); } catch (e) {} }
+        else showToast(d.error || "操作失败");
+    } catch (e) { showToast("网络错误"); }
+});
+
+// 用户形象区：内置形象选择（穹/星，无包自定义头像时生效；复用全局 TB 选择存储）
+document.querySelectorAll(".pv-id-choice").forEach(el => {
+    el.addEventListener("click", () => {
+        try {
+            localStorage.setItem("tb_avatar", el.dataset.key);
+            document.querySelectorAll(".tb-avatar").forEach(x => { x.src = TB_AVATARS[el.dataset.key]; });
+        } catch (e) {}
+        loadPackView();   // 预览刷新（无包头像时显示内置选择）
+    });
+});

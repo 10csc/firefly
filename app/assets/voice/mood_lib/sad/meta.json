@@ -1,0 +1,53 @@
+{
+ "ref_phones": {
+  "shape": [
+   1,
+   27
+  ],
+  "dtype": "int64"
+ },
+ "ref_bert": {
+  "shape": [
+   27,
+   1024
+  ],
+  "dtype": "float32"
+ },
+ "ssl_content": {
+  "shape": [
+   1,
+   768,
+   265
+  ],
+  "dtype": "float32"
+ },
+ "prompt_semantic": {
+  "shape": [
+   132
+  ],
+  "dtype": "int64"
+ },
+ "refer_spec": {
+  "shape": [
+   1,
+   1025,
+   236
+  ],
+  "dtype": "float32"
+ },
+ "mel2": {
+  "shape": [
+   1,
+   100,
+   472
+  ],
+  "dtype": "float32"
+ },
+ "_source": {
+  "ref": "F:\\CodeFile\\firefly\\voice_samples\\reference\\3_悲伤_参考.wav",
+  "ref_sha256": "38b0d55093e98d36088b7f9b62588de26aa2b6a981b70081c5ad306fa0de538e",
+  "ref_text": "抱歉，我不能说。艾利欧告诉我。",
+  "built_at": "2026-09-17 21:31:23",
+  "builder": "FireflyVoiceResearch/_proto/_build_mood_lib.py"
+ }
+}

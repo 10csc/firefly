@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 # ── 运行时数据根目录 ─────────────────────────────────
 # 唯一来源：app_config。前端所有"编辑保存"类接口都写 user_data/，
 # 因此读取必须 user_data 优先，否则出现"前端显示已改、模型仍用旧文件"的静默分裂。
-from modules.app_config import USER_DIR, ROOT as _ROOT, mode_character_dir, bundled_character_dir, mode_journal_dir, DEFAULT_MODE, user_scope_key, char_name, user_name
+from modules.app_config import mode_character_dir, bundled_character_dir, mode_journal_dir, DEFAULT_MODE, user_scope_key, char_name, user_name
 
 # ── 角色设定加载（共享缓存，key 含模式，跨模式不串）──
 _CACHE = {}
@@ -88,7 +88,6 @@ def _journal_file(mode: str = DEFAULT_MODE) -> Path:
     return mode_journal_dir(mode) / "手账.md"
 
 
-_JOURNAL_LEGACY = _ROOT / "knowledge" / "story" / "手账.md"
 _JOURNAL_CACHE: dict[str, str | None] = {}
 _JOURNAL_LOCK = threading.Lock()
 
@@ -99,9 +98,9 @@ def load_journal(mode: str = DEFAULT_MODE) -> str:
         ck = f"{mode}::{user_scope_key()}"
         if ck in _JOURNAL_CACHE:
             return _JOURNAL_CACHE[ck] or ""
+        # 2026-09-15：legacy 手账回退链已移除（唯一源文件 knowledge/story/手账.md 已随
+        # 知识库归位删除；真实用户手账早已在 user_data/{mode}/journal/，不受影响）。
         fp = _journal_file(mode)
-        if not fp.exists() and mode == DEFAULT_MODE:
-            fp = _JOURNAL_LEGACY
         if fp.exists():
             _JOURNAL_CACHE[ck] = fp.read_text(encoding="utf-8").strip()
         else:
@@ -194,7 +193,7 @@ def _log_request(module: str, model: str, success: bool,
 # 峰谷定价 2026-08-17 起生效（闲时 50% 折扣）：本表为高峰价，成本统计为约数。
 # A8：未知模型（自定义供应商/非 DeepSeek）成本显示「未知」（None），不再按 flash 错算。
 _PRICING = {
-    "deepseek-v4-flash":  {"hit": 0.02, "miss": 1, "output": 2},
+    "deepseek-flash":  {"hit": 0.02, "miss": 1, "output": 2},
     "deepseek-v4-pro":    {"hit": 0.025, "miss": 3, "output": 6},
 }
 

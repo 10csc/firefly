@@ -11,7 +11,8 @@ from dataclasses import dataclass, field
 from modules.analyzer import Analyzer, AnalyzerInput
 from modules.organizer import Organizer, OrganizerInput
 from modules.polisher import Polisher, PolisherInput, DEGRADED_TEXT
-from modules.context_manager import ContextManager
+from modules.context_manager import (ContextManager, BUDGET_ANALYZER, BUDGET_POLISHER,
+                                     BUDGET_ORGANIZER, BUDGET_RETRIEVER)
 from modules.llm_retriever import LlmRetriever, RetrieveInput, has_knowledge
 from modules.llm_base import get_token_stats as _get_token_stats
 from modules.app_config import DEFAULT_MODE, user_name
@@ -146,6 +147,22 @@ def preset_opening(mode: str) -> list:
     return msgs
 
 
+def _active_window_turns() -> int:
+    """分析器/回复器要读多少轮历史 = 活跃窗口上限（`memory_window_turns`，默认 100）。
+
+    活跃窗口 = "自上次整理以来"的对话；除刚开场外常驻 30–100 轮。
+    这里取上限而不是固定轮数：窗口在增长期只往后追加，「## 最近对话」是稳定前缀、
+    缓存命中率高；固定滑动窗口的第一行每轮都在变，历史块永远命中不了。
+    真实体量由 `ctx` 自己的长度兜住（会话里没那么多轮时自然给不满）。
+    """
+    try:
+        from modules.auto_rest import window_max
+        n = int(window_max())
+        return n if n > 0 else 100
+    except Exception:
+        return 100
+
+
 def _get_environment(mode: str = DEFAULT_MODE) -> str:
     now = datetime.now()
     h = now.hour
@@ -211,73 +228,9 @@ def stage_label(stage: str) -> str:
 
 # ── 流水线观测：每轮各阶段的输入/输出/思考过程 ──────
 # 落盘持久化：pipeline.jsonl（{mode}/data/），重启后仍可查（诊断不依赖复现）
-import json as _json
-from pathlib import Path as _Path
-from modules.app_config import mode_data_dir as _mode_data_dir
-_PIPELINE_LOG: list[dict] = []
-_PIPELINE_MAX = 200
-_PIPELINE_ROTATE_BYTES = 8 * 1024 * 1024   # 文件超 8MB 轮转，保留最近 200 轮
-
-
-def _pipeline_file(mode: str = DEFAULT_MODE) -> _Path:
-    return _mode_data_dir(mode) / "pipeline.jsonl"
-
-
-def _record_pipeline(entry: dict, mode: str = DEFAULT_MODE):
-    # 写入作用域标记（服务器版多用户隔离）：落盘文件本身已按用户分目录，
-    # 此字段用于 get_pipeline_log 的读取侧复核，防旧格式记录跨界展示。
-    try:
-        from modules.app_config import user_scope_key
-        entry["_scope"] = user_scope_key()
-    except Exception:
-        entry["_scope"] = ""
-    with _lock:
-        _PIPELINE_LOG.append(entry)
-        if len(_PIPELINE_LOG) > _PIPELINE_MAX:
-            _PIPELINE_LOG.pop(0)
-    # 落盘（失败静默，不影响主流程）
-    try:
-        fp = _pipeline_file(mode)
-        fp.parent.mkdir(parents=True, exist_ok=True)
-        with fp.open("a", encoding="utf-8") as f:
-            f.write(_json.dumps(entry, ensure_ascii=False) + "\n")
-        if fp.stat().st_size > _PIPELINE_ROTATE_BYTES:
-            lines = fp.read_text(encoding="utf-8").splitlines()
-            fp.write_text("\n".join(lines[-_PIPELINE_MAX:]) + "\n", encoding="utf-8")
-    except Exception:
-        pass
-
-
-def get_pipeline_log(limit: int = 20, mode: str = DEFAULT_MODE) -> list[dict]:
-    """返回当前用户最近 limit 条流水线记录（/pipeline 调试面板）。
-
-    只读本用户的落盘文件 {mode}/data/pipeline.jsonl（mode_data_dir 经用户上下文按账号
-    隔离），**不读进程级全局 _PIPELINE_LOG**——该内存列表在服务器版是多账号共享的，
-    直接切片返回会造成跨账号会话内容泄漏（2026-09-10 修复）。
-    旧格式（无 _scope 字段）的记录一律跳过：宁可少显示，不跨界。"""
-    try:
-        from modules.app_config import user_scope_key
-        _scope = user_scope_key()
-    except Exception:
-        _scope = ""
-    out = []
-    try:
-        lines = _pipeline_file(mode).read_text(encoding="utf-8").splitlines()
-    except Exception:
-        return []
-    for ln in reversed(lines):
-        if len(out) >= limit:
-            break
-        try:
-            rec = _json.loads(ln)
-        except Exception:
-            continue
-        # 服务器版多用户隔离：_PIPELINE_LOG 是进程级全局，落盘文件才是按用户分的。
-        # 只返回属于当前用户作用域的条目（旧的无作用域记录一律跳过，宁可少显示不跨界）。
-        if (rec.get("_scope") or "") != _scope:
-            continue
-        out.append(rec)
-    return list(reversed(out))
+# 阶段 2.8：实现抽至 modules/pipeline_log.py；此处 re-export 保持消费方
+# （orchestrator 内部的 _record_pipeline 调用、api/debug 的 get_pipeline_log）零改动。
+from modules.pipeline_log import _record_pipeline, get_pipeline_log   # noqa: F401
 
 
 def get_counters() -> dict:
@@ -294,10 +247,10 @@ def handle_chat(
     user_input: str,
     session: dict,
     client,
-    analyzer_model: str = "deepseek-v4-flash-vision-exp",
-    organizer_model: str = "deepseek-v4-flash-vision-exp",
-    polisher_model: str = "deepseek-v4-flash-vision-exp",
-    retriever_model: str = "deepseek-v4-flash-vision-exp",
+    analyzer_model: str = "deepseek-flash",
+    organizer_model: str = "deepseek-flash",
+    polisher_model: str = "deepseek-flash",
+    retriever_model: str = "deepseek-flash",
     retriever_effort: str = "none",
     analyzer_effort: str = "high",
     polisher_effort: str = "high",
@@ -352,7 +305,8 @@ def handle_chat(
             _rt0 = _rt1 = time.perf_counter()
         else:
             _set_stage(session, "retriever")
-            anchor = [m for m in ctx.get_recent(10) if m.get("role") == "user"][-1:]
+            anchor = [m for m in ctx.get_recent(10, max_tokens=BUDGET_RETRIEVER)
+                      if m.get("role") == "user"][-1:]
             _rt0 = time.perf_counter()
             logger.info("[PIPELINE #%d] ⓪ Retriever 开始...", turn)
             _stage_timeout(client, retriever_effort, deadline, "retriever")
@@ -382,6 +336,13 @@ def handle_chat(
         elif hint == "still_typing":
             input_text = f"{user_input}\n（注意：{user_name(mode)}还在输入第二条消息，可能还有下文）"
 
+        # 活跃窗口（用户 2026-09-18 口径）：分析器与回复器读的是"自上次整理以来"的
+        # **完整对话原文**，除刚开场外常驻 30–100 轮。整理只把"最近 keep_turns 轮
+        # 以外"的部分搬进历史存档（存档只进检索器）。
+        # 为什么不做固定轮数窗口：窗口在增长期只往后追加 → 「## 最近对话」是稳定前缀，
+        # 缓存命中率高；固定滑动窗口第一行每轮都变 → 历史块永远命中不了。
+        _win = _active_window_turns()
+
         _t0 = time.perf_counter()
         logger.info("[PIPELINE #%d] ① Analyzer 开始...", turn)
         _set_stage(session, "analyzer")
@@ -389,7 +350,7 @@ def handle_chat(
         analyzer = Analyzer(client, model=analyzer_model, effort=analyzer_effort, mode=mode)
         analysis = analyzer.analyze(AnalyzerInput(
             user_input=input_text,
-            recent_history=ctx.get_recent(20),
+            recent_history=ctx.get_recent(_win, max_tokens=BUDGET_ANALYZER),
             retrieved_knowledge=retrieved_knowledge,
             environment=environment,
         ))
@@ -408,7 +369,7 @@ def handle_chat(
             analyzer_summary=analysis.summary,
             analyzer_intent=analysis.intent,
             analyzer_fact_check=analysis.fact_check,
-            recent_history=ctx.get_recent(15),
+            recent_history=ctx.get_recent(_win, max_tokens=BUDGET_POLISHER),
             memory_head=memory_head,
             environment=environment,
             vision_images=(vision_images or []),
@@ -429,7 +390,7 @@ def handle_chat(
             org_output = organizer.organize(OrganizerInput(
                 user_input=user_input,
                 reply_texts=[m["content"] for m in messages if m.get("type") == "text"],
-                recent_history=ctx.get_recent(5),
+                recent_history=ctx.get_recent(5, max_tokens=BUDGET_ORGANIZER),
                 mode=mode,
             ))
             if org_output.sticker_label:
@@ -514,7 +475,7 @@ def handle_chat(
         if m.get("type") == "sticker":
             ctx.add_action("表情包", m.get("label", "表情"))
         elif m.get("type") == "narration":
-            # 旁白进上下文：回复器下轮能看到"她做了什么动作/环境如何"
+            # 旁白进上下文：回复器下轮能看到"角色做了什么动作/环境如何"
             ctx.add_action("旁白", m.get("text", ""))
 
     return ChatResult(messages=messages, bubble=None, error_code=_first_degraded_code(

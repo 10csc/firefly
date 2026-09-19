@@ -6,7 +6,7 @@ import { IS_SERVER } from "./api.js";
 import { checkKey } from "./settings.js";
 import { loadHistory } from "./chat_history.js";
 import { loadFixStatus } from "./fix.js";
-import { CURRENT_MODE } from "./views.js";
+import { CURRENT_MODE, charName } from "./views.js";
 import { initAssets, startRelay } from "./relay.js";
 
 // ═══════════════════════════════════════════
@@ -18,7 +18,7 @@ async function checkWake() {
         const data = await resp.json();
         if (data.interrupted) {
             document.getElementById("wake-overlay").style.display = "flex";
-            document.getElementById("wake-text").textContent = "流萤正在起床，记忆还在整理中…";
+            document.getElementById("wake-text").textContent = (charName() || "角色") + "正在起床，记忆还在整理中…";
         }
     } catch(e) {}
 }
@@ -30,4 +30,6 @@ checkWake();
 checkKey().then(() => { loadHistory(); });
 initAssets();   // 服务器模式：已有 token 时立即资产本地化（未登录静默失败，登录后 initAuth 会再触发）
 loadFixStatus();   // 设定纠错助手：恢复多轮对齐/待确认方案（本地与服务器模式都可用）
+// 公告通道**不在这里启动**：由 js/notice.js 自己挂 DOMContentLoaded（原因见该文件末尾的说明
+// —— bundle 单作用域，从 main 顶层调进去会撞 TDZ，把 notice 整块静默打死）。
 if (IS_SERVER) startRelay();   // relay 引擎仅服务器模式（本地为 direct 直发）

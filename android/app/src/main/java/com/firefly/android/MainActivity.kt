@@ -34,9 +34,13 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowCompat
+import androidx.core.view.updateLayoutParams
 import com.chaquo.python.Python
 import com.chaquo.python.android.AndroidPlatform
+import com.firefly.voice.VoiceBridge
 import java.io.ByteArrayInputStream
 import java.net.HttpURLConnection
 import java.net.URL
@@ -53,6 +57,7 @@ class MainActivity : AppCompatActivity() {
 
     companion object {
         private const val SERVER_URL = "http://127.0.0.1:8765"
+        private const val HOTUPDATE_POLL_MS = 8000L   // 热更新待生效时的轮询间隔（本地请求，代价可忽略）
         private const val LOCAL_HOME = "file:///android_asset/index.html"
         private const val READY_TIMEOUT_MS = 12_000L   // A7c：本地引擎启动探测窗口（超时自动回落服务器）
         private const val NOTIF_PERMISSION_REQUEST = 1001
@@ -81,12 +86,18 @@ class MainActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        // Android 15 (API 35) 默认 edge-to-edge：让系统处理状态栏 insets，
-        // WebView 内容从状态栏下方开始（避免 header 被挖孔/状态栏遮挡）
-        WindowCompat.setDecorFitsSystemWindows(window, true)
+        // Android 15 (API 35) 起 edge-to-edge 被系统强制：setDecorFitsSystemWindows(true) 被忽略，
+        // WebView 会铺到系统导航条底下（真机实测：角色卡管理页底部按钮被手势条盖住半截）。
+        // 改为 false + 下方 insets 监听手动给 WebView 加 margin——各版本行为一致。
+        WindowCompat.setDecorFitsSystemWindows(window, false)
         val container = FrameLayout(this)
         container.setBackgroundColor(0xFF0f0f23.toInt())
         setContentView(container)
+
+        // 语音插件：把 Context 交给 Kotlin 侧引擎桥（VoiceBridge 读 assets 的映射表要用）。
+        // 这里只注入 Context，**不加载任何模型** —— 引擎由 Python 侧（app/voice/）按需 init，
+        // 这样"未安装/未启用"时零成本，且保证"同时只有一个合成"由 Python 侧统一调度。
+        VoiceBridge.attach(this)
 
         // 后台保活：前台服务（对话流程较长，防止切后台/锁屏时进程被杀导致内容丢失）
         startForegroundService(Intent(this, KeepAliveService::class.java))
@@ -319,26 +330,41 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    /** 返回键策略：聊天页返回首页，首页双击退出 */
+    /** 返回键策略：遮罩/全屏页（设置/反馈/菜单/角色卡列表/包详情/纠错）先关闭，
+     * 聊天页回首页，首页双击退出。
+     * （旧实现只区分 home/chat：角色卡管理等全屏页按返回无反应，真机实测复现。） */
     private fun handleBackPressed() {
         val wv = webView
         if (wv == null) { finish(); return }
         wv.evaluateJavascript(
-            "document.getElementById('home-view') ? document.getElementById('home-view').classList.contains('show') : true"
+            "(function(){" +
+            " if (document.querySelector('#settings-panel.show')) return 'settings';" +
+            " if (document.querySelector('#feedback-panel.show')) return 'feedback';" +
+            " if (document.querySelector('#menu-drawer.open')) return 'menu';" +
+            " if (document.querySelector('#cards-view.show')) return 'cards';" +
+            " if (document.querySelector('#pack-view.show')) return 'pack';" +
+            " if (document.querySelector('#fix-view.show')) return 'fix';" +
+            " var hv=document.getElementById('home-view');" +
+            " return (hv && hv.classList.contains('show')) ? 'home' : 'chat'; })()"
         ) { result ->
-            val onHome = result == "true"
-            if (onHome) {
-                val now = System.currentTimeMillis()
-                if (now - exitBackPressedAt < 2000) {
-                    exitBackPressedAt = 0
-                    finish()   // 双击退出
-                } else {
-                    exitBackPressedAt = now
-                    Toast.makeText(this, "再按一次返回键退出", Toast.LENGTH_SHORT).show()
+            when (result?.trim('"')) {
+                "settings" -> wv.evaluateJavascript("closeSettings()", null)
+                "feedback" -> wv.evaluateJavascript("closeFeedback()", null)
+                "menu" -> wv.evaluateJavascript("closeMenu()", null)
+                "cards" -> wv.evaluateJavascript("closeCardsView()", null)
+                "pack" -> wv.evaluateJavascript("closePackView()", null)
+                "fix" -> wv.evaluateJavascript("closeFixView()", null)
+                "home" -> {
+                    val now = System.currentTimeMillis()
+                    if (now - exitBackPressedAt < 2000) {
+                        exitBackPressedAt = 0
+                        finish()   // 双击退出
+                    } else {
+                        exitBackPressedAt = now
+                        Toast.makeText(this, "再按一次返回键退出", Toast.LENGTH_SHORT).show()
+                    }
                 }
-            } else {
-                // 聊天页：回到首页（不退出）
-                wv.evaluateJavascript("showHome()", null)
+                else -> wv.evaluateJavascript("showHome()", null)
             }
         }
     }
@@ -525,9 +551,21 @@ class MainActivity : AppCompatActivity() {
             addJavascriptInterface(FireflyJsBridge(), "FireflyJs")   // 服务器模式后台主动消息 → 状态栏通知
             loadUrl(baseUrl)
         }
+        // Android 15 强制 edge-to-edge 下，系统状态栏/导航条会压住 WebView 内容；
+        // CSS env(safe-area-inset-*) 在部分机型 WebView 取不到值（真机复现），壳侧直接让出系统栏高度。
+        ViewCompat.setOnApplyWindowInsetsListener(webView!!) { v, insets ->
+            val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
+            v.updateLayoutParams<FrameLayout.LayoutParams> {
+                topMargin = bars.top
+                bottomMargin = bars.bottom
+            }
+            insets
+        }
         (findViewById<ViewGroup>(android.R.id.content)).addView(webView)
         // 服务器模式后台主动：KeepAliveService 经 evaluateJavascript 触发页面 __serverProactive()
         KeepAliveService.webView = webView
+        // 热更新：补丁应用后由壳触发刷新（前端 JS 那份在"补丁本身坏了"时指望不上）
+        startHotUpdateWatcher()
     }
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
@@ -550,5 +588,57 @@ class MainActivity : AppCompatActivity() {
         wakeLock = null
         wifiLock = null
         super.onDestroy()
+    }
+
+    // ── 热更新：补丁就绪时由**壳**触发刷新（见 docs/热更新规范.md §5.2）────────
+    //
+    // 为什么触发权必须在壳这一份、不能只靠前端 JS：
+    //   要修的往往就是那段前端 JS —— 一旦坏的是它本身，页面里就没有任何代码会去
+    //   轮询状态，补丁永远生效不了（2026-09-19 真机实测踩到：apply 成功、
+    //   reload_pending 一直不清）。所以壳必须自己也盯着。
+    //
+    // 空闲判据由后端复合给出（它合并了前端上报的 typing/playing 与"模型下载中"等）；
+    // 壳在这里**再查一次输入框**做兜底：里面有字就不刷，绝不吞掉用户正在打的内容。
+    private fun startHotUpdateWatcher() {
+        val tick = object : Runnable {
+            override fun run() {
+                try {
+                    Thread {
+                        if (hotUpdateReloadPending()) {
+                            uiHandler.post { maybeReloadForHotUpdate() }
+                        }
+                    }.start()
+                } catch (_: Exception) {
+                }
+                uiHandler.postDelayed(this, HOTUPDATE_POLL_MS)
+            }
+        }
+        uiHandler.postDelayed(tick, HOTUPDATE_POLL_MS)
+    }
+
+    /** 问后端：补丁是否已应用待生效、且此刻空闲。任何异常都当"不需要刷新"。 */
+    private fun hotUpdateReloadPending(): Boolean = try {
+        val c = URL("$SERVER_URL/hotupdate/status").openConnection() as HttpURLConnection
+        c.connectTimeout = 3000
+        c.readTimeout = 3000
+        val body = c.inputStream.bufferedReader().use { it.readText() }
+        c.disconnect()
+        val o = org.json.JSONObject(body)
+        o.optBoolean("reload_pending") && o.optBoolean("idle")
+    } catch (_: Exception) {
+        false
+    }
+
+    private fun maybeReloadForHotUpdate() {
+        val wv = webView ?: return
+        wv.evaluateJavascript(
+            "(function(){var i=document.getElementById('msg-input');" +
+                "return (i&&i.value&&i.value.trim())?'BUSY':'OK';})()"
+        ) { r ->
+            if (r != null && r.contains("OK")) {
+                Log.i("FireflyHotUpdate", "补丁已就绪且空闲 → 壳触发刷新")
+                wv.reload()
+            }
+        }
     }
 }

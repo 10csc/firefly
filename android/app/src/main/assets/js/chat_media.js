@@ -83,23 +83,25 @@ stickerBtn.addEventListener("click", async () => {
     }
     _mediaBusy = true;   // 面板打开期间暂停提交（长期等待用户选择）
     stickerPanel.classList.add("show");
-    if (!stickerGrid.dataset.loaded) {
-        try {
-            const resp = await fetch("/stickers?enabled=1");
-            const data = await resp.json();
-            const list = data.stickers || [];
-            stickerGrid.innerHTML = list.map(s =>
-                `<img src="${IS_SERVER ? API_BASE : ""}/assets/${escapeHtml(s.file)}" alt="${escapeHtml(s.label)}" data-label="${escapeHtml(s.label)}" data-file="${escapeHtml(s.file)}">`).join("");
-            stickerGrid.dataset.loaded = "1";
-            stickerGrid.querySelectorAll("img").forEach(img => {
-                img.addEventListener("click", () => {
-                    _mediaBusy = false;   // 选中即结束媒体状态（sendStickerMessage 内 _batchArmSubmit 重新计时）
-                    _stickerPanelClose();
-                    sendStickerMessage(img.dataset.label, img.dataset.file);
-                });
+    // F-6.2（2026-09-14）：面板缓存按包失效 + 按包过滤——原来 dataset.loaded 一旦置位永不过期，
+    // 切包后仍显示旧包（含他包专属）的表情；现在切包必重拉，且只显示 全局共享 + 本包专属。
+    if (stickerGrid.dataset.loaded && stickerGrid.dataset.mode === CURRENT_MODE) return;
+    try {
+        const resp = await fetch("/stickers?enabled=1");
+        const data = await resp.json();
+        const list = (data.stickers || []).filter(s => !s.pack || s.pack === CURRENT_MODE);
+        stickerGrid.innerHTML = list.map(s =>
+            `<img src="${IS_SERVER ? API_BASE : ""}/assets/${escapeHtml(s.file)}" alt="${escapeHtml(s.label)}" data-label="${escapeHtml(s.label)}" data-file="${escapeHtml(s.file)}">`).join("");
+        stickerGrid.dataset.loaded = "1";
+        stickerGrid.dataset.mode = CURRENT_MODE;
+        stickerGrid.querySelectorAll("img").forEach(img => {
+            img.addEventListener("click", () => {
+                _mediaBusy = false;   // 选中即结束媒体状态（sendStickerMessage 内 _batchArmSubmit 重新计时）
+                _stickerPanelClose();
+                sendStickerMessage(img.dataset.label, img.dataset.file);
             });
-        } catch (e) { /* 静默 */ }
-    }
+        });
+    } catch (e) { /* 静默 */ }
 });
 // 点击聊天区关闭表情面板
 messagesEl.addEventListener("click", _stickerPanelClose);

@@ -5,7 +5,7 @@
 
 /* ── 来源：js/state.js ── */
 // 共享状态与 DOM 引用（原 app.js 头部 + 跨模块可变状态 S）
-// 流萤聊天 App — 前端逻辑（统一前端 0.8.0：本地 / 服务器双模式一套代码）
+// Firefly 聊天 App — 前端逻辑（统一前端 0.8.0：本地 / 服务器双模式一套代码）
 
 const messagesEl = document.getElementById("messages");
 const inputEl = document.getElementById("msg-input");
@@ -133,6 +133,103 @@ async function stickerSrc(file, isServer, apiBase) {
     }
     return (isServer ? apiBase : "") + "/assets/" + encodeURI(String(file));
 }
+
+
+/* ── 来源：js/ui_select.js ── */
+// 自绘下拉组件（ui_select）：替代原生 <select> 的系统弹窗
+// 背景：安卓 WebView 的 <select> 点击弹系统级白色选项弹窗，页面 CSS 管不到（图1 实测）。
+// 方案：原生 select 保留为值存储（display:none，所有既有 change 监听/取值代码零改动），
+// 视觉层换成暗色「按钮 + 自绘弹层」。外观/键盘/触摸/点外关闭齐全。
+// 用法：uiSelectEnhance(root=document) 扫描 select[data-ui] 或调用方指定选择器。
+
+const _UI_SEL_KEY = "data-ui-select-enhanced";
+
+function _closeAllPopups(except) {
+    document.querySelectorAll(".ui-select-pop.show").forEach(p => {
+        if (p !== except) p.classList.remove("show");
+    });
+}
+
+// 全局关闭：点外 / Esc / 滚动（弹层跟随是 fixed，滚动时直接关，防错位）
+document.addEventListener("pointerdown", e => {
+    if (!e.target.closest(".ui-select-pop") && !e.target.closest(".ui-select-btn")) _closeAllPopups();
+}, { capture: true });
+document.addEventListener("keydown", e => { if (e.key === "Escape") _closeAllPopups(); });
+window.addEventListener("scroll", () => _closeAllPopups(), { capture: true, passive: true });
+
+function uiSelectEnhance(root) {
+    (root || document).querySelectorAll("select").forEach(sel => {
+        if (sel.hasAttribute(_UI_SEL_KEY)) return;
+        sel.setAttribute(_UI_SEL_KEY, "1");
+        sel.classList.add("ui-select-native");
+
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "ui-select-btn";
+        btn.setAttribute("aria-haspopup", "listbox");
+        const label = document.createElement("span");
+        label.className = "ui-select-label";
+        const arrow = document.createElement("span");
+        arrow.className = "ui-select-arrow";
+        arrow.textContent = "▾";
+        btn.append(label, arrow);
+
+        const pop = document.createElement("div");
+        pop.className = "ui-select-pop";
+        pop.setAttribute("role", "listbox");
+
+        const syncLabel = () => {
+            const opt = sel.selectedOptions && sel.selectedOptions[0];
+            label.textContent = opt ? opt.textContent : "";
+        };
+        const rebuild = () => {
+            pop.innerHTML = "";
+            [...sel.options].forEach(o => {
+                const item = document.createElement("button");
+                item.type = "button";
+                item.className = "ui-select-opt" + (o.value === sel.value ? " on" : "");
+                item.setAttribute("role", "option");
+                item.textContent = o.textContent;
+                item.addEventListener("click", () => {
+                    sel.value = o.value;
+                    sel.dispatchEvent(new Event("change", { bubbles: true }));
+                    syncLabel(); rebuild(); _closeAllPopups();
+                });
+                pop.appendChild(item);
+            });
+        };
+        btn.addEventListener("click", () => {
+            const willOpen = !pop.classList.contains("show");
+            _closeAllPopups();
+            if (willOpen) {
+                rebuild(); syncLabel();
+                // 定位：fixed 贴按钮下缘；下方空间不足则翻上
+                const r = btn.getBoundingClientRect();
+                pop.style.minWidth = r.width + "px";
+                pop.style.left = r.left + "px";
+                pop.style.top = "";
+                pop.style.bottom = "";
+                pop.classList.add("show");
+                const ph = pop.offsetHeight;
+                if (r.bottom + ph + 8 > innerHeight && r.top - ph - 8 > 0) {
+                    pop.style.top = (r.top - ph - 6) + "px";
+                } else {
+                    pop.style.top = (r.bottom + 6) + "px";
+                }
+            }
+        });
+        syncLabel();
+        sel.insertAdjacentElement("afterend", btn);
+        document.body.appendChild(pop);
+        // 弹层随按钮销毁（本项目的 select 都是长驻元素，不销毁；防御性留个口）
+        sel._uiSelectPopup = pop;
+        sel._uiSelectBtn = btn;
+        sel._uiSelectSync = () => { syncLabel(); rebuild(); };
+    });
+}
+
+// 动态重建内容的 select（如 provider-select 会被 _renderProviderSelect 重写 options）：
+// 调用方在重写后调 sel._uiSelectSync() 即可（settings.js 已接）。
 
 
 /* ── 来源：js/imgzip.js ── */
@@ -553,7 +650,8 @@ function openMenu() {
     menuDrawer.classList.add("open");
     menuOverlay.classList.add("show");
     // 默认 tab 是设定文件（DOM active），无点击事件，需主动加载
-    loadCharFiles(); loadJournal(); loadUserMemory();
+    // （2026-09-18：loadCharFiles 已随「用户设定」编辑器一起去掉——它属角色卡管理域）
+    loadJournal(); loadUserMemory(); loadArchive();
 }
 function closeMenu() {
     menuDrawer.classList.remove("open");
@@ -595,7 +693,7 @@ document.querySelectorAll(".menu-tab").forEach(btn => {
         btn.classList.add("active");
         const target = document.getElementById("tab-" + btn.dataset.tab);
         if (target) target.classList.add("active");
-        if (btn.dataset.tab === "char") { loadCharFiles(); loadJournal(); loadUserMemory(); }
+        if (btn.dataset.tab === "char") { loadJournal(); loadUserMemory(); loadArchive(); }
         if (btn.dataset.tab === "state") loadStateTab();
         if (btn.dataset.tab === "fav") loadFavorites();
         if (btn.dataset.tab === "log") loadRequestLog();
@@ -613,157 +711,10 @@ document.querySelectorAll(".menu-tab").forEach(btn => {
 // 阶段 2.5 自 panels.js 拆出。包详情页的写回一律用 _packViewMode（F-3 代际保护）。
 
 
-// ═══════════════════════════════════════════
-// 表情包管理
-// ═══════════════════════════════════════════
-const stickerAddBtn = document.getElementById("sticker-add-btn");
-const stickerAddForm = document.getElementById("sticker-add-form");
-if (stickerAddBtn) stickerAddBtn.addEventListener("click", () => {
-    stickerAddForm.style.display = stickerAddForm.style.display === "none" ? "flex" : "none";
-});
 
-document.getElementById("sticker-submit").addEventListener("click", async () => {
-    const file = document.getElementById("sticker-file").files[0];
-    const category = document.getElementById("sticker-category").value;
-    const label = document.getElementById("sticker-label").value.trim();
-    const msg = document.getElementById("sticker-add-msg");
-    if (!file) { msg.textContent = "请先选择图片"; return; }
-    if (!label) { msg.textContent = "请填写含义描述"; return; }
-    const fd = new FormData(); fd.append("file", file); fd.append("category", category); fd.append("label", label);
-    fd.append("mode", CURRENT_MODE);   // 归属当前包（阶段6）
-    try {
-        const resp = await fetch("/add-sticker", { method: "POST", body: fd });
-        const data = await resp.json();
-        if (data.ok) {
-            // A2 媒体本地策略（服务器版）：图片本体存本机 IndexedDB（key=内容哈希），
-            // 服务器只保留文字元数据（label/category/哈希）；上传后立即本地化
-            if (data.local && data.file && file instanceof Blob) {
-                await idbSaveMedia(String(data.file).slice("local:".length), file);
-                msg.textContent = "已添加：" + data.label + "（图片仅存本机）";
-            } else {
-                msg.textContent = "已添加：" + data.label;
-            }
-            document.getElementById("sticker-file").value = "";
-            document.getElementById("sticker-label").value = "";
-            loadStickerList();
-        } else msg.textContent = "失败：" + (data.error || "未知");
-    } catch(e) { msg.textContent = "网络错误"; }
-});
+// （A7c 运行模式切换已删除：本地优先 + 失败自动回落服务器——保留此注记防旧代码复活）
 
-document.getElementById("sticker-manage-btn").addEventListener("click", () => {
-    const panel = document.getElementById("sticker-manage-panel");
-    panel.style.display = panel.style.display === "none" ? "flex" : "none";
-    if (panel.style.display !== "none") loadStickerList();
-});
-
-async function loadStickerList() {
-    const msg = document.getElementById("sticker-manage-msg");
-    const list = document.getElementById("sticker-list");
-    msg.textContent = "加载中…";
-    try {
-        const resp = await fetch("/stickers");
-        const data = await resp.json();
-        const stickers = data.stickers || [];
-        msg.textContent = `共 ${stickers.length} 个`;
-        // A2：缩略图异步解析（local: 引用 → IndexedDB；无图显示占位块）
-        const rows = await Promise.all(stickers.map(async s => {
-            const src = await stickerSrc(s.file, IS_SERVER, API_BASE);
-            const thumb = src
-                ? `<img class="stk-thumb" src="${escapeHtml(src)}" loading="lazy" onerror="this.style.opacity=0.2">`
-                : `<div class="stk-thumb" style="display:flex;align-items:center;justify-content:center;opacity:0.35;font-size:0.6em">无图</div>`;
-            return `
-        <div class="sticker-row" data-id="${escapeHtml(s.id)}">
-            <div class="stk-head">
-                ${thumb}
-                <button class="stk-toggle ${s.enabled ? "on" : ""}" data-on="${s.enabled ? "1" : ""}" ${(s.editable || s.is_default) ? "" : "disabled"}>${s.enabled ? "启用中" : "已停用"}</button>
-            </div>${s.pack ? `<div style="font-size:0.62em;color:var(--fg-accent);margin-top:2px">专属：${escapeHtml(s.pack)}</div>` : ""}
-            <div class="stk-main">
-                <select class="stk-cat-sel" ${(s.editable || s.is_default) ? "" : "disabled"}>
-                    <option value="可爱" ${s.category==="可爱"?"selected":""}>可爱</option>
-                    <option value="帅气" ${s.category==="帅气"?"selected":""}>帅气</option>
-                </select>
-                <input class="stk-label-input" type="text" value="${escapeHtml(s.label)}" maxlength="120" ${(s.editable || s.is_default) ? "" : "readonly"}>
-                <div class="stk-actions">
-                    <button class="stk-save" disabled>保存</button>
-                    <button class="stk-del" ${(s.is_default || !s.editable) ? "disabled" : ""}>删</button>
-                </div>
-            </div>
-        </div>`;
-        }));
-        list.innerHTML = rows.join("");
-        list.querySelectorAll(".sticker-row").forEach(row => {
-            const id = row.dataset.id;
-            const inp = row.querySelector(".stk-label-input");
-            const cat = row.querySelector(".stk-cat-sel");
-            const save = row.querySelector(".stk-save");
-            const del = row.querySelector(".stk-del");
-            const toggle = row.querySelector(".stk-toggle");
-            const origLabel = inp.value;
-            const origCat = cat.value;
-
-            function checkChanged() {
-                save.disabled = (inp.value.trim() === origLabel && cat.value === origCat) || (!inp.value.trim() && !cat.value);
-            }
-            inp.addEventListener("input", checkChanged);
-            cat.addEventListener("change", checkChanged);
-
-            toggle.addEventListener("click", async () => {
-                const next = toggle.dataset.on !== "1";
-                toggle.disabled = true;
-                try {
-                    const r = await fetch("/sticker-update", {
-                        method:"POST",
-                        headers:{"Content-Type":"application/json"},
-                        body:JSON.stringify({id, enabled: next}),
-                    });
-                    const d = await r.json();
-                    if (d.ok) {
-                        toggle.dataset.on = next ? "1" : "";
-                        toggle.classList.toggle("on", next);
-                        toggle.textContent = next ? "启用中" : "已停用";
-                        msg.textContent = next ? "已启用：" + d.label : "已停用：" + d.label;
-                    }
-                } catch(e) {}
-                toggle.disabled = false;
-            });
-
-            save.addEventListener("click", async () => {
-                const label = inp.value.trim();
-                const category = cat.value;
-                try {
-                    const r = await fetch("/sticker-update", {
-                        method:"POST",
-                        headers:{"Content-Type":"application/json"},
-                        body:JSON.stringify({id, label: label || undefined, category}),
-                    });
-                    const d = await r.json();
-                    if (d.ok) {
-                        inp.value = d.label;
-                        cat.value = d.category;
-                        save.textContent="已存"; save.disabled=true;
-                        msg.textContent="已更新："+d.label;
-                    }
-                } catch(e) {}
-            });
-            del.addEventListener("click", async () => {
-                if (!confirm("确认删除？")) return;
-                try {
-                    await fetch("/sticker-delete", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({id}) });
-                    row.remove();
-                } catch(e) {}
-            });
-        });
-    } catch(e) { msg.textContent = "加载失败"; }
-}
-
-// ═══════════════════════════════════════════
-// 运行模式切换（A7c 已删除）：本地优先 + 后端失败自动回落服务器——无手动切换入口。
-// 保留此注释防止旧代码/测试引用复活。
-// ═══════════════════════════════════════════
-
-// ═══════════════════════════════════════════
-// 角色编辑页（全屏 #pack-view：封面横幅 + 大头像 + 人设文案编辑 + 自建角色删除）
-// ═══════════════════════════════════════════
+// ═══ 角色编辑页（全屏 #pack-view：封面横幅 + 大头像 + 人设文案编辑 + 自建角色删除）═══
 const _PACK_PROMPT_LABELS = {
     "core.md": "核心设定（身份/经历/价值观）",
     "identity.md": "人际关系与认知边界",
@@ -777,11 +728,9 @@ const _PACK_PROMPT_LABELS = {
 };
 
 // F-3（2026-09-13）包详情页的两个捕获量：
-// - _packViewMode：本页展示的是哪个包。所有写回（保存文案 / 换资产 / 恢复默认 / 加表情包 /
-//   主动消息配置）一律用它，**不读实时的 CURRENT_MODE** —— 原来 A→B 快速切换后，
-//   A 页残留的"保存"会把 A 的文案写进 B（请求发出时 CURRENT_MODE 已经是 B）。
-// - _packViewGen：进入本页时的模式代际。await 之后一旦模式已切换就丢弃本次结果，
-//   不把 A 的数据渲染进 B 的页面（范式与 chat_history.loadHistory 一致）。
+// - _packViewMode：本页展示的是哪个包。所有写回一律用它，**不读实时的 CURRENT_MODE** ——
+//   原来 A→B 快速切换后，A 页残留的"保存"会把 A 的文案写进 B。
+// - _packViewGen：进入本页时的模式代际，await 后模式已切换就丢弃本次结果。
 let _packViewMode = "";
 let _packViewGen = -1;
 
@@ -801,9 +750,16 @@ async function loadPackView() {
     const presLabel = {sticker: "短信+表情包", narration: "短信+旁白", none: "纯短信"}[data.presentation] || data.presentation;
     const t = Date.now();
     const coverEl = document.getElementById("pv-cover");
-    if (coverEl && data.assets && data.assets.cover) coverEl.src = data.assets.cover + "?t=" + t;
+    // F-5：无封面/头像的包必须清掉旧 src——否则详情页沿用上一个包的图（"看起来还是流萤"）
+    if (coverEl) {
+        if (data.assets && data.assets.cover) coverEl.src = data.assets.cover + "?t=" + t;
+        else coverEl.removeAttribute("src");
+    }
     const avatarEl = document.getElementById("pv-avatar");
-    if (avatarEl && data.assets && data.assets.avatar) avatarEl.src = data.assets.avatar + "?t=" + t;
+    if (avatarEl) {
+        if (data.assets && data.assets.avatar) avatarEl.src = data.assets.avatar + "?t=" + t;
+        else avatarEl.removeAttribute("src");
+    }
     document.getElementById("pv-name").textContent = "";
     document.getElementById("pv-scene").textContent = data.name || data.mode;
     document.getElementById("pv-pres").textContent = presLabel;
@@ -834,17 +790,33 @@ async function loadPackView() {
 
     _loadPackStickers(mode);
 
-    // 危险区：自建角色可删除；非自建显示恢复资产默认入口
-    const danger = document.getElementById("pv-danger");
-    danger.innerHTML = "";
-    const tools = document.createElement("div");
-    tools.style.cssText = "margin-top:16px;font-size:0.75em;color:var(--fg-muted);display:flex;gap:14px";
-    for (const [slot, label] of [["avatar", "恢复头像默认"], ["cover", "恢复封面默认"]]) {
-        const a = document.createElement("a");
-        a.textContent = label;
-        a.style.cssText = "cursor:pointer;text-decoration:underline";
+    // 用户形象区（05）：称呼 + 用户头像，数据来自 /modes（经 __getPresets 桥）
+    try {
+        const mods = (window.__getPresets && window.__getPresets()) || [];
+        const pm = mods.find(m => m.id === mode) || {};
+        const nameInp = document.getElementById("pv-user-name");
+        if (nameInp) nameInp.value = pm.user_name || "";
+        const uav = document.getElementById("pv-user-avatar");
+        if (uav) {
+            // 预览回落链：包头像 → 全局内置形象（穹/星）——空 src 会显示破图+alt，必须给兜底
+            const tbNow = (() => { try { return localStorage.getItem("tb_avatar") || "穹"; } catch (e) { return "穹"; } })();
+            uav.src = pm.user_avatar ? pm.user_avatar + "?t=" + t : TB_AVATARS[tbNow];
+            document.querySelectorAll(".pv-id-choice").forEach(x => x.classList.toggle("on", !pm.user_avatar && x.dataset.key === tbNow));
+        }
+        const resetLink = document.getElementById("pv-user-avatar-reset");
+        if (resetLink) resetLink.style.display = pm.user_avatar ? "" : "none";
+    } catch (e) {}
+    try { loadPackTree(mode); } catch (e) {}   // 角色卡管理树（数据驱动，2026-09-15）
+
+    // 角色形象「恢复默认」—— 2026-09-19 从"危险区"挪到顶部大图旁。
+    // 理由：它只是撤销用户自己换的图，**不是危险操作**；而官方包又不能删除，
+    // 于是"危险区"对官方包既没内容也没存在理由。形象相关的操作现在全在顶部一处。
+    for (const [slot, elId, label] of [["avatar", "pv-asset-reset-avatar", "恢复默认头像"],
+                                       ["cover", "pv-asset-reset-cover", "恢复默认封面"]]) {
+        const a = document.getElementById(elId);
+        if (!a) continue;
         a.onclick = async () => {
-            if (!confirm(`${label}？（删除你的修改）`)) return;
+            if (!confirm(`${label}？（删除你换的图，回落到角色卡自带的）`)) return;
             try {
                 await fetch("/pack-asset/delete", {method: "POST",
                     headers: {"Content-Type": "application/json"},
@@ -854,9 +826,14 @@ async function loadPackView() {
                 try { window.__modesReload && window.__modesReload(); } catch (e) {}
             } catch (e) { showToast("操作失败"); }
         };
-        tools.appendChild(a);
     }
-    danger.appendChild(tools);
+
+    // 危险区（2026-09-19 重排）：
+    //   · 「恢复头像默认 / 恢复封面默认」**不是危险操作**，已挪到顶部大图旁（.pv-asset-ops）；
+    //   · 官方（内置）包不能归档/删除 ⇒ 这个区对它们**完全不渲染**（见 pack_tree.js 的 danger 分支），
+    //     所以这里只在自建包时才会有内容。
+    const danger = document.getElementById("pv-danger");
+    danger.innerHTML = "";
     if (data.custom) {
         // 活跃包的危险区主按钮 = 「归档」（3.5 一级：不删数据，可反悔）。
         // 「彻底删除」**只在首页归档区**（views.js 的 _renderArchivedPacks）——那是二级操作，
@@ -881,48 +858,6 @@ async function loadPackView() {
         }
     }
 
-    // 人设文案（可折叠编辑器：核心三件 + 用户设定 + 提示词六段，全部放权可编辑）
-    const promptsBox = document.getElementById("pv-prompts");
-    promptsBox.innerHTML = "";
-    for (const f of data.files) {
-        const det = document.createElement("details");
-        const sum = document.createElement("summary");
-        sum.textContent = (_PACK_PROMPT_LABELS[f.name] || f.name) + (f.customized ? "（已修改）" : "");
-        const ta = document.createElement("textarea");
-        ta.value = f.content || "";
-        const btnRow = document.createElement("div");
-        btnRow.className = "btn-row";
-        btnRow.style.marginTop = "6px";
-        const saveBtn = document.createElement("button");
-        saveBtn.type = "button"; saveBtn.textContent = "保存";
-        saveBtn.onclick = async () => {
-            const content = ta.value;
-            if (!content.trim()) { showToast("内容不能为空（要恢复默认请用下方小字）"); return; }
-            try {
-                const r = await fetch("/character-file-update", {method: "POST",
-                    headers: {"Content-Type": "application/json"},
-                    body: JSON.stringify({mode, filename: f.name, content})});
-                const d = await r.json();
-                showToast(d.ok ? "已保存（下轮对话生效）" : ("保存失败：" + (d.error || "")));
-                if (d.ok) sum.textContent = (_PACK_PROMPT_LABELS[f.name] || f.name) + "（已修改）";
-            } catch (e) { showToast("网络错误"); }
-        };
-        const rstBtn = document.createElement("button");
-        rstBtn.type = "button"; rstBtn.textContent = "恢复默认";
-        rstBtn.onclick = async () => {
-            if (!confirm("恢复该文案为默认？（删除你的修改）")) return;
-            try {
-                await fetch("/character-file/delete", {method: "POST",
-                    headers: {"Content-Type": "application/json"},
-                    body: JSON.stringify({mode, filename: f.name})});
-                showToast("已恢复默认");
-                loadPackView();
-            } catch (e) { showToast("操作失败"); }
-        };
-        btnRow.append(saveBtn, rstBtn);
-        det.append(sum, ta, btnRow);
-        promptsBox.appendChild(det);
-    }
 }
 window.loadPackView = loadPackView;
 
@@ -1074,8 +1009,7 @@ document.getElementById("pv-stk-submit")?.addEventListener("click", async () => 
 });
 
 // 头像/封面上传（复用图片压缩，选文件后上传为包资产）
-function _packAssetUpload(slot) {
-    const inp = document.createElement("input");
+function _packAssetUpload(slot) {    const inp = document.createElement("input");
     inp.type = "file";
     inp.accept = "image/png,image/jpeg,image/webp";
     inp.onchange = async () => {
@@ -1101,6 +1035,45 @@ function _packAssetUpload(slot) {
     };
     inp.click();
 }
+
+// ═══ 用户形象区接线（05：每包独立的用户称呼 + 头像）═══
+document.getElementById("pv-user-name-save")?.addEventListener("click", async () => {
+    const msg = document.getElementById("pv-user-msg");
+    const v = document.getElementById("pv-user-name").value.trim();
+    try {
+        const r = await fetch("/pack-config", {method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({mode: _packViewMode || CURRENT_MODE, user_name: v})});
+        const d = await r.json();
+        if (d.ok) {
+            if (msg) msg.textContent = "已保存（称呼：" + (d.user_name || "默认") + "）";
+            try { window.__modesReload && window.__modesReload(); } catch (e) {}   // /modes 携带新称呼
+        } else if (msg) msg.textContent = "保存失败：" + (d.error || "");
+    } catch (e) { if (msg) msg.textContent = "网络错误"; }
+});
+document.getElementById("pv-user-avatar-edit")?.addEventListener("click", () => _packAssetUpload("user_avatar"));
+document.getElementById("pv-user-avatar-reset")?.addEventListener("click", async () => {
+    if (!confirm("恢复默认用户头像？（删除你上传的头像，回落到内置形象）")) return;
+    try {
+        const r = await fetch("/pack-asset/delete", {method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({mode: _packViewMode || CURRENT_MODE, slot: "user_avatar"})});
+        const d = await r.json();
+        if (d.ok) { showToast("已恢复默认"); loadPackView(); try { window.__modesReload && window.__modesReload(); } catch (e) {} }
+        else showToast(d.error || "操作失败");
+    } catch (e) { showToast("网络错误"); }
+});
+
+// 用户形象区：内置形象选择（穹/星，无包自定义头像时生效；复用全局 TB 选择存储）
+document.querySelectorAll(".pv-id-choice").forEach(el => {
+    el.addEventListener("click", () => {
+        try {
+            localStorage.setItem("tb_avatar", el.dataset.key);
+            document.querySelectorAll(".tb-avatar").forEach(x => { x.src = TB_AVATARS[el.dataset.key]; });
+        } catch (e) {}
+        loadPackView();   // 预览刷新（无包头像时显示内置选择）
+    });
+});
 
 
 /* ── 来源：js/panels/data.js ── */
@@ -1137,7 +1110,7 @@ async function loadFavorites() {
                 : f.type === "narration"
                     ? escapeHtml(f.text || "")
                     : escapeHtml(f.content || "");
-            const who = f.who === "user" ? "我" : "流萤";
+            const who = f.who === "user" ? "我" : escapeHtml(charName());
             return `<div class="fav-item">
                 <div class="fav-head"><span class="fav-who">${who}</span><span class="fav-time">${escapeHtml((f.time || "").slice(5, 16))}</span></div>
                 <div class="fav-body">${body}</div>
@@ -1192,37 +1165,78 @@ document.getElementById("user-memory-save").addEventListener("click", async () =
 });
 document.getElementById("user-memory-reload").addEventListener("click", loadUserMemory);
 
-// 用户设定（补充剧情设定）
-async function loadCharFiles() {
-    const msg = document.getElementById("char-file-msg");
+// ── 历史对话存档（整理后的原文；只进检索器）────────────────────────
+// 用户 2026-09-18 口径：整理搬走的那段**原文**要看得见、改得动，
+// 也能手动让它「AI 压缩」进「用户记忆」。存/读都走 /archive 与 /memory-action。
+//
+// （顺带说明：「用户设定」编辑器已从本页移除 —— 它是**用户手写的设定**、不是聊天产物，
+//   与「清除历史会清空本页」的语义冲突；现统一在「角色卡管理 → 人设与口吻」编辑。）
+async function loadArchive(month) {
+    const sel = document.getElementById("archive-month");
+    const editor = document.getElementById("archive-editor");
+    const msg = document.getElementById("archive-msg");
+    if (!editor) return;
+    const m = month || (sel && sel.value) || "";
     try {
-        const resp = await fetch(`/character-files?mode=${CURRENT_MODE}`);
-        const data = await resp.json();
-        const byName = {};
-        (data.files || []).forEach(f => { byName[f.name] = f.content; });
-        const us = document.getElementById("user-setting-editor");
-        if (us) us.value = byName["用户设定.md"] || "";   // ?? 为 ES2020（Chrome 80+），安卓 8.0 WebView 解析期 SyntaxError 全站失效，改用 ||（此处语义等价）
-        if (msg) msg.textContent = "已加载";
+        const url = `/archive?mode=${encodeURIComponent(CURRENT_MODE)}` + (m ? `&month=${encodeURIComponent(m)}` : "");
+        const data = await (await fetch(url)).json();
+        if (sel) {
+            const months = data.months || [];
+            const keep = months.includes(m) ? m : (months[0] || "");
+            sel.innerHTML = months.map(x => `<option value="${x}">${x}</option>`).join("");
+            sel.value = keep;
+            // 自绘下拉：options 被重写后要让它重读（否则弹层还是旧的）
+            try {
+                if (sel._uiSelectSync) sel._uiSelectSync();
+                else uiSelectEnhance(document.getElementById("tab-char"));
+            } catch (e) {}
+        }
+        editor.value = data.content || "";
+        if (msg) msg.textContent = data.content ? `${data.content.length} 字` : "（还没有存档）";
     } catch (e) { if (msg) msg.textContent = "加载失败"; }
 }
 
-async function saveUserFile(filename, editorId, msgEl) {
-    const editor = document.getElementById(editorId);
-    const msg = document.getElementById(msgEl);
-    if (!editor) return;
-    msg.textContent = "保存中…";
+async function _archiveAction(action, extra) {
+    const msg = document.getElementById("archive-msg");
+    if (msg) msg.textContent = action === "compress" ? "压缩中…（要调一次模型，稍等）" : "保存中…";
     try {
-        const resp = await fetch("/character-file-update", {
+        const resp = await fetch("/memory-action", {
             method: "POST", headers: {"Content-Type": "application/json"},
-            body: JSON.stringify({filename, content: editor.value, mode: CURRENT_MODE}),
+            body: JSON.stringify(Object.assign({action: action, mode: CURRENT_MODE}, extra || {})),
         });
         const data = await resp.json();
-        msg.textContent = data.ok ? "✓ 已保存" : "失败：" + (data.error || "未知");
-    } catch (e) { msg.textContent = "网络错误"; }
+        if (!data.ok) { if (msg) msg.textContent = "失败：" + (data.error || "未知"); return; }
+        if (action === "compress") {
+            if (msg) msg.textContent = `✓ 已压缩进「用户记忆」（新增 ${data.added || 0} 条，头部 ${data.head_chars || 0} 字）`;
+            if (typeof loadUserMemory === "function") loadUserMemory();   // 摘要变了，顺手刷新上面那块
+        } else if (msg) {
+            msg.textContent = "✓ 已保存（检索器下次就用改后的原文）";
+        }
+    } catch (e) { if (msg) msg.textContent = "网络错误"; }
 }
 
-document.getElementById("user-setting-save").addEventListener("click", () => saveUserFile("用户设定.md", "user-setting-editor", "char-file-msg"));
-document.getElementById("user-setting-reload").addEventListener("click", loadCharFiles);
+(function _wireArchive() {
+    const sel = document.getElementById("archive-month");
+    const save = document.getElementById("archive-save");
+    const reload = document.getElementById("archive-reload");
+    const comp = document.getElementById("archive-compress");
+    if (save) save.addEventListener("click", () => {
+        const editor = document.getElementById("archive-editor");
+        _archiveAction("save_archive", {
+            month: (sel && sel.value) || "",
+            content: editor ? editor.value : "",
+        });
+    });
+    if (reload) reload.addEventListener("click", () => loadArchive());
+    if (sel) sel.addEventListener("change", () => loadArchive(sel.value));
+    if (comp) comp.addEventListener("click", () => {
+        const month = (sel && sel.value) || "";
+        if (!month) { const m = document.getElementById("archive-msg"); if (m) m.textContent = "还没有存档可压缩"; return; }
+        if (!confirm(`把 ${month} 的存档原文压缩进「用户记忆」？\n（原文会保留，可以反复压；压缩会调用一次模型）`)) return;
+        _archiveAction("compress", {month: month});
+    });
+})();
+window.loadArchive = loadArchive;
 
 // 手账
 async function loadJournal() {
@@ -1255,6 +1269,12 @@ document.getElementById("journal-save").addEventListener("click", async () => {
 // 调试面板：请求记录 / 流水线日志（阶段 2.5 自 panels.js 拆出）
 
 
+// 调试面板里的用户称呼随当前角色包（F-6.x 残留：曾硬编码「开拓者」，自建包下称呼错误）
+// 2026-09-18：收敛到 views.userName()，且**不再回落字面量**（取不到就留空）。
+function _userName() {
+    return userName();
+}
+
 // ═══════════════════════════════════════════
 // 请求记录
 // ═══════════════════════════════════════════
@@ -1277,11 +1297,13 @@ async function loadRequestLog() {
             list.innerHTML = '<div style="color:#8a8a8a;padding:10px">暂无记录</div>';
             return;
         }
+        // A6（审计 2026-09-15）：r.module / r.model / r.time 原先未转义直插 innerHTML
+        // （model 来自上游响应/自定义模型名，注入面真实）——已套 _esc，与本文件其余字段一致
         list.innerHTML = rows.map(r => `
         <div style="display:flex;align-items:center;gap:4px;padding:5px 0;border-bottom:1px solid rgba(255,255,255,0.06);font-size:0.8em;color:#c8d0e0">
-            <span style="flex-shrink:0;width:50px;color:#8a8a8a">${r.time || "?"}</span>
-            <span style="flex-shrink:0;width:64px">${r.module}</span>
-            <span style="flex-shrink:0;width:52px">${r.model || "?"}</span>
+            <span style="flex-shrink:0;width:50px;color:#8a8a8a">${_esc(r.time || "?")}</span>
+            <span style="flex-shrink:0;width:64px">${_esc(r.module)}</span>
+            <span style="flex-shrink:0;width:52px">${_esc(r.model || "?")}</span>
             <span style="flex-shrink:0;width:22px;text-align:center">${r.success ? '<span style="color:#6c8">✓</span>' : '<span style="color:#c66">✗</span>'}</span>
             <span style="flex:1;text-align:right">${r.total_tokens || 0}</span>
             <span style="flex-shrink:0;width:70px;text-align:right;color:#8a8a8a">¥${(r.cost_cny || 0).toFixed(6)}</span>
@@ -1352,7 +1374,7 @@ async function loadPipeline() {
                     ]);
             }
             return `<div style="margin-bottom:14px;padding:8px;border:1px solid rgba(255,255,255,0.08);border-radius:8px;font-size:0.8em;color:#c8d0e0">
-                <div style="margin-bottom:4px"><span style="color:#8a8a8a">${p.time || "?"}</span> 开拓者: <span style="color:#e0d5c1">${_esc(p.user_input)}</span>${p.hint ? ` <span style="color:#8a8a8a">(hint:${p.hint})</span>` : ""}</div>
+                <div style="margin-bottom:4px"><span style="color:#8a8a8a">${_esc(p.time || "?")}</span> ${_esc(_userName())}: <span style="color:#e0d5c1">${_esc(p.user_input)}</span>${p.hint ? ` <span style="color:#8a8a8a">(hint:${_esc(p.hint)})</span>` : ""}</div>
                 ${inner}
             </div>`;
         }).join("");
@@ -1365,6 +1387,617 @@ window.loadPipeline = loadPipeline;
 // ═══════════════════════════════════════════
 // 用户记忆（= memory.md，休息时自动整理的过往摘要）/ 用户设定（补充设定）
 // ═══════════════════════════════════════════
+
+
+/* ── 来源：js/panels/stickers.js ── */
+// 表情包管理（菜单抽屉「表情包」页签：添加 / 映射表 / 启停 / 删除）
+// 阶段 B（2026-09-15）自 panels/packs.js 拆出：这段属菜单域，与角色包详情页无关。
+
+// ═══════════════════════════════════════════
+// 表情包管理
+// ═══════════════════════════════════════════
+const stickerAddBtn = document.getElementById("sticker-add-btn");
+const stickerAddForm = document.getElementById("sticker-add-form");
+if (stickerAddBtn) stickerAddBtn.addEventListener("click", () => {
+    stickerAddForm.style.display = stickerAddForm.style.display === "none" ? "flex" : "none";
+});
+
+document.getElementById("sticker-submit").addEventListener("click", async () => {
+    const file = document.getElementById("sticker-file").files[0];
+    const category = document.getElementById("sticker-category").value;
+    const label = document.getElementById("sticker-label").value.trim();
+    const msg = document.getElementById("sticker-add-msg");
+    if (!file) { msg.textContent = "请先选择图片"; return; }
+    if (!label) { msg.textContent = "请填写含义描述"; return; }
+    const fd = new FormData(); fd.append("file", file); fd.append("category", category); fd.append("label", label);
+    fd.append("mode", CURRENT_MODE);   // 归属当前包（阶段6）
+    try {
+        const resp = await fetch("/add-sticker", { method: "POST", body: fd });
+        const data = await resp.json();
+        if (data.ok) {
+            // A2 媒体本地策略（服务器版）：图片本体存本机 IndexedDB（key=内容哈希），
+            // 服务器只保留文字元数据（label/category/哈希）；上传后立即本地化
+            if (data.local && data.file && file instanceof Blob) {
+                await idbSaveMedia(String(data.file).slice("local:".length), file);
+                msg.textContent = "已添加：" + data.label + "（图片仅存本机）";
+            } else {
+                msg.textContent = "已添加：" + data.label;
+            }
+            document.getElementById("sticker-file").value = "";
+            document.getElementById("sticker-label").value = "";
+            loadStickerList();
+        } else msg.textContent = "失败：" + (data.error || "未知");
+    } catch(e) { msg.textContent = "网络错误"; }
+});
+
+document.getElementById("sticker-manage-btn").addEventListener("click", () => {
+    const panel = document.getElementById("sticker-manage-panel");
+    panel.style.display = panel.style.display === "none" ? "flex" : "none";
+    if (panel.style.display !== "none") loadStickerList();
+});
+
+async function loadStickerList() {
+    const msg = document.getElementById("sticker-manage-msg");
+    const list = document.getElementById("sticker-list");
+    msg.textContent = "加载中…";
+    try {
+        const resp = await fetch("/stickers");
+        const data = await resp.json();
+        const stickers = data.stickers || [];
+        msg.textContent = `共 ${stickers.length} 个`;
+        // A2：缩略图异步解析（local: 引用 → IndexedDB；无图显示占位块）
+        const rows = await Promise.all(stickers.map(async s => {
+            const src = await stickerSrc(s.file, IS_SERVER, API_BASE);
+            const thumb = src
+                ? `<img class="stk-thumb" src="${escapeHtml(src)}" loading="lazy" onerror="this.style.opacity=0.2">`
+                : `<div class="stk-thumb" style="display:flex;align-items:center;justify-content:center;opacity:0.35;font-size:0.6em">无图</div>`;
+            return `
+        <div class="sticker-row" data-id="${escapeHtml(s.id)}">
+            <div class="stk-head">
+                ${thumb}
+                <button class="stk-toggle ${s.enabled ? "on" : ""}" data-on="${s.enabled ? "1" : ""}" ${(s.editable || s.is_default) ? "" : "disabled"}>${s.enabled ? "启用中" : "已停用"}</button>
+            </div>${s.pack ? `<div style="font-size:0.62em;color:var(--fg-accent);margin-top:2px">专属：${escapeHtml(s.pack)}</div>` : ""}
+            <div class="stk-main">
+                <select class="stk-cat-sel" ${(s.editable || s.is_default) ? "" : "disabled"}>
+                    <option value="可爱" ${s.category==="可爱"?"selected":""}>可爱</option>
+                    <option value="帅气" ${s.category==="帅气"?"selected":""}>帅气</option>
+                </select>
+                <input class="stk-label-input" type="text" value="${escapeHtml(s.label)}" maxlength="120" ${(s.editable || s.is_default) ? "" : "readonly"}>
+                <div class="stk-actions">
+                    <button class="stk-save" disabled>保存</button>
+                    <button class="stk-del" ${(s.is_default || !s.editable) ? "disabled" : ""}>删</button>
+                </div>
+            </div>
+        </div>`;
+        }));
+        list.innerHTML = rows.join("");
+        try { uiSelectEnhance(list); } catch (e) {}   // 动态生成的分类下拉也走自绘（守卫幂等）
+        list.querySelectorAll(".sticker-row").forEach(row => {
+            const id = row.dataset.id;
+            const inp = row.querySelector(".stk-label-input");
+            const cat = row.querySelector(".stk-cat-sel");
+            const save = row.querySelector(".stk-save");
+            const del = row.querySelector(".stk-del");
+            const toggle = row.querySelector(".stk-toggle");
+            const origLabel = inp.value;
+            const origCat = cat.value;
+
+            function checkChanged() {
+                save.disabled = (inp.value.trim() === origLabel && cat.value === origCat) || (!inp.value.trim() && !cat.value);
+            }
+            inp.addEventListener("input", checkChanged);
+            cat.addEventListener("change", checkChanged);
+
+            toggle.addEventListener("click", async () => {
+                const next = toggle.dataset.on !== "1";
+                toggle.disabled = true;
+                try {
+                    const r = await fetch("/sticker-update", {
+                        method:"POST",
+                        headers:{"Content-Type":"application/json"},
+                        body:JSON.stringify({id, enabled: next}),
+                    });
+                    const d = await r.json();
+                    if (d.ok) {
+                        toggle.dataset.on = next ? "1" : "";
+                        toggle.classList.toggle("on", next);
+                        toggle.textContent = next ? "启用中" : "已停用";
+                        msg.textContent = next ? "已启用：" + d.label : "已停用：" + d.label;
+                    }
+                } catch(e) {}
+                toggle.disabled = false;
+            });
+
+            save.addEventListener("click", async () => {
+                const label = inp.value.trim();
+                const category = cat.value;
+                try {
+                    const r = await fetch("/sticker-update", {
+                        method:"POST",
+                        headers:{"Content-Type":"application/json"},
+                        body:JSON.stringify({id, label: label || undefined, category}),
+                    });
+                    const d = await r.json();
+                    if (d.ok) {
+                        inp.value = d.label;
+                        cat.value = d.category;
+                        save.textContent="已存"; save.disabled=true;
+                        msg.textContent="已更新："+d.label;
+                    }
+                } catch(e) {}
+            });
+            del.addEventListener("click", async () => {
+                if (!confirm("确认删除？")) return;
+                try {
+                    await fetch("/sticker-delete", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({id}) });
+                    row.remove();
+                } catch(e) {}
+            });
+        });
+    } catch(e) { msg.textContent = "加载失败"; }
+}
+
+
+/* ── 来源：js/panels/pack_assist.js ── */
+// 逐文件 AI 辅助抽屉（阶段 E）：✨ 图标 → 与 AI 对话 → diff 提案 → 应用才写盘
+// AI 永不直接写盘；提案经后端静态校验 + 备份 + 原子写（见 modules/pack_assist.py 边界表）。
+
+let _av = { mode: "", file: "", history: [], pending: null };
+
+function openAssist(mode, file, label) {
+    _av = { mode: mode || CURRENT_MODE, file, history: [], pending: null };
+    const v = document.getElementById("assist-view");
+    if (!v) return;
+    document.getElementById("av-title").textContent = `✨ AI 辅助 · ${label || file}`;
+    document.getElementById("av-chat").innerHTML =
+        `<div class="fix-hist">说说想把这个文件改成什么样，AI 会给出具体修改提案（应用前一定会给你看 diff）。</div>`;
+    document.getElementById("av-proposal").style.display = "none";
+    document.getElementById("av-input").value = "";
+    v.style.display = "flex";
+    setTimeout(() => document.getElementById("av-input").focus(), 200);
+}
+window.__openAssist = openAssist;
+
+function closeAssist() {
+    const v = document.getElementById("assist-view");
+    if (v) v.style.display = "none";
+}
+window.closeAssist = closeAssist;
+
+function _avMsg(who, text) {
+    const chat = document.getElementById("av-chat");
+    chat.insertAdjacentHTML("beforeend",
+        `<div class="fix-msg ${who === "user" ? "me" : "ai"}"><div class="fix-who">${who === "user" ? "我" : "AI"}</div><div class="fix-text">${escapeHtml(text)}</div></div>`);
+    chat.scrollTop = chat.scrollHeight;
+}
+
+function _renderProposal(changes) {
+    const box = document.getElementById("av-proposal");
+    box.style.display = "block";
+    box.innerHTML = `<div class="fix-proposal-title"><span>修改提案（尚未生效）</span><span class="fix-op-tag">待确认</span></div>`
+        + changes.map(c => `<div class="fix-change"><div class="fix-change-head">
+            <span class="fix-op-tag ${c.op === "append" ? "add" : "fix"}">${c.op === "append" ? "补充" : "纠正"}</span></div>
+            ${c.op === "replace" ? `<div class="fix-diff-old">− ${escapeHtml(c.old || "")}</div>` : ""}
+            <div class="fix-diff-new">+ ${escapeHtml(c.new || "")}</div>
+            <div class="fix-reason">${escapeHtml(c.reason || "")}</div></div>`).join("")
+        + `<div class="fix-proposal-actions">
+             <button class="hb-btn" type="button" id="av-discard">放弃</button>
+             <button class="hb-btn primary" type="button" id="av-apply">应用修改</button>
+           </div>`;
+    document.getElementById("av-discard").onclick = () => {
+        _av.pending = null;
+        box.style.display = "none";
+        _avMsg("ai", "已放弃这次提案。继续说想怎么改就行。");
+    };
+    document.getElementById("av-apply").onclick = _applyPending;
+}
+
+async function _applyPending() {
+    if (!_av.pending) return;
+    const changes = _av.pending;
+    try {
+        const r = await fetch("/pack-assist/apply", {method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({mode: _av.mode, file: _av.file, changes})});
+        const d = await r.json();
+        if (d.ok) {
+            showToast("已应用（写入前有自动备份）");
+            document.getElementById("av-proposal").style.display = "none";
+            _av.pending = null;
+            _avMsg("ai", "已写入并生效。还要改别的地方吗？");
+            // 让背后的编辑页刷新（详情页/知识库列表/记忆区各自的重载函数都在）
+            try { window.loadPackView && window.loadPackView(); } catch (e) {}
+        } else {
+            _avMsg("ai", "校验没通过：" + (d.error || ""));
+        }
+    } catch (e) { showToast("网络错误"); }
+}
+
+async function _avSend() {
+    const inp = document.getElementById("av-input");
+    const text = (inp.value || "").trim();
+    if (!text) return;
+    inp.value = "";
+    _avMsg("user", text);
+    _av.history.push({who: "user", text});
+    _avMsg("ai", "（正在想…）");
+    try {
+        const r = await fetch("/pack-assist", {method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({mode: _av.mode, file: _av.file, message: text, history: _av.history})});
+        const d = await r.json();
+        // 摘掉"正在想"
+        const chat = document.getElementById("av-chat");
+        const last = chat.querySelectorAll(".fix-msg.ai");
+        if (last.length) last[last.length - 1].remove();
+        if (d.need_key) { _avMsg("ai", "需要先去 ⚙ 设置里填 API Key。"); return; }
+        if (!d.ok) { _avMsg("ai", "出了点问题：" + (d.error || "")); return; }
+        _av.history.push({who: "ai", text: d.reply});
+        _avMsg("ai", (d.searched ? "🌐 已联网检索官方资料\n\n" : "") + d.reply);
+        if (Array.isArray(d.changes) && d.changes.length) {
+            _av.pending = d.changes;
+            _renderProposal(d.changes);
+        }
+    } catch (e) {
+        const chat = document.getElementById("av-chat");
+        const last = chat.querySelectorAll(".fix-msg.ai");
+        if (last.length) last[last.length - 1].remove();
+        _avMsg("ai", "网络错误，稍后再试");
+    }
+}
+
+document.getElementById("av-send")?.addEventListener("click", _avSend);
+document.getElementById("av-input")?.addEventListener("keydown", e => {
+    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); _avSend(); }
+});
+document.getElementById("av-back")?.addEventListener("click", closeAssist);
+
+
+/* ── 来源：js/panels/pack_tree.js ── */
+// 角色卡管理树（数据驱动 · 2026-09-15）
+// 数据源 = GET /pack-structure（core/pack_structure.py 的声明式规范）——
+// 本模块只按返回的域/来源渲染树：可收起可展开，文件点击**就地展开**编辑（不跳页底）。
+// 业务结构由后端规范决定；新域/新槽位出现后，本模块自动跟随，无需改代码。
+
+let _treeMode = "";
+
+async function loadPackTree(mode) {
+    _treeMode = mode || CURRENT_MODE;
+    const box = document.getElementById("pv-tree");
+    if (!box) return;
+    try {
+        const resp = await fetch(`/pack-structure?mode=${encodeURIComponent(_treeMode)}`);
+        const data = await resp.json();
+        if (!data.ok) { box.innerHTML = "结构读取失败"; return; }
+        _render(box, data);
+    } catch (e) {
+        box.innerHTML = "结构读取失败（网络）";
+    }
+}
+
+function _render(box, data) {
+    _parkEmbeds();   // 先把嵌入块泊出——innerHTML 清空会销毁树内一切（含事件接线）
+    box.innerHTML = "";
+    _domainLabels = {};
+    for (const d of data.domains) _domainLabels[d.key] = d.label;
+    for (const d of data.domains) {
+        // ★ 2026-09-19：两个域整体不渲染（用户真机反馈）——
+        //   · `assets`（形象资产）：功能早已挪到顶部大图，这个域只剩一句说明，是空壳；
+        //   · `danger`（危险区）：官方包不能归档/删除 ⇒ 没有任何危险操作；而原来给官方包
+        //     塞的"恢复头像/封面默认"根本不是危险操作（已挪到顶部大图旁）。
+        //   两者都该"没有内容就没有这个区"，而不是留一个空的折叠条。
+        if (d.key === "assets") continue;
+        if (d.key === "danger" && !data.custom) continue;
+        const det = document.createElement("details");
+        det.className = "pt-domain";
+        det.dataset.key = d.key;
+        const sum = document.createElement("summary");
+        sum.innerHTML = `<b>${escapeHtml(d.label)}</b> <span class="pt-desc">${escapeHtml(d.desc || "")}</span>`;
+        det.appendChild(sum);
+        for (const s of d.sources) {
+            // 节点可能"故意不渲染"（见 _renderSource 的 assets / 官方包 danger 分支）——
+            // appendChild(null) 会抛错，所以这里必须判空。
+            const node = _renderSource(d, s, data);
+            if (node) det.appendChild(node);
+        }
+        box.appendChild(det);
+    }
+}
+
+// ── 嵌入块车位 ──
+// 树重渲 = #pv-tree innerHTML 清空。被 _moveInto 搬进树的既有区块（用户形象/主动消息/
+// 表情包/危险区）若不清空前泊出，会随清空被销毁：二次渲染后这些域全空，
+// 且模块级事件接线（防抖保存/上传/称呼保存）随元素死亡。车位 = display:none 的隐藏容器，
+// 泊入其中元素存活、getElementById 可达，渲染后再搬回新节点。
+const _EMBED_GETTERS = {
+    identity: () => document.getElementById("pv-identity"),
+    config: () => document.querySelector(".pv-proactive"),
+    stickers: () => document.querySelector(".pv-stickers"),
+    danger: () => document.getElementById("pv-danger"),
+};
+let _embedParking = null;
+let _domainLabels = {};
+
+function _parkEmbeds() {
+    if (!_embedParking) {
+        _embedParking = document.createElement("div");
+        _embedParking.style.display = "none";
+        document.body.appendChild(_embedParking);
+    }
+    for (const get of Object.values(_EMBED_GETTERS)) {
+        const el = get();
+        if (el) _embedParking.appendChild(el);
+    }
+}
+
+function _renderSource(domain, s, data) {
+    const t = s.type;
+    if (t === "slot" || t === "file") return _fileNode(s, data);
+    if (t === "dir") return _kbNode(s);
+    if (t === "sys_prompt") return _sysPromptNode(s);
+    if (t === "ref") return _refNode(s);
+    // ★ 2026-09-19：`assets` 节点不再渲染 —— 它只剩一句"去顶部大图换图"的说明，
+    //   留一个空折叠区纯属噪音（用户："形象自从在上面改就不要在下面放个空的"）。
+    //   角色形象的所有操作（换封面/换头像/恢复默认）现在都在顶部大图区。
+    if (t === "assets") return null;
+    // ★ 2026-09-19：危险区**只对自建包**渲染。
+    //   · 官方（内置）包不能归档、不能删除 ⇒ 里面没有任何"危险"操作；
+    //   · 原来给官方包塞的"恢复头像/封面默认"根本不是危险操作，已挪到顶部大图旁。
+    //   两个理由都指向同一结论：官方包不该有这个区（用户："官方角色卡删不了就别放危险区"）。
+    if (t === "danger") return (data && data.custom) ? _moveInto(t) : null;
+    if (t === "identity" || t === "config" || t === "stickers") return _moveInto(t);
+    const ph = document.createElement("div");
+    ph.className = "pt-src";
+    return ph;
+}
+
+// 控件型来源：把既有工作区块搬入树节点（不重写功能，只换归属；元素来自车位或初始位置）
+function _moveInto(type) {
+    const wrap = document.createElement("div");
+    wrap.className = "pt-src pt-embed";
+    const get = _EMBED_GETTERS[type];
+    const el = get ? get() : null;
+    if (el) wrap.appendChild(el);
+    return wrap;
+}
+
+// 引用型来源：只读跳转行——交叉文件的唯一编辑点在目标域，不重复放编辑器（避免两处改同一文件）
+function _refNode(s) {
+    const wrap = document.createElement("div");
+    wrap.className = "pt-src";
+    const row = document.createElement("div");
+    row.className = "pt-row pt-ref";
+    const target = _domainLabels[s.target] || s.target || "";
+    row.title = s.note || "";
+    row.innerHTML = `<span class="pt-name">${escapeHtml(s.label)}</span><span class="pt-tag">见「${escapeHtml(target)}」→</span>`;
+    row.addEventListener("click", () => {
+        const dom = document.querySelector(`#pv-tree .pt-domain[data-key="${s.target}"]`);
+        if (dom) { dom.open = true; dom.scrollIntoView({block: "start", behavior: "smooth"}); }
+    });
+    wrap.appendChild(row);
+    return wrap;
+}
+
+// ── 文件节点（slot/file）：行 + 就地展开编辑器 ──
+const _STATE_LABEL = {baseline: "", inherited: "", customized: "（已修改）"};
+
+function _fileNode(s, data) {
+    const wrap = document.createElement("div");
+    wrap.className = "pt-src pt-file";
+    const row = document.createElement("div");
+    row.className = "pt-row";
+    const shared = (s.used_by || []).length > 1
+        ? `<span class="pt-tag pt-shared" title="本文件被多个阶段读取：${escapeHtml(s.used_by.join("、"))}">共用</span>` : "";
+    const feed = s.feeds ? `<span class="pt-tag" title="本文件的输出流向">→ ${escapeHtml(s.feeds)}</span>` : "";
+    const ai = s.assistable === false ? "" : `<span class="assist-ico" title="AI 辅助修改本文件">✨</span>`;
+    // 包未附带的文件（如 sticker 包无 opening.json）：灰态只展示，不提供编辑入口
+    if (s.exists === false && !s.user_copy) {
+        row.classList.add("pt-row-missing");
+        row.innerHTML = `<span class="pt-name">${escapeHtml(s.label)}</span><span class="pt-tag">本包未附带</span>`;
+        wrap.appendChild(row);
+        return wrap;
+    }
+    row.innerHTML = `<span class="pt-name">${escapeHtml(s.label)}</span>
+        ${s.state && _STATE_LABEL[s.state] ? `<span class="pt-tag">${_STATE_LABEL[s.state]}</span>` : ""}
+        ${!s.state && s.user_copy ? `<span class="pt-tag">已改</span>` : ""}
+        ${shared}${feed}${ai}`;
+    const ed = document.createElement("div");
+    ed.className = "pt-editor";
+    ed.style.display = "none";
+    wrap.append(row, ed);
+    row.addEventListener("click", () => _toggleFile(ed, s));
+    const ico = row.querySelector(".assist-ico");
+    if (ico) ico.addEventListener("click", e => {
+        e.stopPropagation();
+        const file = s.type === "slot" ? s.file : s.path;
+        if (window.__openAssist) window.__openAssist(_treeMode, file, s.label);
+    });
+    return wrap;
+}
+
+async function _loadFileContent(s) {
+    if (s.type === "slot") {
+        const resp = await fetch(`/pack-files?mode=${encodeURIComponent(_treeMode)}`);
+        const data = await resp.json();
+        const f = (data.files || []).find(x => x.name === s.file);
+        return f ? (f.content || "") : "";
+    }
+    // file 类型统一走 /pack-file（白名单 = 结构规范声明的 file 路径）——
+    // 修复：此前硬编码 /pack-memory，opening.json 的读写会落在出厂记忆上
+    const resp = await fetch(`/pack-file?mode=${encodeURIComponent(_treeMode)}&path=${encodeURIComponent(s.path)}`);
+    const data = await resp.json();
+    return data.content || "";
+}
+
+async function _toggleFile(ed, s) {
+    if (ed.style.display === "none") {
+        if (!ed.dataset.loaded) {
+            ed.innerHTML = `<div class="pt-editing">${escapeHtml(s.type === "slot" ? s.file : s.path)}</div>
+                <textarea class="pt-ta"></textarea>
+                <div class="btn-row" style="display:flex;gap:8px;margin-top:6px">
+                    <button class="pt-save" type="button" style="flex:1">保存</button>
+                    <button class="pt-revert" type="button" style="flex:1">恢复默认</button>
+                    <button class="pt-close" type="button" style="flex:1">收起</button>
+                </div><div class="pt-msg" style="font-size:0.72em;color:var(--fg-muted);margin-top:4px"></div>`;
+            const content = await _loadFileContent(s);
+            ed.querySelector(".pt-ta").value = content;
+            ed.dataset.loaded = "1";
+            ed.querySelector(".pt-save").onclick = () => _saveFile(ed, s);
+            ed.querySelector(".pt-revert").onclick = () => _revertFile(ed, s);
+            ed.querySelector(".pt-close").onclick = () => { ed.style.display = "none"; };
+        }
+        ed.style.display = "block";
+    } else {
+        ed.style.display = "none";
+    }
+}
+
+async function _saveFile(ed, s) {
+    const msg = ed.querySelector(".pt-msg");
+    const content = ed.querySelector(".pt-ta").value;
+    if (!content.trim()) { msg.textContent = "内容不能为空"; return; }
+    msg.textContent = "保存中…";
+    const isSlot = s.type === "slot";
+    try {
+        const resp = await fetch(isSlot ? "/character-file-update" : "/pack-file/update", {
+            method: "POST", headers: {"Content-Type": "application/json"},
+            body: JSON.stringify(isSlot
+                ? {mode: _treeMode, filename: s.file, content}
+                : {mode: _treeMode, path: s.path, content}),
+        });
+        const d = await resp.json();
+        msg.textContent = d.ok ? "已保存（下轮对话生效）" : "保存失败：" + (d.error || "");
+    } catch (e) { msg.textContent = "网络错误"; }
+}
+
+async function _revertFile(ed, s) {
+    if (!confirm("恢复默认？（删除你的修改）")) return;
+    const msg = ed.querySelector(".pt-msg");
+    const isSlot = s.type === "slot";
+    try {
+        // file 类型走 /pack-file/delete 删用户副本——修复：此前向 /pack-memory/update 发空串，
+        // 后端拒绝空内容，「恢复默认」永远失败
+        const resp = await fetch(isSlot ? "/character-file/delete" : "/pack-file/delete", {
+            method: "POST", headers: {"Content-Type": "application/json"},
+            body: JSON.stringify(isSlot ? {mode: _treeMode, filename: s.file} : {mode: _treeMode, path: s.path}),
+        });
+        const d = await resp.json();
+        if (d.ok) { showToast("已恢复默认"); ed.style.display = "none"; loadPackTree(_treeMode); }
+        else msg.textContent = d.error || "操作失败";
+    } catch (e) { msg.textContent = "网络错误"; }
+}
+
+// ── 知识库目录节点：组内文件列表 + 就地展开 ──
+const _KB_GROUPS = {world: "世界观", factions: "势力", story: "主线剧情", character: "角色个人", dialogues: "对话"};
+
+function _kbNode(s) {
+    const wrap = document.createElement("div");
+    wrap.className = "pt-src";
+    const head = document.createElement("div");
+    head.className = "pt-row";
+    const feed = s.feeds ? `<span class="pt-tag" title="本目录内容的输出流向">→ ${escapeHtml(s.feeds)}</span>` : "";
+    head.innerHTML = `<span class="pt-name">${escapeHtml(s.label)}</span> <span class="pt-tag">${s.count || 0} 个文件</span>${feed}`;
+    const body = document.createElement("div");
+    body.className = "pt-kb";
+    body.style.display = "none";
+    wrap.append(head, body);
+    head.addEventListener("click", () => _toggleKB(body, head));
+    return wrap;
+}
+
+async function _toggleKB(body, head) {
+    if (body.style.display === "none") {
+        if (!body.dataset.loaded) {
+            const resp = await fetch(`/pack-knowledge?mode=${encodeURIComponent(_treeMode)}`);
+            const data = await resp.json();
+            const files = (data.ok && data.files) || [];
+            const groups = {};
+            for (const f of files) (groups[f.path.split("/")[0]] = groups[f.path.split("/")[0]] || []).push(f);
+            let html = "";
+            for (const top of Object.keys(groups)) {
+                html += `<div class="pt-kb-grp">${escapeHtml(_KB_GROUPS[top] || top)}/</div>`;
+                for (const f of groups[top]) {
+                    html += `<div class="pt-row pt-kb-file" data-path="${escapeHtml(f.path)}">
+                        <span class="pt-name" style="font-size:0.78em">${escapeHtml(f.path.split("/").slice(1).join("/"))}</span>
+                        ${f.user_copy ? '<span class="pt-tag">已改</span>' : ""}
+                        <span class="assist-ico" data-ai="${escapeHtml(f.path)}" title="AI 辅助修改本文件">✨</span>
+                    </div>`;
+                }
+            }
+            body.innerHTML = html || `<div class="pt-note">还没有知识文件</div>`;
+            body.dataset.loaded = "1";
+            body.querySelectorAll(".pt-kb-file").forEach(row => {
+                row.addEventListener("click", () => _toggleKBFile(row));
+            });
+            body.querySelectorAll(".assist-ico").forEach(ico => {
+                ico.addEventListener("click", e => {
+                    e.stopPropagation();
+                    if (window.__openAssist) window.__openAssist(_treeMode, "knowledge/" + ico.dataset.ai, ico.dataset.ai);
+                });
+            });
+        }
+        body.style.display = "block";
+    } else {
+        body.style.display = "none";
+    }
+}
+
+async function _toggleKBFile(row) {
+    let ed = row.nextElementSibling;
+    if (ed && ed.classList && ed.classList.contains("pt-editor")) {
+        ed.style.display = ed.style.display === "none" ? "block" : "none";
+        return;
+    }
+    ed = document.createElement("div");
+    ed.className = "pt-editor";
+    const path = row.dataset.path;
+    ed.innerHTML = `<div class="pt-editing">${escapeHtml(path)}</div>
+        <textarea class="pt-ta"></textarea>
+        <div class="btn-row" style="display:flex;gap:8px;margin-top:6px">
+            <button class="pt-save" type="button" style="flex:1">保存</button>
+            <button class="pt-revert" type="button" style="flex:1">恢复默认</button>
+            <button class="pt-close" type="button" style="flex:1">收起</button>
+        </div><div class="pt-msg" style="font-size:0.72em;color:var(--fg-muted);margin-top:4px"></div>`;
+    row.after(ed);
+    try {
+        const resp = await fetch(`/pack-knowledge/file?mode=${encodeURIComponent(_treeMode)}&path=${encodeURIComponent(path)}`);
+        const data = await resp.json();
+        ed.querySelector(".pt-ta").value = data.ok ? (data.content || "") : "";
+    } catch (e) { ed.querySelector(".pt-ta").value = ""; }
+    ed.querySelector(".pt-save").onclick = async () => {
+        const msg = ed.querySelector(".pt-msg");
+        const content = ed.querySelector(".pt-ta").value;
+        if (!content.trim()) { msg.textContent = "内容不能为空"; return; }
+        const resp = await fetch("/pack-knowledge/update", {method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({mode: _treeMode, path, content})});
+        const d = await resp.json();
+        msg.textContent = d.ok ? "已保存（下轮对话生效）" : "保存失败：" + (d.error || "");
+    };
+    ed.querySelector(".pt-revert").onclick = async () => {
+        if (!confirm("恢复默认？（删除你的修改）")) return;
+        const resp = await fetch("/pack-knowledge/delete", {method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({mode: _treeMode, path})});
+        const d = await resp.json();
+        if (d.ok) { showToast("已恢复默认"); ed.remove(); row.remove(); }
+        else ed.querySelector(".pt-msg").textContent = d.error || "操作失败";
+    };
+    ed.querySelector(".pt-close").onclick = () => { ed.style.display = "none"; };
+}
+
+// ── 系统提示词节点（只读）──
+function _sysPromptNode(s) {
+    const det = document.createElement("details");
+    det.className = "pt-src pt-sysprompt";
+    const sum = document.createElement("summary");
+    sum.innerHTML = `<span class="pt-name">${escapeHtml(s.label)}</span> <span class="pt-tag">代码内置 · 只读</span>`;
+    const pre = document.createElement("pre");
+    pre.className = "pt-pre";
+    pre.textContent = s.text || "";
+    det.append(sum, pre);
+    return det;
+}
 
 
 /* ── 来源：js/settings.js ── */
@@ -1457,6 +2090,7 @@ function _renderProviderSelect() {
         sel.appendChild(opt);
     }
     if (_providers.length) sel.value = _activeId;
+    try { sel._uiSelectSync && sel._uiSelectSync(); } catch (e) {}   // 自绘层跟随 options 重建
 }
 
 function _renderModelSuggest() {
@@ -1464,7 +2098,7 @@ function _renderModelSuggest() {
     const p = _activeProviderObject();
     if (!dl) return;
     const models = (p && p.models && p.models.length) ? p.models
-        : ["deepseek-v4-flash", "deepseek-v4-pro", "deepseek-v4-flash-vision-exp"];
+        : ["deepseek-flash", "deepseek-v4-pro"];
     dl.innerHTML = "";
     for (const m of models) {
         const opt = document.createElement("option");
@@ -1479,9 +2113,14 @@ function _updateKeyGuide() {
     const p = _activeProviderObject();
     if (!p) { box.innerHTML = ""; return; }
     const isDp = /deepseek\.com/.test(p.base_url || "");
+    // A5（审计 2026-09-15）：p.name / p.base_url 是用户表单原样输入（持久化在
+    // localStorage），原样插 innerHTML = 存储型 XSS——可直接读同域 firefly_providers
+    // 里的 API Key 与 firefly_token。先转义再拼模板。
+    const pname = escapeHtml(p.name || "");
+    const pbase = escapeHtml(String(p.base_url || "").replace(/\/+$/, ""));
     box.innerHTML = isDp
-        ? `① 浏览器打开 <b>platform.deepseek.com</b>，注册并登录<br>② 左侧「API Keys」→ 创建，复制 <b>sk-</b> 开头的 Key<br>③ 粘贴到「${p.name}」的 Key 输入框 → 保存（Key 只存本机，不会上传）`
-        : `① 打开供应商控制台（<b>${p.base_url.replace(/\/+$/, "")}</b> 所在站点主页）创建 API Key<br>② 粘贴到「${p.name}」的 Key 输入框 → 保存（Key 只存本机，不会上传）`;
+        ? `① 浏览器打开 <b>platform.deepseek.com</b>，注册并登录<br>② 左侧「API Keys」→ 创建，复制 <b>sk-</b> 开头的 Key<br>③ 粘贴到「${pname}」的 Key 输入框 → 保存（Key 只存本机，不会上传）`
+        : `① 打开供应商控制台（<b>${pbase}</b> 所在站点主页）创建 API Key<br>② 粘贴到「${pname}」的 Key 输入框 → 保存（Key 只存本机，不会上传）`;
 }
 
 function _openProviderForm(provider) {
@@ -1674,10 +2313,10 @@ async function loadConfig() {
         for (const [k, id] of Object.entries(ids)) el[k] = document.getElementById(id);
 
         const normEffort = v => (v === "low" ? "low" : v);
-        if (el.a) el.a.value = data.analyzer_model || "deepseek-v4-flash-vision-exp";
-        if (el.r) el.r.value = data.retriever_model || "deepseek-v4-flash-vision-exp";
-        if (el.o) el.o.value = data.organizer_model || "deepseek-v4-flash-vision-exp";
-        if (el.p) el.p.value = data.polisher_model || "deepseek-v4-flash-vision-exp";
+        if (el.a) el.a.value = data.analyzer_model || "deepseek-flash";
+        if (el.r) el.r.value = data.retriever_model || "deepseek-flash";
+        if (el.o) el.o.value = data.organizer_model || "deepseek-flash";
+        if (el.p) el.p.value = data.polisher_model || "deepseek-flash";
         if (el.re) el.re.value = normEffort(data.retriever_effort || "none");
         if (el.ae) el.ae.value = normEffort(data.analyzer_effort || "high");
         if (el.pe) el.pe.value = normEffort(data.polisher_effort || "high");
@@ -1787,7 +2426,7 @@ async function loadConfig() {
             exitRow.style.display = "";
             const exitBtn = _$("app-exit-btn");
             if (exitBtn) exitBtn.onclick = () => {
-                if (!confirm("确定退出流萤吗？聊天数据已实时保存，下次启动继续。")) return;
+                if (!confirm("确定退出 Firefly 吗？聊天数据已实时保存，下次启动继续。")) return;
                 exitBtn.disabled = true;
                 exitBtn.textContent = "正在退出…";
                 fetch("/shutdown", {method: "GET"}).catch(() => {});
@@ -1796,6 +2435,7 @@ async function loadConfig() {
 
         _configLoaded = true;
         updateSettingsSummaries();
+        uiSelectEnhance(document.getElementById("settings-panel"));   // 自绘下拉（原生 select 弹窗无法主题化）
         return data;
     } catch (e) { return {has_key: false}; }
 }
@@ -1877,7 +2517,10 @@ _$("key-save")?.addEventListener("click", () => saveConfigNow(true));
 // ═══════════════════════════════════════════
 // 检查更新（GitHub 优先，失败自动降级 Gitee——国内网络 Gitee 更稳）
 // ═══════════════════════════════════════════
-const CURRENT_VERSION = "0.8.1";   // 与 android versionName / 安装器 AppVersion 保持一致
+const CURRENT_VERSION = "0.9.0";   // 与 android versionName / 安装器 AppVersion 保持一致
+// PC 三栏外壳（pc_shell.js，独立 classic script）底部状态栏要显示版本号，
+// 它看不到 bundle 作用域，所以暴露一个只读副本（不要在这里写版本，单一来源仍是本文件）。
+window.__appVersion = CURRENT_VERSION;
 // 设置面板版本号动态显示（单一版本源：CURRENT_VERSION；替代 index.html 硬编码文案）
 const curVersionEl = document.getElementById("current-version");
 if (curVersionEl) curVersionEl.textContent = "v" + CURRENT_VERSION;
@@ -2122,18 +2765,63 @@ if (window.visualViewport) {
     });
 }
 
-function _addAvatar(row, who) {    const img = document.createElement("img");
+/** 发送者显示名 —— 统一走 views.js 的 charName()/userName()（**只从当前角色卡取**）。
+ *  取不到返回空串，调用方不渲染名字行。 */
+function _whoName(who) {
+    return who === "user" ? userName() : charName();
+}
+
+/** 消息内容外壳：`.msg-col` = 名字行 +（可选引用卡片）+ 内容。
+ *
+ *  为什么现在**总是**用它（以前只有带引用时才包）：
+ *  名字行要与气泡同一侧对齐，就得有个纵向容器；顺带让 `align-items:flex-start`
+ *  能把头像对到**名字行顶部**（官方就是这样）——以前没有名字行时用 flex-end，
+ *  两行气泡的头像会被拽到气泡底部（用户真机发现"第二行头像又下去了"）。
+ */
+function _mkCol(who, inner, quote) {
+    const col = document.createElement("div");
+    col.className = "msg-col";
+    const nm = _whoName(who);
+    if (nm) {                       // 角色卡没填称呼 → 不渲染名字行（不写死假名字）
+        const el = document.createElement("div");
+        el.className = "msg-who";
+        el.textContent = nm;
+        col.appendChild(el);
+    }
+    if (quote) col.appendChild(_buildQuotePreview(quote));
+    if (inner) col.appendChild(inner);
+    return col;
+}
+
+/** 容错替换：内容节点现在可能不在 row 的直接子层（被 .msg-col 包住），
+ *  所以不能用 `row.replaceChild`（会抛 NotFoundError，表现为"占位不显示"）。 */
+function _replaceNode(oldNode, newNode) {
+    if (oldNode && oldNode.parentNode) oldNode.parentNode.replaceChild(newNode, oldNode);
+}
+
+function _addAvatar(row, who) {
+    const p = who === "user" ? null : currentPreset();
+    if (who !== "user" && !(p && p.avatar)) {
+        // F-5：无头像包 → 首字占位圆（否则每条消息行都是破图）
+        const d = document.createElement("div");
+        d.className = "msg-avatar pack-noimg";
+        d.textContent = ((p && (p.char_name || p.name)) || "？").slice(0, 1);
+        row.insertBefore(d, row.firstChild);
+        return;
+    }
+    const img = document.createElement("img");
     img.className = "msg-avatar";
     if (who === "user") {
-        img.src = TB_AVATARS[tbChoice];
+        // 05：用户头像随当前角色包（包内 user_avatar 资产优先，回落内置穹/星选择）
+        const p = typeof currentPreset === "function" ? currentPreset() : null;
+        img.src = (p && p.user_avatar) || TB_AVATARS[tbChoice];
         img.classList.add("tb-toggle");
         img.title = "点击切换形象";
         img.addEventListener("click", openAvatarPicker);
         img.classList.add("tb-avatar");
     } else {
         // 角色头像按当前预设包（角色预设化）
-        const p = currentPreset();
-        if (p && p.avatar) img.src = p.avatar;
+        img.src = p.avatar;
     }
     row.insertBefore(img, row.firstChild);
 }
@@ -2161,19 +2849,23 @@ function addTextMessage(text, who, prepend = false, seq = null, quote = null) {
     const bubble = document.createElement("div");
     bubble.className = "bubble";
     bubble.textContent = text;
-    if (quote) {
-        // 带引用的消息：气泡上方加引用小卡片（QQ 式）
-        const col = document.createElement("div");
-        col.className = "msg-col";
-        col.appendChild(_buildQuotePreview(quote));
-        col.appendChild(bubble);
-        row.appendChild(col);
-    } else {
-        row.appendChild(bubble);
-    }
+    // 名字行 + 引用卡片 + 气泡统一进 .msg-col（官方每条消息都有名字行；
+    // 头像靠 align-items:flex-start 对到名字行顶部）
+    row.appendChild(_mkCol(who, bubble, quote));
     _addAvatar(row, who);
     if (prepend) { messagesEl.insertBefore(row, messagesEl.firstChild); }
     else { _insertRow(row, seq); scrollToBottom(); }
+    // 已有语音的消息：立刻把语音条贴到气泡下面（缓存表已在内存时走这条快路径；
+    // 首次进聊天还没拉到表的情况由 voiceRestoreBarsAuto() 事后补扫）。
+    try {
+        if (seq !== null && seq !== undefined
+            && typeof voiceHas === "function" && voiceHas(seq)
+            && typeof voiceAttachBar === "function") {
+            const m = (typeof _voiceSeqMap !== "undefined" && _voiceSeqMap)
+                ? _voiceSeqMap[CURRENT_MODE] : null;
+            voiceAttachBar(row, seq, m ? m[String(seq)] : 0);
+        }
+    } catch (e) { /* 语音条失败绝不影响消息渲染 */ }
     return row;
 }
 
@@ -2185,7 +2877,11 @@ function _quoteContentText(q) {
     if (q.type === "narration") return q.text || "";
     return q.content || "";
 }
-function _quoteWhoName(q) { return q && q.who === "user" ? "我" : "流萤"; }
+// 引用卡片里的"谁"：**从当前角色卡取**（原来写死了「流萤」）。
+// 用户侧固定「我」——第一人称代词，不是角色名字面量。
+function _quoteWhoName(q) {
+    return (q && q.who === "user") ? "我" : charName();
+}
 function _buildQuotePreview(q) {
     const div = document.createElement("div");
     div.className = "quote-preview";
@@ -2221,7 +2917,7 @@ async function addSticker(stickerPath, who, prepend = false, seq = null, label =
             const span = document.createElement("span");
             span.className = "sticker-fallback";
             span.textContent = "（表情包已失效）";
-            row.replaceChild(span, img);
+            _replaceNode(img, span);
         };
     } else {
         const span = document.createElement("span");
@@ -2229,15 +2925,7 @@ async function addSticker(stickerPath, who, prepend = false, seq = null, label =
         span.textContent = "（表情包已失效）";
         img = span;
     }
-    if (quote) {
-        const col = document.createElement("div");
-        col.className = "msg-col";
-        col.appendChild(_buildQuotePreview(quote));
-        col.appendChild(img);
-        row.appendChild(col);
-    } else {
-        row.appendChild(img);
-    }
+    row.appendChild(_mkCol(who, img, quote));
     _addAvatar(row, who);
     if (prepend) { messagesEl.insertBefore(row, messagesEl.firstChild); }
     else { _insertRow(row, seq); scrollToBottom(); }
@@ -2280,7 +2968,7 @@ async function addImage(msg, who, prepend = false, seq = null, quote = null) {
             const span = document.createElement("span");
             span.className = "sticker-fallback";
             span.textContent = desc ? `（图片：${desc}）` : "（图片已失效）";
-            row.replaceChild(span, img);
+            _replaceNode(img, span);
         };
         content = img;
     } else {
@@ -2291,15 +2979,7 @@ async function addImage(msg, who, prepend = false, seq = null, quote = null) {
         span.dataset.desc = desc;
         content = span;
     }
-    if (quote) {
-        const col = document.createElement("div");
-        col.className = "msg-col";
-        col.appendChild(_buildQuotePreview(quote));
-        col.appendChild(content);
-        row.appendChild(col);
-    } else {
-        row.appendChild(content);
-    }
+    row.appendChild(_mkCol(who, content, quote));
     _addAvatar(row, who);
     if (prepend) { messagesEl.insertBefore(row, messagesEl.firstChild); }
     else { messagesEl.appendChild(row); scrollToBottom(); }
@@ -2450,6 +3130,98 @@ function openMenuTab(tab) {
 }
 window.openMenuTab = openMenuTab;
 
+// ═══════════════════════════════════════════
+// 语音插件：长按消息 →「转语音」（docs/工具/tts.md §2）
+//  · 语音是**消息的附属产物**（v{seq}.wav），不是新消息类型 → 不写 conversation.jsonl
+//  · 已有缓存直接播；没有才合成
+//  · **同时只能有一个合成**：本地 _voiceBusy 拦重复点击，后端还会再串行一次
+//  · 插件不可用 → 按钮点击时给出**原因**（不静默失败）
+// ═══════════════════════════════════════════
+let _voiceBusy = false;
+let _voiceMood = localStorage.getItem("firefly_voice_mood") || "happy";
+
+async function _voiceStatus(force) {
+    if (window.__voiceStatusCache && !force) return window.__voiceStatusCache;
+    try {
+        const r = await fetch("/voice/status");
+        window.__voiceStatusCache = await r.json();
+    } catch (e) {
+        window.__voiceStatusCache = {engine_ok: false, reason: "无法连接后端"};
+    }
+    return window.__voiceStatusCache;
+}
+
+/** 语音文件 URL（播放由消息下方的语音条负责，见 voice_plugin.js） */
+function _voiceUrl(mode, seq) {
+    return "/voice-file?mode=" + encodeURIComponent(mode) + "&name=v" + seq + ".wav";
+}
+
+/**
+ * 转语音。**每次都强制重生成**（force）—— 用户要求"再点一次就自动重新生成"；
+ * 单纯回放由消息下方的语音条承担。生成期间先在消息下面贴一个占位条（⏳ …）。
+ */
+async function _voiceConvert(mode, snap) {
+    if (_voiceBusy) { showToast("正在生成上一句语音，请稍候"); return; }
+    if (snap.who !== "firefly") { showToast(`只能给${charName() || "角色"}的消息转语音`); return; }
+    if (snap.seq == null) { showToast("这条消息还没有序号（刷新页面后可用）"); return; }
+    if (snap.type !== "text" && snap.type !== "narration") {
+        showToast("这条消息没有可念的文本"); return;
+    }
+    const st = await _voiceStatus(true);
+    if (!st.engine_ok) {
+        showToast("语音插件不可用：" + (st.reason || "未知原因"));
+        return;
+    }
+
+    const had = (typeof voiceHas === "function") && voiceHas(snap.seq);
+    const row = (typeof messagesEl !== "undefined" && messagesEl)
+        ? messagesEl.querySelector('.msg-row[data-seq="' + snap.seq + '"]') : null;
+    let bar = null;
+    if (row && typeof voiceAttachBar === "function") {
+        bar = voiceAttachBar(row, snap.seq, 0);
+        if (bar) {
+            bar.classList.add("generating");
+            bar.querySelector(".vb-ico").textContent = "⏳";
+        }
+    }
+
+    _voiceBusy = true;
+    showToast(had ? "正在重新生成语音…（约 20 秒）" : "正在生成语音…（首次约 20 秒）");
+    try {
+        const r = await fetch("/voice/tts", {
+            method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({mode: mode, seq: snap.seq, mood: _voiceMood, force: true}),
+        });
+        const d = await r.json();
+        if (d && d.ok) {
+            if (typeof voiceSyncCache === "function") await voiceSyncCache();
+            if (!bar && row && typeof voiceAttachBar === "function") {
+                bar = voiceAttachBar(row, snap.seq, d.dur);
+            }
+            if (bar) {
+                bar.classList.remove("generating");
+                bar.querySelector(".vb-ico").textContent = "🔊";
+                const dd = bar.querySelector(".vb-dur");
+                if (dd) dd.textContent = Math.round(d.dur || 0) + "″";
+                if (typeof _voicePlayBar === "function") _voicePlayBar(bar, snap.seq);
+            }
+            showToast((had ? "已重新生成" : "已生成") + "（" + (d.seconds || "?") + "s）");
+        } else {
+            if (bar) bar.remove();
+            showToast("生成失败：" + ((d && d.error) || "未知原因"));
+            _voiceStatus(true);   // 失败后刷新状态，下次点能拿到新原因
+        }
+    } catch (e) {
+        if (bar) bar.remove();
+        showToast("生成失败：无法连接后端");
+    } finally {
+        _voiceBusy = false;
+    }
+}
+window._voiceMood = () => _voiceMood;
+window.setVoiceMood = (m) => { _voiceMood = m; localStorage.setItem("firefly_voice_mood", m); };
+
 function _showMsgMenu(row, x, y) {
     const snap = _msgSnapshot(row);
     if (!_snapHasContent(snap)) return;
@@ -2478,12 +3250,22 @@ function _showMsgMenu(row, x, y) {
             showToast(d.ok ? "已收藏（菜单 → 收藏可查看）" : "收藏失败：" + (d.error || ""));
         } catch (e) { showToast("收藏失败，请重试"); }
     }));
+    // 转语音：只对流萤的 text/narration 且有 seq 的消息显示。
+    // 已有语音时**再点一次即重新生成** —— 不再单列「重新生成」：
+    //   2026-09-18 真机实测 4 项会把菜单撑出屏幕（最左「引用」被裁到屏幕外）。
+    // 播放改由消息下方的语音条承担（见 voice_plugin.js 的 voiceAttachBar）。
+    if (snap.who === "firefly" && snap.seq != null
+        && (snap.type === "text" || snap.type === "narration")) {
+        menu.appendChild(mkBtn("转语音", "🔊", () => { _closeMsgMenu(); _voiceConvert(CURRENT_MODE, snap); }));
+    }
     document.body.appendChild(menu);
     // 定位：消息在上半屏 → 菜单放下方；下半屏 → 放上方（QQ 式，且不超出视口）
     const mw = menu.offsetWidth, mh = menu.offsetHeight;
     const r = row.getBoundingClientRect();
     const vw = innerWidth, vh = innerHeight;
     let left = Math.min(Math.max(8, x - mw / 2), vw - mw - 8);
+    // 菜单比视口还宽时上式会得到负数 → 左边被裁（真机踩过）。兜到 8。
+    left = Math.max(8, left);
     const cy = r.top + r.height / 2;
     let top = cy < vh / 2 ? r.bottom + 10 : r.top - mh - 10;
     top = Math.max(8, Math.min(top, vh - mh - 8));
@@ -2707,7 +3489,11 @@ async function restoreSnapshot(name) {
         });
         const data = await resp.json().catch(() => ({}));
         if (resp.ok && data.ok) {
-            _toast("恢复成功，正在重新加载…");
+            // E-1 配套：恢复前自动备份失败时后端会回落逐包备份并标 backup_ok=false——
+            // 此时若快照本身有问题，损失不可回滚，必须让用户知道
+            _toast(data.backup_ok === false
+                ? "已恢复（注意：恢复前的保险快照生成失败）"
+                : "恢复成功，正在重新加载…");
             setTimeout(() => location.reload(), 800);
         } else {
             _toast("恢复失败：" + (data.error || ""));
@@ -2850,8 +3636,8 @@ async function _chatSend(msgs) {
     _inflight++;
     const statusEl = document.querySelector("#header .status");
     // 修复：不用"请求开始时的快照"恢复（快照可能已被 _sendFlush / 阶段轮询污染成
-    // "对方正在输入"/"正在理解你的话…"），统一恢复为流萤的个人简介默认文案。
-    const defaultStatus = "会找到的，属于我的梦...";
+    // "对方正在输入"/"正在理解你的话…"），统一恢复为当前角色包的签名（无签名用默认句）。
+    const defaultStatus = (currentPreset() || {}).tagline || "会找到的，属于我的梦...";
     const gen = _modeGen;   // 捕获发起时的模式代际
     // 后台保活（安卓 WebView JS Bridge）：回复流程（检索→分析→回复→调度）期间
     // 持 CPU/WiFi 锁，用户切后台/锁屏也能完成回复；引用计数归零才释放。
@@ -2878,6 +3664,12 @@ async function _chatSend(msgs) {
         }
         else if (data.reply) addTextMessage(data.reply, "firefly");
         if (data.error_code) _toast(ERROR_TIPS[data.error_code] || ERROR_TIPS.unknown);
+        // R-07（服务器版）：请求的包在本端不存在时后端会静默回退默认包并打 mode_fallback 标记——
+        // 必须显式告知（否则用户以为"角色坏了"而不知原因）
+        if (data.mode_fallback) {
+            _toast("该角色包在服务器模式不可用，已回退到「" +
+                   (MODE_NAMES[data.mode_used] || data.mode_used || "默认包") + "」");
+        }
         // data.queued：副请求，回复由主请求带回，无 UI 操作
     } catch (e) {
         if (gen === _modeGen && _inflight === 1) {
@@ -3023,23 +3815,25 @@ stickerBtn.addEventListener("click", async () => {
     }
     _mediaBusy = true;   // 面板打开期间暂停提交（长期等待用户选择）
     stickerPanel.classList.add("show");
-    if (!stickerGrid.dataset.loaded) {
-        try {
-            const resp = await fetch("/stickers?enabled=1");
-            const data = await resp.json();
-            const list = data.stickers || [];
-            stickerGrid.innerHTML = list.map(s =>
-                `<img src="${IS_SERVER ? API_BASE : ""}/assets/${escapeHtml(s.file)}" alt="${escapeHtml(s.label)}" data-label="${escapeHtml(s.label)}" data-file="${escapeHtml(s.file)}">`).join("");
-            stickerGrid.dataset.loaded = "1";
-            stickerGrid.querySelectorAll("img").forEach(img => {
-                img.addEventListener("click", () => {
-                    _mediaBusy = false;   // 选中即结束媒体状态（sendStickerMessage 内 _batchArmSubmit 重新计时）
-                    _stickerPanelClose();
-                    sendStickerMessage(img.dataset.label, img.dataset.file);
-                });
+    // F-6.2（2026-09-14）：面板缓存按包失效 + 按包过滤——原来 dataset.loaded 一旦置位永不过期，
+    // 切包后仍显示旧包（含他包专属）的表情；现在切包必重拉，且只显示 全局共享 + 本包专属。
+    if (stickerGrid.dataset.loaded && stickerGrid.dataset.mode === CURRENT_MODE) return;
+    try {
+        const resp = await fetch("/stickers?enabled=1");
+        const data = await resp.json();
+        const list = (data.stickers || []).filter(s => !s.pack || s.pack === CURRENT_MODE);
+        stickerGrid.innerHTML = list.map(s =>
+            `<img src="${IS_SERVER ? API_BASE : ""}/assets/${escapeHtml(s.file)}" alt="${escapeHtml(s.label)}" data-label="${escapeHtml(s.label)}" data-file="${escapeHtml(s.file)}">`).join("");
+        stickerGrid.dataset.loaded = "1";
+        stickerGrid.dataset.mode = CURRENT_MODE;
+        stickerGrid.querySelectorAll("img").forEach(img => {
+            img.addEventListener("click", () => {
+                _mediaBusy = false;   // 选中即结束媒体状态（sendStickerMessage 内 _batchArmSubmit 重新计时）
+                _stickerPanelClose();
+                sendStickerMessage(img.dataset.label, img.dataset.file);
             });
-        } catch (e) { /* 静默 */ }
-    }
+        });
+    } catch (e) { /* 静默 */ }
 });
 // 点击聊天区关闭表情面板
 messagesEl.addEventListener("click", _stickerPanelClose);
@@ -3063,6 +3857,59 @@ function sendStickerMessage(label, file) {
 /* ── 来源：js/chat_history.js ── */
 // 聊天历史：历史加载（滚动翻页）/ 休息 / 清除 / 撤回
 
+// 当前角色名统一走 views.charName()（角色卡化：框架不含角色名字面量）。
+// 休息/起床的**提示句**需要一个语法上的主语，取不到时用中性词「角色」。
+function _cn() {
+    return charName() || "角色";
+}
+
+// ═══════════════════════════════════════════
+// 记忆窗口提醒（聊天页头部的名字行尾，2026-09-18）
+//
+// 活跃窗口 = "自上次整理以来"的对话原文，除刚开场外常驻 30–100 轮：
+//   · 分析器 / 回复器读它（所以压缩后也照样看得到最近 30 轮完整对话）
+//   · 整理只把"最近 keep_turns 轮以外"的部分搬进「历史对话存档」（只进检索器）
+// 阈值故意放得很宽（100 轮才触发）——整理一次要花 2 次 LLM 调用，频繁整理就是烧用户 token。
+//
+// 显示形态（用户 2026-09-18 反馈"太影响观感"后定的）：
+//   **只是名字行尾一小截灰字**（`· 记忆 92/100`），不加行、不加边框、不加按钮。
+//   理由是它属"低优先级知会"——手动整理入口本来就在菜单「让流萤休息」，
+//   到上限后下一条回复也会自动整理，不需要再给按钮。
+// 数据源 GET /memory-status（只读计数 + 游标文件，很轻）。
+// ═══════════════════════════════════════════
+const memHint = document.getElementById("chat-mem");
+const appViewEl = document.getElementById("app");
+
+function _chatVisible() {
+    return !!appViewEl && appViewEl.style.display !== "none";
+}
+
+async function memoryBarRefresh() {
+    if (!memHint) return;
+    if (!_chatVisible() || typeof CURRENT_MODE === "undefined" || !CURRENT_MODE) {
+        memHint.hidden = true;
+        return;
+    }
+    try {
+        const r = await fetch(`/memory-status?mode=${encodeURIComponent(CURRENT_MODE)}`);
+        const d = await r.json();
+        const lv = d.level || "ok";
+        // ok/empty/off：不打扰（off = 自动整理被 config 关掉，用户既然关了就别提醒）
+        if (lv !== "warn" && lv !== "full") { memHint.hidden = true; return; }
+        memHint.hidden = false;
+        memHint.className = "chat-mem " + lv;
+        memHint.textContent = lv === "full"
+            ? `· 记忆 ${d.active_turns}/${d.window_max} · 将整理`
+            : `· 记忆 ${d.active_turns}/${d.window_max}`;
+    } catch (e) {
+        memHint.hidden = true;   // 提醒永不阻塞聊天：取不到就干脆不显示
+    }
+}
+window.memoryBarRefresh = memoryBarRefresh;
+
+// 轮询：本地端点、响应 ~200 字节；聊天页不可见时函数自己直接返回
+setInterval(memoryBarRefresh, 15000);
+
 // ═══════════════════════════════════════════
 // 休息 / 清除 / 撤回
 // ═══════════════════════════════════════════
@@ -3072,11 +3919,10 @@ function _showRestResult(txt) {
     document.getElementById("rest-text").textContent = txt;
     setTimeout(() => { restOverlay.style.display = "none"; }, 3000);
 }
-document.getElementById("menu-rest-btn").addEventListener("click", async () => {
-    if (!confirm("让流萤去休息吗？她会整理这段对话的记忆。")) return;
-    closeMenu();
+/** 执行一次「休息」（整理）。菜单按钮与顶部状态条的「现在整理」共用同一条链。 */
+async function _doRest() {
     restOverlay.style.display = "flex";
-    document.getElementById("rest-text").textContent = "流萤正在整理记忆…";
+    document.getElementById("rest-text").textContent = `${_cn()}正在整理记忆…`;
     try {
         const resp = await fetch("/rest", {
             method: "POST", headers: {"Content-Type": "application/json"},
@@ -3087,13 +3933,13 @@ document.getElementById("menu-rest-btn").addEventListener("click", async () => {
         let msg = "";
         if (data.ok) {
             if (data.skipped) {
-                msg = "流萤已休息。这边没有新的对话内容需要整理，下次聊完再叫我吧。";
+                msg = `${_cn()}已休息。这边没有新的对话内容需要整理，下次聊完再叫我吧。`;
             } else {
                 const parts = [];
                 if (data.added) parts.push(`新增记忆 ${data.added} 条`);
                 if (data.resolved) parts.push(`解决 ${data.resolved} 条`);
                 if (!parts.length && data.head_changed) parts.push("记忆已更新");
-                msg = `流萤已休息。${parts.join("，") || "记忆已更新"}。下次见。`;
+                msg = `${_cn()}已休息。${parts.join("，") || "记忆已更新"}。下次见。`;
             }
         } else {
             msg = "整理出了点问题：" + (data.error || "未知");
@@ -3102,6 +3948,13 @@ document.getElementById("menu-rest-btn").addEventListener("click", async () => {
     } catch (e) {
         _showRestResult("信号不好，等会儿再试。");
     }
+}
+
+document.getElementById("menu-rest-btn").addEventListener("click", async () => {
+    if (!confirm(`让${_cn()}去休息吗？${_cn()}会整理这段对话的记忆。`)) return;
+    closeMenu();
+    await _doRest();
+    memoryBarRefresh();
 });
 
 document.getElementById("menu-clear-btn").addEventListener("click", async () => {
@@ -3180,6 +4033,9 @@ async function loadHistory(beforeSeq=null) {
         if (!beforeSeq) { data.messages.forEach(m=>renderHistoryMessage(m,false)); messagesEl.scrollTop=messagesEl.scrollHeight; undoBtn.disabled=false; }
         else { const ph=messagesEl.scrollHeight, ps=messagesEl.scrollTop; data.messages.slice().reverse().forEach(m=>renderHistoryMessage(m,true)); messagesEl.scrollTop=ps+(messagesEl.scrollHeight-ph); }
         S._hasMore = !!data.has_more;
+        // 历史渲染完再补扫一次语音条（首次进来时缓存表是异步拉的，赶不上逐条渲染）
+        if (typeof voiceRestoreBarsAuto === "function") voiceRestoreBarsAuto();
+        if (!beforeSeq) memoryBarRefresh();   // 进聊天页时同步一次记忆窗口状态
     } catch(e) {} finally { _loading=false; }
 }
 messagesEl.addEventListener("scroll", () => {
@@ -3189,6 +4045,329 @@ messagesEl.addEventListener("scroll", () => {
         if (seq) loadHistory(seq);
     }
 });
+
+
+/* ── 来源：js/voice_plugin.js ── */
+// ═══════════════════════════════════════════
+// 语音插件页（首页 →「语音插件」）
+//   GET  /voice/plugin              → 状态（5 态 + 缺什么 + 下载进度）
+//   POST /voice/plugin {action,...} → install/cancel/enable/disable/uninstall/rescan/set_mood/set_repo
+// 设计与边界见 docs/工具/tts.md。本页只做展示与派发，不做任何模型逻辑。
+// ═══════════════════════════════════════════
+let _vpTimer = null;
+
+const _VP_LABEL = {
+    downloading: "⏳ 下载中",
+    not_installed: "⬇ 未安装",
+    installed_disabled: "⏸ 已安装 · 未启用",
+    unavailable: "⚠ 已启用 · 不可用",
+    ready: "✅ 可用",
+};
+
+function _vpEsc(s) {
+    return String(s == null ? "" : s).replace(/[&<>"']/g, c => (
+        {"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]));
+}
+
+function _vpMB(n) {
+    return (n / 1048576).toFixed(1) + " MB";
+}
+
+async function _vpFetchState() {
+    try {
+        const r = await fetch("/voice/plugin");
+        return await r.json();
+    } catch (e) {
+        return {id: "unavailable", label: "无法连接后端", reason: String(e)};
+    }
+}
+
+async function _vpAct(action, extra) {
+    try {
+        const r = await fetch("/voice/plugin", {
+            method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify(Object.assign({action: action}, extra || {})),
+        });
+        const d = await r.json();
+        if (d && d.ok === false) showToast("操作失败：" + (d.error || "未知原因"));
+        return d;
+    } catch (e) {
+        showToast("操作失败：无法连接后端");
+        return null;
+    }
+}
+
+function _vpRender(st) {
+    const box = document.getElementById("vv-body");
+    if (!box) return;
+    const dl = st.download || {};
+    const moodRows = Object.keys(st.moods || {}).map(k => {
+        const on = (st.mood === k);
+        return `<button class="vv-mood${on ? " on" : ""}" type="button"
+             onclick="voiceSetMood('${_vpEsc(k)}')">${_vpEsc(st.moods[k])}</button>`;
+    }).join(" ");
+
+    // 操作按钮：按状态给出可用的那几个
+    const btns = [];
+    if (st.id === "downloading") {
+        btns.push(`<button class="vv-btn" onclick="voiceAct('cancel')">取消下载</button>`);
+    } else {
+        if (st.repo_configured) {
+            btns.push(`<button class="vv-btn primary" onclick="voiceAct('install')">${st.models_found ? "重新下载" : "下载模型"}</button>`);
+        }
+        btns.push(`<button class="vv-btn" onclick="voiceAct('rescan')">重新扫描</button>`);
+        const vc = st.voice_cache || {};
+        if (vc.files) {
+            btns.push(`<button class="vv-btn danger" onclick="voiceAct('purge_voice')">清除语音缓存（${vc.files} 条）</button>`);
+        }
+        if (st.models_found) {
+            btns.push(st.enabled
+                ? `<button class="vv-btn" onclick="voiceAct('disable')">停用</button>`
+                : `<button class="vv-btn primary" onclick="voiceAct('enable')">启用</button>`);
+            btns.push(`<button class="vv-btn danger" onclick="voiceAct('uninstall')">卸载</button>`);
+        }
+    }
+
+    // 下载进度：带 sha256 对账状态（2026-09-18）。
+    //   verify=on  → 拿到了仓库清单，每个文件下完都会比对 sha256（坏文件不会落盘）
+    //   verify=off → 拿不到清单（自建镜像无清单端点等），降级为只比大小
+    const _vfy = dl.verify === "on"
+        ? `· 已校验 ${dl.verified || 0} 个`
+        : (dl.verify === "off" ? "· 未校验（仓库无清单）" : "");
+    const _pct = Math.max(0, Math.min(100, Number(dl.percent) || 0));   // 纵深防御：后端若给出越界值也不显示
+    const dlBar = dl.running ? `
+      <div class="vv-dl">
+        <div class="vv-dl-bar"><i style="width:${_pct}%"></i></div>
+        <div class="vv-dl-txt">${_vpEsc(dl.file || "")} · ${_pct}%
+          ${dl.total ? "（" + _vpMB(dl.done) + " / " + _vpMB(dl.total) + "）" : ""}
+          · 已用 ${dl.elapsed || 0}s ${_vfy}</div>
+      </div>` : (dl.error ? `<div class="vv-err">上次下载：${_vpEsc(dl.error)}</div>`
+        : (dl.verified ? `<div class="vv-hint">上次下载已通过 sha256 校验（${dl.verified} 个文件）</div>` : ""));
+
+    const missing = (st.missing_files || []).length ? `
+      <div class="vv-err">缺 ${st.missing_files.length} 个文件：${_vpEsc(st.missing_files.join("、"))}</div>` : "";
+
+    const repoBox = st.repo_configured ? "" : `
+      <div class="vv-field">
+        <div class="vv-hint">模型仓库地址（含 <code>{file}</code> 占位；留空则无法下载）</div>
+        <input id="vv-repo" type="text" placeholder="https://www.modelscope.cn/api/v1/models/&lt;ns&gt;/&lt;name&gt;/repo?Revision=master&amp;FilePath={file}">
+        <button class="vv-btn" onclick="voiceAct('set_repo',{url:document.getElementById('vv-repo').value})">保存地址</button>
+      </div>`;
+
+    box.innerHTML = `
+      <div class="vv-card vv-state vv-state-${_vpEsc(st.id)}">
+        <div class="vv-state-label">${_vpEsc(_VP_LABEL[st.id] || st.label || st.id)}</div>
+        ${st.reason ? `<div class="vv-reason">${_vpEsc(st.reason)}</div>` : ""}
+      </div>
+
+      ${dlBar}${missing}
+
+      <div class="vv-card">
+        <div class="vv-h">语气</div>
+        <div class="vv-moods">${moodRows}</div>
+        <div class="vv-hint">作用范围：长按消息 →「转语音」时使用所选语气</div>
+      </div>
+
+      <div class="vv-card">
+        <div class="vv-h">模型</div>
+        <div class="vv-kv"><span>状态</span><b>${st.models_found ? "已就位" : "未安装"}</b></div>
+        <div class="vv-kv"><span>体积</span><b>${st.models_found ? _vpMB(st.model_bytes) : "—"}</b></div>
+        <div class="vv-kv"><span>目录</span><code>${_vpEsc(st.models_dir || (st.search_dirs || [])[0] || "")}</code></div>
+        ${st.engine && st.engine.ready ? `<div class="vv-kv"><span>引擎</span><b>已装载</b></div>` : ""}
+        ${(st.voice_cache && st.voice_cache.files)
+            ? `<div class="vv-kv"><span>已生成语音</span><b>${st.voice_cache.files} 条 · ${_vpMB(st.voice_cache.bytes)}</b></div>`
+            : ""}
+      </div>
+
+      <div class="vv-actions">${btns.join(" ")}</div>
+      ${repoBox}
+
+      <div class="vv-foot">
+        语音模型来自第三方整合包；<b>语音原声版权归米哈游所有</b>，仅供个人二次创作使用，
+        禁止售卖与再分发。模型仅存放在本机，不会上传到服务器。
+      </div>`;
+}
+
+async function renderVoiceView() {
+    const box = document.getElementById("vv-body");
+    if (box && !box.innerHTML.trim()) box.innerHTML = `<div class="vv-loading">读取中…</div>`;
+    const st = await _vpFetchState();
+    _vpRender(st);
+    // 下载中 → 自动轮询刷新进度
+    if (_vpTimer) { clearTimeout(_vpTimer); _vpTimer = null; }
+    if (st.id === "downloading") {
+        _vpTimer = setTimeout(renderVoiceView, 1200);
+    }
+}
+
+function openVoiceView() {
+    homeView.classList.remove("show");
+    const cv = document.getElementById("cards-view");
+    if (cv) cv.classList.remove("show");
+    const fv = document.getElementById("fix-view");
+    if (fv) fv.classList.remove("show");
+    const v = document.getElementById("voice-view");
+    if (!v) return;
+    v.classList.add("show");
+    try { if (location.hash !== "#voice") history.pushState({voice: true}, "", "#voice"); } catch (e) {}
+    renderVoiceView();
+}
+window.openVoiceView = openVoiceView;
+
+function closeVoiceView() {
+    const v = document.getElementById("voice-view");
+    if (v) v.classList.remove("show");
+    if (_vpTimer) { clearTimeout(_vpTimer); _vpTimer = null; }
+    showHome();
+    try { if (location.hash === "#voice") history.replaceState({}, "", location.pathname + location.search); } catch (e) {}
+}
+window.closeVoiceView = closeVoiceView;
+
+async function voiceAct(action, extra) {
+    if (action === "uninstall" && !confirm("确定卸载语音插件？\n\n会删除本机的模型文件（约 872 MB）。\n已生成的语音不受影响（那些随「清理历史」处理）。")) return;
+    if (action === "purge_voice" && !confirm("清除所有已生成的语音？\n\n只删音频文件 —— 模型、语气库、聊天记录都不受影响。\n清除后重新点「转语音」会用当前前端重新合成（旧音频可能带有已修复的问题）。")) return;
+    await _vpAct(action, extra);
+    renderVoiceView();
+}
+window.voiceAct = voiceAct;
+
+async function voiceSetMood(mood) {
+    await _vpAct("set_mood", {mood: mood});
+    // 同步长按菜单用的默认语气（chat.js 的 _voiceMood）
+    if (window.setVoiceMood) window.setVoiceMood(mood);
+    renderVoiceView();
+}
+window.voiceSetMood = voiceSetMood;
+
+// ═══════════════════════════════════════════
+// 消息下面的「语音条」
+//   参考微信「语音转文字」的形态：语音生成后**贴在消息气泡下方**（不是弹播放器）。
+//   数据来源：/voice/plugin 的 voice_cache.seqs = {mode: {seq: 时长}}。
+//   · 生成成功后立刻贴上去
+//   · 历史渲染后再扫一遍贴回（刷新/翻页后仍在）
+//   · 点它播放 / 再点暂停（播放区在条上，长按菜单不再承担"播放"职责）
+// ═══════════════════════════════════════════
+let _voiceSeqMap = null;        // {mode: {seq: dur}}
+let _voiceAudio = null;
+let _voicePlayingBar = null;
+
+async function voiceSyncCache() {
+    try {
+        const st = await (await fetch("/voice/plugin")).json();
+        _voiceSeqMap = (st && st.voice_cache && st.voice_cache.seqs) || {};
+    } catch (e) {
+        _voiceSeqMap = null;
+    }
+    return _voiceSeqMap;
+}
+window.voiceSyncCache = voiceSyncCache;
+
+/** 该 seq 是否已有语音（同步查本地缓存表） */
+function voiceHas(seq) {
+    const m = _voiceSeqMap && _voiceSeqMap[CURRENT_MODE];
+    return !!(m && Object.prototype.hasOwnProperty.call(m, String(seq)));
+}
+window.voiceHas = voiceHas;
+
+function _voiceStopPlay() {
+    if (_voiceAudio) { try { _voiceAudio.pause(); } catch (e) {} _voiceAudio = null; }
+    if (_voicePlayingBar) {
+        _voicePlayingBar.classList.remove("playing");
+        const i = _voicePlayingBar.querySelector(".vb-ico");
+        if (i) i.textContent = "🔊";
+        _voicePlayingBar = null;
+    }
+}
+
+function _voicePlayBar(bar, seq) {
+    // 再点 = 暂停
+    if (_voicePlayingBar === bar) { _voiceStopPlay(); return; }
+    _voiceStopPlay();
+    const a = new Audio("/voice-file?mode=" + encodeURIComponent(CURRENT_MODE)
+                        + "&name=v" + seq + ".wav");
+    _voiceAudio = a;
+    _voicePlayingBar = bar;
+    bar.classList.add("playing");
+    const ico = bar.querySelector(".vb-ico");
+    if (ico) ico.textContent = "⏸";
+    const stop = () => { if (_voicePlayingBar === bar) _voiceStopPlay(); };
+    a.addEventListener("ended", stop);
+    a.addEventListener("error", () => { stop(); showToast("播放失败"); });
+    a.play().catch(() => { stop(); showToast("播放失败（再点一次试试）"); });
+}
+
+/** 把语音条贴到某条消息下面（幂等）。返回条元素。
+ *
+ *  ★ 语音条是 `.msg-row` 的**直接子元素**，靠 `.msg-row.has-voice{flex-wrap:wrap}`
+ *    换到第二行 —— 这样**头像仍与气泡底部对齐**（微信/QQ 的形态）。
+ *    早先把条塞进 `.msg-col` 时，列变高 → `align-items:flex-end` 把头像拉到语音条底，
+ *    头像会比气泡低一截（真机截图发现）。
+ */
+function voiceAttachBar(row, seq, dur) {
+    if (!row || seq === null || seq === undefined) return null;
+    const exist = row.querySelector(".voice-bar");
+    if (exist) {
+        if (dur) {
+            const d = exist.querySelector(".vb-dur");
+            if (d) d.textContent = Math.round(dur) + "″";
+        }
+        return exist;
+    }
+    if (!row.querySelector(".bubble")) return null;   // 没气泡的（表情包/旁白）不贴
+    row.classList.add("has-voice");
+    // 外层 .voice-row 占满一行（强制换行 → 头像仍与气泡底部对齐），
+    // 内层 .voice-bar 保持内容宽度（早先直接给条 flex-basis:100% 会把它拉成整行宽）
+    const wrap = document.createElement("div");
+    wrap.className = "voice-row";
+    const bar = document.createElement("div");
+    bar.className = "voice-bar";
+    bar.dataset.seq = String(seq);
+    bar.title = "点击播放";
+    bar.innerHTML = `<span class="vb-ico">🔊</span><span class="vb-dur">`
+        + (dur ? Math.round(dur) + "″" : "…") + `</span>`;
+    bar.addEventListener("click", (e) => { e.stopPropagation(); _voicePlayBar(bar, seq); });
+    wrap.appendChild(bar);
+    row.appendChild(wrap);
+    return bar;
+}
+window.voiceAttachBar = voiceAttachBar;
+
+/** 历史渲染后扫一遍，把已有语音的条贴回去 */
+function voiceRestoreBars() {
+    const m = _voiceSeqMap && _voiceSeqMap[CURRENT_MODE];
+    if (!m) return 0;
+    const root = (typeof messagesEl !== "undefined" && messagesEl) ? messagesEl : document;
+    let n = 0;
+    root.querySelectorAll(".msg-row[data-seq]").forEach((row) => {
+        const s = parseInt(row.dataset.seq, 10);
+        if (isNaN(s)) return;
+        const k = String(s);
+        if (Object.prototype.hasOwnProperty.call(m, k) && voiceAttachBar(row, s, m[k])) n++;
+    });
+    return n;
+}
+window.voiceRestoreBars = voiceRestoreBars;
+
+/** 首次进聊天时：拉一次缓存表再贴 */
+async function voiceInitBars() {
+    await voiceSyncCache();
+    voiceRestoreBars();
+}
+window.voiceInitBars = voiceInitBars;
+
+/** 渲染后自动贴（首次会先拉一次缓存表；之后直接用内存里的表） */
+let _voiceCacheSynced = false;
+async function voiceRestoreBarsAuto() {
+    try {
+        if (!_voiceCacheSynced) {
+            await voiceSyncCache();
+            _voiceCacheSynced = true;
+        }
+        voiceRestoreBars();
+    } catch (e) { /* 语音条失败绝不影响消息渲染 */ }
+}
+window.voiceRestoreBarsAuto = voiceRestoreBarsAuto;
 
 
 /* ── 来源：js/fix.js ── */
@@ -3208,6 +4387,13 @@ let _fixBusy = false;
 function fixModeLabel(mode) { return MODE_NAMES[mode] || mode; }
 
 function openFixView() {
+    // F-6.1（2026-09-14）：进入纠错页跟随当前聊天包——原来 FIX_MODE 恒为初值 story，
+    // 用户在 haruno/自建包里点「指出问题」，读的是 story 的历史与设定、写的也是 story。
+    // 页内模式按钮仍可手动切换（setFixMode 语义不变）。
+    if (PRESET_MODES.some(m => m.id === CURRENT_MODE)) FIX_MODE = CURRENT_MODE;
+    document.querySelectorAll("#fix-view .fix-mode").forEach(b => {
+        b.classList.toggle("active", b.dataset.mode === FIX_MODE);
+    });
     homeView.classList.remove("show");
     appView.style.display = "none";
     const view = document.getElementById("fix-view");
@@ -3280,7 +4466,7 @@ function _fixHistMsgHtml(m) {
     const me = m.who === "user";
     return `<div class="fix-hist-msg ${me ? "me" : ""}">
         <div class="fix-hist-line">
-            <span class="fix-hist-who">${me ? "我" : "流萤"}</span>
+            <span class="fix-hist-who">${me ? "我" : escapeHtml(charName())}</span>
             <span class="fix-hist-time">${escapeHtml((m.time || "").slice(5, 16))}</span>
         </div>
         <div class="fix-hist-text">${escapeHtml(_fixHistText(m))}</div>
@@ -3348,8 +4534,8 @@ function _renderFix(status) {
         chat.innerHTML = status.messages.map(_fixMsgHtml).join("");
         _fixChatScroll();
     } else {
-        chat.innerHTML = `<div class="fix-empty">先说说她哪里说得不对，我会和你确认后再生成修改方案。</div>`
-                       + `<div class="fix-hint">例如：她还说自己在医疗舱，但设定里已经恢复得不错、能开机甲了。</div>`;
+        chat.innerHTML = `<div class="fix-empty">先说说角色哪里说得不对，我会和你确认后再生成修改方案。</div>`
+                       + `<div class="fix-hint">例如：角色还说自己在医疗舱，但设定里已经恢复得不错、能开机甲了。</div>`;
     }
 
     // 选项 chips：只在没有 pending 时启用（有 pending 时是改方案，选项已过期）
@@ -3697,12 +4883,12 @@ window.toggleTheme = toggleTheme;
 const homeView = document.getElementById("home-view");
 const appView = document.getElementById("app");
 
-// 当前模式：story=剧情模式；haruno=春日手信（流萤想象的普通学生生活）
+// 模式（仅两类）：story=故事/剧情模式；haruno=剧本模式（有旁白与环境描写）
 // 角色预设化：模式清单来自后端注册表（GET /modes），前端不写死包列表
 let CURRENT_MODE = "story";
 let _lastMode = null;   // 上次进入聊天时的模式（切换时重载历史）
 let _modeGen = 0;       // 模式代际：切换时递增，飞行中的异步渲染/历史加载任务作废丢弃
-const MODE_NAMES = { story: "剧情模式", haruno: "春日手信" };   // 默认两内置；loadModes 后按注册表刷新
+const MODE_NAMES = { story: "剧情模式", haruno: "剧本模式" };   // 默认两内置；loadModes 后按注册表刷新
 const PRESET_MODES = [];   // /modes 清单（id/name/presentation/desc/tagline/cover/avatar/has_opening）
 // 归档包清单（3.5）：归档 = 不进 PRESET_MODES（不在 /modes 的 modes 里），但数据与清单条目都在。
 // 单独存一份是为了让首页能画出"已归档"区块——否则归档就等于把包弄丢：看不见、恢复不了。
@@ -3740,6 +4926,20 @@ function modeName(id) { return MODE_NAMES[id] || id; }
 function currentPreset() {
     return PRESET_MODES.find(m => m.id === CURRENT_MODE) || PRESET_MODES[0] || null;
 }
+
+/** 当前角色卡的**角色名**（角色卡化铁律：框架任何地方都不许写角色名字面量）。
+ *  取不到返回空串 —— 调用方自行决定降级（名字行不渲染 / 文案省略称呼），
+ *  **不要**回落到某个具体角色名，否则自建卡会显示别人的名字。 */
+function charName() {
+    const p = currentPreset();
+    return ((p && (p.char_name || p.name)) || "").toString().trim();
+}
+
+/** 当前角色卡的**用户称呼**（同上：取不到返回空串，不回落字面量）。 */
+function userName() {
+    const p = currentPreset();
+    return ((p && p.user_name) || "").toString().trim();
+}
 function setCurrentMode(mode) {   // ESM 导出只读绑定，外部经此切换
     _applyMode(mode);
 }
@@ -3762,11 +4962,14 @@ async function loadModes() {
         }
     } catch (e) {}
     if (!PRESET_MODES.length) {
+        // 离线兜底：只给**渲染必需**的最小信息（id/模式名/演出形态/图）。
+        // **不带 char_name / user_name** —— 那是角色卡数据，正常从 /modes 取；
+        // 兜底路径下名字行为空（宁可不显示，也不在框架里写死某个角色名）。
         PRESET_MODES.push(
             {id: "story", name: "剧情模式", presentation: "sticker", desc: "", tagline: "",
-             cover: "/assets/character/story/assets/cover.png", avatar: "/assets/character/story/assets/avatar.png", has_opening: false, char_name: "流萤"},
-            {id: "haruno", name: "春日手信", presentation: "narration", desc: "", tagline: "",
-             cover: "/assets/character/haruno/assets/cover.png", avatar: "/assets/character/haruno/assets/avatar.png", has_opening: true, char_name: "流萤"});
+             cover: "/assets/character/story/assets/cover.png", avatar: "/assets/character/story/assets/avatar.png", has_opening: false},
+            {id: "haruno", name: "剧本模式", presentation: "narration", desc: "", tagline: "",
+             cover: "/assets/character/haruno/assets/cover.png", avatar: "/assets/character/haruno/assets/avatar.png", has_opening: true});
     }
     // 启动恢复当前包（F-6.3）：候选逐个校验，全不合法才回退注册表首包
     const pick = [_savedMode(), serverDefault, "story"].find(id => id && PRESET_MODES.some(m => m.id === id))
@@ -3786,28 +4989,45 @@ window.__modesReload = async () => {
 // 动态导入产生第二份 ESM 模块实例）
 window.__getPresets = () => PRESET_MODES;
 window.__setCurrentMode = (mode) => setCurrentMode(mode);
+// PC 三栏外壳（pc_shell.js，独立 classic script）读当前包用：它看不到 bundle 作用域里的
+// CURRENT_MODE，所以给一个只读 getter（不要给它写入口，切包一律走 enterMode）。
+window.__getCurrentMode = () => CURRENT_MODE;
 
-// 进入某包的管理页（卡片角标/轮播角标入口）：切到该包 + 打开角色包管理
-function managePack(mode) {
-    _applyMode(mode);
-    try { window.openMenuTab("pack"); } catch (e) {}
-}
-window.managePack = managePack;
-// 轮播角标：管理当前轮播位置的包
+// 进入某包的管理页（卡片角标/轮播角标入口）：切到该包 + 打开角色编辑页。
+// （2026-09-14 修复：此处原有第二个同名 managePack 定义（openPackView 包装），函数声明提升下
+//  后者覆盖前者，菜单里又没有 "pack" 这个 tab，旧定义实为死代码+误导——已删，统一走 openPackView。）
 document.getElementById("carousel-manage-btn")?.addEventListener("click", (e) => {
     e.stopPropagation();
     const m = PRESET_MODES[carouselIndex];
-    if (m) managePack(m.id);
+    if (m) openPackView(m.id);
 });
 
-// ── 新建角色包（阶段7，本地版）──
+// ── 新建角色卡（阶段7，本地版）──
+// 命名统一（2026-09-18）：角色名_模式名_创建时间（月日_时分），如「流萤_剧情_0918_0041」。
+// 同角色允许建多个包（后端不校验 char_name 唯一），靠这个名字区分。
+function _defaultPackName(charName, presentation) {
+    const d = new Date();
+    const p2 = n => String(n).padStart(2, "0");
+    const label = presentation === "narration" ? "剧本" : "剧情";
+    return `${charName || "角色"}_${label}_${p2(d.getMonth() + 1)}${p2(d.getDate())}_${p2(d.getHours())}${p2(d.getMinutes())}`;
+}
+
 function togglePackCreate(show) {
     const p = document.getElementById("pack-create-panel");
     if (!p) return;
     const visible = p.style.display !== "none";
     const target = (show === undefined) ? !visible : !!show;
     p.style.display = target ? "block" : "none";
-    if (target) document.getElementById("pc-name").focus();
+    if (target) {
+        const nameEl = document.getElementById("pc-name");
+        // 名称留空时预填默认名（用户可改；留空提交后端也会按同规则生成）
+        if (nameEl && !nameEl.value.trim()) {
+            const cn = (document.getElementById("pc-char")?.value || "").trim();
+            const pres = document.getElementById("pc-presentation")?.value || "sticker";
+            nameEl.value = _defaultPackName(cn, pres);
+        }
+        nameEl?.focus();
+    }
 }
 window.togglePackCreate = togglePackCreate;
 
@@ -3816,7 +5036,8 @@ document.getElementById("pc-submit")?.addEventListener("click", async () => {
     const charName = document.getElementById("pc-char").value.trim();
     const userName = document.getElementById("pc-user").value.trim();
     const presentation = document.getElementById("pc-presentation").value;
-    if (!name || !charName || !userName) { showToast("包名称、角色名、对方称呼都必填"); return; }
+    // 名称可留空：后端按「角色名_模式名_月日_时分」生成（同角色多包靠它区分）
+    if (!charName || !userName) { showToast("角色名、对方称呼都必填"); return; }
     try {
         const resp = await fetch("/pack-create", {method: "POST",
             headers: {"Content-Type": "application/json"},
@@ -3833,102 +5054,7 @@ document.getElementById("pc-submit")?.addEventListener("click", async () => {
     } catch (e) { showToast("网络错误"); }
 });
 
-// ── AI 建卡向导（搜索 + 分步生成）──
-const _forge = { session: "", step: "", drafts: {} };
 
-function togglePackForge(show) {
-    const p = document.getElementById("pack-forge-panel");
-    if (!p) return;
-    const visible = p.style.display !== "none";
-    const target = (show === undefined) ? !visible : !!show;
-    p.style.display = target ? "block" : "none";
-    if (target) document.getElementById("pf-query").focus();
-}
-window.togglePackForge = togglePackForge;
-
-function _pfStatus(t) { const el = document.getElementById("pf-status"); if (el) el.textContent = t || ""; }
-
-document.getElementById("pf-start")?.addEventListener("click", async () => {
-    const query = document.getElementById("pf-query").value.trim();
-    if (!query) { showToast("先描述想创建的角色"); return; }
-    const btn = document.getElementById("pf-start");
-    btn.disabled = true;
-    _pfStatus("正在联网搜索并生成第一步（核心设定），可能要十几秒…");
-    try {
-        const resp = await fetch("/pack-forge/start", {method: "POST",
-            headers: {"Content-Type": "application/json"},
-            body: JSON.stringify({
-                query,
-                char_name: document.getElementById("pf-char").value.trim(),
-                user_name: document.getElementById("pf-user").value.trim(),
-                presentation: document.getElementById("pf-presentation").value,
-            })});
-        const data = await resp.json();
-        if (!data.ok) { _pfStatus(data.error || "生成失败"); btn.disabled = false; return; }
-        _forge.session = data.session;
-        _forge.step = data.step;
-        _forge.drafts = { [data.step]: data.draft };
-        _pfShowDraft(data);
-        _pfStatus(data.searched ? `已搜到资料（${data.search_source || "网络"}），草案可改，确认后点下一步`
-                                : "没搜到足够资料——已按你的描述构建（请仔细检查）");
-    } catch (e) { _pfStatus("网络错误"); btn.disabled = false; }
-});
-
-function _pfShowDraft(data) {
-    document.getElementById("pf-draft-box").style.display = "block";
-    document.getElementById("pf-step-label").textContent = `第 ${_stepNo(data.step)} 步 / 共 4 步：${data.step_label}`;
-    document.getElementById("pf-draft").value = data.draft || "";
-    document.getElementById("pf-next").style.display = data.is_last ? "none" : "";
-    document.getElementById("pf-finish").style.display = data.is_last ? "" : "none";
-}
-function _stepNo(s) { return {core: 1, identity: 2, sms_samples: 3, polisher: 4}[s] || 1; }
-
-document.getElementById("pf-next")?.addEventListener("click", async () => {
-    const btn = document.getElementById("pf-next");
-    btn.disabled = true;
-    _pfStatus("生成下一步…");
-    try {
-        const resp = await fetch("/pack-forge/next", {method: "POST",
-            headers: {"Content-Type": "application/json"},
-            body: JSON.stringify({session: _forge.session, step: _forge.step,
-                                  draft: document.getElementById("pf-draft").value})});
-        const data = await resp.json();
-        if (!data.ok) { _pfStatus(data.error || "生成失败"); btn.disabled = false; return; }
-        _forge.step = data.step;
-        _forge.drafts[data.step] = data.draft;
-        _pfShowDraft(data);
-        _pfStatus("草案可改，确认后继续");
-    } catch (e) { _pfStatus("网络错误"); }
-    btn.disabled = false;
-});
-
-document.getElementById("pf-finish")?.addEventListener("click", async () => {
-    _forge.drafts[_forge.step] = document.getElementById("pf-draft").value;
-    const btn = document.getElementById("pf-finish");
-    btn.disabled = true;
-    _pfStatus("正在创建角色包…");
-    try {
-        const resp = await fetch("/pack-forge/finish", {method: "POST",
-            headers: {"Content-Type": "application/json"},
-            body: JSON.stringify({session: _forge.session,
-                                  name: document.getElementById("pf-query").value.trim().slice(0, 30),
-                                  char_name: document.getElementById("pf-char").value.trim(),
-                                  user_name: document.getElementById("pf-user").value.trim(),
-                                  files: _forge.drafts})});
-        const data = await resp.json();
-        if (data.ok) {
-            showToast(`已创建「${data.name}」——点列表里的卡片进详情，换头像封面、配表情包`);
-            togglePackForge(false);
-            document.getElementById("pf-draft-box").style.display = "none";
-            _pfStatus("");
-            await window.__modesReload();
-            renderCardsList();
-        } else {
-            _pfStatus(data.error || "创建失败");
-            btn.disabled = false;
-        }
-    } catch (e) { _pfStatus("网络错误"); btn.disabled = false; }
-});
 
 // 轮播图上的角色信息条：跟随当前轮播位置
 function _updateCarouselChar() {
@@ -3938,7 +5064,7 @@ function _updateCarouselChar() {
     if (!m) { c.style.display = "none"; return; }
     c.style.display = "";
     const img = c.querySelector("img");
-    if (m.avatar) img.src = m.avatar;
+    _setImgSrc(img, m.avatar);   // F-5：无头像清掉旧 src（持久元素，否则沿用上一包的图）
     c.querySelector(".cc-name").textContent = m.char_name || "";
     c.querySelector(".cc-scene").textContent = m.name || "";
 }
@@ -4004,9 +5130,7 @@ function renderCardsList() {
         card.className = "cv-card";
         card.type = "button";
         card.onclick = () => openPackView(m.id, "cards");
-        const img = document.createElement("img");
-        img.className = "cv-thumb";
-        if (m.cover) img.src = m.cover;
+        const img = _coverImg(m, "cv-thumb");
         img.alt = "";
         const mid = document.createElement("div");
         const cn = document.createElement("div");
@@ -4014,7 +5138,12 @@ function renderCardsList() {
         cn.textContent = (m.char_name || "") + (m.custom ? "" : "");
         const sub = document.createElement("div");
         sub.className = "cv-csub";
-        sub.textContent = (m.name || m.id) + " · " + (presLabel[m.presentation] || m.presentation);
+        // name 形如「流萤_剧情_0918_0041」；副标题去掉与大字重复的角色名，
+        // 留下「模式_创建时间 · 演出形态」——同角色多包靠这段区分（不分组方案）
+        const _nm = m.name || m.id;
+        const _shown = (m.char_name && _nm.startsWith(m.char_name + "_"))
+            ? _nm.slice(m.char_name.length + 1) : _nm;
+        sub.textContent = _shown + " · " + (presLabel[m.presentation] || m.presentation);
         mid.append(cn, sub);
         const go = document.createElement("span");
         go.className = "cv-cgo";
@@ -4024,20 +5153,40 @@ function renderCardsList() {
     }
 }
 
-// 卡片角标/轮播角标入口（保留 managePack 名兼容）
-function managePack(mode) { openPackView(mode); }
+// 卡片角标/轮播角标入口（保留 managePack 名兼容）：经 _applyMode 校验后开详情页
+function managePack(mode) { if (_applyMode(mode)) openPackView(); }
 window.managePack = managePack;
 
+// F-5（2026-09-14）：无封面/头像的包给「首字占位块」，不再显示破图或沿用上一张图。
+// 返回值是元素（img 或 div），尺寸由调用处既有 class 决定。
+function _coverImg(m, cls) {
+    if (m.cover) {
+        const img = document.createElement("img");
+        img.className = cls;
+        img.src = m.cover;
+        img.alt = m.name || m.id;
+        return img;
+    }
+    const d = document.createElement("div");
+    d.className = cls + " pack-noimg";
+    d.textContent = (m.char_name || m.name || "?").slice(0, 1);
+    return d;
+}
+
+// 持久 <img> 元素（详情页/品牌位/轮播信息条）：无图必须清掉旧 src，否则沿用上一包的图
+function _setImgSrc(img, url) {
+    if (!img) return;
+    if (url) img.src = url;
+    else img.removeAttribute("src");
+}
+
 // 按 PRESET_MODES 渲染角色卡（轮播 + PC 大卡）：卡的主角是角色（头像+角色名），
-// 剧本名（剧情模式/春日手信）是小标签；卡上 ✎ 角标进角色编辑页
+// 模式名（剧情模式/剧本模式）是小标签；卡上 ✎ 角标进角色编辑页
 function renderModeCards() {
     carouselTrack.innerHTML = "";
     carouselDots.innerHTML = "";
     PRESET_MODES.forEach((m, i) => {
-        const img = document.createElement("img");
-        if (m.cover) img.src = m.cover;
-        img.alt = m.name || m.id;
-        carouselTrack.appendChild(img);
+        carouselTrack.appendChild(_coverImg(m, "pack-noimg-abs"));
         const dot = document.createElement("span");
         if (i === 0) dot.classList.add("active");
         dot.addEventListener("click", () => goCarousel(i));
@@ -4060,10 +5209,7 @@ function renderModeCards() {
             btn.className = "hm-card";
             btn.type = "button";
             btn.onclick = () => enterMode(m.id);
-            const img = document.createElement("img");
-            img.className = "hm-cover";
-            if (m.cover) img.src = m.cover;
-            img.alt = m.name || m.id;
+            const img = _coverImg(m, "hm-cover");
             // 编辑角标（毛玻璃，hover 卡面时显现）
             const edit = document.createElement("span");
             edit.className = "hm-edit";
@@ -4073,9 +5219,7 @@ function renderModeCards() {
             // 角色信息叠加层：底部渐变压暗 + 头像 + 角色名 + 剧本标签
             const ov = document.createElement("div");
             ov.className = "hm-overlay";
-            const av = document.createElement("img");
-            av.className = "hm-avatar";
-            if (m.avatar) av.src = m.avatar;
+            const av = _coverImg(m, "hm-avatar");
             const info = document.createElement("div");
             info.className = "hm-info";
             const cn = document.createElement("div");
@@ -4167,13 +5311,31 @@ function _renderArchivedPacks(container) {
     container.appendChild(box);
 }
 
+/** 把带 `data-tpl` 的静态文案按当前角色卡重填（角色卡化：HTML 里不写死角色名）。
+ *
+ *  用法：HTML 写通用默认文案（无 JS/首屏时不露角色名），标签带模板：
+ *    `<span data-tpl="让{c}休息">让角色休息</span>`
+ *    `<div data-tpl-ph="…让{c}休息…">` → 填 placeholder
+ *  `{c}` = charName()，`{u}` = userName()；两者取不到时用中性词（角色／你）。
+ *  覆盖了菜单「休息」按钮、手账标签与说明、休息/起床遮罩、用户形象弹窗标题等。 */
+function applyTextTemplates() {
+    const c = charName() || "角色";
+    const u = userName() || "你";
+    const fill = (s) => String(s).replace(/\{c\}/g, c).replace(/\{u\}/g, u);
+    document.querySelectorAll("[data-tpl]").forEach(el => {
+        el.textContent = fill(el.dataset.tpl || "");
+    });
+    document.querySelectorAll("[data-tpl-ph]").forEach(el => {
+        el.setAttribute("placeholder", fill(el.dataset.tplPh || ""));
+    });
+}
+
 // 聊天页/侧边栏的角色标识（头像/名字/签名）按当前包刷新
 function applyModeBranding() {
     const p = currentPreset() || {};
     const cname = p.char_name || "";
     for (const id of ["chat-avatar", "pcs-avatar"]) {
-        const img = document.getElementById(id);
-        if (img && p.avatar) img.src = p.avatar;
+        _setImgSrc(document.getElementById(id), p.avatar);   // F-5：无头像清旧 src
     }
     const pcsName = document.getElementById("pcs-name");
     if (pcsName) pcsName.textContent = cname;
@@ -4183,6 +5345,7 @@ function applyModeBranding() {
         const el = document.getElementById(id);
         if (el) el.textContent = p.tagline || "";
     }
+    applyTextTemplates();   // 静态文案里的角色名/称呼一并刷新（换卡后立刻生效）
 }
 
 function showHome() {
@@ -4254,6 +5417,7 @@ async function showChat() {
         clearTimeout(S._hintTimer);
         S._hintTimer = null;
         try { resetBatchWindow(); } catch (e) {}   // 0.8.1 批状态机作废（chat.js）
+        try { _clearQuote(); } catch (e) {}   // F-6.4：引用条不跨包——否则 A 包引用的消息会随下一条发送写进 B 包历史
         messagesEl.innerHTML = "";
         S._hasMore = false;
         await loadHistory();   // 先加载历史（含已保存的开场）
@@ -4310,6 +5474,12 @@ function toggleNotice() {
     const panel = document.getElementById("notice-panel");
     const open = panel.classList.toggle("show");
     document.getElementById("notice-arrow").textContent = open ? "▴" : "▾";
+    // 打开时才联网刷新 + 延迟记已读（见 js/notice.js）。
+    // 走 window 全局而不是 import：本文件在 bundle 里先于 notice 出现，
+    // 调用期解析既能避免顶层顺序约束，也少了 views ↔ notice 的模块耦合。
+    if (open && typeof window.noticeOnOpen === "function") {
+        try { window.noticeOnOpen(); } catch (e) {}
+    }
 }
 function closeNotice() {
     document.getElementById("notice-panel").classList.remove("show");
@@ -4401,6 +5571,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     else if (window.matchMedia && matchMedia("(min-width:1100px)").matches) showChat();
     else showHome();
     initAuth();   // 服务器版：轮播图下登录/用户模块
+    uiSelectEnhance(document);   // 自绘下拉全站接管（原生 select 弹窗无法主题化；幂等有守卫）
 });
 
 
@@ -4437,7 +5608,7 @@ async function _renderProactiveWithThink(data) {
     S.waiting = true;
     inputEl.disabled = true; sendBtn.disabled = true;
     const statusEl = document.querySelector("#header .status");
-    const defaultStatus = "会找到的，属于我的梦...";   // 固定简介（防快照污染）
+    const defaultStatus = (currentPreset() || {}).tagline || "会找到的，属于我的梦...";   // 随当前角色包签名（原来是硬编码流萤签名）
     if (statusEl) statusEl.textContent = "对方正在输入...";
     const thinkMs = 2000 + Math.floor(Math.random() * 3000);
     await new Promise(r => setTimeout(r, thinkMs));
@@ -4491,7 +5662,7 @@ function _notifyFirefly(messages) {
         if (window.FireflyJs && window.FireflyJs.notify && Array.isArray(messages)) {
             const texts = messages.filter(m => m && m.type === "text" && m.content)
                                   .map(m => m.content);
-            if (texts.length) window.FireflyJs.notify("流萤 · AI", texts.join("\n").slice(0, 200));
+            if (texts.length) window.FireflyJs.notify((charName() || "角色") + " · AI", texts.join("\n").slice(0, 200));
         }
     } catch (e) {}
 }
@@ -4503,7 +5674,15 @@ window.__serverProactive = async function () {
     await checkProactive();
 };
 
-setInterval(checkProactive, _PROACTIVE_INTERVAL);
+// 10s 轮询 + 抖动（2026-09-19 压测）：原来是固定 10s 的 setInterval。
+// 固定周期会让所有客户端在同一秒对齐（惊群）；加 0-5s 抖动把负载摊平，
+// 首次延迟也保持 10s 量级（避免刚进页面就判定"该主动了"）。
+(function _proactiveLoop() {
+    setTimeout(() => {
+        checkProactive();
+        _proactiveLoop();
+    }, _PROACTIVE_INTERVAL + Math.random() * 5000);
+})();
 
 
 /* ── 来源：js/relay.js ── */
@@ -4694,7 +5873,21 @@ async function relayTick() {
     _relayBusy = false;
 }
 // 由 main.js 在全部模块求值后调用（直接顶层 setInterval 会在 api↔relay 循环导入中撞 TDZ）
-function startRelay() { setInterval(relayTick, 1000); }   // relay 引擎仅服务器模式（本地为 direct 直发）
+//
+// 2026-09-19 压力测试后的调整：1s → 4s + 抖动。
+// 为什么：1s 轮询 = **60 请求/分钟/用户**，是全站最大的流量来源。10× 并发（22 → 220 用户）时：
+//   · 网关限流是"每 IP 300 请求/分钟"→ 同一出口 IP（手机 CGNAT / 家庭 WiFi / 办公室）
+//     只够 ~4 个用户，第 5 个起全 429（实测：第 301 次请求返回 429）；
+//   · 220 用户 × 70 请求/分钟 ≈ 257 请求/秒，同时逼近 3Mbps 上行。
+// 降到 4s 后请求量变 1/4，代价只是"回复最多晚几秒到达"—— 而后端合并窗口本来就是 5 秒级的，
+// 用户感知不到差别。**抖动**是避免所有客户端在同一秒对齐（惊群）。
+function startRelay() {
+    const tick = () => {
+        relayTick();
+        setTimeout(tick, 4000 + Math.random() * 1500);
+    };
+    setTimeout(tick, 1200 + Math.random() * 1200);   // 首次也错开
+}
 
 
 /* ── 来源：js/guide.js ── */
@@ -4704,21 +5897,28 @@ function startRelay() { setInterval(relayTick, 1000); }   // relay 引擎仅服�
 // 使用引导（纯代码：高亮框 + 文字气泡 + CSS 呼吸边，不用任何图片）
 // 基础引导 4 步；结束后可点「深入了解」进入详细引导（设置/菜单/纠错助手）。
 // ═══════════════════════════════════════════
-const GUIDE_KEY = "firefly_guide_v1_done";
-const DEEP_GUIDE_KEY = "firefly_deep_guide_v1_done";
+// 基础引导 5 步；结束后可点「深入了解」进入详细引导（设置/菜单/纠错助手）。
+// ★ 0.9.0 把 KEY 从 v1 升到 v2：引导内容变了（新增"公告与更新说明""自动修复"两步），
+//   不升 key 的话老用户永远看不到新步骤 —— 那等于没更新引导。
+const GUIDE_KEY = "firefly_guide_v2_done";
+const DEEP_GUIDE_KEY = "firefly_deep_guide_v2_done";
 const GUIDE_STEPS = [
     { el: "#home-carousel", title: "从这里进入对话",
-      text: "请实际操作：点「剧情模式」或「春日手信」卡片，进入和流萤的聊天页。\n操作成功会自动进入下一步；如果没反应，点「下一步」。",
+      text: "请实际操作：点任意一张角色卡片（如「剧情模式」），进入和角色的聊天页。\n操作成功会自动进入下一步；如果没反应，点「下一步」。",
       setup: () => { showHome(); },
       done: () => !document.getElementById("home-view").classList.contains("show") },
     { el: "#home-settings-btn", title: "先填 API Key",
       text: "请点右上角 ⚙ 打开设置，把 sk- 开头的 Key 粘进 API Key 输入框。\n没有 Key 之前，聊天只会提示你去设置。",
       setup: () => { showHome(); },
       done: () => document.getElementById("settings-panel").classList.contains("show") },
-    { el: "#fix-module", title: "设定不对？直接告诉她",
-      text: "请点这张卡上的「指出问题 →」进入设定纠错助手。\nAI 会先和你确认问题，再列出修改清单；你点「应用」才生效，随时可撤销。",
+    { el: "#cards-manage-btn", title: "角色卡管理",
+      text: "请点「角色卡管理」。每个角色卡的人设、用户设定、知识库、出厂记忆、表情包都在里面单独编辑（聊天产生的记忆与手账在菜单页「设定文件」里，清除历史会一并清空）。",
       setup: () => { closeSettings(); showHome(); },
-      done: () => document.getElementById("fix-view").classList.contains("show") },
+      done: () => document.getElementById("cards-view").classList.contains("show") },
+    { el: "#home-notice", title: "公告与更新说明",
+      text: "请点首页上方的「公告 · 使用指南」。\n\n更新说明与临时提醒会由服务端下发到这里（有新内容时标题旁会亮一个小圆点）；万一拉不到，这里仍显示 App 内置的使用指南，功能不受影响。",
+      setup: () => { showHome(); },
+      done: () => document.getElementById("notice-panel").classList.contains("show") },
     { el: "#home-feedback-btn", title: "其他问题",
       text: "请点左上角「✉ 反馈」看看。功能建议、安装问题、联系开发者（GitHub / QQ 群 / 邮箱）都在这页。",
       setup: () => { showHome(); },
@@ -4761,42 +5961,44 @@ const DEEP_GUIDE_STEPS = [
       setup: () => { openSettings(); },
       done: () => _guideGroupOpen("model") },
     { el: '#settings-panel .set-head[data-group="system"]', title: "④ 点开「数据」",
-      text: "请点「📦 数据」展开。\n\n版本更新、数据快照（保存/恢复/导入 zip）、云端同步都在这里；主动消息则按角色卡配（角色卡管理 → 点角色卡 → 主动消息）。",
+      text: "请点「📦 数据」展开。\n\n版本更新、自动修复、数据快照（保存/恢复/导入 zip）、云端同步都在这里；主动消息则按角色卡配（角色卡管理 → 点角色卡 → 主动消息）。",
       setup: () => { openSettings(); },
       done: () => _guideGroupOpen("system") },
-    { el: "#menu-btn", title: "⑤ 到聊天页打开菜单",
-      text: "已经帮你切到聊天页：请点右上角 ☰ 打开菜单。\n\n菜单里是分组页签：与她相关（收藏 / 表情包 / 设定文件）、与系统相关（请求记录 / 流程日志）。",
+    { el: "#hotupdate-check-btn", title: "⑤ 看一眼「自动修复」",
+      text: "请点「检查修复」。\n\n小 bug 修好后服务器会推一个小补丁，App 空闲时自动装上，不必重装；这里能开关、查看当前修复版本，有问题还能「回退修复」退回安装包自带的版本。",
+      setup: () => { openSettings(); _guideOpenGroup("system"); _guideArmHotupdate(); },
+      done: () => _guideHotTouched },
+    { el: "#menu-btn", title: "⑥ 到聊天页打开菜单",
+      text: "已经帮你切到聊天页：请点右上角 ☰ 打开菜单。\n\n菜单里是分组页签：与角色相关（收藏 / 表情包 / 设定文件）、与系统相关（请求记录 / 流程日志）。",
       setup: () => { closeSettings(); showChat(); },
       done: () => document.getElementById("menu-drawer").classList.contains("open") },
-    { el: '.menu-tab[data-tab="sticker"]', title: "⑥ 点「表情包」页签",
+    { el: '.menu-tab[data-tab="sticker"]', title: "⑦ 点「表情包」页签",
       text: "请在菜单顶部点「表情包」。\n\n这一页能添加新表情、打开映射表逐个启用/停用；停用的表情不会出现在聊天面板，也不会被 AI 使用。",
       setup: () => { openMenu(); },
       done: () => _guideStickerTabOpen() },
-    { el: "#sticker-manage-btn", title: "⑦ 展开映射表试开关",
+    { el: "#sticker-manage-btn", title: "⑧ 展开映射表试开关",
       text: "请点「表情包映射表」。\n\n展开后可以试试点某张表情的「启用中 / 已停用」按钮，状态会立刻切换；改分类和描述后要点该卡片「保存」。内置默认表情的「删」是灰色保护。",
       setup: () => { openMenu(); try { document.querySelector('.menu-tab[data-tab="sticker"]')?.click(); } catch (e) {} },
       done: () => { const p = document.getElementById("sticker-manage-panel"); return !!(p && p.style.display !== "none" && p.style.display !== ""); } },
-    { el: "#sticker-add-btn", title: "⑧ 看看添加表情包表单",
+    { el: "#sticker-add-btn", title: "⑨ 看看添加表情包表单",
       text: "请点「+ 添加表情包」展开表单（不用真的上传）。\n\n流程是：选图 → 选分类（可爱/帅气）→ 写一句含义描述 → 保存。描述越清楚，AI 选图越准。",
       setup: () => { openMenu(); try { document.querySelector('.menu-tab[data-tab="sticker"]')?.click(); } catch (e) {} },
       done: () => { const f = document.getElementById("sticker-add-form"); return !!(f && f.style.display !== "none" && f.style.display !== ""); } },
-    { el: "#fix-module .am-btn", title: "⑨ 进入设定纠错",
-      text: "已经回到首页：请点「指出问题 →」进入设定纠错助手。\n\n进去后先选模式：剧情模式 或 春日手信，两个模式的设定和历史完全独立。",
-      setup: () => { closeMenu(); showHome(); },
-      done: () => document.getElementById("fix-view").classList.contains("show") },
-    { el: "#fix-chathist", title: "⑩ 展开最近聊天记录",
-      text: "请点「📜 最近聊天记录」展开它。\n\n这里显示当前模式的最近 20 条聊天，描述问题时可以直接对照她具体说错了哪句，不用切页面。",
-      setup: () => { closeMenu(); if (!document.getElementById("fix-view").classList.contains("show")) openFixView(); },
-      done: () => { const d = document.getElementById("fix-chathist"); return !!(d && d.open); } },
-    { el: "#fix-input", title: "⑪ 点输入框，试着描述问题",
-      text: "请点底部输入框，试着输入一句“她哪里说得不对”（先不用发送，或只发一句真实问题）。\n\n流程是：AI 多轮确认 → 点「开始修改」→ 看修改清单 → 点「应用修改」才生效；顶部状态点会显示：状态正常/对齐中/已对齐/方案待确认。",
-      setup: () => { closeMenu(); if (!document.getElementById("fix-view").classList.contains("show")) openFixView(); },
-      done: () => document.activeElement && document.activeElement.id === "fix-input" },
-    { el: "#home-feedback-btn", title: "⑫ 反馈页可随时重看",
+    { el: "#home-feedback-btn", title: "⑩ 反馈页可随时重看",
       text: "最后请点左上角「✉ 反馈」。\n\n以后想复习：反馈页点「查看详细使用教程」即可重新开始这套实际操作教程；有问题可在 GitHub / QQ 群 / 邮箱反馈。",
       setup: () => { showHome(); },
       done: () => document.getElementById("feedback-panel").classList.contains("show") },
 ];
+
+// 步骤⑤的判定：用户真的点了「检查修复」（而不是"这个按钮存在"——那不叫操作成功）。
+// 监听是一次性的：进入该步时挂上，离开后自然失效（按钮不存在时直接算完成，不卡住流程）。
+let _guideHotTouched = false;
+function _guideArmHotupdate() {
+    _guideHotTouched = false;
+    const btn = document.getElementById("hotupdate-check-btn");
+    if (!btn) { _guideHotTouched = true; return; }
+    btn.addEventListener("click", () => { _guideHotTouched = true; }, { once: true });
+}
 
 let _guideIndex = 0;
 let _guideSteps = GUIDE_STEPS;
@@ -4956,7 +6158,7 @@ async function checkWake() {
         const data = await resp.json();
         if (data.interrupted) {
             document.getElementById("wake-overlay").style.display = "flex";
-            document.getElementById("wake-text").textContent = "流萤正在起床，记忆还在整理中…";
+            document.getElementById("wake-text").textContent = (charName() || "角色") + "正在起床，记忆还在整理中…";
         }
     } catch(e) {}
 }
@@ -4968,4 +6170,423 @@ checkWake();
 checkKey().then(() => { loadHistory(); });
 initAssets();   // 服务器模式：已有 token 时立即资产本地化（未登录静默失败，登录后 initAuth 会再触发）
 loadFixStatus();   // 设定纠错助手：恢复多轮对齐/待确认方案（本地与服务器模式都可用）
+// 公告通道**不在这里启动**：由 js/notice.js 自己挂 DOMContentLoaded（原因见该文件末尾的说明
+// —— bundle 单作用域，从 main 顶层调进去会撞 TDZ，把 notice 整块静默打死）。
 if (IS_SERVER) startRelay();   // relay 引擎仅服务器模式（本地为 direct 直发）
+
+
+/* ── 来源：js/hotupdate.js ── */
+// 热更新前端（见 docs/热更新规范.md 与 热更新/02_实现契约.md §五/§六/§七）
+//
+// 前端在这条链路上有四件不可省的事：
+//   ① 上报「忙/闲」——后端据此决定什么时候允许 reload（规范 §5.2.1：绝不打断用户）
+//   ② 首帧渲染完成后上报 boot-ok —— 这是"启动成功判据"，坏补丁靠它才敢确认（§5.5）
+//   ③ reload 前把草稿存 sessionStorage —— 一个会吞掉用户正在打的字的"静默修复"比不修还糟（§5.2.2）
+//   ④ 把运行版本三元组露给用户，并给一个手动回滚的出口（信任问题，不只是合规）
+//
+// 写成自包含 IIFE：bundle 是单作用域拼接，不污染其它模块的名字。
+(function () {
+    "use strict";
+
+    var POLL_MS = 10000;          // 本地请求，代价可忽略；10s 内完成"立即生效"
+    var DRAFT_KEY = "firefly_hu_draft";
+    var _busy = false;
+    var _busyWhy = "";
+    var _last = null;
+
+    function $(id) { return document.getElementById(id); }
+
+    function post(path, obj) {
+        try {
+            return fetch(path, {
+                method: "POST", cache: "no-store",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(obj || {}),
+            });
+        } catch (e) { return Promise.resolve(null); }
+    }
+
+    // ── ① 忙/闲上报 ────────────────────────────────
+    function setBusy(busy, why) {
+        if (busy === _busy && why === _busyWhy) return;
+        _busy = busy; _busyWhy = why;
+        post("/hotupdate/activity", { busy: busy, why: why });
+    }
+
+    function computeBusy() {
+        // 输入框有内容 = 用户正在打字（后端还会叠加"模型下载中/正在应用"两个自有判据）
+        var inp = $("msg-input");
+        if (inp && inp.value && inp.value.trim()) return "typing";
+        if (typeof _voicePlaying !== "undefined" && _voicePlaying) return "playing";
+        return "";
+    }
+
+    function watchActivity() {
+        var inp = $("msg-input");
+        if (inp) {
+            ["input", "focus", "compositionstart"].forEach(function (ev) {
+                inp.addEventListener(ev, function () { setBusy(!!computeBusy(), computeBusy()); });
+            });
+            ["blur", "compositionend"].forEach(function (ev) {
+                inp.addEventListener(ev, function () {
+                    var w = computeBusy();
+                    setBusy(!!w, w);
+                });
+            });
+        }
+        setInterval(function () {
+            var w = computeBusy();
+            setBusy(!!w, w);
+        }, 3000);
+    }
+
+    // ── ③ 草稿保留 ──────────────────────────────────
+    function saveDraft() {
+        try {
+            var inp = $("msg-input");
+            var msgs = $("messages");
+            sessionStorage.setItem(DRAFT_KEY, JSON.stringify({
+                text: inp ? inp.value : "",
+                scroll: msgs ? msgs.scrollTop : 0,
+                at: Date.now(),
+            }));
+        } catch (e) { /* 存不下也不能拦着 reload */ }
+    }
+
+    function restoreDraft() {
+        try {
+            var raw = sessionStorage.getItem(DRAFT_KEY);
+            if (!raw) return;
+            sessionStorage.removeItem(DRAFT_KEY);
+            var d = JSON.parse(raw);
+            if (Date.now() - (d.at || 0) > 60000) return;   // 太久的草稿不要（可能是上次崩的）
+            var inp = $("msg-input");
+            if (inp && d.text) {
+                inp.value = d.text;
+                if (typeof setBusy === "function") setBusy(true, "typing");
+            }
+            var msgs = $("messages");
+            if (msgs && d.scroll) msgs.scrollTop = d.scroll;
+        } catch (e) { /* 恢复失败无所谓 */ }
+    }
+
+    // ── ④ 状态展示 + 操作 ───────────────────────────
+    function esc(s) {
+        return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) {
+            return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+        });
+    }
+
+    function render(st) {
+        var box = $("hotupdate-box");
+        if (!box || !st) return;
+        var run = st.running || {};
+        var lines = [];
+        var ver = esc(run.base_version || "") +
+            (run.hot_serial ? ' <b style="color:var(--fg-accent)">hot.' + run.hot_serial + "</b>" : "");
+        lines.push('<div>运行版本：' + ver +
+            (run.patch_hash ? ' <span style="opacity:.6">' + esc(run.patch_hash) + "</span>" : "") +
+            "</div>");
+        if (!st.enabled) {
+            lines.push('<div style="opacity:.75">热更新已关闭（只保留安全吊销）</div>');
+        } else if (st.available) {
+            lines.push('<div>可更新：修复 ' + st.available.serial + " · " +
+                esc(st.available.note || "") + "</div>");
+        } else if (st.overlay_files) {
+            lines.push('<div style="opacity:.75">已应用 ' + st.overlay_files + " 个文件</div>");
+        } else {
+            lines.push('<div style="opacity:.6">没有待安装的修复</div>');
+        }
+        if (st.rolled_back_reason) {
+            lines.push('<div style="color:#e0a05c">上次修复已回退：' + esc(st.rolled_back_reason) + "</div>");
+        }
+        if (st.last_error) {
+            lines.push('<div style="opacity:.7">' + esc(st.last_error) + "</div>");
+        }
+        box.innerHTML = lines.join("");
+        var rb = $("hotupdate-rollback-btn");
+        if (rb) rb.style.display = st.applied_serial ? "" : "none";
+        var ap = $("hotupdate-apply-btn");
+        if (ap) ap.style.display = (st.enabled && st.available) ? "" : "none";
+        var tg = $("hotupdate-toggle");
+        if (tg) tg.checked = !!st.enabled;
+    }
+
+    function poll() {
+        fetch("/hotupdate/status", { cache: "no-store" })
+            .then(function (r) { return r.json(); })
+            .then(function (st) {
+                _last = st;
+                render(st);
+                // ★ 生效：后端说可以刷新了，而且此刻确实空闲 → 存草稿后刷新
+                if (st.reload_pending && st.idle) {
+                    saveDraft();
+                    location.reload();
+                }
+            })
+            .catch(function () { /* 后端在重启/不可用：下一轮再试 */ });
+    }
+
+    function wire() {
+        var tg = $("hotupdate-toggle");
+        if (tg) {
+            tg.addEventListener("change", function () {
+                post("/hotupdate/action", { action: "set_enabled", enabled: tg.checked })
+                    .then(poll);
+            });
+        }
+        var ck = $("hotupdate-check-btn");
+        if (ck) {
+            ck.addEventListener("click", function () {
+                var m = $("hotupdate-msg");
+                if (m) m.textContent = "检查中…";
+                post("/hotupdate/action", { action: "check" }).then(function (r) {
+                    return r ? r.json() : null;
+                }).then(function (d) {
+                    if (m) m.textContent = (d && d.ok) ? "已检查" : ("检查失败：" + ((d && d.error) || "网络不可达"));
+                    poll();
+                }).catch(function () { if (m) m.textContent = "检查失败"; });
+            });
+        }
+        var ap = $("hotupdate-apply-btn");
+        if (ap) {
+            ap.addEventListener("click", function () {
+                var m = $("hotupdate-msg");
+                if (m) m.textContent = "下载并安装中…";
+                post("/hotupdate/action", { action: "apply" }).then(function (r) {
+                    return r ? r.json() : null;
+                }).then(function (d) {
+                    if (m) m.textContent = (d && d.ok) ? "已安装，即将生效" : ("安装失败：" + ((d && d.error) || ""));
+                    poll();
+                }).catch(function () { if (m) m.textContent = "安装失败"; });
+            });
+        }
+        var rb = $("hotupdate-rollback-btn");
+        if (rb) {
+            rb.addEventListener("click", function () {
+                if (!confirm("回退到当前安装包的版本？")) return;
+                post("/hotupdate/action", { action: "rollback" }).then(poll);
+            });
+        }
+    }
+
+    function boot() {
+        restoreDraft();
+        wire();
+        // ★ 启动成功判据：首帧渲染完成（这里就是）→ 告诉后端"补丁是好的"
+        post("/hotupdate/boot-ok", {});
+        poll();
+        setInterval(poll, POLL_MS);
+        watchActivity();
+    }
+
+    if (document.readyState === "loading") {
+        document.addEventListener("DOMContentLoaded", boot);
+    } else {
+        boot();
+    }
+})();
+
+
+/* ── 来源：js/notice.js ── */
+// 公告 / 更新说明通道（服务端下发 + 本地缓存 + 静态兜底）
+// 见 docs/公告通道规范.md。
+//
+// 三条设计约束（都不是"顺手写的"，是有原因的）：
+//  ① **不阻塞**：先渲染 localStorage 里的上次结果，再后台联网刷新。
+//     公告是"顺带看一眼"的东西，绝不能让人打开面板时卡在网络上。
+//  ② **不拼 HTML**：服务端文本一律 createTextNode/textContent 写入。
+//     这样即便签名密钥泄露、服务端被投毒，也**注入不进来** —— 结构上不存在 XSS 面。
+//  ③ **不依赖网络**：拿不到就什么都不加，Index.html 里的内置指南照常显示。
+
+const CACHE_KEY = "firefly_notice_cache";     // 最近一次成功的 payload（含已读态镜像）
+const SEEN_OPEN_KEY = "firefly_notice_opened"; // 上次打开面板的时间（节流刷新用）
+const REFRESH_MS = 30 * 60 * 1000;            // 打开面板时最多 30 分钟联网一次
+
+let _payload = null;
+let _readTimer = null;
+
+function _ls(key, val) {
+    try {
+        if (val === undefined) return localStorage.getItem(key);
+        localStorage.setItem(key, val);
+    } catch (e) { /* 隐私模式/配额满：静默降级为"不缓存" */ }
+    return null;
+}
+
+function _readCache() {
+    try {
+        const raw = _ls(CACHE_KEY);
+        const d = raw ? JSON.parse(raw) : null;
+        return (d && typeof d === "object" && Array.isArray(d.entries)) ? d : null;
+    } catch (e) { return null; }
+}
+
+function _writeCache(p) {
+    try { _ls(CACHE_KEY, JSON.stringify(p)); } catch (e) {}
+}
+
+// ── 渲染（只用 DOM API + textContent；本文件刻意不出现任何标记字符串接口）─────
+function _el(tag, cls, text) {
+    const n = document.createElement(tag);
+    if (cls) n.className = cls;
+    if (text !== undefined && text !== null) n.appendChild(document.createTextNode(String(text)));
+    return n;
+}
+
+const _BLOCK_TAG = { p: "p", h: "h4", li: "li", tip: "p" };
+
+function _renderBlock(b) {
+    if (b.t === "img") {
+        const fig = _el("div", "notice-fig");
+        const img = document.createElement("img");
+        // 图片走独立端点：内容在服务端已按清单 sha256 校验过，文件名是白名单形态
+        img.src = API_BASE + "/notice-image?name=" + encodeURIComponent(b.name);
+        img.alt = b.alt || "";
+        img.loading = "lazy";
+        fig.appendChild(img);
+        if (b.alt) fig.appendChild(_el("div", "notice-fig-cap", b.alt));
+        return fig;
+    }
+    const tag = _BLOCK_TAG[b.t] || "p";
+    return _el(tag, "notice-b-" + b.t, b.text);
+}
+
+function _renderEntry(e) {
+    const box = _el("div", "notice-entry notice-lv-" + (e.level || "info"));
+    if (e.pinned) box.classList.add("notice-pinned");
+    const head = _el("div", "notice-ent-head");
+    head.appendChild(_el("span", "notice-ent-title", e.title));
+    if (e.date) head.appendChild(_el("span", "notice-ent-date", e.date));
+    if (e.unread) head.appendChild(_el("span", "notice-ent-new", "新"));
+    box.appendChild(head);
+    for (const b of (e.blocks || [])) box.appendChild(_renderBlock(b));
+    return box;
+}
+
+function _paint(p) {
+    const host = document.getElementById("notice-server");
+    if (!host) return;
+    host.textContent = "";                       // 清空（只走 textContent，全程不碰标记字符串）
+    const entries = (p && p.entries) || [];
+    if (!entries.length) {
+        // 一条都没有：整块不留痕迹（静态兜底照常显示）
+        return;
+    }
+    for (const e of entries) host.appendChild(_renderEntry(e));
+    const divider = _el("div", "notice-divider");
+    divider.appendChild(document.createTextNode("以下为 App 内置使用指南"));
+    host.appendChild(divider);
+}
+
+function _paintDot(n) {
+    const dot = document.getElementById("notice-dot");
+    if (dot) {
+        dot.hidden = !n;
+        dot.textContent = n > 9 ? "9+" : String(n || "");
+        dot.title = n ? `有 ${n} 条新公告` : "";
+    }
+}
+
+// ── 联网（失败一律静默：公告不配打断用户）────────────
+async function refreshNotice(force) {
+    try {
+        const url = force ? "/notice/action" : "/notice";
+        const opts = force
+            ? { method: "POST", headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ action: "check" }) }
+            : {};
+        const r = await fetch(url, opts);
+        if (!r.ok) return null;
+        const d = await r.json();
+        const p = force ? (d.payload || null) : d;
+        if (p && p.ok) {
+            _payload = p;
+            _writeCache(p);
+            _paint(p);
+            _paintDot(p.unread);
+            // ★ 后端是「先回缓存、后台联网刷新」（见 app/notice.py::payload 的说明）：
+            //   首次安装 / 缓存过期时，这一次拿到的就是**空的**，而刷新结果要几百毫秒后才有。
+            //   不跟一次的话：首页永远不亮小圆点、面板永远只有内置指南，
+            //   直到用户下次再打开面板 —— 表现为"公告功能像没做"。
+            //   （2026-09-19 真机实测抓到的：后端 serial=1、前端渲染 0 条。）
+            if (p.refreshing) _scheduleRetry();
+            else _retry = 0;
+        }
+        return p;
+    } catch (e) {
+        return null;                             // 离线/服务端没开：保持现状
+    }
+}
+
+// 后台刷新还没落地 → 过几秒自己再拉一次（最多 3 次，之后交给下次打开面板）
+let _retry = 0;
+function _scheduleRetry() {
+    if (_retry >= 3) return;
+    _retry++;
+    setTimeout(() => { refreshNotice(false); }, 4000);
+}
+
+// 标记已读（面板打开 1.5 秒后）——延迟是为了让"新"标记真的被眼睛扫到
+function _markReadSoon() {
+    clearTimeout(_readTimer);
+    _readTimer = setTimeout(async () => {
+        const p = _payload;
+        const ids = ((p && p.entries) || []).filter(e => e.unread).map(e => e.id);
+        if (!ids.length) return;
+        try {
+            await fetch("/notice/action", {
+                method: "POST", headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ action: "read", ids }),
+            });
+        } catch (e) { /* 没记上也没关系：下次打开还会提示 */ }
+        const cached = _readCache();
+        if (cached) {
+            cached.entries = (cached.entries || []).map(e => Object.assign({}, e, { unread: false }));
+            cached.unread = 0;
+            _writeCache(cached);
+        }
+        if (_payload) {
+            _payload.entries = (_payload.entries || []).map(e => Object.assign({}, e, { unread: false }));
+            _payload.unread = 0;
+        }
+        _paint(_payload);
+        _paintDot(0);
+    }, 1500);
+}
+
+// 面板打开时调用（views.js 的 toggleNotice 会调）
+function noticeOnOpen() {
+    _markReadSoon();
+    let last = 0;
+    try { last = parseInt(_ls(SEEN_OPEN_KEY) || "0", 10) || 0; } catch (e) {}
+    if (Date.now() - last < REFRESH_MS) return;
+    _ls(SEEN_OPEN_KEY, String(Date.now()));
+    refreshNotice(false);
+}
+
+// 启动：先画缓存（瞬时），再后台刷新（不 await）
+function initNotice() {
+    _payload = _readCache();
+    if (_payload) {
+        _paint(_payload);
+        _paintDot(_payload.unread);
+    }
+    // 冷启动先让首页把首帧画完，别跟聊天/历史的启动请求抢带宽
+    setTimeout(() => { refreshNotice(false); }, 2500);
+}
+
+// ★ 自启动，**不要**让 main.js 在顶层调 initNotice()（2026-09-19 真机踩到，见 docs/错误总结.md #15）：
+//   bundle 是**单作用域**的拼接产物，`main` 排在 `notice` 前面 —— 从 main 的顶层调进本模块时，
+//   本模块的顶层 `let _payload` 还没执行 ⇒ **TDZ ReferenceError** ⇒ main 顶层从这里中断，
+//   连本文件末尾的 `window.noticeOnOpen = ...` 都没跑到 ⇒ 公告功能整体静默失效
+//   （后端一切正常、界面什么都没有，52 项单测全绿）。
+//   挂在 DOMContentLoaded 上还有第二个好处：DOM 一定就绪，首帧就能画。
+window.noticeOnOpen = noticeOnOpen;
+
+function _bootNotice() { try { initNotice(); } catch (e) { /* 公告不配拖垮启动 */ } }
+if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", _bootNotice);
+} else {
+    _bootNotice();
+}

@@ -2,7 +2,7 @@
 import { SESSION_ID, sendBtn } from "./state.js";
 import { escapeHtml, showToast } from "./util.js";
 import { openSettings } from "./panels.js";
-import { MODE_NAMES, PRESET_MODES, appView, homeView, showHome } from "./views.js";
+import { MODE_NAMES, PRESET_MODES, CURRENT_MODE, appView, homeView, showHome, charName } from "./views.js";
 
 // ═══════════════════════════════════════════
 // 设定纠错助手（对齐 → 开始修改 → diff 审批 → 应用/回滚）
@@ -18,6 +18,13 @@ let _fixBusy = false;
 function fixModeLabel(mode) { return MODE_NAMES[mode] || mode; }
 
 export function openFixView() {
+    // F-6.1（2026-09-14）：进入纠错页跟随当前聊天包——原来 FIX_MODE 恒为初值 story，
+    // 用户在 haruno/自建包里点「指出问题」，读的是 story 的历史与设定、写的也是 story。
+    // 页内模式按钮仍可手动切换（setFixMode 语义不变）。
+    if (PRESET_MODES.some(m => m.id === CURRENT_MODE)) FIX_MODE = CURRENT_MODE;
+    document.querySelectorAll("#fix-view .fix-mode").forEach(b => {
+        b.classList.toggle("active", b.dataset.mode === FIX_MODE);
+    });
     homeView.classList.remove("show");
     appView.style.display = "none";
     const view = document.getElementById("fix-view");
@@ -90,7 +97,7 @@ function _fixHistMsgHtml(m) {
     const me = m.who === "user";
     return `<div class="fix-hist-msg ${me ? "me" : ""}">
         <div class="fix-hist-line">
-            <span class="fix-hist-who">${me ? "我" : "流萤"}</span>
+            <span class="fix-hist-who">${me ? "我" : escapeHtml(charName())}</span>
             <span class="fix-hist-time">${escapeHtml((m.time || "").slice(5, 16))}</span>
         </div>
         <div class="fix-hist-text">${escapeHtml(_fixHistText(m))}</div>
@@ -158,8 +165,8 @@ function _renderFix(status) {
         chat.innerHTML = status.messages.map(_fixMsgHtml).join("");
         _fixChatScroll();
     } else {
-        chat.innerHTML = `<div class="fix-empty">先说说她哪里说得不对，我会和你确认后再生成修改方案。</div>`
-                       + `<div class="fix-hint">例如：她还说自己在医疗舱，但设定里已经恢复得不错、能开机甲了。</div>`;
+        chat.innerHTML = `<div class="fix-empty">先说说角色哪里说得不对，我会和你确认后再生成修改方案。</div>`
+                       + `<div class="fix-hint">例如：角色还说自己在医疗舱，但设定里已经恢复得不错、能开机甲了。</div>`;
     }
 
     // 选项 chips：只在没有 pending 时启用（有 pending 时是改方案，选项已过期）

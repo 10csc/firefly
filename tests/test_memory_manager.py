@@ -67,7 +67,7 @@ mm = MemoryManager(
     memory_file=_make_mem_path(),
     index_file=_make_idx_path(),
 )
-result = mm.rest([], 0)
+result = mm.rest([], 0, keep_turns=0)
 check("空历史 rest 不崩溃", result is not None)
 
 
@@ -86,7 +86,7 @@ mm = MemoryManager(
 result = mm.rest([
     {"role": "user", "content": "你好"},
     {"role": "assistant", "content": "晚上好呀"},
-], 1)
+], 1, keep_turns=0)
 check("正常 rest success", result.success is True)
 check("新头部非空", len(result.new_head) > 0)
 check("integrated_turn=1", result.integrated_turn == 1)
@@ -126,7 +126,7 @@ mm_dates = MemoryManager(
 res = mm_dates.rest([
     {"role": "user", "content": "今晚看星星", "time": "2026-08-21 21:00:00"},
     {"role": "assistant", "content": "好呀", "time": "2026-08-21 21:00:05"},
-], 1, today=today_cap)
+], 1, today=today_cap, keep_turns=0)
 dates = [e.get("date") for e in res.added_entries]
 check("D4 示例日期被校正为今天", dates[0] == today_cap)
 check("D5 合规日期保留", dates[1] == today_cap)
@@ -148,7 +148,7 @@ mm_today = MemoryManager(
 res_t = mm_today.rest([
     {"role": "user", "content": "x", "time": "2026-08-22 09:00:00"},
     {"role": "assistant", "content": "y", "time": "2026-08-22 09:00:05"},
-], 1, today="2026-08-22")
+], 1, today="2026-08-22", keep_turns=0)
 check("D7 注入 today 生效（日期保留）", res_t.added_entries[0].get("date") == "2026-08-22")
 
 
@@ -188,7 +188,7 @@ mm_c = MemoryManager(
     MockClient([json.dumps({"new_head": "测试计数器。", "resolved": [], "added": []})]),
     memory_file=mem_file_c, index_file=idx_file_c,
 )
-mm_c.rest([{"role": "user", "content": "hi"}, {"role": "assistant", "content": "hello"}], 1)
+mm_c.rest([{"role": "user", "content": "hi"}, {"role": "assistant", "content": "hello"}], 1, keep_turns=0)
 after = get_counters().get("rest_count", 0)
 check("rest() 后 rest_count +1", after == before + 1)
 
@@ -218,7 +218,7 @@ mm_r = MemoryManager(
 # index 设为 0 让新对话非空
 with open(idx_file_r, "w", encoding="utf-8") as f:
     f.write(json.dumps({"last_integrated_turn": 0}))
-mm_r.rest([{"role": "user", "content": "蛋糕吃到了"}, {"role": "assistant", "content": "嗯"}], 1)
+mm_r.rest([{"role": "user", "content": "蛋糕吃到了"}, {"role": "assistant", "content": "嗯"}], 1, keep_turns=0)
 
 content_r = open(str(mem_file_r), encoding="utf-8").read()
 check("resolved 条目被标记（已完成）", "下次带蛋糕（已完成）" in content_r)

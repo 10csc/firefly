@@ -59,10 +59,12 @@ check("A6 函数体内 CURRENT_MODE 只出现 1 次（就是那行捕获）",
 check("A7 fetch 用的是捕获的 mode", "`/pack-files?mode=${encodeURIComponent(mode)}`" in lpv)
 
 print("=== B. 写回一律用捕获的包（不再是实时 CURRENT_MODE） ===")
-check("B1 保存人设文案用 mode",
-      "JSON.stringify({mode, filename: f.name, content})" in lpv)
-check("B2 恢复默认用 mode",
-      "JSON.stringify({mode, filename: f.name})" in lpv)
+# 2026-09-15：人设文案编辑已迁入管理树（pack_tree.js），写回一律用 _treeMode（树内捕获的包）
+tree = (ROOT / "app" / "static" / "js" / "panels" / "pack_tree.js").read_text(encoding="utf-8")
+check("B1 树内保存人设文案用 _treeMode（/character-file-update）",
+      "/character-file-update" in tree and "_treeMode, filename: s.file, content" in tree)
+check("B2 树内恢复默认用 _treeMode（/character-file/delete）",
+      "/character-file/delete" in tree and "_treeMode, filename: s.file" in tree)
 check("B3 恢复资产默认用 mode",
       "JSON.stringify({mode, slot})" in lpv)
 check("B4 表情包区按捕获的 mode 加载", "_loadPackStickers(mode);" in lpv)

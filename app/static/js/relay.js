@@ -188,4 +188,18 @@ async function relayTick() {
     _relayBusy = false;
 }
 // 由 main.js 在全部模块求值后调用（直接顶层 setInterval 会在 api↔relay 循环导入中撞 TDZ）
-export function startRelay() { setInterval(relayTick, 1000); }   // relay 引擎仅服务器模式（本地为 direct 直发）
+//
+// 2026-09-19 压力测试后的调整：1s → 4s + 抖动。
+// 为什么：1s 轮询 = **60 请求/分钟/用户**，是全站最大的流量来源。10× 并发（22 → 220 用户）时：
+//   · 网关限流是"每 IP 300 请求/分钟"→ 同一出口 IP（手机 CGNAT / 家庭 WiFi / 办公室）
+//     只够 ~4 个用户，第 5 个起全 429（实测：第 301 次请求返回 429）；
+//   · 220 用户 × 70 请求/分钟 ≈ 257 请求/秒，同时逼近 3Mbps 上行。
+// 降到 4s 后请求量变 1/4，代价只是"回复最多晚几秒到达"—— 而后端合并窗口本来就是 5 秒级的，
+// 用户感知不到差别。**抖动**是避免所有客户端在同一秒对齐（惊群）。
+export function startRelay() {
+    const tick = () => {
+        relayTick();
+        setTimeout(tick, 4000 + Math.random() * 1500);
+    };
+    setTimeout(tick, 1200 + Math.random() * 1200);   // 首次也错开
+}

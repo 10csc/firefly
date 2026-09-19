@@ -102,7 +102,7 @@ svg text{font-family:var(--body)}
 <body>
 <div id="layout">
   <nav id="nav">
-    <div class="brand">流萤 · 架构重构蓝图<small>v0.9 · 2026-09-13 · HEAD 3a65e6a</small></div>
+    <div class="brand">流萤 · 架构重构蓝图<small>v0.9 · 2026-09-13 · 阶段 0-3 + 2.8 已落地</small></div>
     <div id="navbtns"></div>
     <div class="toc-note">数据全部来自仓库实读证据；<br>灰色标注 = 不可见信息。</div>
   </nav>
@@ -124,25 +124,41 @@ D.meta = {
 
 /* 模块清单（行数为 2026-09-13 实测 wc -l） */
 D.modules = [
-  // [路径, 行数, 域, 职责]
-  ["app/server.py",214,"入口","HTTP 骨架/多开检测/启动（迁移+首启引导显式调用）"],
+  // [路径, 行数, 域, 职责]（行数为 2026-09-13 阶段 2.8 后实测 wc -l）
+  ["app/server.py",227,"入口","HTTP 骨架/多开检测/启动（迁移+首启引导显式调用）"],
   ["app/shared_http.py",112,"入口","ResponseMixin/UTF8/知识预载/优雅关闭"],
-  ["app/orchestrator.py",521,"编排","对话流水线：检索→分析→回复→组织；阶段进度；pipeline 观测"],
-  ["app/routes.py",782,"路由","聊天主链（合并窗口/hint/flush/rest/undo/清空/历史/主动性）+ 分发表聚合"],
+  ["app/orchestrator.py",457,"编排","对话流水线：检索→分析→回复→组织；阶段进度"],
+  ["app/modules/pipeline_log.py",82,"编排","流水线观测（2.8 拆出）：内存环+落盘+按用户读取"],
+  ["app/api/router.py",145,"路由","仅 POST/GET 分发表注册"],
+  ["app/api/chat.py",411,"路由","聊天主链：合并窗口+流水线入口（chat/hint/flush/history/stage）"],
+  ["app/api/chat_ops.py",239,"路由","操作端点：rest/undo/clear/open-mode/proactive/time"],
+  ["app/api/debug.py",68,"路由","调试端点：metrics/requests/pipeline/journal/user-memory"],
+  ["app/api/data_export.py",279,"路由","导出/导入/本地备份"],
+  ["app/api/data_sync.py",354,"路由","同步 HTTP 编排（manifest/import/export/now）"],
+  ["app/api/pack_lifecycle.py",280,"路由","建包/AI 向导端点/归档/两级删除（2.8 拆出）"],
+  ["app/routes.py",120,"路由","兼容层（re-export，PyInstaller 静态分析锚点）"],
   ["app/routes_common.py",236,"路由","会话表/模式解析/回复写盘/图片配额"],
-  ["app/routes_config.py",338,"路由","配置/供应商/Key/modes/余额"],
+  ["app/routes_config.py",396,"路由","配置/供应商/Key/modes/余额"],
   ["app/routes_assets.py",324,"路由","表情包/图片上传/资产 index/收藏"],
-  ["app/routes_pack.py",339,"路由","角色包 CRUD/包文件编辑/包资产/建卡向导端点"],
-  ["app/routes_data.py",942,"路由","导出/导入/本地备份/快照恢复主体/同步 HTTP 编排"],
-  ["app/routes_snapshot.py",242,"路由","全包快照 CRUD + pre-restore"],
+  ["app/routes_pack.py",301,"路由","包文件编辑/包资产/包配置 + 生命周期 re-export"],
+  ["app/routes_snapshot.py",328,"路由","全包快照 CRUD + pre-restore + manifest 写入"],
   ["app/routes_fix.py",193,"路由","设定纠错 7 端点"],
   ["app/routes_update.py",199,"路由","检查更新/下载（GitHub/Gitee 双源）"],
   ["app/routes_auth.py",111,"路由","本地版→认证服务器代理"],
   ["app/routes_relay.py",89,"路由","relay 中转三端点"],
-  ["app/modules/app_config.py",999,"内核","路径公式/配置状态/供应商/预设包注册表/用户上下文/包级配置/迁移+首启"],
-  ["app/modules/storage.py",215,"内核","原子写/数据类型注册表 REGISTRY/migrate_once"],
+  ["app/routes_data.py",67,"路由","兼容层（2.2 拆分后 re-export）"],
+  ["app/core/paths.py",139,"内核","路径公式/resolve_asset/ensure_mode_root"],
+  ["app/core/userctx.py",101,"内核","contextvars 用户上下文/overlay/配额钩子"],
+  ["app/core/config.py",460,"内核","配置加载/供应商/get_client（三通道）"],
+  ["app/core/presets.py",133,"内核","注册表扫描/运行时访问器/备份白名单"],
+  ["app/core/preset_parse.py",190,"内核","preset.json 解析/knowledge_dirs 校验/槽位三态推导"],
+  ["app/core/pack_registry.py",277,"内核","packs.json 读写+自愈（包存在性唯一权威）"],
+  ["app/core/migrations.py",280,"内核","启动迁移链/首启引导/陈旧副本清理"],
+  ["app/modules/app_config.py",102,"内核","兼容层（re-export core/*，消费方不变）"],
+  ["app/modules/storage.py",258,"内核","原子写/数据类型注册表 REGISTRY（含 owner）"],
   ["app/modules/llm_base.py",327,"内核","设定槽位加载/提示词渲染/JSON 解析/token 统计"],
-  ["app/modules/api_client.py",597,"内核","_CompatClient/RelayClient/QuotaClient、重试、超时、SSRF 防护"],
+  ["app/modules/api_client.py",449,"内核","_CompatClient/QuotaClient、重试、SSRF、PEP562 转发"],
+  ["app/modules/api_client_relay.py",192,"内核","RelayClient/relay 队列（2.8 拆出）"],
   ["app/modules/sync_engine.py",255,"内核","清单扫描/行级合并/新者胜/冲突备份（纯函数）"],
   ["app/modules/auth_store.py",113,"内核","本地 token 存取（auth.json）"],
   ["app/modules/multipart.py",78,"内核","multipart 解析"],
@@ -155,43 +171,63 @@ D.modules = [
   ["app/modules/llm_retriever.py",258,"领域·对话","LLM 子代理知识检索（整库注入→压缩摘要）"],
   ["app/modules/context_manager.py",243,"领域·对话","上下文窗口/token 估算"],
   ["app/modules/conversation_store.py",470,"领域·对话","conversation.jsonl 追加/分页/回灌/撤回"],
-  ["app/modules/memory_manager.py",454,"领域·记忆","rest 整理 memory.md/wake 加载/手账更新"],
+  ["app/modules/memory_manager.py",417,"领域·记忆","rest 整理/wake 加载/手账更新"],
+  ["app/modules/memory_files.py",114,"领域·记忆","记忆路径/迁移/游标自愈（2.8 拆出）"],
   ["app/modules/proactive.py",337,"领域·主动性","主动性 facade（gate+gen 汇聚）"],
-  ["app/modules/proactive_gate.py",459,"领域·主动性","门控/信号量/冷却/忽视计数"],
+  ["app/modules/proactive_gate.py",478,"领域·主动性","门控/信号量/冷却/忽视计数"],
   ["app/modules/proactive_gen.py",301,"领域·主动性","主动消息动机决策与生成"],
-  ["app/modules/setting_fix.py",568,"领域·纠错","纠错 Agent（对齐+提案+静态校验）"],
+  ["app/modules/setting_fix.py",385,"领域·纠错","纠错：六文件白名单/静态校验/应用"],
+  ["app/modules/setting_fix_agents.py",215,"领域·纠错","对齐/提案两个 LLM Agent（2.8 拆出）"],
   ["app/modules/setting_fix_store.py",381,"领域·纠错",".setting_fix/ 中间态存储"],
-  ["app/modules/pack_forge.py",279,"领域·角色包","AI 建卡向导状态机（内存会话）"],
+  ["app/modules/pack_forge.py",281,"领域·角色包","AI 建卡向导状态机（内存会话）"],
   ["app/modules/favorite_store.py",144,"领域·对话","收藏快照存储"],
-  ["app/tools/sticker_picker.py",428,"领域·表情包","表情包注册表/选择/迁移"],
-  ["server/server_app.py",658,"服务器","多用户入口/认证端点/托管配额钩子/管理台服务"],
-  ["server/db.py",444,"服务器","SQLite：users/sessions/proxy_usage/settings/notices + 顺序迁移"],
+  ["app/domain/stickers/picker.py",482,"领域·表情包","表情包注册表/选择/迁移/detach_pack（2.7 归位）"],
+  ["app/infra/sync/restore.py",466,"基础设施","恢复引擎：安全审查/原子换入/两阶段恢复"],
+  ["app/infra/sync/manifest.py",115,"基础设施","快照 _manifest.json 口径与核对（2.8 拆出）"],
+  ["server/server_app.py",46,"服务器","入口层（硬置 FIREFLY_SERVER + re-export + main）"],
+  ["server/app.py",338,"服务器","装配+FireflyHandler 分发"],
+  ["server/auth_endpoints.py",96,"服务器","/auth/* 端点 mixin"],
+  ["server/admin.py",256,"服务器","管理台（8766 本机+令牌）"],
+  ["server/quota.py",79,"服务器","托管额度（C-2：账号授权+个人日限+全站池）"],
+  ["server/db.py",491,"服务器","SQLite：users/sessions/proxy_usage/settings/notices + 顺序迁移 v3"],
   ["server/auth.py",258,"服务器","注册/登录/重置/限流/scrypt"],
   ["server/mail.py",151,"服务器","QQ 邮箱验证码 SMTP"],
-  ["server/download_server.py",777,"服务器","8787 网关：下载白名单/反代/限流/统计"],
+  ["server/download_server.py",279,"服务器","8787 网关：Handler/并发/反代（2.8 拆出数据层）"],
+  ["server/download_lib.py",281,"服务器","下载统计/请求日志/限流/Gitee 解析"],
+  ["server/download_page.py",258,"服务器","下载页模板"],
   ["android/.../MainActivity.kt",554,"安卓壳","WebView/引擎启动/回落/权限/文件选择/下载/JS桥"],
   ["android/.../KeepAliveService.kt",188,"安卓壳","前台服务保活/后台定时器/通知"],
 ];
 
 /* 依赖边（from → to，标签） */
 D.deps = [
-  ["server.py","routes.py","分发"],["server.py","app_config","run_legacy_migration/run_startup_init"],
-  ["server_app.py","routes.py","复用全部业务路由"],["server_app.py","db/auth/mail","账号体系"],["server_app.py","app_config","用户上下文/配额钩子"],
+  ["server.py","api/router.py","分发"],["server.py","core/migrations","run_legacy_migration/run_startup_init（显式）"],
+  ["server_app.py","server/app.py","入口层→装配（先硬置 FIREFLY_SERVER）"],["server/app.py","quota/admin/auth_endpoints","账号/额度/管理台"],
+  ["server/app.py","api/router.py","复用全部业务路由"],["download_server.py","download_lib.py","统计/限流/Gitee（2.8 拆出）"],
   ["MainActivity.kt","app/ (Chaquopy)","start_server.py 内嵌"],["MainActivity.kt","server :8787","回落/服务器模式"],
-  ["routes.py","orchestrator","handle_chat"],["routes.py","conversation_store","写盘/分页"],["routes.py","memory_manager","rest"],["routes.py","proactive","信号量"],
-  ["routes_data.py","sync_engine","纯函数合并"],["routes_data.py","storage","原子写/注册表"],["routes_snapshot.py","routes_data","_restore_full_snapshot"],
-  ["orchestrator","llm_retriever","知识摘要"],["orchestrator","analyzer","意图/核查"],["orchestrator","polisher","生成回复"],["orchestrator","organizer","表情包/旁白"],["orchestrator","context_manager","历史窗口"],
+  ["api/router.py","api/chat.py · chat_ops.py · debug.py · data_* · pack_lifecycle.py","端点注册"],
+  ["api/chat.py","orchestrator","handle_chat（经 _run_pipeline）"],["api/chat.py","conversation_store","写盘/分页"],
+  ["api/chat_ops.py","memory_manager","rest/wake"],["api/chat_ops.py","proactive","信号量"],
+  ["api/data_sync.py","sync_engine","纯函数合并"],["api/data_export.py","infra/sync/restore.py","导入/备份/恢复"],
+  ["routes_snapshot.py","infra/sync/manifest.py","manifest 写入/核对"],["infra/sync/restore.py","infra/sync/manifest.py","清单口径（2.8）"],
+  ["orchestrator","llm_retriever","知识摘要"],["orchestrator","analyzer","意图/核查"],["orchestrator","polisher","生成回复"],
+  ["orchestrator","organizer","表情包/旁白"],["orchestrator","context_manager","历史窗口"],["orchestrator","pipeline_log","观测（2.8）"],
   ["analyzer/polisher/organizer/retriever","llm_base","设定槽位/统计"],["analyzer/polisher/organizer/retriever","api_client","LLM 调用"],
-  ["memory_manager","app_config","mode_data_dir"],["proactive_gate","app_config","proactive_log"],
-  ["pack_forge","web_search","资料搜索"],["sticker_picker","app_config","USER_DIR/stickers"],
-  ["全部模块","app_config","USER_DIR/MODES/配置（唯一公式源）"],["routes_*/orchestrator","storage","原子写/REGISTRY 策略"],
+  ["api_client","api_client_relay","PEP562 惰性转发（2.8）"],
+  ["memory_manager","memory_files","路径/游标自愈（2.8）"],
+  ["core/presets.py","core/preset_parse.py","解析层"],["core/presets.py","core/pack_registry.py","packs.json 唯一权威（3.2）"],
+  ["core/pack_registry.py","core/presets.py","仅函数内 lazy 读 MODES（防环）"],
+  ["pack_forge","web_search","资料搜索"],["domain/stickers/picker","core/paths","USER_DIR/stickers（2.7 归位）"],
+  ["routes_pack.py","api/pack_lifecycle.py","生命周期 re-export（2.8）"],
+  ["全部模块","core/*（经 app_config 兼容层）","USER_DIR/MODES/配置（唯一公式源）"],
+  ["api/*/orchestrator","storage","原子写/REGISTRY 策略（含 owner）"],
 ];
 
 /* 业务能力地图 */
 D.caps = [
   {g:"对话核心",items:[
     ["角色扮演对话","用户发消息→5s 合并窗口→四段流水线→多条约回","orchestrator.py:293 handle_chat","conversation.jsonl"],
-    ["知识检索","设定库整体注入 system→LLM 压缩摘要（缓存高命中）","llm_retriever.py:73 _load_knowledge","knowledge/ + database/dialogues_compiled/"],
+    ["知识检索","设定库整体注入 system→LLM 压缩摘要（缓存高命中）","llm_retriever.py:73 _load_knowledge","story/knowledge/（包内归位 2026-09-14）"],
     ["图片消息","发图落盘 {mode}/images/，当轮原图注入回复器（原生识图）","routes_assets.py:23 upload_image","{mode}/images/（blob 同步）"],
     ["引用与收藏","长按消息→引用快照进 jsonl/收藏进 favorites.json","conversation_store.py:48 sanitize_quote","favorites.json"],
     ["撤回/清空","undo 撤最后一轮（游标回退）/clear-history 全清","routes.py:435/:469","conversation.jsonl + .memory_index"]]},
@@ -229,7 +265,7 @@ D.caps = [
 /* 追溯矩阵：需求→能力→对象→数据→接口→代码 */
 D.trace = [
   ["「和流萤发消息聊天」","对话流水线","Message/Turn（seq,who,type,content,quote）","{mode}/data/conversation.jsonl","POST /chat · /chat/hint · /chat/flush","routes.py:122 chat → orchestrator.handle_chat"],
-  ["「她懂剧情设定」","知识检索","KnowledgeSummary","knowledge/ · database/dialogues_compiled/（只读）","（内部，无端点）","llm_retriever.py"],
+  ["「她懂剧情设定」","知识检索","KnowledgeSummary","story/knowledge/（只读，包内归位 2026-09-14）","（内部，无端点）","llm_retriever.py"],
   ["「她记得我们说过的话」","记忆整理/加载","MemoryHead/FactEntry","{mode}/data/memory.md + .memory_index","POST /rest · GET /wake-status · GET/POST /user-memory","memory_manager.py"],
   ["「她有记手账的习惯」","手账","JournalDoc","{mode}/journal/手账.md","GET /journal · POST /save-journal","llm_base.load_journal / routes.py:60"],
   ["「她会主动找我」","主动消息","ProactiveTurn（proactive 标记行）","{mode}/data/proactive_log.jsonl + proactive.json","POST /proactive-status","proactive_gate.py + proactive_gen.py"],
@@ -259,7 +295,7 @@ D.ownership = [
   ["角色设定","{mode}/character/{core,identity,sms_samples}.md · prompts/*.md","character 包槽位（llm_base）","character_file_update（白名单 10 文件）","newest","bundled 兜底；未修改副本启动期清理"],
   ["包清单","{mode}/character/preset.json","app_config(_parse_preset)","create_pack/forge_finish/快照恢复","newest","schema 字段已加（默认 1，宽进）"],
   ["包资产","{mode}/character/assets/{avatar,cover}.* + opening.json","routes_pack","upload_pack_asset / delete","扩展名放行","服务器版 /assets/* 免登录（见问题 R-11）"],
-  ["知识库","knowledge/ · database/dialogues_compiled/","仓库内容（只读）","人工维护 + compile_dialogues.py","不同步","knowledge_dirs 无越界校验（R-10）"],
+  ["知识库","assets/character/story/knowledge/（含 dialogues_compiled/）","story 角色包内容（只读，包内归位 2026-09-14）","人工维护 + compile_dialogues.py","不同步","R-10 越界校验已修（09-13）"],
   ["表情包","user_data/stickers/（注册表+本体）","sticker_picker","add_sticker/sticker-update/delete","metadata（本体本地）","换机图不在（只有元数据）"],
   ["聊天图片","{mode}/images/","routes_assets","upload_image / sync blob","blob（整传不合并）","200MB/用户配额"],
   ["全局配置","user_data/config.json","app_config","set_config/save_config","exclude（含 Key）","迁移备份留 5 份 .bak-*"],
@@ -391,11 +427,11 @@ D.problems = [
   ["F-3","P2","包详情页无代际保护","panels.js loadPackView 无 _modeGen 捕获；写回用点击时 CURRENT_MODE","快速切包时 A 的文案可写进 B","加 gen 捕获校验；写回用捕获 mode；实测：子加载/资产/表情包/防抖配置一并收口","A→B 快速切换后保存不错包","fixed"],
   ["F-6.x","P3","前端十余处角色字面量未变量化","panels.js:256 硬编码「开拓者」；views/fix/guide 等 12+ 处「流萤/剧情模式」字面量","自建包调试面板/通知显示错称呼","随包变量化补齐","自建包 UI 无流萤字面量","open"],
   ["R-03","P2","安卓后端副本入库漂移史","android/app/src/main/python/backend/ 为构建期 syncBackend 产物仍入库（曾 7 陈旧+4 缺失）","看仓库做判断会被误导","产物移出 git（gitignore + rm --cached）；tools/check_backend_sync.py（123 行，已新增）纳入发版清单","app/ 改动后门禁必失败","partial"],
-  ["X-1","P1","app_config.py 999 行上帝模块","路径/配置/供应商/注册表/用户上下文/包级配置/迁移/首启 8 职责一身","改动半径大；import 期副作用历史事故源","拆 core/{paths,userctx,config,presets,migrations}.py（行为不变）","全量测试 35/35 绿 + check 计数不变","open"],
-  ["X-2","P1","routes_data.py 942 行四职责混合","导出/备份/快照恢复/同步（客户端编排+服务端合并）同文件","942 行超 800 必须拆分线","拆 api/data_export.py + api/data_sync.py + domain/sync/restore.py","路由键集 oracle 对比不变","open"],
-  ["X-3","P2","chat() 单函数 ~215 行","routes.py:122-336 消息摄取/窗口/流水线调用三段耦合","函数 >80 行重点线","拆 ingest_messages / window_merge / run_pipeline 三函数","e2e_20turns 行为一致","open"],
-  ["X-4","P2","mode_root 读路径带 mkdir 副作用","app_config.py:465-471 getter 内 mkdir","「读」产生「写」，审计/测试易踩坑","getter 不建目录，写路径显式 ensure","无数据时读端点零新目录","open"],
-  ["X-5","P2","memory_manager import 期迁移残留","memory_manager.py:85 模块级 _migrate_legacy()","import 即改文件系统","移入 run_startup_init 链","import 零副作用","open"],
+  ["X-1","P1","app_config.py 999 行上帝模块","路径/配置/供应商/注册表/用户上下文/包级配置/迁移/首启 8 职责一身","改动半径大；import 期副作用历史事故源","已拆 core/{paths,userctx,config,presets,migrations}.py（app_config 退化为兼容层）","58 脚本全绿 + oracle 8/8 + PyInstaller 冒烟过","fixed"],
+  ["X-2","P1","routes_data.py 942 行四职责混合","导出/备份/快照恢复/同步（客户端编排+服务端合并）同文件","942 行超 800 必须拆分线","已拆 api/data_export.py + data_sync.py + infra/sync/restore.py（2.8 再拆 manifest.py）","oracle 不变 + 58 脚本绿","fixed"],
+  ["X-3","P2","chat() 单函数 ~215 行","routes.py:122-336 消息摄取/窗口/流水线调用三段耦合","函数 >80 行重点线","已拆 _ingest_user_messages/_merge_window/_run_pipeline；2.8 再抽 chat_ops.py（chat.py 411 行）","test_routes_split 19 项 + 全量绿","fixed"],
+  ["X-4","P2","mode_root 读路径带 mkdir 副作用","app_config.py:465-471 getter 内 mkdir","「读」产生「写」，审计/测试易踩坑","已改纯计算 + ensure_mode_root（阶段 2.6）","test_no_side_effects 11 项：import/读端点零落盘","fixed"],
+  ["X-5","P2","memory_manager import 期迁移残留","memory_manager.py:85 模块级 _migrate_legacy()","import 即改文件系统","已移入启动链（migrate_legacy_memory，阶段 2.6）","import 零副作用（test_no_side_effects）","fixed"],
   ["C-1","P0","跨账号会话内容泄漏（/pipeline）","orchestrator.get_pipeline_log 曾直接切全局 _PIPELINE_LOG","任何登录账号可拉他人最近 20 轮完整私聊","已改只读 per-user 落盘文件 + _scope 复核（orchestrator.py:251-280）","两账号互拉为空","fixed"],
   ["R-01","P0","自建包快照恢复整包丢弃","routes_data.py 旧实现白名单=启动期 cfg.MODES","换机/重装自建包静默丢失","已改两阶段：先落 preset.json+reload_presets 后解数据（:330-393）","含未注册包快照在空环境恢复可用","fixed"],
   ["R-02","P0","恢复非原子（rmtree 后解压）","旧 _import_zip_to_mode/_restore_full_snapshot","中途失败数据空窗","已改临时目录+rename 三段式 _swap_dir_into_place（:169-199）","注入异常旧数据完好","fixed"],
@@ -409,35 +445,45 @@ D.problems = [
 /* 文件行数热力图数据（wc -l 实测，>800 红 /500-800 橙 /300-500 黄 /其余绿；bundle 为构建产物单独标记） */
 D.heatmap = [
   ["app/static/js/bundle.js",4818,"构建产物（build_frontend_bundle.py 生成，非源码）","art"],
-  ["app/modules/app_config.py",999,"内核","hot"],["app/routes_data.py",942,"路由","hot"],
-  ["app/routes.py",782,"路由","warn"],["server/download_server.py",777,"服务器","warn"],
-  ["server/server_app.py",658,"服务器","warn"],["app/modules/api_client.py",597,"内核","warn"],
-  ["app/modules/setting_fix.py",568,"领域","warn"],["app/orchestrator.py",521,"编排","warn"],
-  ["app/modules/conversation_store.py",470,"领域","mid"],["app/modules/proactive_gate.py",459,"领域","mid"],
-  ["app/modules/memory_manager.py",454,"领域","mid"],["server/db.py",444,"服务器","mid"],
-  ["app/tools/sticker_picker.py",428,"领域","mid"],["app/modules/setting_fix_store.py",381,"领域","mid"],
-  ["app/modules/organizer.py",366,"领域","mid"],["app/routes_pack.py",339,"路由","mid"],
-  ["app/routes_config.py",338,"路由","mid"],["app/modules/proactive.py",337,"领域","mid"],
-  ["app/modules/llm_base.py",327,"内核","mid"],["app/routes_assets.py",324,"路由","mid"],
-  ["app/modules/polisher.py",324,"领域","mid"],["app/modules/proactive_gen.py",301,"领域","mid"],
-  ["app/modules/pack_forge.py",279,"领域","ok"],["app/modules/llm_retriever.py",258,"领域","ok"],
-  ["server/auth.py",258,"服务器","ok"],["app/modules/sync_engine.py",255,"内核","ok"],
+  ["server/db.py",491,"服务器","ok"],["app/domain/stickers/picker.py",482,"领域","ok"],
+  ["app/modules/proactive_gate.py",478,"领域","ok"],["app/modules/conversation_store.py",470,"领域","ok"],
+  ["app/infra/sync/restore.py",466,"基础设施","ok"],["app/core/config.py",460,"内核","ok"],
+  ["app/orchestrator.py",457,"编排","ok"],["app/modules/api_client.py",449,"内核","ok"],
+  ["app/modules/memory_manager.py",417,"领域","ok"],["app/api/chat.py",411,"路由","ok"],
+  ["app/routes_config.py",396,"路由","ok"],["app/modules/setting_fix.py",385,"领域","ok"],
+  ["app/modules/setting_fix_store.py",381,"领域","ok"],["app/modules/organizer.py",366,"领域","ok"],
+  ["app/api/data_sync.py",354,"路由","ok"],["server/app.py",338,"服务器","ok"],
+  ["app/modules/proactive.py",337,"领域","ok"],["app/routes_snapshot.py",328,"路由","ok"],
+  ["app/modules/llm_base.py",327,"内核","ok"],["app/routes_assets.py",324,"路由","ok"],
+  ["app/modules/polisher.py",324,"领域","ok"],["app/routes_pack.py",301,"路由","ok"],
+  ["app/modules/proactive_gen.py",301,"领域","ok"],["server/download_lib.py",281,"服务器","ok"],
+  ["app/modules/pack_forge.py",281,"领域","ok"],["app/core/migrations.py",280,"内核","ok"],
+  ["app/api/pack_lifecycle.py",280,"路由","ok"],["server/download_server.py",279,"服务器","ok"],
+  ["app/api/data_export.py",279,"路由","ok"],["app/core/pack_registry.py",277,"内核","ok"],
+  ["server/download_page.py",258,"服务器","ok"],["server/auth.py",258,"服务器","ok"],
+  ["app/modules/storage.py",258,"内核","ok"],["app/modules/llm_retriever.py",258,"领域","ok"],
+  ["server/admin.py",256,"服务器","ok"],["app/modules/sync_engine.py",255,"内核","ok"],
   ["app/modules/context_manager.py",243,"领域","ok"],["app/modules/analyzer.py",243,"领域","ok"],
-  ["app/routes_snapshot.py",242,"路由","ok"],["app/routes_common.py",236,"路由","ok"],
-  ["app/modules/storage.py",215,"内核","ok"],["app/server.py",214,"入口","ok"],
+  ["app/api/chat_ops.py",239,"路由","ok"],["app/routes_common.py",236,"路由","ok"],
+  ["app/server.py",227,"入口","ok"],["app/modules/setting_fix_agents.py",215,"领域","ok"],
   ["app/routes_update.py",199,"路由","ok"],["app/routes_fix.py",193,"路由","ok"],
-  ["android MainActivity.kt",554,"安卓壳","warn"],["android KeepAliveService.kt",188,"安卓壳","ok"],
-  ["server/mail.py",151,"服务器","ok"],["app/modules/favorite_store.py",144,"领域","ok"],
-  ["app/modules/auth_store.py",113,"内核","ok"],["app/shared_http.py",112,"入口","ok"],
-  ["app/routes_auth.py",111,"路由","ok"],["app/modules/web_search.py",108,"领域","ok"],
-  ["app/routes_relay.py",89,"路由","ok"],["app/modules/multipart.py",78,"内核","ok"],
+  ["app/modules/api_client_relay.py",192,"内核","ok"],["app/core/preset_parse.py",190,"内核","ok"],
+  ["app/api/router.py",145,"路由","ok"],["app/modules/favorite_store.py",144,"领域","ok"],
+  ["app/core/paths.py",139,"内核","ok"],["app/core/presets.py",133,"内核","ok"],
+  ["app/routes.py",120,"路由（兼容层）","ok"],["app/infra/sync/manifest.py",115,"基础设施","ok"],
+  ["app/modules/memory_files.py",114,"领域","ok"],["app/modules/auth_store.py",113,"内核","ok"],
+  ["app/shared_http.py",112,"入口","ok"],["app/routes_auth.py",111,"路由","ok"],
+  ["app/modules/web_search.py",108,"领域","ok"],["app/modules/app_config.py",102,"内核（兼容层）","ok"],
+  ["app/routes_relay.py",89,"路由","ok"],["app/modules/pipeline_log.py",82,"编排","ok"],
+  ["app/modules/multipart.py",78,"内核","ok"],["app/api/debug.py",68,"路由","ok"],
+  ["app/routes_data.py",67,"路由（兼容层）","ok"],["server/server_app.py",46,"服务器（入口层）","ok"],
   ["app/modules/metrics.py",35,"内核","ok"],["app/modules/vision.py",19,"内核","ok"],
-  ["app/static/js/panels.js",824,"前端","hot"],["app/static/js/views.js",682,"前端","warn"],
-  ["app/static/js/chat.js",563,"前端","warn"],["app/static/js/settings.js",503,"前端","warn"],
-  ["app/static/js/fix.js",421,"前端","mid"],["app/static/js/api.js",299,"前端","ok"],
-  ["app/static/js/chat_render.js",287,"前端","ok"],["app/static/js/guide.js",248,"前端","ok"],
+  ["android MainActivity.kt",554,"安卓壳","warn"],["android KeepAliveService.kt",188,"安卓壳","ok"],
+  ["app/static/js/views.js",682,"前端","warn"],["app/static/js/chat.js",563,"前端","warn"],
+  ["app/static/js/settings.js",503,"前端","warn"],["app/static/js/panels/packs.js",497,"前端","ok"],
+  ["app/static/js/fix.js",421,"前端","ok"],["app/static/js/panels.js",101,"前端（外壳，2.5 拆分后）","ok"],
   ["app/static/index.html",975,"前端","hot"],["app/static/style.css",1331,"前端","hot"],
-  ["tests/（35 文件合计）",6316,"测试 890 条 check","mid"],
+  ["tests/（58 个 test_*.py）",9000,"测试（独立脚本体系，约数）","ok"],
 ];
 
 /* 路线图 */
@@ -490,35 +536,31 @@ D.roadmap = [
 ];
 
 /* 目标目录树 */
-D.targetTree = `firefly/
+D.targetTree = `firefly/  （阶段 0-3 + 2.8 已落地后的**现状**，依赖规则见上）
 ├── app/                          # 本地版=服务器版共用内核（唯一事实源不变）
-│   ├── server.py                 # 仅入口：装配+启动（<150 行）
+│   ├── server.py(227)            # 仅入口：装配+启动
 │   ├── core/                     # 平台内核（不依赖领域）
-│   │   ├── paths.py              # ROOT/USER_DIR/resolve_asset（读路径零副作用）
-│   │   ├── userctx.py            # contextvars 用户上下文/overlay
-│   │   ├── config.py             # 配置加载/供应商/迁移（providers）
-│   │   ├── presets.py            # 角色包注册表/解析/schema
-│   │   ├── migrations.py         # 启动迁移链（统一入口+备份+报告）
-│   │   └── storage.py            # 原子写/REGISTRY（+owner 字段）
-│   ├── domain/                   # 业务域（限界上下文）
-│   │   ├── conversation/         # analyzer/polisher/organizer/retriever/context/store/orchestrator
-│   │   ├── memory/               # memory_manager/journal
-│   │   ├── proactive/            # gate/gen/facade
-│   │   ├── character/            # pack_forge/包槽位/资产
-│   │   ├── stickers/             # sticker_picker（从 tools/ 归位）
-│   │   └── fixer/                # setting_fix(+store)
-│   ├── infra/
-│   │   ├── llm/                  # api_client/llm_base/vision/web_search
-│   │   ├── sync/                 # sync_engine/restore 引擎
-│   │   └── http/                 # shared_http/multipart
-│   ├── api/                      # 控制器层（每域一文件，<350 行）
-│   │   ├── router.py             # 仅 POST_ROUTES/GET_ROUTES 注册
-│   │   ├── chat.py / pack.py / data_export.py / data_sync.py / …
+│   │   ├── paths.py(139)         # ROOT/USER_DIR/resolve_asset/ensure_mode_root（读零副作用）
+│   │   ├── userctx.py(101)       # contextvars 用户上下文/overlay
+│   │   ├── config.py(460)        # 配置/供应商/get_client（direct/relay/proxy）
+│   │   ├── presets.py(133)       # 注册表扫描/访问器（re-export 下层）
+│   │   ├── preset_parse.py(190)  # preset.json 解析/三态推导（最底层）
+│   │   ├── pack_registry.py(277) # packs.json 唯一权威 + 自愈
+│   │   └── migrations.py(280)    # 启动迁移链（统一入口+备份+报告）
+│   ├── domain/                   # 业务域（已落：stickers；conversation/memory 等仍在 modules/，逐版迁移）
+│   ├── modules/                  # 领域模块现状：analyzer/polisher/organizer/retriever/
+│   │   │                         #   conversation_store/context_manager/memory_manager(+memory_files)/
+│   │   │                         #   proactive×3/setting_fix(+agents)/pack_forge/favorite_store
+│   │   └── api_client(+_relay)/llm_base/sync_engine/storage/auth_store/multipart/metrics/vision/web_search
+│   ├── infra/sync/               # restore.py(466) 恢复引擎 + manifest.py(115) 清单口径
+│   ├── api/                      # 控制器层：router(145) 仅注册 + chat(411)/chat_ops(239)/debug(68)/
+│   │                             #   data_export(279)/data_sync(354)/pack_lifecycle(280)
 │   ├── assets/character/         # bundled 角色包（不变）
-│   └── static/                   # 前端唯一源（bundle 为产物）
-├── server/                       # 服务器版壳（auth/admin/quota/gateway 各自成文件）
-├── android/                      # Kotlin 壳（backend/ 产物移出 git）
-└── user_data/                    # 布局冻结：{uid?}/{pack}/{character,data,journal,images}`;
+│   └── static/                   # 前端唯一源（panels/ 已拆 packs/data/debug；bundle 为产物）
+├── server/                       # 壳：server_app(46 入口) + app(338 装配) + auth_endpoints + admin + quota
+│                                 #   + db(491) + auth + mail + download_server/lib/page（8787 网关三件）
+├── android/                      # Kotlin 壳（backend/ 镜像由 check_backend_sync 门禁看护）
+└── user_data/                    # 布局冻结：{uid?}/{pack}/{character,data,journal,images} + packs.json`;
 
 /* 导航 */
 D.nav = [
@@ -698,12 +740,12 @@ function renderDeps(){
      领域模块之间不互相 import 对方存储；<code>app_config（拆后 core/）</code> 是唯一路径/配置公式源；
      <code>storage.REGISTRY</code> 是唯一数据策略源。节点悬停看职责。`);
   const layers = [
-    ["入口层",["server.py 214","server_app.py 658","MainActivity.kt 554"],"rgba(125,211,252,.5)"],
-    ["路由层 api/",["routes.py 782","routes_data.py 942","routes_pack.py 339","routes_config.py 338","routes_assets.py 324","routes_snapshot.py 242","routes_fix/update/auth/relay/common"],"rgba(232,160,191,.5)"],
+    ["入口层",["server.py 227","server_app.py 46（入口层）","MainActivity.kt 554"],"rgba(125,211,252,.5)"],
+    ["路由层 api/",["api/chat.py 411","api/data_sync.py 354","routes_config.py 396","routes_assets.py 324","routes_snapshot.py 328","routes_pack.py 301","api/chat_ops·data_export·pack_lifecycle·debug·router","routes_*.py 多数为兼容层"],"rgba(232,160,191,.5)"],
     ["编排层",["orchestrator.py 521","（阶段进度+pipeline 观测）"],"rgba(217,242,79,.5)"],
     ["领域层 domain/",["analyzer 243","polisher 324","organizer 366","llm_retriever 258","conversation_store 470","context_manager 243","memory_manager 454","proactive ×3 (337+459+301)","setting_fix ×2 (568+381)","pack_forge 279","sticker_picker 428","favorite_store 144"],"rgba(192,132,252,.5)"],
-    ["内核 core/ + infra/",["app_config.py 999（待拆）","api_client.py 597","llm_base.py 327","sync_engine.py 255","storage.py 215","auth_store 113 / multipart 78 / metrics 35 / vision 19 / web_search 108"],"rgba(123,216,143,.5)"],
-    ["服务器专属",["db.py 444","auth.py 258","mail.py 151","download_server.py 777"],"rgba(251,146,60,.55)"],
+    ["内核 core/ + infra/",["core/config.py 460","api_client.py 449(+relay 192)","llm_base.py 327","core/pack_registry.py 277","sync_engine.py 255 / storage.py 258","infra/sync: restore 466 + manifest 115"],"rgba(123,216,143,.5)"],
+    ["服务器专属",["db.py 491","auth.py 258","app.py 338 / admin.py 256 / quota.py 79","download_server 279 + lib 281 + page 258"],"rgba(251,146,60,.55)"],
   ];
   let s=""; const W=1200, colW=185, rowH=64;
   const pos={};
@@ -877,7 +919,7 @@ function renderHeatmap(){
   const b = view("heatmap","⑩ 文件行数热力图",
     `阈值（Python/JS/Kotlin 通用，理由：本项目函数密度高、注释密）：<span class="tag t-p0">>800 必须拆分</span>
      <span class="tag t-p1">500-800 重点</span><span class="tag t-p2">300-500 警告</span><span class="tag t-fixed"><300 健康</span>；
-     函数 >50 行警告 / >80 行重点（已知最大：routes.py chat() ≈215 行）。点击行尾标签可按域筛选。`);
+     函数 >50 行警告 / >80 行重点。阶段 0-3 + 2.8 后：**后端已无 >500 行文件**（2026-09-13 实测），剩余热点为前端静态件（index.html/style.css）与安卓壳 MainActivity.kt。点击行尾标签可按域筛选。`);
   const colors={hot:"var(--red)",warn:"var(--orange)",mid:"var(--warm)",ok:"var(--green)",art:"var(--faint)"};
   let h=`<div class="filters" id="hf"></div><div id="hlist" class="panel">`;
   const domains=["全部","路由","内核","领域","服务器","前端","安卓壳","入口","编排"];

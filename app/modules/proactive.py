@@ -74,10 +74,10 @@ def check_and_generate(session: dict, client, mode: str = DEFAULT_MODE,
                        enabled: bool = True, hard: int = 4, soft: float = 0.5,
                        prob_enabled: bool = True, prob_value: float = 0.3,
                        hidden: bool = False,
-                       polisher_model: str = "deepseek-v4-flash-vision-exp",
+                       polisher_model: str = "deepseek-flash",
                        polisher_effort: str = "high",
                        polisher_temperature: float = 0.5,
-                       organizer_model: str = "deepseek-v4-flash-vision-exp",
+                       organizer_model: str = "deepseek-flash",
                        organizer_effort: str = "none",
                        memory_head: str = "") -> ProactiveResult:
     """主动式 + 概率式 + 隐藏式统一入口。

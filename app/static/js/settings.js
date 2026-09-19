@@ -1,7 +1,8 @@
 // 设置面板配置：供应商与模型管理 / 主动性预设 / 配置加载（loadConfig）与自动保存（_scheduleAutoSave）
 import { S } from "./state.js";
-import { getLocalApiKey } from "./util.js";
+import { getLocalApiKey, escapeHtml } from "./util.js";
 import { IS_SERVER, applyApiSource } from "./api.js";
+import { uiSelectEnhance } from "./ui_select.js";
 
 // ═══════════════════════════════════════════
 // 配置管理
@@ -90,6 +91,7 @@ function _renderProviderSelect() {
         sel.appendChild(opt);
     }
     if (_providers.length) sel.value = _activeId;
+    try { sel._uiSelectSync && sel._uiSelectSync(); } catch (e) {}   // 自绘层跟随 options 重建
 }
 
 function _renderModelSuggest() {
@@ -97,7 +99,7 @@ function _renderModelSuggest() {
     const p = _activeProviderObject();
     if (!dl) return;
     const models = (p && p.models && p.models.length) ? p.models
-        : ["deepseek-v4-flash", "deepseek-v4-pro", "deepseek-v4-flash-vision-exp"];
+        : ["deepseek-flash", "deepseek-v4-pro"];
     dl.innerHTML = "";
     for (const m of models) {
         const opt = document.createElement("option");
@@ -112,9 +114,14 @@ function _updateKeyGuide() {
     const p = _activeProviderObject();
     if (!p) { box.innerHTML = ""; return; }
     const isDp = /deepseek\.com/.test(p.base_url || "");
+    // A5（审计 2026-09-15）：p.name / p.base_url 是用户表单原样输入（持久化在
+    // localStorage），原样插 innerHTML = 存储型 XSS——可直接读同域 firefly_providers
+    // 里的 API Key 与 firefly_token。先转义再拼模板。
+    const pname = escapeHtml(p.name || "");
+    const pbase = escapeHtml(String(p.base_url || "").replace(/\/+$/, ""));
     box.innerHTML = isDp
-        ? `① 浏览器打开 <b>platform.deepseek.com</b>，注册并登录<br>② 左侧「API Keys」→ 创建，复制 <b>sk-</b> 开头的 Key<br>③ 粘贴到「${p.name}」的 Key 输入框 → 保存（Key 只存本机，不会上传）`
-        : `① 打开供应商控制台（<b>${p.base_url.replace(/\/+$/, "")}</b> 所在站点主页）创建 API Key<br>② 粘贴到「${p.name}」的 Key 输入框 → 保存（Key 只存本机，不会上传）`;
+        ? `① 浏览器打开 <b>platform.deepseek.com</b>，注册并登录<br>② 左侧「API Keys」→ 创建，复制 <b>sk-</b> 开头的 Key<br>③ 粘贴到「${pname}」的 Key 输入框 → 保存（Key 只存本机，不会上传）`
+        : `① 打开供应商控制台（<b>${pbase}</b> 所在站点主页）创建 API Key<br>② 粘贴到「${pname}」的 Key 输入框 → 保存（Key 只存本机，不会上传）`;
 }
 
 function _openProviderForm(provider) {
@@ -307,10 +314,10 @@ export async function loadConfig() {
         for (const [k, id] of Object.entries(ids)) el[k] = document.getElementById(id);
 
         const normEffort = v => (v === "low" ? "low" : v);
-        if (el.a) el.a.value = data.analyzer_model || "deepseek-v4-flash-vision-exp";
-        if (el.r) el.r.value = data.retriever_model || "deepseek-v4-flash-vision-exp";
-        if (el.o) el.o.value = data.organizer_model || "deepseek-v4-flash-vision-exp";
-        if (el.p) el.p.value = data.polisher_model || "deepseek-v4-flash-vision-exp";
+        if (el.a) el.a.value = data.analyzer_model || "deepseek-flash";
+        if (el.r) el.r.value = data.retriever_model || "deepseek-flash";
+        if (el.o) el.o.value = data.organizer_model || "deepseek-flash";
+        if (el.p) el.p.value = data.polisher_model || "deepseek-flash";
         if (el.re) el.re.value = normEffort(data.retriever_effort || "none");
         if (el.ae) el.ae.value = normEffort(data.analyzer_effort || "high");
         if (el.pe) el.pe.value = normEffort(data.polisher_effort || "high");
@@ -420,7 +427,7 @@ export async function loadConfig() {
             exitRow.style.display = "";
             const exitBtn = _$("app-exit-btn");
             if (exitBtn) exitBtn.onclick = () => {
-                if (!confirm("确定退出流萤吗？聊天数据已实时保存，下次启动继续。")) return;
+                if (!confirm("确定退出 Firefly 吗？聊天数据已实时保存，下次启动继续。")) return;
                 exitBtn.disabled = true;
                 exitBtn.textContent = "正在退出…";
                 fetch("/shutdown", {method: "GET"}).catch(() => {});
@@ -429,6 +436,7 @@ export async function loadConfig() {
 
         _configLoaded = true;
         updateSettingsSummaries();
+        uiSelectEnhance(document.getElementById("settings-panel"));   // 自绘下拉（原生 select 弹窗无法主题化）
         return data;
     } catch (e) { return {has_key: false}; }
 }

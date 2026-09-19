@@ -1,4 +1,4 @@
-# 流萤（Firefly）— 角色扮演 Agent
+# Firefly（萤火虫）— 角色扮演 Agent
 
 基于 DeepSeek API（Flash + Think High）的独立角色扮演系统。开源版，本地运行，不依赖服务器。
 
@@ -101,7 +101,7 @@ pyinstaller firefly.spec --noconfirm
 
 ## 服务器版（可选，云端部署）
 
-把流萤部署到云服务器后，**鸿蒙 / iOS / PC 用服务器版 APP（WebView 壳）加载服务器前端**（无需安装）：
+把 Firefly 部署到云服务器后，**鸿蒙 / iOS / PC 用服务器版 APP（WebView 壳）加载服务器前端**（无需安装）：
 
 - **用户自带 API Key**：Key 只存在用户浏览器（localStorage），服务器只处理逻辑、用用户的 Key 调 DeepSeek API，**不落盘不存储**
 - **多用户隔离**：数据按按账号（user_id）分目录（`user_data/{uuid}/`），互不可见
@@ -109,7 +109,7 @@ pyinstaller firefly.spec --noconfirm
 
 ```bash
 # 部署（详见 docs/部署说明.md）
-scp -r server app knowledge database root@<公网IP>:/opt/firefly/
+scp -r server app database root@<公网IP>:/opt/firefly/   # 2026-09-14 起 knowledge 已并入 app/assets/character/story/knowledge/
 # 服务器上：python3 -m venv venv && venv/bin/pip install requests
 nohup venv/bin/python server/server_app.py > /var/log/firefly.log 2>&1 &
 ```
@@ -146,7 +146,7 @@ firefly/
 │   ├── tools/              表情包选择器
 │   ├── assets/character/   内置设定模板（core/identity/sms_samples/用户设定）
 │   └── static/             前端
-├── knowledge/              只读知识层（检索器扫描区：世界观 + story/ 个人经历 + 剧本）
+├── app/assets/character/story/knowledge/  story 包知识层（世界观 + 个人经历 + 剧本 + 对话压缩版，包内归位 2026-09-14）
 ├── database/               原始资料（wiki 抓取/对话原文，仅查证，不扫描）
 ├── user_data/              运行时用户数据（升级保留；exe 同级 / 安卓内部存储）
 ├── _trash/                 弃用文件暂存区（标注原位置与逻辑，见 _trash/README.md）

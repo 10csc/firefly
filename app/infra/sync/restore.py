@@ -14,12 +14,25 @@ import time
 from pathlib import Path
 
 from modules import app_config as cfg
+# 快照清单口径与排除目录（阶段 2.8 起由 infra/sync/manifest.py 承载；此处 re-export，
+# 打包端 routes_snapshot、恢复端本模块、routes_data 兼容层与多处测试的取用路径不变）。
+from infra.sync.manifest import (   # noqa: F401
+    _EXPORT_EXCLUDE_DIRS, _pack_digest, _read_snapshot_manifest, _sha256_file,
+    _verify_snapshot_manifest,
+)
 
 logger = logging.getLogger(__name__)
 
-
-# 导出/备份打包排除的内部目录（同步冲突备份/设定纠错中间态，不是用户数据）
-_EXPORT_EXCLUDE_DIRS = {".sync_backups", ".setting_fix", ".sync_conflicts"}
+# re-export 面（阶段 2.8）：以下名字实现已移至 infra/sync/manifest.py，
+# 本模块是恢复/备份/清单的对外入口（routes_snapshot、routes_data 兼容层、多处测试经此处取用）。
+__all__ = [
+    "_EXPORT_EXCLUDE_DIRS", "_pack_digest", "_read_snapshot_manifest", "_sha256_file",
+    "_verify_snapshot_manifest",
+    "_IMPORT_MAX_BYTES", "_IMPORT_MAX_FILE_BYTES", "_IMPORT_MAX_TOTAL_BYTES", "_BACKUP_KEEP",
+    "_zip_safe_entries", "_backup_dir", "_backup_current_mode", "_swap_dir_into_place",
+    "_import_zip_to_mode", "_is_snapshot_zip", "_pack_restorable", "_restore_full_snapshot",
+    "_prune_auto_backups",
+]
 
 
 # ══ 数据导入 / 本地备份 ════
@@ -37,33 +50,6 @@ _IMPORT_MAX_TOTAL_BYTES = 100 * 1024 * 1024   # 包内解压总量上限
 
 _BACKUP_KEEP = 10                             # 每模式保留最近手动备份份数
 
-
-# ── 快照清单口径（3.4）────────────────────────────────────────────
-# 打包端（routes_snapshot）与恢复端核对用的是**同一份**哈希口径，故放在这里（两侧都依赖的数据层），
-# 避免"两边各写一份、日后悄悄漂移"。
-def _sha256_file(fp: Path) -> str:
-    """文件 sha256（读失败返回 ""，调用方按"无法核对"处理，不致命）。"""
-    import hashlib
-    h = hashlib.sha256()
-    try:
-        with open(fp, "rb") as f:
-            for chunk in iter(lambda: f.read(1 << 20), b""):
-                h.update(chunk)
-    except OSError:
-        return ""
-    return h.hexdigest()
-
-
-def _pack_digest(entries) -> str:
-    """一个包（或 stickers 集合）的 sha256 汇总：对 `(相对路径, 文件sha256)` 排序后逐行哈希。
-
-    口径：`sha256( "{rel}\\0{filehash}\\n" ... )` —— 路径参与哈希（改名/换文件一定变），
-    排序保证与打包顺序无关。空集合返回 sha256("") 而不是报错（"这个包在快照里没有文件"是合法状态）。"""
-    import hashlib
-    h = hashlib.sha256()
-    for rel, fh in sorted(entries):
-        h.update(f"{rel}\0{fh}\n".encode("utf-8"))
-    return h.hexdigest()
 
 # 自动备份（auto-/pre-restore-）的滚动配额（C-3，2026-09-13）。
 # 原状：`_backup_current_mode` 只写不删，每次导入/恢复都在 backups/ 里堆一份全量 zip；
@@ -120,23 +106,30 @@ def _prune_auto_backups(bdir: Path, mode: str, prefix: str, keep: int, current: 
         logger.warning("自动备份裁剪失败（不影响本次备份）: %s", e)
 
 
-def _backup_current_mode(mode: str, prefix: str) -> None:
+def _backup_current_mode(mode: str, prefix: str, root: Path | None = None) -> None:
     """把当前模式数据打成 zip 存到 backups/（导入/恢复前自动备份，防误操作）。空目录跳过。
-    写入后按前缀滚动裁剪（C-3）：auto 留 _BACKUP_KEEP 份、pre-restore 留 3 份。"""
-    root = cfg.mode_root(mode)
+    写入后按前缀滚动裁剪（C-3）：auto 留 _BACKUP_KEEP 份、pre-restore 留 3 份。
+
+    root（B6，审计 2026-09-15）：显式数据根，None = cfg.mode_root(mode)。
+    恢复自建包阶段 1 用它传 pack_dir——此时包尚未 register 进 MODES，
+    mode_root(pid) 会把未注册 pid **静默回退成默认包**（paths.pack_root 文档
+    警告过的坑），绝不能隐式走默认公式。备份目录取 root.parent/backups，
+    与模式备份同一位置（user 根/backups）。"""
+    root = cfg.mode_root(mode) if root is None else root
     if not any(root.rglob("*")):
         return
     import io as _io
     import zipfile as _zipfile
-    _backup_dir(mode).mkdir(parents=True, exist_ok=True)
-    fp = _backup_dir(mode) / f"{prefix}-{mode}-{time.strftime('%Y%m%d-%H%M%S')}.zip"
+    bdir = root.parent / "backups"
+    bdir.mkdir(parents=True, exist_ok=True)
+    fp = bdir / f"{prefix}-{mode}-{time.strftime('%Y%m%d-%H%M%S')}.zip"
     with _zipfile.ZipFile(fp, "w", _zipfile.ZIP_DEFLATED) as zf:
         for f in sorted(root.rglob("*")):
             if f.is_file():
                 zf.write(f, f.relative_to(root).as_posix())
     keep = _AUTO_KEEP.get(prefix)
     if keep:
-        _prune_auto_backups(_backup_dir(mode), mode, prefix, keep, fp.name)
+        _prune_auto_backups(bdir, mode, prefix, keep, fp.name)
 
 
 def _swap_dir_into_place(tmp: Path, root: Path) -> str:
@@ -170,6 +163,52 @@ def _swap_dir_into_place(tmp: Path, root: Path) -> str:
         return ""
     except Exception as e:
         return f"目录切换失败（未改动任何数据）: {e}"
+
+
+def recover_swap_leftovers(base: Path | None = None) -> list[str]:
+    """启动期回收（B7，审计 2026-09-15）：扫描用户数据根一层的换入/换出残留目录。
+
+    背景：`_swap_dir_into_place` 的「root → .restore_old → tmp → root」三段式，
+    进程若死在两段 rename 之间，目标目录不存在 → 读取链**静默回退 bundled**
+    （对话/记忆/手账"消失"），全仓原先没有任何启动期回收。
+
+    只自动处理一种致命形态：**X.restore_old 存在而 X 不存在 → rename 回滚**
+    （救回被换走的数据；这正是"死在第一段 rename 之后"的现场）。
+    其余残留（X 存在时的 .restore_old = 换入已完成但清理失败的旧备份；
+    .restore_tmp/.import_tmp/.pack_tmp/.pack_stage = 解压或换入未完成）一律
+    **留置并告警，绝不自动删除**——保留现场供人工判断（解压中途的 tmp 可能
+    是半截数据，自动补完等于把半成品当正式数据）。
+
+    处理顺序保证正确性：同名 X 的 .import_tmp/.pack_stage 按字典序先于
+    .restore_old 被扫到，但它们对"X 不存在"只留置不动作；.restore_old 随后
+    回滚出 X，此时 tmp 转为"目标已存在"留置——最终 X = 旧数据（可读），
+    tmp = 孤儿（留待人工清理）。
+    幂等：正常完成的流程不残留；对同一现场二次扫描结果一致。"""
+    notes: list[str] = []
+    root = Path(base) if base is not None else Path(cfg._user_ctx_dir() or cfg.USER_DIR)
+    try:
+        entries = sorted(p for p in root.iterdir() if p.is_dir())
+    except OSError:
+        return notes
+    suffixes = (".restore_old", ".restore_tmp", ".import_tmp", ".pack_tmp", ".pack_stage")
+    for p in entries:
+        name = p.name
+        hit = next((s for s in suffixes if name.endswith(s)), None)
+        if hit is None:
+            continue
+        target = root / name[: -len(hit)]
+        if hit == ".restore_old" and not target.exists():
+            try:
+                p.rename(target)
+                msg = f"已回滚 {name} → {target.name}（上次恢复被中断，数据已找回）"
+            except OSError as e:
+                msg = f"回滚失败 {name}: {e}（请人工处理）"
+        else:
+            why = "目标目录已存在" if target.exists() else "换入未完成"
+            msg = f"留置 {name}（{why}，请人工检查后处理）"
+        logger.warning("启动回收：%s", msg)
+        notes.append(msg)
+    return notes
 
 
 def _import_zip_to_mode(data: bytes, mode: str, backup_prefix: str = "auto") -> tuple[bool, str, int]:
@@ -273,81 +312,6 @@ def _pack_restorable(top: str) -> bool:
     return pid not in cfg.PRESETS
 
 
-def _read_snapshot_manifest(zf) -> dict | None:
-    """读快照里的 `_manifest.json`（3.4）。缺失/损坏 → None（旧 zip 走现逻辑）。"""
-    import json as _json
-    try:
-        raw = zf.read("_manifest.json")
-    except KeyError:
-        return None
-    except Exception as e:
-        logger.warning("快照 manifest 读取失败，按旧格式恢复: %s", e)
-        return None
-    try:
-        man = _json.loads(raw.decode("utf-8"))
-    except Exception as e:
-        logger.warning("快照 manifest 解析失败，按旧格式恢复: %s", e)
-        return None
-    return man if isinstance(man, dict) else None
-
-
-def _verify_snapshot_manifest(zf, entries, man: dict) -> dict:
-    """按 manifest 核对 zip 内容，产出可回传的摘要（3.4）。
-
-    核对口径：对每个清单里的包，用**同一份** `_pack_digest` 复算 zip 条目哈希并比对。
-    `verified=False` 只告警不中止 —— 快照可能被手工改过（用户有权改自己的备份），
-    此时"照旧恢复 + 明确告知不可信"比"直接拒绝"更符合备份工具的定位；真正的安全审查
-    （zip slip / 炸弹 / 大小）在 `_zip_safe_entries` 与 `_validate_snapshot_zip`，与本核对无关。
-
-    **刻意不做过滤**：清单不用于"只恢复清单里的条目"。手改 zip 里多出来的目录仍按现逻辑走
-    （宁可多恢复，不可因为清单缺一条就静默丢数据）；清单的作用是**核对 + 上报**。"""
-    import zipfile as _zipfile
-    per_top: dict[str, list] = {}
-    for name, info in entries:
-        parts = name.split("/")
-        if len(parts) < 2:
-            continue
-        rel = "/".join(parts[1:])
-        if any(p in _EXPORT_EXCLUDE_DIRS for p in parts[1:]):
-            continue
-        try:
-            with zf.open(info) as f:
-                import hashlib as _hashlib
-                h = _hashlib.sha256()
-                for chunk in iter(lambda: f.read(1 << 20), b""):
-                    h.update(chunk)
-            per_top.setdefault(parts[0], []).append((rel, h.hexdigest()))
-        except Exception:
-            per_top.setdefault(parts[0], [])
-    out_packs, ok_all, missing = [], True, []
-    for p in man.get("packs") or []:
-        if not isinstance(p, dict) or not p.get("id"):
-            continue
-        pid = str(p["id"])
-        actual = per_top.get(pid)
-        if actual is None:
-            missing.append(pid)
-            ok_all = False
-            out_packs.append({"id": pid, "in_manifest": True, "in_zip": False, "ok": False})
-            continue
-        ok = (not p.get("sha256")) or (_pack_digest(actual) == p.get("sha256"))
-        ok_all = ok_all and ok
-        out_packs.append({"id": pid, "in_manifest": True, "in_zip": True,
-                          "files": len(actual), "ok": ok})
-    # zip 里有、清单里没有的顶层包目录（手改/旧清单）也报出来
-    man_ids = {str(p.get("id")) for p in (man.get("packs") or []) if isinstance(p, dict)}
-    extra = sorted(t for t in per_top
-                   if t not in man_ids and t != "stickers" and _pack_restorable(t))
-    if missing or extra or not ok_all:
-        logger.warning("快照清单核对：verified=%s 缺失=%s 清单外=%s",
-                       ok_all, missing or "-", extra or "-")
-    return {"snapshot_version": man.get("snapshot_version", 1),
-            "app_version": man.get("app_version", ""),
-            "created_at": man.get("created_at", ""),
-            "packs": out_packs, "extra_in_zip": extra, "missing_in_zip": missing,
-            "verified": ok_all and not missing}
-
-
 def _restore_full_snapshot(data: bytes, backup: bool = True,
                            summary: dict | None = None) -> tuple[bool, str, int]:
     """恢复全包快照 zip（所有角色包 + 用户表情包；_config.json 不自动恢复）。
@@ -437,6 +401,18 @@ def _restore_full_snapshot(data: bytes, backup: bool = True,
                 _sh.rmtree(stage, ignore_errors=True)
                 ignored_packs.append(pid)
                 continue
+            # B6（审计 2026-09-15）：阶段 1 换入 character/ **之前**先备份——原实现
+            # backup 只在阶段 2b 才打，此时 character/ 已被快照内容覆盖，「pre-restore
+            # 备份」存的是新内容，旧角色定义无法回滚。备份失败即中止该包恢复
+            # （宁可恢复失败，不可丢用户当前的角色定义；与 _import_zip_to_mode 的
+            # 「备份失败即中止」同一哲学）。root 必须显式传 pack_dir：此时尚未
+            # register，mode_root(pid) 会静默回退默认包。
+            if backup and pack_dir.exists() and any(pack_dir.rglob("*")):
+                try:
+                    _backup_current_mode(pid, "pre-restore", root=pack_dir)
+                except Exception as e:
+                    _sh.rmtree(stage, ignore_errors=True)
+                    return False, f"[{pid}] 恢复前备份失败（未改动任何数据）: {e}", n
             char_tmp = user_root / (pid + ".pack_tmp")
             if char_tmp.exists():
                 _sh.rmtree(char_tmp, ignore_errors=True)

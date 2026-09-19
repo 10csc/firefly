@@ -88,6 +88,30 @@ def mode_character_dir(mode: str = None) -> Path:
     return mode_root(mode) / "character"
 
 
+def hotupdate_root() -> Path:
+    """热更新覆盖层根目录（与 user_data **平级**，见 docs/热更新规范.md）。
+
+    与 `voice/` 同样的理由放这里：与 user_data 平级 ⇒ 任何"遍历 user_data"的操作
+    （备份/快照/导出/同步/清理历史）**结构上碰不到它**；卸载清空、覆盖升级保留。
+
+    ⚠️ **安卓覆盖安装不会清它** —— 装了新整包后，旧覆盖层会盖住新 APK 的代码。
+       所以"base 版本变了就清空"必须由启动逻辑主动做（`hotupdate/state.py::on_startup`）。
+
+    开发机：{仓库根}/hotupdate/（gitignored）；安卓：{FIREFLY_DATA_DIR}/hotupdate/。
+    """
+    return USER_DIR.parent / "hotupdate"
+
+
+def notice_root() -> Path:
+    """公告缓存根（与 hotupdate/ 平级、同样不进 user_data，见 `app/notice.py`）。
+
+    与 hotupdate 放同一层的理由完全一致：任何"遍历 user_data"的操作（备份/快照/导出/
+    同步/清理历史）**结构上碰不到它**；它是**可再生缓存**（丢了下次联网自动重建），
+    所以也不需要被备份。
+    """
+    return USER_DIR.parent / "notice"
+
+
 def mode_data_dir(mode: str = None) -> Path:
     return mode_root(mode) / "data"
 

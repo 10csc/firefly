@@ -4,10 +4,11 @@ import { initAuth, showAuthModule, IS_SERVER } from "./api.js";
 import { showToast } from "./util.js";
 import { closeMenu, openSettings } from "./panels.js";
 import { renderMessages, scrollToBottom } from "./chat_render.js";
-import { resetBatchWindow } from "./chat.js";
+import { resetBatchWindow, _clearQuote } from "./chat.js";
 import { loadHistory } from "./chat_history.js";
 import { openFixView } from "./fix.js";
 import { initAssets } from "./relay.js";
+import { uiSelectEnhance } from "./ui_select.js";
 
 // ═══ 入口收敛（A5 底部导航已于 0.8.1 移除）：聊天页全屏只留输入栏，
 // 首页轮播图进入聊天、返回键/首页按钮回首页、设置走首页右上角 ⚙ / 汉堡菜单 ═══
@@ -92,12 +93,12 @@ window.toggleTheme = toggleTheme;
 export const homeView = document.getElementById("home-view");
 export const appView = document.getElementById("app");
 
-// 当前模式：story=剧情模式；haruno=春日手信（流萤想象的普通学生生活）
+// 模式（仅两类）：story=故事/剧情模式；haruno=剧本模式（有旁白与环境描写）
 // 角色预设化：模式清单来自后端注册表（GET /modes），前端不写死包列表
 export let CURRENT_MODE = "story";
 let _lastMode = null;   // 上次进入聊天时的模式（切换时重载历史）
 export let _modeGen = 0;       // 模式代际：切换时递增，飞行中的异步渲染/历史加载任务作废丢弃
-export const MODE_NAMES = { story: "剧情模式", haruno: "春日手信" };   // 默认两内置；loadModes 后按注册表刷新
+export const MODE_NAMES = { story: "剧情模式", haruno: "剧本模式" };   // 默认两内置；loadModes 后按注册表刷新
 export const PRESET_MODES = [];   // /modes 清单（id/name/presentation/desc/tagline/cover/avatar/has_opening）
 // 归档包清单（3.5）：归档 = 不进 PRESET_MODES（不在 /modes 的 modes 里），但数据与清单条目都在。
 // 单独存一份是为了让首页能画出"已归档"区块——否则归档就等于把包弄丢：看不见、恢复不了。
@@ -135,6 +136,20 @@ export function modeName(id) { return MODE_NAMES[id] || id; }
 export function currentPreset() {
     return PRESET_MODES.find(m => m.id === CURRENT_MODE) || PRESET_MODES[0] || null;
 }
+
+/** 当前角色卡的**角色名**（角色卡化铁律：框架任何地方都不许写角色名字面量）。
+ *  取不到返回空串 —— 调用方自行决定降级（名字行不渲染 / 文案省略称呼），
+ *  **不要**回落到某个具体角色名，否则自建卡会显示别人的名字。 */
+export function charName() {
+    const p = currentPreset();
+    return ((p && (p.char_name || p.name)) || "").toString().trim();
+}
+
+/** 当前角色卡的**用户称呼**（同上：取不到返回空串，不回落字面量）。 */
+export function userName() {
+    const p = currentPreset();
+    return ((p && p.user_name) || "").toString().trim();
+}
 export function setCurrentMode(mode) {   // ESM 导出只读绑定，外部经此切换
     _applyMode(mode);
 }
@@ -157,11 +172,14 @@ export async function loadModes() {
         }
     } catch (e) {}
     if (!PRESET_MODES.length) {
+        // 离线兜底：只给**渲染必需**的最小信息（id/模式名/演出形态/图）。
+        // **不带 char_name / user_name** —— 那是角色卡数据，正常从 /modes 取；
+        // 兜底路径下名字行为空（宁可不显示，也不在框架里写死某个角色名）。
         PRESET_MODES.push(
             {id: "story", name: "剧情模式", presentation: "sticker", desc: "", tagline: "",
-             cover: "/assets/character/story/assets/cover.png", avatar: "/assets/character/story/assets/avatar.png", has_opening: false, char_name: "流萤"},
-            {id: "haruno", name: "春日手信", presentation: "narration", desc: "", tagline: "",
-             cover: "/assets/character/haruno/assets/cover.png", avatar: "/assets/character/haruno/assets/avatar.png", has_opening: true, char_name: "流萤"});
+             cover: "/assets/character/story/assets/cover.png", avatar: "/assets/character/story/assets/avatar.png", has_opening: false},
+            {id: "haruno", name: "剧本模式", presentation: "narration", desc: "", tagline: "",
+             cover: "/assets/character/haruno/assets/cover.png", avatar: "/assets/character/haruno/assets/avatar.png", has_opening: true});
     }
     // 启动恢复当前包（F-6.3）：候选逐个校验，全不合法才回退注册表首包
     const pick = [_savedMode(), serverDefault, "story"].find(id => id && PRESET_MODES.some(m => m.id === id))
@@ -181,28 +199,45 @@ window.__modesReload = async () => {
 // 动态导入产生第二份 ESM 模块实例）
 window.__getPresets = () => PRESET_MODES;
 window.__setCurrentMode = (mode) => setCurrentMode(mode);
+// PC 三栏外壳（pc_shell.js，独立 classic script）读当前包用：它看不到 bundle 作用域里的
+// CURRENT_MODE，所以给一个只读 getter（不要给它写入口，切包一律走 enterMode）。
+window.__getCurrentMode = () => CURRENT_MODE;
 
-// 进入某包的管理页（卡片角标/轮播角标入口）：切到该包 + 打开角色包管理
-function managePack(mode) {
-    _applyMode(mode);
-    try { window.openMenuTab("pack"); } catch (e) {}
-}
-window.managePack = managePack;
-// 轮播角标：管理当前轮播位置的包
+// 进入某包的管理页（卡片角标/轮播角标入口）：切到该包 + 打开角色编辑页。
+// （2026-09-14 修复：此处原有第二个同名 managePack 定义（openPackView 包装），函数声明提升下
+//  后者覆盖前者，菜单里又没有 "pack" 这个 tab，旧定义实为死代码+误导——已删，统一走 openPackView。）
 document.getElementById("carousel-manage-btn")?.addEventListener("click", (e) => {
     e.stopPropagation();
     const m = PRESET_MODES[carouselIndex];
-    if (m) managePack(m.id);
+    if (m) openPackView(m.id);
 });
 
-// ── 新建角色包（阶段7，本地版）──
+// ── 新建角色卡（阶段7，本地版）──
+// 命名统一（2026-09-18）：角色名_模式名_创建时间（月日_时分），如「流萤_剧情_0918_0041」。
+// 同角色允许建多个包（后端不校验 char_name 唯一），靠这个名字区分。
+function _defaultPackName(charName, presentation) {
+    const d = new Date();
+    const p2 = n => String(n).padStart(2, "0");
+    const label = presentation === "narration" ? "剧本" : "剧情";
+    return `${charName || "角色"}_${label}_${p2(d.getMonth() + 1)}${p2(d.getDate())}_${p2(d.getHours())}${p2(d.getMinutes())}`;
+}
+
 function togglePackCreate(show) {
     const p = document.getElementById("pack-create-panel");
     if (!p) return;
     const visible = p.style.display !== "none";
     const target = (show === undefined) ? !visible : !!show;
     p.style.display = target ? "block" : "none";
-    if (target) document.getElementById("pc-name").focus();
+    if (target) {
+        const nameEl = document.getElementById("pc-name");
+        // 名称留空时预填默认名（用户可改；留空提交后端也会按同规则生成）
+        if (nameEl && !nameEl.value.trim()) {
+            const cn = (document.getElementById("pc-char")?.value || "").trim();
+            const pres = document.getElementById("pc-presentation")?.value || "sticker";
+            nameEl.value = _defaultPackName(cn, pres);
+        }
+        nameEl?.focus();
+    }
 }
 window.togglePackCreate = togglePackCreate;
 
@@ -211,7 +246,8 @@ document.getElementById("pc-submit")?.addEventListener("click", async () => {
     const charName = document.getElementById("pc-char").value.trim();
     const userName = document.getElementById("pc-user").value.trim();
     const presentation = document.getElementById("pc-presentation").value;
-    if (!name || !charName || !userName) { showToast("包名称、角色名、对方称呼都必填"); return; }
+    // 名称可留空：后端按「角色名_模式名_月日_时分」生成（同角色多包靠它区分）
+    if (!charName || !userName) { showToast("角色名、对方称呼都必填"); return; }
     try {
         const resp = await fetch("/pack-create", {method: "POST",
             headers: {"Content-Type": "application/json"},
@@ -228,102 +264,7 @@ document.getElementById("pc-submit")?.addEventListener("click", async () => {
     } catch (e) { showToast("网络错误"); }
 });
 
-// ── AI 建卡向导（搜索 + 分步生成）──
-const _forge = { session: "", step: "", drafts: {} };
 
-function togglePackForge(show) {
-    const p = document.getElementById("pack-forge-panel");
-    if (!p) return;
-    const visible = p.style.display !== "none";
-    const target = (show === undefined) ? !visible : !!show;
-    p.style.display = target ? "block" : "none";
-    if (target) document.getElementById("pf-query").focus();
-}
-window.togglePackForge = togglePackForge;
-
-function _pfStatus(t) { const el = document.getElementById("pf-status"); if (el) el.textContent = t || ""; }
-
-document.getElementById("pf-start")?.addEventListener("click", async () => {
-    const query = document.getElementById("pf-query").value.trim();
-    if (!query) { showToast("先描述想创建的角色"); return; }
-    const btn = document.getElementById("pf-start");
-    btn.disabled = true;
-    _pfStatus("正在联网搜索并生成第一步（核心设定），可能要十几秒…");
-    try {
-        const resp = await fetch("/pack-forge/start", {method: "POST",
-            headers: {"Content-Type": "application/json"},
-            body: JSON.stringify({
-                query,
-                char_name: document.getElementById("pf-char").value.trim(),
-                user_name: document.getElementById("pf-user").value.trim(),
-                presentation: document.getElementById("pf-presentation").value,
-            })});
-        const data = await resp.json();
-        if (!data.ok) { _pfStatus(data.error || "生成失败"); btn.disabled = false; return; }
-        _forge.session = data.session;
-        _forge.step = data.step;
-        _forge.drafts = { [data.step]: data.draft };
-        _pfShowDraft(data);
-        _pfStatus(data.searched ? `已搜到资料（${data.search_source || "网络"}），草案可改，确认后点下一步`
-                                : "没搜到足够资料——已按你的描述构建（请仔细检查）");
-    } catch (e) { _pfStatus("网络错误"); btn.disabled = false; }
-});
-
-function _pfShowDraft(data) {
-    document.getElementById("pf-draft-box").style.display = "block";
-    document.getElementById("pf-step-label").textContent = `第 ${_stepNo(data.step)} 步 / 共 4 步：${data.step_label}`;
-    document.getElementById("pf-draft").value = data.draft || "";
-    document.getElementById("pf-next").style.display = data.is_last ? "none" : "";
-    document.getElementById("pf-finish").style.display = data.is_last ? "" : "none";
-}
-function _stepNo(s) { return {core: 1, identity: 2, sms_samples: 3, polisher: 4}[s] || 1; }
-
-document.getElementById("pf-next")?.addEventListener("click", async () => {
-    const btn = document.getElementById("pf-next");
-    btn.disabled = true;
-    _pfStatus("生成下一步…");
-    try {
-        const resp = await fetch("/pack-forge/next", {method: "POST",
-            headers: {"Content-Type": "application/json"},
-            body: JSON.stringify({session: _forge.session, step: _forge.step,
-                                  draft: document.getElementById("pf-draft").value})});
-        const data = await resp.json();
-        if (!data.ok) { _pfStatus(data.error || "生成失败"); btn.disabled = false; return; }
-        _forge.step = data.step;
-        _forge.drafts[data.step] = data.draft;
-        _pfShowDraft(data);
-        _pfStatus("草案可改，确认后继续");
-    } catch (e) { _pfStatus("网络错误"); }
-    btn.disabled = false;
-});
-
-document.getElementById("pf-finish")?.addEventListener("click", async () => {
-    _forge.drafts[_forge.step] = document.getElementById("pf-draft").value;
-    const btn = document.getElementById("pf-finish");
-    btn.disabled = true;
-    _pfStatus("正在创建角色包…");
-    try {
-        const resp = await fetch("/pack-forge/finish", {method: "POST",
-            headers: {"Content-Type": "application/json"},
-            body: JSON.stringify({session: _forge.session,
-                                  name: document.getElementById("pf-query").value.trim().slice(0, 30),
-                                  char_name: document.getElementById("pf-char").value.trim(),
-                                  user_name: document.getElementById("pf-user").value.trim(),
-                                  files: _forge.drafts})});
-        const data = await resp.json();
-        if (data.ok) {
-            showToast(`已创建「${data.name}」——点列表里的卡片进详情，换头像封面、配表情包`);
-            togglePackForge(false);
-            document.getElementById("pf-draft-box").style.display = "none";
-            _pfStatus("");
-            await window.__modesReload();
-            renderCardsList();
-        } else {
-            _pfStatus(data.error || "创建失败");
-            btn.disabled = false;
-        }
-    } catch (e) { _pfStatus("网络错误"); btn.disabled = false; }
-});
 
 // 轮播图上的角色信息条：跟随当前轮播位置
 function _updateCarouselChar() {
@@ -333,7 +274,7 @@ function _updateCarouselChar() {
     if (!m) { c.style.display = "none"; return; }
     c.style.display = "";
     const img = c.querySelector("img");
-    if (m.avatar) img.src = m.avatar;
+    _setImgSrc(img, m.avatar);   // F-5：无头像清掉旧 src（持久元素，否则沿用上一包的图）
     c.querySelector(".cc-name").textContent = m.char_name || "";
     c.querySelector(".cc-scene").textContent = m.name || "";
 }
@@ -399,9 +340,7 @@ function renderCardsList() {
         card.className = "cv-card";
         card.type = "button";
         card.onclick = () => openPackView(m.id, "cards");
-        const img = document.createElement("img");
-        img.className = "cv-thumb";
-        if (m.cover) img.src = m.cover;
+        const img = _coverImg(m, "cv-thumb");
         img.alt = "";
         const mid = document.createElement("div");
         const cn = document.createElement("div");
@@ -409,7 +348,12 @@ function renderCardsList() {
         cn.textContent = (m.char_name || "") + (m.custom ? "" : "");
         const sub = document.createElement("div");
         sub.className = "cv-csub";
-        sub.textContent = (m.name || m.id) + " · " + (presLabel[m.presentation] || m.presentation);
+        // name 形如「流萤_剧情_0918_0041」；副标题去掉与大字重复的角色名，
+        // 留下「模式_创建时间 · 演出形态」——同角色多包靠这段区分（不分组方案）
+        const _nm = m.name || m.id;
+        const _shown = (m.char_name && _nm.startsWith(m.char_name + "_"))
+            ? _nm.slice(m.char_name.length + 1) : _nm;
+        sub.textContent = _shown + " · " + (presLabel[m.presentation] || m.presentation);
         mid.append(cn, sub);
         const go = document.createElement("span");
         go.className = "cv-cgo";
@@ -419,20 +363,40 @@ function renderCardsList() {
     }
 }
 
-// 卡片角标/轮播角标入口（保留 managePack 名兼容）
-function managePack(mode) { openPackView(mode); }
+// 卡片角标/轮播角标入口（保留 managePack 名兼容）：经 _applyMode 校验后开详情页
+function managePack(mode) { if (_applyMode(mode)) openPackView(); }
 window.managePack = managePack;
 
+// F-5（2026-09-14）：无封面/头像的包给「首字占位块」，不再显示破图或沿用上一张图。
+// 返回值是元素（img 或 div），尺寸由调用处既有 class 决定。
+function _coverImg(m, cls) {
+    if (m.cover) {
+        const img = document.createElement("img");
+        img.className = cls;
+        img.src = m.cover;
+        img.alt = m.name || m.id;
+        return img;
+    }
+    const d = document.createElement("div");
+    d.className = cls + " pack-noimg";
+    d.textContent = (m.char_name || m.name || "?").slice(0, 1);
+    return d;
+}
+
+// 持久 <img> 元素（详情页/品牌位/轮播信息条）：无图必须清掉旧 src，否则沿用上一包的图
+function _setImgSrc(img, url) {
+    if (!img) return;
+    if (url) img.src = url;
+    else img.removeAttribute("src");
+}
+
 // 按 PRESET_MODES 渲染角色卡（轮播 + PC 大卡）：卡的主角是角色（头像+角色名），
-// 剧本名（剧情模式/春日手信）是小标签；卡上 ✎ 角标进角色编辑页
+// 模式名（剧情模式/剧本模式）是小标签；卡上 ✎ 角标进角色编辑页
 function renderModeCards() {
     carouselTrack.innerHTML = "";
     carouselDots.innerHTML = "";
     PRESET_MODES.forEach((m, i) => {
-        const img = document.createElement("img");
-        if (m.cover) img.src = m.cover;
-        img.alt = m.name || m.id;
-        carouselTrack.appendChild(img);
+        carouselTrack.appendChild(_coverImg(m, "pack-noimg-abs"));
         const dot = document.createElement("span");
         if (i === 0) dot.classList.add("active");
         dot.addEventListener("click", () => goCarousel(i));
@@ -455,10 +419,7 @@ function renderModeCards() {
             btn.className = "hm-card";
             btn.type = "button";
             btn.onclick = () => enterMode(m.id);
-            const img = document.createElement("img");
-            img.className = "hm-cover";
-            if (m.cover) img.src = m.cover;
-            img.alt = m.name || m.id;
+            const img = _coverImg(m, "hm-cover");
             // 编辑角标（毛玻璃，hover 卡面时显现）
             const edit = document.createElement("span");
             edit.className = "hm-edit";
@@ -468,9 +429,7 @@ function renderModeCards() {
             // 角色信息叠加层：底部渐变压暗 + 头像 + 角色名 + 剧本标签
             const ov = document.createElement("div");
             ov.className = "hm-overlay";
-            const av = document.createElement("img");
-            av.className = "hm-avatar";
-            if (m.avatar) av.src = m.avatar;
+            const av = _coverImg(m, "hm-avatar");
             const info = document.createElement("div");
             info.className = "hm-info";
             const cn = document.createElement("div");
@@ -562,13 +521,31 @@ function _renderArchivedPacks(container) {
     container.appendChild(box);
 }
 
+/** 把带 `data-tpl` 的静态文案按当前角色卡重填（角色卡化：HTML 里不写死角色名）。
+ *
+ *  用法：HTML 写通用默认文案（无 JS/首屏时不露角色名），标签带模板：
+ *    `<span data-tpl="让{c}休息">让角色休息</span>`
+ *    `<div data-tpl-ph="…让{c}休息…">` → 填 placeholder
+ *  `{c}` = charName()，`{u}` = userName()；两者取不到时用中性词（角色／你）。
+ *  覆盖了菜单「休息」按钮、手账标签与说明、休息/起床遮罩、用户形象弹窗标题等。 */
+export function applyTextTemplates() {
+    const c = charName() || "角色";
+    const u = userName() || "你";
+    const fill = (s) => String(s).replace(/\{c\}/g, c).replace(/\{u\}/g, u);
+    document.querySelectorAll("[data-tpl]").forEach(el => {
+        el.textContent = fill(el.dataset.tpl || "");
+    });
+    document.querySelectorAll("[data-tpl-ph]").forEach(el => {
+        el.setAttribute("placeholder", fill(el.dataset.tplPh || ""));
+    });
+}
+
 // 聊天页/侧边栏的角色标识（头像/名字/签名）按当前包刷新
 export function applyModeBranding() {
     const p = currentPreset() || {};
     const cname = p.char_name || "";
     for (const id of ["chat-avatar", "pcs-avatar"]) {
-        const img = document.getElementById(id);
-        if (img && p.avatar) img.src = p.avatar;
+        _setImgSrc(document.getElementById(id), p.avatar);   // F-5：无头像清旧 src
     }
     const pcsName = document.getElementById("pcs-name");
     if (pcsName) pcsName.textContent = cname;
@@ -578,6 +555,7 @@ export function applyModeBranding() {
         const el = document.getElementById(id);
         if (el) el.textContent = p.tagline || "";
     }
+    applyTextTemplates();   // 静态文案里的角色名/称呼一并刷新（换卡后立刻生效）
 }
 
 export function showHome() {
@@ -649,6 +627,7 @@ export async function showChat() {
         clearTimeout(S._hintTimer);
         S._hintTimer = null;
         try { resetBatchWindow(); } catch (e) {}   // 0.8.1 批状态机作废（chat.js）
+        try { _clearQuote(); } catch (e) {}   // F-6.4：引用条不跨包——否则 A 包引用的消息会随下一条发送写进 B 包历史
         messagesEl.innerHTML = "";
         S._hasMore = false;
         await loadHistory();   // 先加载历史（含已保存的开场）
@@ -705,6 +684,12 @@ function toggleNotice() {
     const panel = document.getElementById("notice-panel");
     const open = panel.classList.toggle("show");
     document.getElementById("notice-arrow").textContent = open ? "▴" : "▾";
+    // 打开时才联网刷新 + 延迟记已读（见 js/notice.js）。
+    // 走 window 全局而不是 import：本文件在 bundle 里先于 notice 出现，
+    // 调用期解析既能避免顶层顺序约束，也少了 views ↔ notice 的模块耦合。
+    if (open && typeof window.noticeOnOpen === "function") {
+        try { window.noticeOnOpen(); } catch (e) {}
+    }
 }
 function closeNotice() {
     document.getElementById("notice-panel").classList.remove("show");
@@ -796,4 +781,5 @@ document.addEventListener("DOMContentLoaded", async () => {
     else if (window.matchMedia && matchMedia("(min-width:1100px)").matches) showChat();
     else showHome();
     initAuth();   // 服务器版：轮播图下登录/用户模块
+    uiSelectEnhance(document);   // 自绘下拉全站接管（原生 select 弹窗无法主题化；幂等有守卫）
 });

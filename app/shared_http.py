@@ -50,16 +50,34 @@ class ResponseMixin:
         self.wfile.write(body)
 
     def _cors_headers(self):
-        """CORS：本地打包前端（file:// 或 appassets 域）请求服务器 API 需要跨域。
-        Bearer token 认证 + 无 Cookie，`*` 安全。"""
-        self.send_header("Access-Control-Allow-Origin", "*")
+        """CORS。服务器版：本地打包前端（file:// 或 appassets 域）请求服务器 API
+        需要跨域，Bearer token 认证 + 无 Cookie，`*` 安全。
+        本地版（审计 A2，2026-09-15）：没有 Bearer 认证——`*` 等于把读 Key 前缀/
+        改配置/导入数据交给任意网页。改为白名单回显：仅本机同源页面（PC exe 与
+        安卓内嵌 WebView 都从本服务加载页面，不存在合法的跨源本地前端）拿到 ACAO，
+        其余来源不发 → 跨域 JS 读不到响应；写端点另有 server.py do_POST 的来源
+        校验兜底（CORS 拦不住"免预检请求已发出"）。"""
+        if os.environ.get("FIREFLY_SERVER"):
+            self.send_header("Access-Control-Allow-Origin", "*")
+        else:
+            origin = (self.headers.get("Origin") or "").strip()
+            if origin in _local_allowed_origins():
+                self.send_header("Access-Control-Allow-Origin", origin)
+                self.send_header("Vary", "Origin")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
         self.send_header("Access-Control-Allow-Headers",
                          "Authorization, Content-Type, X-API-Key, X-API-Base, X-API-Mode")
         self.send_header("Access-Control-Max-Age", "86400")
 
     def do_OPTIONS(self):
-        """CORS 预检：POST + Authorization 头会触发浏览器预检。"""
+        """CORS 预检：POST + Authorization 头会触发浏览器预检。
+        本地版（审计 A2，2026-09-15）：非本机同源来源的预检一律 403——
+        把跨站写请求拦在"发出"之前（预检失败则实际请求根本不会送出）。"""
+        if not os.environ.get("FIREFLY_SERVER"):
+            origin = (self.headers.get("Origin") or "").strip()
+            if origin not in _local_allowed_origins():
+                self.send_error(403)
+                return
         self.send_response(204)
         self._cors_headers()
         self.send_header("Content-Length", "0")
@@ -67,6 +85,47 @@ class ResponseMixin:
 
     def log_message(self, format, *args):
         pass  # 静默日志
+
+
+# ── 本地版信任边界（审计 A1/A2，2026-09-15）──────────
+def _local_allowed_origins() -> tuple:
+    """本地版跨域白名单：仅本机同源。PC exe 与安卓内嵌 WebView 都从本服务
+    （http://127.0.0.1:8765）加载页面，不存在合法的跨源本地前端；安卓的服务器
+    回落模式（file:// 页面 + 远端 8787）走服务器版分支，与本函数无关。"""
+    try:
+        from core import paths as _paths
+        port = int(_paths.PORT)
+    except Exception:
+        port = 8765
+    return (f"http://127.0.0.1:{port}", f"http://localhost:{port}")
+
+
+def local_origin_ok(handler) -> bool:
+    """浏览器来源校验（本地版专用；/shutdown 与全部写端点共用）。
+
+    判定：Origin / Sec-Fetch-Site / Referer 三者全缺 → 非浏览器客户端
+    （server.py 多开探测、routes_update 安装器、curl/测试）→ 放行；
+    任一存在 → 必须全部落在本机同源白名单内（跨站 <img>/表单/fetch 一律拒）。
+    服务器版直接放行（Bearer 鉴权 + 无 Cookie，信任模型不同，见 _cors_headers）。
+
+    为什么"绑 127.0.0.1"不够：攻击页面跑在**用户自己的浏览器**里，发出的连接
+    同样来自本机回环——真正的边界是"哪个页面在发起"，只能依赖浏览器自动附加、
+    页面 JS 无法伪造的来源标记（Origin/Sec-Fetch-Site/Referer）。"""
+    if os.environ.get("FIREFLY_SERVER"):
+        return True
+    origin = (handler.headers.get("Origin") or "").strip()
+    sfs = (handler.headers.get("Sec-Fetch-Site") or "").strip()
+    ref = (handler.headers.get("Referer") or "").strip()
+    if not origin and not sfs and not ref:
+        return True   # 非浏览器客户端（urllib 探测/安装器/白盒测试）
+    allowed = _local_allowed_origins()
+    if origin and origin not in allowed:
+        return False
+    if sfs and sfs not in ("same-origin", "none"):
+        return False
+    if ref and not any(ref == a or ref.startswith(a + "/") for a in allowed):
+        return False
+    return True
 
 
 def setup_stdio_utf8():

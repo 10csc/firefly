@@ -4,7 +4,7 @@ import { _toast, escapeHtml, showToast } from "./util.js";
 import { IS_SERVER, API_BASE } from "./api.js";
 import { openMenu, openSettings } from "./panels.js";
 import { addTextMessage, _quoteContentText, _quoteWhoName } from "./chat_render.js";
-import { CURRENT_MODE, MODE_NAMES, _modeGen } from "./views.js";
+import { CURRENT_MODE, MODE_NAMES, _modeGen, currentPreset, charName } from "./views.js";
 import { _idleOk, _notifyFirefly, checkProactive } from "./proactive.js";
 
 // ═══════════════════════════════════════════
@@ -69,6 +69,98 @@ function openMenuTab(tab) {
 }
 window.openMenuTab = openMenuTab;
 
+// ═══════════════════════════════════════════
+// 语音插件：长按消息 →「转语音」（docs/工具/tts.md §2）
+//  · 语音是**消息的附属产物**（v{seq}.wav），不是新消息类型 → 不写 conversation.jsonl
+//  · 已有缓存直接播；没有才合成
+//  · **同时只能有一个合成**：本地 _voiceBusy 拦重复点击，后端还会再串行一次
+//  · 插件不可用 → 按钮点击时给出**原因**（不静默失败）
+// ═══════════════════════════════════════════
+let _voiceBusy = false;
+let _voiceMood = localStorage.getItem("firefly_voice_mood") || "happy";
+
+async function _voiceStatus(force) {
+    if (window.__voiceStatusCache && !force) return window.__voiceStatusCache;
+    try {
+        const r = await fetch("/voice/status");
+        window.__voiceStatusCache = await r.json();
+    } catch (e) {
+        window.__voiceStatusCache = {engine_ok: false, reason: "无法连接后端"};
+    }
+    return window.__voiceStatusCache;
+}
+
+/** 语音文件 URL（播放由消息下方的语音条负责，见 voice_plugin.js） */
+function _voiceUrl(mode, seq) {
+    return "/voice-file?mode=" + encodeURIComponent(mode) + "&name=v" + seq + ".wav";
+}
+
+/**
+ * 转语音。**每次都强制重生成**（force）—— 用户要求"再点一次就自动重新生成"；
+ * 单纯回放由消息下方的语音条承担。生成期间先在消息下面贴一个占位条（⏳ …）。
+ */
+async function _voiceConvert(mode, snap) {
+    if (_voiceBusy) { showToast("正在生成上一句语音，请稍候"); return; }
+    if (snap.who !== "firefly") { showToast(`只能给${charName() || "角色"}的消息转语音`); return; }
+    if (snap.seq == null) { showToast("这条消息还没有序号（刷新页面后可用）"); return; }
+    if (snap.type !== "text" && snap.type !== "narration") {
+        showToast("这条消息没有可念的文本"); return;
+    }
+    const st = await _voiceStatus(true);
+    if (!st.engine_ok) {
+        showToast("语音插件不可用：" + (st.reason || "未知原因"));
+        return;
+    }
+
+    const had = (typeof voiceHas === "function") && voiceHas(snap.seq);
+    const row = (typeof messagesEl !== "undefined" && messagesEl)
+        ? messagesEl.querySelector('.msg-row[data-seq="' + snap.seq + '"]') : null;
+    let bar = null;
+    if (row && typeof voiceAttachBar === "function") {
+        bar = voiceAttachBar(row, snap.seq, 0);
+        if (bar) {
+            bar.classList.add("generating");
+            bar.querySelector(".vb-ico").textContent = "⏳";
+        }
+    }
+
+    _voiceBusy = true;
+    showToast(had ? "正在重新生成语音…（约 20 秒）" : "正在生成语音…（首次约 20 秒）");
+    try {
+        const r = await fetch("/voice/tts", {
+            method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({mode: mode, seq: snap.seq, mood: _voiceMood, force: true}),
+        });
+        const d = await r.json();
+        if (d && d.ok) {
+            if (typeof voiceSyncCache === "function") await voiceSyncCache();
+            if (!bar && row && typeof voiceAttachBar === "function") {
+                bar = voiceAttachBar(row, snap.seq, d.dur);
+            }
+            if (bar) {
+                bar.classList.remove("generating");
+                bar.querySelector(".vb-ico").textContent = "🔊";
+                const dd = bar.querySelector(".vb-dur");
+                if (dd) dd.textContent = Math.round(d.dur || 0) + "″";
+                if (typeof _voicePlayBar === "function") _voicePlayBar(bar, snap.seq);
+            }
+            showToast((had ? "已重新生成" : "已生成") + "（" + (d.seconds || "?") + "s）");
+        } else {
+            if (bar) bar.remove();
+            showToast("生成失败：" + ((d && d.error) || "未知原因"));
+            _voiceStatus(true);   // 失败后刷新状态，下次点能拿到新原因
+        }
+    } catch (e) {
+        if (bar) bar.remove();
+        showToast("生成失败：无法连接后端");
+    } finally {
+        _voiceBusy = false;
+    }
+}
+window._voiceMood = () => _voiceMood;
+window.setVoiceMood = (m) => { _voiceMood = m; localStorage.setItem("firefly_voice_mood", m); };
+
 function _showMsgMenu(row, x, y) {
     const snap = _msgSnapshot(row);
     if (!_snapHasContent(snap)) return;
@@ -97,12 +189,22 @@ function _showMsgMenu(row, x, y) {
             showToast(d.ok ? "已收藏（菜单 → 收藏可查看）" : "收藏失败：" + (d.error || ""));
         } catch (e) { showToast("收藏失败，请重试"); }
     }));
+    // 转语音：只对流萤的 text/narration 且有 seq 的消息显示。
+    // 已有语音时**再点一次即重新生成** —— 不再单列「重新生成」：
+    //   2026-09-18 真机实测 4 项会把菜单撑出屏幕（最左「引用」被裁到屏幕外）。
+    // 播放改由消息下方的语音条承担（见 voice_plugin.js 的 voiceAttachBar）。
+    if (snap.who === "firefly" && snap.seq != null
+        && (snap.type === "text" || snap.type === "narration")) {
+        menu.appendChild(mkBtn("转语音", "🔊", () => { _closeMsgMenu(); _voiceConvert(CURRENT_MODE, snap); }));
+    }
     document.body.appendChild(menu);
     // 定位：消息在上半屏 → 菜单放下方；下半屏 → 放上方（QQ 式，且不超出视口）
     const mw = menu.offsetWidth, mh = menu.offsetHeight;
     const r = row.getBoundingClientRect();
     const vw = innerWidth, vh = innerHeight;
     let left = Math.min(Math.max(8, x - mw / 2), vw - mw - 8);
+    // 菜单比视口还宽时上式会得到负数 → 左边被裁（真机踩过）。兜到 8。
+    left = Math.max(8, left);
     const cy = r.top + r.height / 2;
     let top = cy < vh / 2 ? r.bottom + 10 : r.top - mh - 10;
     top = Math.max(8, Math.min(top, vh - mh - 8));
@@ -326,7 +428,11 @@ async function restoreSnapshot(name) {
         });
         const data = await resp.json().catch(() => ({}));
         if (resp.ok && data.ok) {
-            _toast("恢复成功，正在重新加载…");
+            // E-1 配套：恢复前自动备份失败时后端会回落逐包备份并标 backup_ok=false——
+            // 此时若快照本身有问题，损失不可回滚，必须让用户知道
+            _toast(data.backup_ok === false
+                ? "已恢复（注意：恢复前的保险快照生成失败）"
+                : "恢复成功，正在重新加载…");
             setTimeout(() => location.reload(), 800);
         } else {
             _toast("恢复失败：" + (data.error || ""));
@@ -469,8 +575,8 @@ export async function _chatSend(msgs) {
     _inflight++;
     const statusEl = document.querySelector("#header .status");
     // 修复：不用"请求开始时的快照"恢复（快照可能已被 _sendFlush / 阶段轮询污染成
-    // "对方正在输入"/"正在理解你的话…"），统一恢复为流萤的个人简介默认文案。
-    const defaultStatus = "会找到的，属于我的梦...";
+    // "对方正在输入"/"正在理解你的话…"），统一恢复为当前角色包的签名（无签名用默认句）。
+    const defaultStatus = (currentPreset() || {}).tagline || "会找到的，属于我的梦...";
     const gen = _modeGen;   // 捕获发起时的模式代际
     // 后台保活（安卓 WebView JS Bridge）：回复流程（检索→分析→回复→调度）期间
     // 持 CPU/WiFi 锁，用户切后台/锁屏也能完成回复；引用计数归零才释放。
@@ -497,6 +603,12 @@ export async function _chatSend(msgs) {
         }
         else if (data.reply) addTextMessage(data.reply, "firefly");
         if (data.error_code) _toast(ERROR_TIPS[data.error_code] || ERROR_TIPS.unknown);
+        // R-07（服务器版）：请求的包在本端不存在时后端会静默回退默认包并打 mode_fallback 标记——
+        // 必须显式告知（否则用户以为"角色坏了"而不知原因）
+        if (data.mode_fallback) {
+            _toast("该角色包在服务器模式不可用，已回退到「" +
+                   (MODE_NAMES[data.mode_used] || data.mode_used || "默认包") + "」");
+        }
         // data.queued：副请求，回复由主请求带回，无 UI 操作
     } catch (e) {
         if (gen === _modeGen && _inflight === 1) {

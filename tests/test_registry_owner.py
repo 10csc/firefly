@@ -34,9 +34,14 @@ def check(desc, cond):
 
 
 def _resolve(owner: str):
-    """owner 字符串 → 源码文件路径（app/ 下）。找不到返回 None。"""
+    """owner 字符串 → 源码文件路径（app/ 下）。找不到返回 None。
+
+    ⚠️ 白名单 = **app/ 下的顶层包**。新增顶层包必须在这里登记，
+    否则它的 owner（如 `voice.store`）会被当成"app/voice.store.py"而解析失败。
+    2026-09-18 增补 `voice`（语音插件独立子系统，见 docs/工具/tts.md）。
+    """
     parts = owner.split(".")
-    if parts[0] in ("modules", "core", "api", "infra", "domain", "tools"):
+    if parts[0] in ("modules", "core", "api", "infra", "domain", "tools", "voice"):
         return ROOT / "app" / Path(*parts).with_suffix(".py")
     return ROOT / "app" / (owner + ".py")
 

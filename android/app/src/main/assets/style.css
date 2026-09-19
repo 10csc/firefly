@@ -1,9 +1,10 @@
 /* ═══════════════════════════════════════════
-   流萤聊天 App 样式
+   Firefly 聊天 App 样式
    布局策略：移动优先 + clamp() 流式尺寸
    - base（默认）= 手机全宽，字号/头像/间距随视口自动缩放（clamp 按 vw）
-   - 720~1100px 过渡档：单栏居中放宽 640px（文件末尾）
-   - ≥1100px 桌面档：IM 双栏（左侧 300px 导航 #pc-sidebar + 右侧主区，文件末尾）
+   - 720~1100px 过渡档：单栏居中放宽 640px（本文件末尾）
+   - ≥1100px 桌面档：**三栏（图标栏 + 上下文列 + 工作区）**，
+     样式在独立的 app/static/pc.css 里（本文件之后加载），设计见 docs/设计/PC端前端重构.md
    ═══════════════════════════════════════════ */
 
 /* ── 主题变量（默认暗色；body.theme-light 覆盖为游戏聊天亮色）── */
@@ -12,7 +13,8 @@
     --page-bg: #101020;                 /* body 底色 */
     --panel-bg: rgba(20,20,40,0.82);    /* #app 主面板（微透背景图） */
     --home-bg: rgba(20,20,40,0.78);     /* 首页独立视图（微透背景图） */
-    --panel-solid: #10101e;              /* 菜单/设置/公告全屏面板（完全不透明，防下层内容透出造成漂移） */
+    --panel-solid: #10101e;              /* 低端机兜底/完全不透明场景 */
+    --panel-veil: rgba(16,16,30,0.78);   /* 菜单/设置/公告全屏面板（透出萤火粒子场，与首页同浓度，0.8.2） */
     --fg-main: #e0d5c1;                 /* 主文字/按钮文字 */
     --fg-bright: #c8d0e0;               /* 次级文字 */
     --fg-muted: #8a8a8a;                /* 弱化文字/占位 */
@@ -56,6 +58,7 @@ body.theme-light {
     --panel-bg: rgba(248,246,241,0.9);
     --home-bg: rgba(248,246,241,0.85);
     --panel-solid: #f8f6f1;
+    --panel-veil: rgba(248,246,241,0.88);
     --fg-main: #3a3a42;
     --fg-bright: #4e4e58;
     --fg-muted: #86868e;
@@ -164,11 +167,24 @@ body {
     color: var(--fg-muted); font-size: clamp(11px, 3vw, 12px);
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
+/* 记忆窗口提醒（活跃窗口轮数接近上限时，名字行尾上一小截灰字）──
+   设计取舍：这只是一个**低优先级知会**（整理不急，阈值放到 100 轮）；早先做成整行横幅
+   + 边框 + 按钮，用户反馈"太影响观感"。现在压到名字行里、不加行、不加按钮——
+   手动整理入口本来就在菜单「让流萤休息」，到上限后也会自动整理，不需要再给按钮。 */
+#header .chat-mem {
+    margin-left: 6px; font-size: clamp(10px, 2.7vw, 11px); font-weight: normal;
+    color: var(--fg-muted); white-space: nowrap;
+}
+#header .chat-mem[hidden] { display: none; }
+#header .chat-mem.warn { color: #c9a86a; }
+#header .chat-mem.full { color: #cf7a5e; }
 
-/* 消息头像 */
+/* 消息头像
+   2026-09-18 对齐官方短信 UI：官方头像直径 ≈ 11.8% 视口宽（591 宽截图量得 70px）。
+   原 8.5% → 10.5%（360 屏上 30.6 → 37.8px，官方 ≈ 43px；取"稍微放大"而非照搬）。 */
 .msg-avatar {
-    width: calc(clamp(30px, 8.5vw, 36px) * var(--ui-scale));
-    height: calc(clamp(30px, 8.5vw, 36px) * var(--ui-scale));
+    width: calc(clamp(34px, 10.5vw, 42px) * var(--ui-scale));
+    height: calc(clamp(34px, 10.5vw, 42px) * var(--ui-scale));
     border-radius: 50%; object-fit: cover; flex-shrink: 0;
 }
 .msg-avatar.tb-toggle { cursor: pointer; }
@@ -186,31 +202,57 @@ body {
 /* ── 消息列表 ── */
 #messages {
     flex: 1; overflow-y: auto;
-    padding: clamp(12px, 4vw, 20px) clamp(10px, 4vw, 16px);
-    display: flex; flex-direction: column; gap: clamp(8px, 2.8vw, 12px);
+    /* 左右内边距 4vw → 7vw：官方气泡左边缘在 24.2% 视口宽，我们原来只有 14.5%（贴左）。
+       加大左边距 + 头像放大 + 间距加大，三处一起把气泡推到 ≈20% 处（官方 24.2%）。 */
+    padding: clamp(12px, 4vw, 20px) clamp(16px, 7vw, 30px);
+    /* 消息**之间**的间距。2026-09-18 从 clamp(8px,2.8vw,12px)（→10.1px）加大到 →16.2px：
+       用户真机反馈「消息之间反而太近了」——原来它跟气泡↔语音条（17px）几乎一样，
+       看屏幕时分不清语音条属于哪条消息。现在拉开成 16 vs 4，层级一眼可辨。 */
+    display: flex; flex-direction: column; gap: clamp(12px, 4.5vw, 18px);
 }
 #messages::-webkit-scrollbar { width: 4px; }
 #messages::-webkit-scrollbar-thumb { background: var(--input-border); border-radius: 2px; }
-.msg-row { display: flex; align-items: flex-end; gap: clamp(6px, 2vw, 8px); position: relative; z-index: 0;
+/* 头像与**名字行顶部**对齐（官方短信 UI 就是这样）。
+   ⚠️ 2026-09-18：原来是 `align-items: flex-end`（底对齐气泡底）——没有名字行时看着还行，
+   但一加名字行、且遇到两行气泡，头像就被拽到气泡底部，"第二行头像又下去了"（用户真机发现）。
+   flex 换行的第二行只有 `.voice-row`，不受本属性影响。 */
+.msg-row { display: flex; align-items: flex-start; gap: clamp(8px, 3vw, 12px); position: relative; z-index: 0;
     -webkit-user-select: none; user-select: none; }   /* 禁选：长按触发消息菜单，不触发系统文本选择 */
 .msg-row.user { flex-direction: row-reverse; }
+
+/* 发送者名字行（气泡/贴纸/图片上方一行）。
+   官方量得：名字左缘 143 == 气泡左缘 143（差 0px），字形高 ≈ 气泡内文字的 0.79 倍
+   （15px vs 19px @591 → 9.1px vs 11.5px @360），名字底到气泡顶间隔 3px@591 ≈ 1.8px@360。
+   左右对齐交给 `.msg-col` 的 align-items（firefly=flex-start / user=flex-end），不必各写一份。 */
+.msg-who {
+    font-size: calc(clamp(9px, 2.7vw, 11px) * var(--ui-scale));
+    line-height: 1.25;
+    color: var(--fg-muted);
+    margin: 0 2px 2px;
+    max-width: 100%;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 .msg-row .bubble {
-    max-width: 76%;
-    padding: calc(clamp(9px, 2.8vw, 12px) * var(--ui-scale))
-             calc(clamp(11px, 3.6vw, 16px) * var(--ui-scale));
-    line-height: 1.6;
-    font-size: calc(clamp(13px, 3.9vw, 15px) * var(--ui-scale));
+    /* 2026-09-18 对齐官方：官方单行气泡高 ≈ 27-29px（360 屏），我们原来 42.6px（高 50%）。
+       根因不是左右内边距（量得官方 21@591 ≈ 12.8px，我们 12.96px 本来就一致），
+       而是**上下内边距 10px + 行高 1.6** 一起把气泡撑胖。
+       现取 字号 12.96 / 行高 1.5 / 上下内边距 ≈4.3 → 单行气泡 ≈ 28px（官方 26.8-28.6）。 */
+    max-width: 80%;
+    padding: calc(clamp(4px, 1.2vw, 7px) * var(--ui-scale))
+             calc(clamp(11px, 3.55vw, 15px) * var(--ui-scale));
+    line-height: 1.5;
+    font-size: calc(clamp(12px, 3.6vw, 14px) * var(--ui-scale));
     word-break: break-word;
     position: relative;
 }
 .msg-row.firefly .bubble {
     background: var(--bub-f-bg); color: var(--bub-f-fg);
-    border-radius: 4px 16px 16px 16px;
+    border-radius: 3px 10px 10px 10px;
     border: 1px solid var(--bub-f-border);
 }
 .msg-row.user .bubble {
     background: var(--bub-u-bg); color: var(--bub-u-fg);
-    border-radius: 16px 4px 16px 16px;
+    border-radius: 10px 3px 10px 10px;
     border: 1px solid var(--bub-u-border);
 }
 
@@ -260,16 +302,12 @@ body {
     30%      { opacity: 1; transform: translateY(-2px) scale(1.18); }   /* 3.1：加点呼吸缩放，更细腻 */
 }
 
-/* ═══ 消息气泡尾巴（默认样式；0.7.2 起聊天气泡主题功能已移除）═══ */
-.msg-row .bubble::before {
-    content: ""; position: absolute; bottom: 10px;
-    width: 11px; height: 11px;
-    background: var(--bub-tail, var(--bub-f-bg));
-    transform: rotate(45deg);
-    z-index: -1;
-}
-.msg-row.firefly .bubble::before { left: -5px; }
-.msg-row.user .bubble::before { right: -5px; }
+/* ═══ 消息气泡：**无尾巴**（2026-09-18 起）═══
+   原 `.bubble::before` 是个 rotate(45deg) 的小方块当三角标（靠头像那侧），
+   2026-09-18 对齐官方短信 UI 时**整块删掉**：官方气泡左侧是干净的大圆角，没有指向头像的尖角。
+   实测依据：官方截图里气泡左缘从顶到底是一条直线（x 恒为 143，阈值扫描 y 129→172 无偏移），
+   只有外侧圆角明显（≈13px @591）。气泡本身 + 4/10 的不对称圆角已经足够表达"谁说的"。
+   （主题变量 `--bub-tail` 随之失效，保留在主题里不再引用，删它是另一批改动。） */
 
 .msg-row .time { font-size: 0.65em; color: var(--dot-bg); flex-shrink: 0; margin-bottom: 4px; }
 /* 时间分割线 */
@@ -300,11 +338,53 @@ body {
 /* 引用+气泡纵向容器：气泡上方出现引用小卡片 */
 .msg-col {
     display: flex; flex-direction: column;
-    max-width: 76%; min-width: 0;
+    /* 与 .msg-row .bubble 的 max-width 保持一致（气泡被 max-width:100% 覆盖，真正的上限在这里） */
+    max-width: 80%; min-width: 0;
 }
 .msg-row.user .msg-col { align-items: flex-end; }
 .msg-row.firefly .msg-col { align-items: flex-start; }
 .msg-col .bubble { max-width: 100%; }
+
+/* ── 消息下面的语音条（文字转语音；参考微信「语音转文字」的附属形态）──
+   贴在气泡下方、与气泡同侧对齐；点它播放/再点暂停。生成中显示 ⏳ …
+
+   ⚠️ 间距（2026-09-18 真机实测后改）：可见间距 = `.msg-row` 的 row-gap **加上** 本条的
+   `margin-top`。原来 row-gap 10.8 + margin-top 6 = **17px**，比消息之间的 10.1px 还大
+   ——用户反馈「语音跟文本分太远了，消息之间反而太近了」。现在 row-gap 归零（见下），
+   只留本条 `margin-top: 4px`，与消息间的 16px 拉开层级：语音条明显属于它上面那条消息。 */
+.voice-bar {
+    display: inline-flex; align-items: center; gap: 6px;
+    margin-top: 4px; padding: 5px 12px; border-radius: 13px;
+    background: var(--ctrl-bg); border: 1px solid var(--border-mid);
+    color: var(--fg-main); font-size: 0.76em; line-height: 1.3;
+    cursor: pointer; user-select: none; -webkit-user-select: none;
+    transition: background .15s, color .15s, transform .1s;
+}
+.voice-bar:active { transform: scale(0.97); }
+.voice-bar.playing { background: var(--btn-bg); color: var(--fg-bright); border-color: transparent; }
+.voice-bar.generating { opacity: .65; cursor: default; }
+.voice-bar .vb-ico { font-size: 1.05em; }
+.voice-bar .vb-dur { font-variant-numeric: tabular-nums; }
+
+/* 带语音条的消息：换行让语音条独占第二行 → **头像仍与气泡底部对齐**（微信/QQ 形态）。
+   若不换行，语音条会被当作列内元素把列撑高，`align-items:flex-end` 就会把头像
+   拉到语音条底部（真机截图发现：头像比气泡低一截）。
+   ⚠️ 换行由外层 `.voice-row`（flex-basis:100%）负责，**不是**给 `.voice-bar` 设 100%
+   —— 那样会把条本身拉成整行宽（真机截图发现）。
+   ⚠️ `row-gap: 0`：换行后的行间距会**叠加**在 `.voice-bar` 的 margin-top 上（17px 的由来），
+   归零后间距完全由那 4px 决定。row-gap 只作用于换行产生的第二行（该行只有 `.voice-row`），
+   不影响头像与气泡的横向 gap。 */
+.msg-row.has-voice { flex-wrap: wrap; row-gap: 0; }
+.msg-row.has-voice .voice-row { flex-basis: 100%; display: flex; }
+/* ⚠️ 这里的缩进必须与「头像宽 + 行间距」逐字一致，否则语音条与气泡左缘对不齐
+   （2026-09-18 头像从 8.5vw 调到 10.5vw、间距 2vw→3vw，两处都要同步改）。 */
+.msg-row.firefly.has-voice .voice-row {
+    padding-left: calc(clamp(34px, 10.5vw, 42px) * var(--ui-scale) + clamp(8px, 3vw, 12px));
+}
+.msg-row.user.has-voice .voice-row {
+    justify-content: flex-end;
+    padding-right: calc(clamp(34px, 10.5vw, 42px) * var(--ui-scale) + clamp(8px, 3vw, 12px));
+}
 .quote-preview {
     max-width: 100%; margin-bottom: 4px; padding: 5px 9px;
     border-radius: 6px; background: var(--ctrl-bg-3);
@@ -323,6 +403,9 @@ body {
     border: 1px solid var(--border-mid); border-radius: 14px;
     box-shadow: 0 8px 30px var(--shadow-panel);
     animation: mlmPop 0.16s ease-out;   /* 3.3：缩放淡入（节点每次新建，动画必触发） */
+    /* 2026-09-18 真机实测：4 项时总宽超过视口（393 CSS px），left 被算成负数 → 最左
+       「引用」被裁到屏幕外。这里兜住宽度并允许换行，避免再次溢出。 */
+    max-width: calc(100vw - 16px); flex-wrap: wrap;
 }
 @keyframes mlmPop {
     from { opacity: 0; transform: scale(0.85); }
@@ -455,7 +538,7 @@ body {
 
 #menu-drawer {
     position: fixed; top: 0; right: 0; width: 100%; height: 100vh; height: 100dvh;
-    background: var(--panel-solid); z-index: 50;
+    background: var(--panel-veil); backdrop-filter: blur(10px); z-index: 50;
     transform: translateX(100%);
     transition: transform 0.25s;
     overflow-y: auto; padding-bottom: calc(40px + env(safe-area-inset-bottom));
@@ -471,24 +554,33 @@ body {
 }
 .menu-header button { background:none; border:none; color:var(--fg-main); cursor:pointer; font-size:1.2em; }
 
-/* 菜单标签行：手机上一行 5 个（状态 tab 占位隐藏），不换行。
-   0.8.1：分组标题独占整行（grid-column: 1/-1），不再与按钮挤同格导致文字换行歪斜。 */
+/* 菜单标签行：**按组自适应等分**，不是固定 5 列。
+   2026-09-18 真机（360 CSS px 屏）：原来是 repeat(5, minmax(0,1fr))，每个 chip 恒占 1/5
+   = 61px；而「设定文件 / 请求记录 / 流程日志」是 4 字标签，实需
+   图标 13 + gap 5 + 4×11.84 ≈ 65px（再算内边距 69px）→ 装不下被**硬裁**。
+   实测证据：这三个 chip 的内容宽 = 容器宽（184 device，左 0 右 0），
+   放大截图里 `#i-list` 图标被切掉一半、`志` 字右半边没了。
+   ⚠️ `text-overflow:ellipsis` 在 flex 容器上对**匿名文本项无效**（只会硬切），
+   所以文字另包 `<span>` 兜底。
+   现改 flex：分组标题 `flex:0 0 100%` 强制换行，chip `flex:1 1 0`
+   → 组内 3 个各 1/3、2 个各 1/2：既放得下，也不留空格子（原来第二组右边空 3 格）。 */
 .menu-tabs {
-    display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 6px;
+    display: flex; flex-wrap: wrap; gap: 6px;
     padding: 10px clamp(12px, 4vw, 16px); border-bottom: 1px solid var(--ctrl-bg-2);
 }
 .menu-tabs .menu-group-title {
-    grid-column: 1 / -1;   /* 分组标题整行 */
+    flex: 0 0 100%;        /* 分组标题独占整行（原 grid-column: 1/-1 的等价写法） */
     padding: 8px 4px 2px; font-size: 0.68em; font-weight: 600;
     color: var(--fg-muted); letter-spacing: 0.1em; text-align: left;
 }
 .menu-tab {
-    padding: 8px 2px; border-radius: 8px; border: none; min-width: 0;
+    flex: 1 1 0; min-width: 0;
+    padding: 8px 2px; border-radius: 8px; border: none;
     background: var(--ctrl-bg-2); color: var(--fg-muted);
     font-family: inherit; font-size: 0.74em; cursor: pointer;
     white-space: nowrap; text-align: center;
-    overflow: hidden; text-overflow: ellipsis;
 }
+.menu-tab > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .menu-tab.active { background: var(--btn-bg); color: var(--fg-bright); }
 /* 操作按钮排：4 等分网格 + 图标上/文字下，彻底避免图标把文字挤出按钮造成漂移 */
 .menu-actions {
@@ -531,7 +623,8 @@ body {
     color: var(--fg-main); font-family: Consolas,'Microsoft YaHei',monospace; font-size: 14px;
     resize: vertical; box-sizing: border-box;
 }
-#config-msg, #char-file-msg { color: var(--fg-muted); font-size: 0.75em; margin-top: 6px; }
+#config-msg { color: var(--fg-muted); font-size: 0.75em; margin-top: 6px; }
+/* 2026-09-18：#char-file-msg 随「用户设定」编辑器移出设定文件页，选择器一并删 */
 .btn-row { display: flex; gap: 8px; margin-top: 8px; }
 .btn-row button { flex: 1; }
 
@@ -658,6 +751,7 @@ body {
     background: var(--panel-solid);
     backdrop-filter: blur(10px);
     padding-top: env(safe-area-inset-top);
+    padding-bottom: env(safe-area-inset-bottom);
 }
 #fix-view.show { display: flex; }
 /* ── 角色卡管理页（全屏，卡片列表）── */
@@ -668,15 +762,62 @@ body {
     background: var(--panel-solid);
     backdrop-filter: blur(10px);
     padding-top: env(safe-area-inset-top);
+    padding-bottom: env(safe-area-inset-bottom);
 }
 #cards-view.show { display: flex; }
+/* ── 语音插件页（全屏，与角色卡管理同范式）── */
+#voice-view {
+    position: fixed; inset: 0; z-index: 6;
+    width: 100%; height: 100vh; height: 100dvh;
+    display: none; flex-direction: column;
+    background: var(--panel-solid);
+    backdrop-filter: blur(10px);
+    padding-top: env(safe-area-inset-top);
+    padding-bottom: env(safe-area-inset-bottom);
+}
+#voice-view.show { display: flex; }
+.vv-body { flex: 1; min-height: 30%; overflow-y: auto; padding: 12px clamp(12px,4vw,16px) 28px; }
+.vv-loading { color: var(--fg-muted); padding: 20px 4px; }
+.vv-card { background: var(--ctrl-bg); border-radius: 12px; padding: 12px 14px; margin-bottom: 10px; }
+.vv-state { text-align: center; }
+.vv-state-label { font-size: 1.06em; font-weight: 600; }
+.vv-state-ready { color: #4ade80; }
+.vv-state-unavailable { color: #fbbf24; }
+.vv-state-installed_disabled { color: var(--fg-muted); }
+.vv-reason { color: var(--fg-muted); font-size: 0.78em; margin-top: 6px; word-break: break-all; }
+.vv-h { font-size: 0.82em; color: var(--fg-muted); margin-bottom: 8px; }
+.vv-hint { font-size: 0.72em; color: var(--fg-muted); margin-top: 6px; line-height: 1.5; }
+.vv-kv { display: flex; justify-content: space-between; gap: 10px; font-size: 0.8em; padding: 3px 0; }
+.vv-kv span { color: var(--fg-muted); flex-shrink: 0; }
+.vv-kv code { word-break: break-all; text-align: right; opacity: 0.85; font-size: 0.92em; }
+.vv-moods { display: flex; gap: 8px; flex-wrap: wrap; }
+.vv-mood { padding: 7px 16px; border-radius: 999px; border: 1px solid var(--ctrl-bg);
+    background: transparent; color: var(--fg-main); font-size: 0.85em; }
+.vv-mood.on { background: #6ea8fe; color: #fff; border-color: transparent; }
+.vv-actions { display: flex; gap: 8px; flex-wrap: wrap; margin: 12px 0; }
+.vv-btn { padding: 9px 15px; border-radius: 10px; border: 1px solid var(--ctrl-bg);
+    background: var(--ctrl-bg); color: var(--fg-main); font-size: 0.85em; }
+.vv-btn.primary { background: #6ea8fe; color: #fff; border-color: transparent; }
+.vv-btn.danger { color: #f87171; }
+.vv-dl { background: var(--ctrl-bg); border-radius: 12px; padding: 10px 14px; margin-bottom: 10px; }
+.vv-dl-bar { height: 6px; border-radius: 3px; background: rgba(128,128,128,.25); overflow: hidden; }
+.vv-dl-bar i { display: block; height: 100%; background: #6ea8fe; transition: width .3s; }
+.vv-dl-txt { font-size: 0.74em; color: var(--fg-muted); margin-top: 6px; word-break: break-all; }
+.vv-err { background: rgba(248,113,113,.12); color: #f87171; border-radius: 10px;
+    padding: 8px 12px; font-size: 0.76em; margin-bottom: 10px; word-break: break-all; }
+.vv-field { margin-top: 12px; }
+.vv-field input { width: 100%; box-sizing: border-box; padding: 8px 10px; border-radius: 8px;
+    border: 1px solid var(--ctrl-bg); background: transparent; color: var(--fg-main);
+    margin: 6px 0; font-size: 0.78em; }
+.vv-foot { font-size: 0.7em; color: var(--fg-muted); line-height: 1.65;
+    margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--ctrl-bg); }
 .cv-head { display: flex; align-items: center; gap: 10px; flex-shrink: 0;
     padding: clamp(10px,3vw,14px) clamp(12px,4vw,16px); border-bottom: 1px solid var(--ctrl-bg); }
 .cv-back { width: 38px; height: 38px; flex-shrink: 0; border-radius: 50%;
     border: 1px solid var(--border-mid); background: var(--ctrl-bg-3);
     color: var(--fg-main); font-size: 1.05em; cursor: pointer; }
 .cv-title { font-size: 1.05em; color: var(--fg-main); font-weight: 600; }
-.cv-list { flex: 1; overflow-y: auto; padding: 12px clamp(12px,4vw,16px); }
+.cv-list { flex: 1; min-height: 30%; overflow-y: auto; padding: 12px clamp(12px,4vw,16px); }
 .cv-card {
     display: flex; align-items: center; gap: 14px; width: 100%;
     padding: 12px; margin-bottom: 12px; text-align: left; cursor: pointer;
@@ -701,11 +842,18 @@ body {
     font-size: 1.3em; transition: color 0.18s, transform 0.18s;
 }
 .cv-card:hover .cv-cgo { color: var(--fg-accent); transform: translateX(2px); }
-.cv-new { flex-shrink: 0; padding: 10px clamp(12px,4vw,16px) 16px; border-top: 1px solid var(--ctrl-bg); }
+/* 新建/AI 向导面板在 .cv-new 内联展开：面板打开时本区变高，必须允许内部滚动，
+   否则底部按钮被 100dvh 裁出屏外（375px/桌面均实测复现） */
+.cv-new { flex-shrink: 0; max-height: 62%; overflow-y: auto; padding: 10px clamp(12px,4vw,16px) 16px; border-top: 1px solid var(--ctrl-bg); }
 #cv-new-btn { width: 100%; padding: 13px; border-radius: 14px; border: 1.5px dashed var(--border-mid);
     background: transparent; color: var(--fg-muted); font-size: 0.92em; cursor: pointer; font-family: inherit;
     transition: color 0.18s, border-color 0.18s; }
 #cv-new-btn:hover { color: var(--fg-accent); border-color: var(--gold-line); }
+/* AI 向导入口：深色主题化（原来无规则，渲染成原生白底按钮，与暗色面板突兀） */
+#cv-forge-btn { width: 100%; padding: 13px; border-radius: 14px; border: 1px solid var(--gold-line);
+    background: var(--ctrl-bg-3); color: var(--fg-main); font-size: 0.92em; cursor: pointer;
+    font-family: inherit; transition: border-color 0.18s, color 0.18s; }
+#cv-forge-btn:hover { color: var(--fg-accent); }
 /* 新建角色表单：控件深色化（与 menu-content 同风格；修复原生白底突兀） */
 #cards-view .field { margin-bottom: 10px; }
 #cards-view input[type="text"], #cards-view select {
@@ -729,6 +877,7 @@ body {
     background: var(--panel-solid);
     backdrop-filter: blur(10px);
     padding-top: env(safe-area-inset-top);
+    padding-bottom: env(safe-area-inset-bottom);
     overflow-y: auto;
 }
 #pack-view.show { display: flex; }
@@ -783,14 +932,23 @@ body {
 .pv-body details[open] { border-left-color: var(--fg-accent); }
 .pv-body summary { cursor: pointer; font-size: 0.86em; color: var(--fg-main); }
 .pv-body .field-tip { margin: 8px 0 4px; }
+/* 角色形象操作（恢复默认）：与顶部大图上的「换封面/换头像」同处一区。
+   2026-09-19：从树里的"危险区"挪来 —— 撤销自己换的图不是危险操作，
+   而对官方包来说"危险区"本就该不存在（它不能删、不能归档）。 */
+.pv-asset-ops { margin-top: 6px; display: flex; gap: 14px; flex-wrap: wrap; }
+.pv-asset-ops a { font-size: 0.72em; color: var(--fg-muted); text-decoration: underline; cursor: pointer; }
+
 /* 详情页「主动消息」区 */
 .pv-proactive { margin-bottom: 18px; padding: 12px 14px; border: 1px solid var(--border-mid); border-radius: 12px; background: var(--ctrl-bg-3); }
 .pv-sec-title { color: var(--fg-main); font-size: 0.88em; font-weight: 600; margin-bottom: 8px; }
 .pv-check { display: flex; align-items: center; gap: 8px; color: var(--fg-main); font-size: 0.84em; margin: 7px 0; cursor: pointer; }
 .pv-check input { accent-color: var(--fg-accent); }
-.pv-pro-row { display: flex; align-items: center; gap: 10px; margin: 6px 0; font-size: 0.78em; color: var(--fg-muted); }
-.pv-pro-row span { flex: 0 0 auto; }
-.pv-pro-row input[type="range"] { flex: 1; accent-color: var(--fg-accent); }
+/* ⚠️ 2026-09-19 修复滑块冲出卡片（真机截图：两条 range 的右端拖到屏幕外）。
+   原因是 flex 子项的 `min-width: auto`：range 有固有最小宽度，容器不够宽时它不肯收缩，
+   于是整行溢出。三处一起治：允许换行 + 两端都放开收缩。 */
+.pv-pro-row { display: flex; align-items: center; gap: 10px; margin: 6px 0; font-size: 0.78em; color: var(--fg-muted); flex-wrap: wrap; }
+.pv-pro-row span { flex: 0 1 auto; min-width: 0; }
+.pv-pro-row input[type="range"] { flex: 1 1 120px; min-width: 0; accent-color: var(--fg-accent); }
 .pv-pro-msg { font-size: 0.72em; color: var(--fg-muted); margin-top: 6px; min-height: 1em; }
 /* 详情页「表情包」区 */
 .pv-stickers { margin-bottom: 18px; padding: 12px 14px; border: 1px solid var(--border-mid); border-radius: 12px; background: var(--ctrl-bg-3); }
@@ -981,7 +1139,8 @@ body {
     -webkit-tap-highlight-color: transparent;
     -webkit-touch-callout: none;
 }
-.carousel-track img {
+.carousel-track img,
+.carousel-track > .pack-noimg-abs {
     position: absolute; top: 0; left: 0;
     width: 100%; height: 100%;
     object-fit: contain; flex-shrink: 0;
@@ -989,6 +1148,11 @@ body {
     user-select: none; -webkit-user-drag: none;
     transition: opacity 0.4s ease;   /* 淡入淡出切换（替代 transform 滑动，避开 WebView 合成 bug） */
 }
+/* F-5：无封面/头像包的「首字占位块」（替代破图/沿用上一张图） */
+.carousel-track > .pack-noimg-abs { display: flex; align-items: center; justify-content: center;
+    font-size: 3.4em; color: var(--fg-muted); background: var(--ctrl-bg); }
+.pack-noimg { display: flex; align-items: center; justify-content: center;
+    color: var(--fg-muted); background: var(--ctrl-bg); font-size: 1.5em; }
 .carousel-dots {
     position: absolute; bottom: 8px; left: 0; right: 0;
     display: flex; justify-content: center; gap: 6px;
@@ -1065,7 +1229,7 @@ body {
 /* 公告面板（覆盖层） */
 #notice-panel {
     position: fixed; inset: 0; z-index: 58;
-    background: var(--panel-solid);
+    background: var(--panel-veil); backdrop-filter: blur(10px);
     display: none; flex-direction: column;
     padding: env(safe-area-inset-top) 0 env(safe-area-inset-bottom);
 }
@@ -1074,7 +1238,7 @@ body {
 /* 设置面板（首页 ⚙ 打开，API 配置独立于此） */
 #settings-panel {
     position: fixed; inset: 0; z-index: 58;
-    background: var(--panel-solid);
+    background: var(--panel-veil); backdrop-filter: blur(10px);
     display: none; flex-direction: column;
     padding: env(safe-area-inset-top) 0 env(safe-area-inset-bottom);
 }
@@ -1083,7 +1247,7 @@ body {
 /* 反馈面板（首页 ✉ 打开） */
 #feedback-panel {
     position: fixed; inset: 0; z-index: 58;
-    background: var(--panel-solid);
+    background: var(--panel-veil); backdrop-filter: blur(10px);
     display: none; flex-direction: column;
     padding: env(safe-area-inset-top) 0 env(safe-area-inset-bottom);
 }
@@ -1140,6 +1304,51 @@ body {
 .notice-body p { margin: 4px 0; }
 .notice-tip { color: var(--fg-muted); font-size: 0.85em; }
 
+/* ── 服务端下发的公告条目（js/notice.js 渲染；见 docs/公告通道规范.md §四）──
+   与下面的内置指南刻意做出层次差：条目是"新内容"（有卡片底、有日期、置顶有强调边），
+   指南是"常驻参考"。分隔线上写一句"以下为 App 内置使用指南"，避免用户以为是两条公告。 */
+.notice-entry {
+    background: rgba(255,255,255,0.045);
+    border: 1px solid var(--ctrl-bg);
+    border-radius: 10px;
+    padding: 12px 14px;
+    margin: 0 0 12px;
+}
+.notice-entry.notice-lv-warn { border-color: rgba(255,200,120,0.45); }
+.notice-entry.notice-lv-critical { border-color: rgba(255,120,120,0.55); background: rgba(255,80,80,0.07); }
+.notice-entry.notice-pinned { box-shadow: inset 3px 0 0 var(--fg-accent); }
+.notice-ent-head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; margin-bottom: 6px; }
+.notice-ent-title { color: var(--fg-accent); font-size: 1.05em; font-weight: 600; }
+.notice-ent-date { color: var(--fg-muted); font-size: 0.78em; }
+.notice-ent-new {
+    background: var(--fg-accent); color: #201a10; border-radius: 4px;
+    font-size: 0.68em; padding: 0 5px; line-height: 1.6;
+}
+.notice-b-h { color: var(--fg-accent); margin: 12px 0 6px; font-size: 1em; }
+.notice-b-p { margin: 4px 0; }
+.notice-b-li { margin: 3px 0 3px 1.1em; list-style: disc; }
+.notice-b-tip { color: var(--fg-muted); font-size: 0.85em; margin: 6px 0 0; }
+.notice-fig { margin: 8px 0 4px; }
+.notice-fig img { max-width: 100%; border-radius: 8px; display: block; }
+.notice-fig-cap { color: var(--fg-muted); font-size: 0.78em; margin-top: 4px; }
+.notice-divider {
+    color: var(--fg-muted); font-size: 0.78em; text-align: center;
+    margin: 18px 0 12px; position: relative;
+}
+.notice-divider::before, .notice-divider::after {
+    content: ""; position: absolute; top: 50%; width: 22%; height: 1px; background: var(--ctrl-bg);
+}
+.notice-divider::before { left: 0; }
+.notice-divider::after { right: 0; }
+
+/* 首页公告栏"有新公告"小圆点（.notice-dot 由 js/notice.js 显隐） */
+.notice-dot {
+    min-width: 15px; height: 15px; border-radius: 8px;
+    background: #ff6b6b; color: #fff;
+    font-size: 0.62em; line-height: 15px; text-align: center;
+    padding: 0 4px; margin-left: 4px; flex-shrink: 0;
+}
+
 /* ═══════════════════════════════════════════
    面板进出场过渡统一（3.4）：抽屉原本就有滑入；浮层补淡入/上滑
    均为 .show 触发（display none→flex/block 时动画必播），不改 JS
@@ -1179,153 +1388,126 @@ body {
    低端机降级（5.5）：JS 探测 deviceMemory/hardwareConcurrency 打 body.low-end，
    关掉毛玻璃（backdrop-filter 在低端 GPU 掉帧），面板改不透明底
    ═══════════════════════════════════════════ */
-body.low-end #app, body.low-end #fix-view { backdrop-filter: none; }
+body.low-end #app, body.low-end #fix-view, body.low-end #menu-drawer,
+body.low-end #settings-panel, body.low-end #notice-panel, body.low-end #feedback-panel { backdrop-filter: none; }
+body.low-end #menu-drawer, body.low-end #settings-panel, body.low-end #notice-panel, body.low-end #feedback-panel { background: var(--panel-solid); }
 body.low-end #app { background: var(--panel-solid); }
 
-/* ═══════════════════════════════════════════
-   桌面双栏（≥1100px）：左 264px 导航 + 右侧主区
-   实现策略：现有各视图都是 position:fixed 全屏层，桌面档统一 left:264px
-   收进右栏——视图切换逻辑（JS）零改动；移动端 DOM/样式完全不受影响。
-   ═══════════════════════════════════════════ */
-#pc-sidebar {
-    display: none;   /* 移动端永不显示；petite-vue 也只在桌面档加载（js/pc_nav.js） */
-}
-@media (min-width: 1100px) {
-    #pc-sidebar {
-        position: fixed; left: 0; top: 0; bottom: 0; width: 264px; z-index: 40;
-        display: flex; flex-direction: column;
-        background: var(--panel-solid);
-        border-right: 1px solid var(--border-mid);
-        padding-top: env(safe-area-inset-top);
-    }
-    /* 各全屏视图收进右栏 */
-    #app, #home-view, #fix-view, #settings-panel, #notice-panel, #feedback-panel,
-    #menu-overlay, #sticker-panel, #pack-view, #cards-view {
-        left: 264px;
-    }
-    #app { position: fixed; max-width: none; width: auto; box-shadow: none; }
-    #home-view { left: 264px; right: 0; width: auto; max-width: none; transform: none; }
-    /* 抽屉桌面化：右区整页视图（与设置同级），不再滑出窄面板；遮罩不再需要 */
-    #menu-drawer {
-        top: 20px; bottom: 20px; right: 20px; left: 284px;
-        width: auto; max-width: none; height: auto;
-        border: 1px solid var(--border-mid); border-radius: 14px;
-        box-shadow: 0 12px 44px rgba(0,0,0,0.45);
-        transform: none; transition: none;
-        visibility: hidden;              /* 桌面无滑入动画：用 visibility 显隐（.open 显示） */
-    }
-    #menu-drawer.open { visibility: visible; animation: panelFadeIn 0.18s; }
-    #menu-overlay { display: none !important; }
-    #fix-view { max-width: none; }
-    /* 抽屉内容桌面密度：tab 行靠左、列表网格化 */
-    .menu-tabs { grid-template-columns: repeat(5, minmax(90px, 130px)); justify-content: start; }
-    .menu-content { max-width: 980px; margin: 0 auto; }
-    #fav-list, #log-list, #pipeline-list {
-        display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
-        gap: 10px; max-height: none !important; align-content: start;
-    }
-    #fav-list .fav-item, #fav-list .fav-empty { margin-bottom: 0; }
-    #fav-list .fav-empty, #log-list > div, #pipeline-list > div { grid-column: 1 / -1; }
-    #fav-list .fav-item { grid-column: auto; }
-    /* 首页 PC 欢迎区：轮播退役，左右模式大卡；入口行（继续聊天/角色卡管理）保留 */
-    .home-carousel { display: none; }
-    .home-modes {
-        display: grid; grid-template-columns: 1fr 1fr; gap: 18px;
-        padding: 22px clamp(20px, 4vw, 48px) 8px; flex-shrink: 0;
-    }
-    .hm-card {
-        position: relative; padding: 0; border: 1px solid var(--border-mid);
-        border-radius: 18px; overflow: hidden; cursor: pointer;
-        background: var(--ctrl-bg-3); font-family: inherit; text-align: left;
-        box-shadow: 0 6px 22px rgba(0,0,0,0.3);
-        transition: transform 0.2s, border-color 0.2s, box-shadow 0.2s;
-    }
-    .hm-card:hover {
-        transform: translateY(-3px); border-color: var(--gold-line);
-        box-shadow: 0 12px 34px rgba(0,0,0,0.45), 0 0 0 1px var(--gold-glow);
-    }
-    .hm-card > img.hm-cover { width: 100%; aspect-ratio: 2 / 1; object-fit: cover; display: block; }
-    /* 首页下方卡片区限宽 */
-    .home-blank { max-width: 980px; width: 100%; margin: 0 auto; }
-    /* 桌面有侧栏导航，聊天页汉堡按钮冗余 */
-    #menu-btn { display: none; }
-
-    /* ── PC 浏览器观感（非手机 UI 拉伸）── */
-    /* ① 主视图窗口卡片化：四周留白透出萤火背景，圆角+描边+投影 */
-    #app, #home-view, #fix-view, #settings-panel, #notice-panel, #feedback-panel {
-        top: 20px; bottom: 20px; right: 20px; left: 284px;
-        width: auto; height: auto;
-        border: 1px solid var(--border-mid); border-radius: 14px;
-        overflow: hidden;
-        box-shadow: 0 12px 44px rgba(0,0,0,0.45);
-    }
-    #menu-overlay { border-radius: 0; }
-    #menu-drawer {
-        top: 20px; bottom: 20px; right: 20px; height: auto;
-        border: 1px solid var(--border-mid); border-radius: 14px;
-    }
-    #sticker-panel {
-        left: 284px; right: 20px; bottom: 20px;
-        border: 1px solid var(--border-mid); border-radius: 14px;
-        max-width: 640px; margin-left: auto; margin-right: auto;
-    }
-    /* ② 桌面密度：气泡收窄、行高放松、滚动条加粗 */
-    .msg-row .bubble { max-width: 68%; line-height: 1.7; }
-    .msg-col { max-width: 68%; }
-    #messages::-webkit-scrollbar { width: 8px; }
-    #messages::-webkit-scrollbar-thumb { border-radius: 4px; }
-    /* ③ 桌面输入区：悬浮作曲卡片 */
-    #input-bar {
-        margin: 0 12px 12px; padding: 8px 10px;
-        border: 1px solid var(--border-mid); border-radius: 14px;
-        background: var(--ctrl-bg-2);
-    }
-    #input-bar:focus-within { border-color: var(--gold-line); box-shadow: 0 0 0 2px var(--gold-glow); }
-    #quote-bar { margin: 0 12px 8px; }
-    /* ④ 头部去手机感：去底部分隔线，留窗口标题栏感 */
-    #header { border-bottom: none; padding-bottom: 4px; }
-    #messages { padding-top: 4px; }
-    /* 聊天列限宽居中：宽屏下气泡行宽保持可读 */
-    #header, #messages { max-width: 880px; width: 100%; margin-left: auto; margin-right: auto; }
-    #input-bar, #quote-bar { max-width: 856px; box-sizing: border-box; width: calc(100% - 24px); margin-left: auto; margin-right: auto; }
-    /* 面板内容限宽居中 */
-    .settings-body > *, .notice-body > * { max-width: 760px; margin-left: auto; margin-right: auto; }
-    /* 侧栏内部 */
-    .pcs-head {
-        display: flex; flex-direction: column; align-items: center;
-        padding: 24px 16px 16px; border-bottom: 1px solid var(--ctrl-bg);
-    }
-    .pcs-avatar { width: 60px; height: 60px; border-radius: 50%; object-fit: cover; }
-    .pcs-name { color: var(--fg-main); font-size: 1.02em; font-weight: bold; margin-top: 10px; }
-    .pcs-status {
-        color: var(--fg-muted); font-size: 0.72em; margin-top: 4px;
-        max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-    }
-    .pcs-nav { flex: 1; overflow-y: auto; padding: 10px 10px; }
-    .pcs-foot { padding: 8px 10px 10px; border-top: 1px solid var(--ctrl-bg); }
-    .pcs-item {
-        display: flex; align-items: center; gap: 10px;
-        width: 100%; padding: 10px 14px; margin-bottom: 2px;
-        border: none; border-radius: 10px; background: transparent;
-        color: var(--fg-bright); font-family: inherit; font-size: 0.88em;
-        cursor: pointer; text-align: left; transition: background 0.15s;
-    }
-    .pcs-item:hover { background: var(--ctrl-bg-2); }
-    .pcs-item.active { background: var(--gold-glow); color: var(--fg-accent); box-shadow: inset 2px 0 0 var(--fg-accent); }
-    .pcs-item .pcs-ico { width: 20px; text-align: center; flex-shrink: 0; }
-    /* 诊断/系统项弱化：字号小一档、颜色 muted */
-    .pcs-item.pcs-dim { font-size: 0.78em; color: var(--fg-muted); padding: 7px 14px; }
-    .pcs-diag-row { display: flex; gap: 4px; }
-    .pcs-diag-row .pcs-item { flex: 1; }
-    .pcs-label {
-        color: var(--fg-muted); font-size: 0.66em; letter-spacing: 2px;
-        padding: 4px 14px 6px; user-select: none;
-    }
-    .pcs-foot .pcs-label { padding-top: 2px; }
-    /* 侧栏卡片化微调：与右区间留出呼吸 */
-    .pcs-head { padding-top: 28px; }
-}
+/* ── PC（≥1100px）样式已迁出本文件 ──
+   见 app/static/pc.css 与 docs/设计/PC端前端重构.md。
+   理由：此前 PC 规则与移动规则混在一起互相覆盖，改一处崩一处；
+   现在 style.css 只管移动端与两端共用，PC 规则集中在 pc.css（在本文之后加载）。 */
 
 /* ═══ 菜单分组标题（底部导航已于 0.8.1 移除：聊天页全屏只留输入栏） ═══ */
 .menu-group-title{padding:12px 12px 6px;font-size:0.68em;color:var(--fg-muted);
   letter-spacing:.06em;text-transform:uppercase}
+
+/* ── 自绘下拉（ui_select.js）：原生 select 退为隐藏值存储，视觉为暗色按钮+弹层 ──
+   背景：安卓 WebView 原生 select 弹系统级白色弹窗，页面 CSS 管不到（图1 实测）。 */
+select.ui-select-native{position:absolute!important;opacity:0!important;pointer-events:none!important;height:0!important;width:0!important}
+.ui-select-btn{
+  display:flex;align-items:center;justify-content:space-between;gap:8px;width:100%;
+  padding:10px 12px;border-radius:10px;border:1px solid var(--border-mid);
+  background:var(--ctrl-bg);color:var(--fg-main);font-family:inherit;font-size:0.85em;
+  cursor:pointer;box-sizing:border-box;text-align:left;
+}
+.ui-select-btn:hover{border-color:var(--gold-line)}
+.ui-select-label{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ui-select-arrow{color:var(--fg-muted);flex-shrink:0}
+.ui-select-pop{
+  position:fixed;z-index:1000;display:none;min-width:160px;max-height:46vh;overflow-y:auto;
+  background:var(--panel-solid,#181830);border:1px solid var(--border-mid);border-radius:12px;
+  box-shadow:0 10px 32px rgba(0,0,0,.55);padding:5px;
+}
+.ui-select-pop.show{display:block}
+.ui-select-opt{
+  display:block;width:100%;text-align:left;padding:10px 12px;border:none;border-radius:8px;
+  background:transparent;color:var(--fg-main);font-family:inherit;font-size:0.85em;cursor:pointer;
+}
+.ui-select-opt:hover{background:var(--ctrl-bg)}
+.ui-select-opt.on{color:var(--fg-accent);background:var(--ctrl-bg)}
+
+/* ── 设置页表单控件统一深色（修复原生白底/灰底输入，图1 实测）── */
+#settings-panel input:not([type]), #settings-panel input[type="text"],
+#settings-panel input[type="password"], #settings-panel input[type="email"],
+#settings-panel select {
+  background: var(--ctrl-bg); color: var(--fg-main);
+  border: 1px solid var(--border-mid); border-radius: 10px;
+  padding: 10px 12px; font-family: inherit; font-size: 0.85em;
+  width: 100%; box-sizing: border-box;
+}
+#settings-panel input:focus { border-color: var(--gold-line); outline: none; }
+
+/* ── 用户形象区（05：每包独立的用户称呼+头像）── */
+/* 用户形象（05）：独立模块卡，与主动消息区同风格 */
+.pv-identity{margin-top:14px;margin-bottom:20px}
+.pv-stickers{margin-top:8px}
+.pv-id-main{display:flex;align-items:center;gap:14px;margin-top:10px}
+.pv-id-ops{display:flex;flex-direction:column;gap:6px;flex:1;min-width:0}
+.pv-id-builtin{display:flex;align-items:center;gap:8px;font-size:0.75em;color:var(--fg-muted)}
+.pv-id-choice{width:36px;height:36px;border-radius:50%;cursor:pointer;border:2px solid transparent;object-fit:cover}
+.pv-id-choice:hover{border-color:var(--gold-line)}
+.pv-id-choice.on{border-color:var(--fg-accent)}
+.pv-id-row{display:flex;align-items:center;gap:10px;margin-top:10px}
+.pv-id-upload{align-self:flex-start;padding:8px 14px;border-radius:10px;border:1px solid var(--border-mid);
+    background:var(--ctrl-bg-3);color:var(--fg-main);font-size:0.8em;cursor:pointer;font-family:inherit}
+.pv-id-upload:hover{border-color:var(--gold-line)}
+.pv-user-avatar{width:52px;height:52px;border-radius:50%;object-fit:cover;background:var(--ctrl-bg);border:1px solid var(--border-mid)}
+.pv-id-row input{flex:1}
+
+/* ── AI 辅助抽屉（阶段 E）：底部弹出，覆盖聊天区上方 ── */
+#assist-view{position:fixed;inset:0;z-index:7;display:none;flex-direction:column;background:var(--panel-solid,#181830)}
+.av-head{display:flex;align-items:center;gap:10px;padding:calc(10px + env(safe-area-inset-top)) 14px 10px;border-bottom:1px solid var(--ctrl-bg);color:var(--fg-main);font-size:0.95em;font-weight:600}
+.av-head button{width:36px;height:36px;border-radius:50%;border:1px solid var(--border-mid);background:var(--ctrl-bg-3);color:var(--fg-main);font-size:1em;cursor:pointer;flex-shrink:0}
+#av-chat{flex:1;overflow-y:auto;padding:12px}
+#av-proposal{max-height:46vh;overflow-y:auto;border-top:1px solid var(--ctrl-bg);padding:10px}
+.av-inputbar{display:flex;gap:8px;padding:10px 12px calc(10px + env(safe-area-inset-bottom));border-top:1px solid var(--ctrl-bg)}
+.av-inputbar input{flex:1;min-width:0;padding:10px 12px;border-radius:10px;border:1px solid var(--border-mid);background:var(--ctrl-bg);color:var(--fg-main);font-family:inherit;font-size:0.9em;box-sizing:border-box}
+.av-inputbar input:focus{border-color:var(--gold-line);outline:none}
+.av-inputbar button{padding:10px 18px;border-radius:10px;border:1px solid transparent;background:var(--btn-bg);color:var(--fg-bright);cursor:pointer;font-family:inherit;font-size:0.9em;box-sizing:border-box;flex-shrink:0}
+/* 文件项右侧的 AI 辅助小图标（只是图标，不抢主操作） */
+.assist-ico{flex:0 0 auto;border:none;background:transparent;color:var(--fg-muted);cursor:pointer;font-size:0.9em;padding:2px 6px;border-radius:8px}
+.assist-ico:hover{color:var(--fg-accent);background:var(--ctrl-bg)}
+
+/* ── 角色卡管理树（pack_tree.js，数据驱动）：与人设文案折叠条同款（左金线 + ▶）── */
+#pv-tree{margin-top:14px}
+.pt-domain{margin:10px 0;border:1px solid var(--border-mid);border-left:3px solid var(--gold-line);border-radius:12px;background:var(--ctrl-bg-3);transition:border-color 0.18s;overflow:hidden}
+.pt-domain:hover{border-color:var(--border-hover);border-left-color:var(--gold-line)}
+.pt-domain[open]{border-left-color:var(--fg-accent)}
+.pt-domain>summary{display:flex;align-items:baseline;gap:8px;padding:10px 14px;cursor:pointer;list-style:none;user-select:none;font-size:0.86em;color:var(--fg-main)}
+.pt-domain>summary::-webkit-details-marker{display:none}
+.pt-domain>summary::before{content:"▶";flex:0 0 auto;color:var(--fg-muted);font-size:0.72em;transition:transform .15s}
+.pt-domain[open]>summary::before{transform:rotate(90deg)}
+.pt-domain>summary b{font-weight:600}
+.pt-desc{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:right;color:var(--fg-muted);font-size:0.72em;font-weight:400}
+.pt-src{margin:0 10px 8px;padding:0 10px;border:1px solid var(--border-mid);border-radius:10px;background:var(--ctrl-bg)}
+.pt-row{display:flex;align-items:center;gap:8px;padding:8px 4px;cursor:pointer;border-radius:8px}
+.pt-row::before{content:"▶";flex:0 0 auto;color:var(--fg-muted);font-size:0.68em}
+.pt-row:hover{background:var(--ctrl-bg-3)}
+.pt-kb .pt-row{padding:5px 4px}
+.pt-kb-grp{font-size:0.68em;color:var(--fg-muted);margin:8px 0 2px}
+.pt-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:0.82em;color:var(--fg-main)}
+.pt-tag{flex:0 0 auto;font-size:0.62em;color:var(--fg-accent)}
+.pt-note{color:var(--fg-muted);font-size:0.75em;padding:4px}
+.pt-editor{padding:6px 4px}
+.pt-editing{font-size:0.7em;color:var(--fg-muted);margin-bottom:4px}
+.pt-ta{width:100%;height:200px;box-sizing:border-box;background:var(--ctrl-bg);color:var(--fg-main);
+  border:1px solid var(--border-mid);border-radius:8px;padding:8px;font-family:inherit;font-size:0.8em}
+.pt-sysprompt>summary{display:flex;align-items:center;gap:8px;padding:8px 4px;cursor:pointer;list-style:none}
+.pt-sysprompt>summary::-webkit-details-marker{display:none}
+.pt-sysprompt>summary::before{content:"▶";flex:0 0 auto;color:var(--fg-muted);font-size:0.68em;transition:transform .15s}
+.pt-sysprompt[open]>summary::before{transform:rotate(90deg)}
+/* 多阶段共用标签 / 未附带灰态 / 引用跳转行 */
+.pt-shared{color:#d8a94e;border:1px solid rgba(216,169,78,.4);border-radius:8px;padding:0 4px}
+.pt-row-missing{opacity:.45;cursor:default}
+.pt-row-missing:hover{background:transparent}
+.pt-row-missing::before{content:""}
+.pt-ref .pt-name{color:var(--fg-muted);font-style:italic}
+.pt-pre{max-height:280px;overflow-y:auto;white-space:pre-wrap;word-break:break-all;
+  background:var(--ctrl-bg);border:1px solid var(--border-mid);border-radius:8px;
+  padding:8px;font-size:0.72em;color:var(--fg-muted);margin:6px 0 2px}
+.pt-embed{padding:8px 10px}
+/* 嵌入块搬入树后：去掉自身的框与重复标题（外层 .pt-src 已有框） */
+.pt-embed .pv-sec-title{display:none}
+.pt-embed .pv-proactive,.pt-embed .pv-stickers,.pt-embed .pv-identity{margin:0;padding:0;border:none;background:transparent}
+.pt-embed .pv-danger-btn{margin-top:6px}

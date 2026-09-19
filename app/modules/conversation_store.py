@@ -14,6 +14,7 @@ from pathlib import Path
 from datetime import datetime
 
 from modules.app_config import USER_DIR, BASE_DIR, mode_data_dir, DEFAULT_MODE
+from modules.storage import atomic_write_text   # B4（审计 2026-09-15）：撤回全量重写改原子写
 
 logger = logging.getLogger(__name__)
 _lock = threading.Lock()
@@ -170,8 +171,12 @@ def remove_last_turn(mode: str = DEFAULT_MODE) -> int:
                 j -= 1
             original_len = len(lines)
             lines = lines[:j]
-            with fp.open("w", encoding="utf-8") as f:
-                f.writelines(lines)
+            # B4（审计 2026-09-15）：全量重写改原子写——写中途崩溃/断电/磁盘满会把
+            # conversation.jsonl 截断成半截，整个会话历史损坏（不是丢一轮）。会话越长
+            # 窗口越大。失败返回 0（调用方视为撤回未生效，文件保持原样）
+            if not atomic_write_text(fp, "".join(lines)):
+                logger.error("撤回主动轮写盘失败（会话文件保持原样）: %s", fp)
+                return 0
             removed = original_len - len(lines)
             logger.debug("remove_last_turn: 移除主动轮 %d 行", removed)
             return removed
@@ -208,8 +213,10 @@ def remove_last_turn(mode: str = DEFAULT_MODE) -> int:
 
         original_len = len(lines)
         lines = lines[:i]
-        with fp.open("w", encoding="utf-8") as f:
-            f.writelines(lines)
+        # B4（审计 2026-09-15）：同上——全量重写改原子写，防半截会话文件
+        if not atomic_write_text(fp, "".join(lines)):
+            logger.error("撤回写盘失败（会话文件保持原样）: %s", fp)
+            return 0
 
     removed = original_len - len(lines)
     logger.debug("remove_last_turn: 移除 %d 行, 剩余 %d 行", removed, len(lines))
@@ -370,6 +377,77 @@ def get_min_seq(mode: str = DEFAULT_MODE) -> int:
                 except Exception:
                     continue
     return 1
+
+
+def load_all(mode: str = DEFAULT_MODE) -> list:
+    """加载**全部**消息（按 seq 升序）。记忆整理（rest）切片用。
+
+    2026-09-18 修复：rest 原先喂的是 `session["context"].get_full()`，而它最多只有
+    `hydrate_context(max_turns=40)` 截断后的 40 轮。但 rest 的切片游标
+    `last_integrated_turn` 是**磁盘全量**轮号 —— 于是长对话（>40 轮）重启一次后：
+      游标 40（内存轮数）写入 → verify_index 看 40 <= 100 判定"正常"不修
+      → 下次 _slice_new_dialogue(40 轮内存, 40) 切成空 → "无新对话，跳过"
+      → **从此每次点「让流萤休息」都是"没有新内容"，记忆永不更新，全程零报错**。
+    与阶段 3.6 修过的"游标偏大 → 永久跳过"同一类病，只是这次的偏大来自内存窗口截断。
+
+    会话文件很小（万行级 JSONL 也就几百 KB），一次性读入即可，不做流式。
+    """
+    return load_recent(limit=10 ** 9, mode=mode)
+
+
+def load_all_context(mode: str = DEFAULT_MODE) -> list:
+    """加载全部历史，并转成**记忆整理口径**的消息列表（`{role, content, time, proactive}`）。
+
+    ⚠️ 为什么不能直接把 `load_all()` 喂给 `MemoryManager.rest`：
+    `load_all` 返回的是 **jsonl 原始行**（字段是 `who`/`type`/`content`），
+    而 rest 的切片（`_slice_dialogue`）与 `format_history` 读的是 **`role`**。
+    形状不一致 → 每行都落进 "（行为）" 分支、`turn` 永远不涨 →
+    `turn <= last_turn` 恒真 → **切出来是空的、"无新对话，跳过"**。
+    （2026-09-18 本轮实测踩到：上一轮把 rest 的入参从 `ctx.get_full()` 换成
+      `load_all()` 修口径 bug 时，顺手引入了这个"形状不一致"的新 bug，
+      而当时的测试只断言了 `success`，没断言切出来的内容。）
+
+    ★ 映射规则：**逐条 1:1，不合并连续 user 消息**。因为整理游标
+    `last_integrated_turn` 与 `count_user_turns()` 都是按 **jsonl 里 `who=="user"` 的行数**
+    定义的；一旦像 `hydrate_context` 那样把连发合并成一轮，两个口径又会分叉
+    （同类坑见 docs/错误总结.md #10）。
+    行为/表情包/旁白 → system 行，文案与 `hydrate_context` 的 `add_action` 保持一致。
+    """
+    from modules.llm_base import char_name  # noqa: F401  （占位：文案口径与 hydrate 一致）
+    out = []
+    for m in load_all(mode):
+        who = m.get("who")
+        typ = m.get("type")
+        ts = m.get("time")
+        if who == "user":
+            if typ == "text" and m.get("content"):
+                out.append({"role": "user",
+                            "content": compose_user_text(m["content"], m.get("quote"), mode),
+                            "time": ts})
+            elif typ == "image":
+                out.append({"role": "user",
+                            "content": compose_user_text(
+                                f"[图片：{m.get('desc') or '（无描述）'}]", m.get("quote"), mode),
+                            "time": ts})
+            elif typ == "sticker":
+                out.append({"role": "user",
+                            "content": compose_user_text(
+                                f"[表情包：{m.get('label') or '表情'}]", m.get("quote"), mode),
+                            "time": ts})
+            continue
+        if who != "firefly":
+            continue
+        if typ == "text" and m.get("content"):
+            rec = {"role": "assistant", "content": m["content"], "time": ts}
+            if m.get("proactive"):
+                rec["proactive"] = True
+            out.append(rec)
+        elif typ == "narration" and m.get("text"):
+            out.append({"role": "system", "content": f"[行为: 旁白] {m['text']}", "time": ts})
+        elif typ == "sticker":
+            out.append({"role": "system",
+                        "content": f"[行为: 表情包] {m.get('label') or '表情'}", "time": ts})
+    return out
 
 
 def hydrate_context(ctx, max_turns: int = 40, mode: str = DEFAULT_MODE) -> int:

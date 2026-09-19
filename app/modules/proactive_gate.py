@@ -41,7 +41,7 @@ def reset_states(mode: str = DEFAULT_MODE) -> None:
     修的是什么：`routes.clear_history` 原来写的是 `_IGNORED.pop(mode)` / `_HIDDEN.pop(mode)`，
     但这些表的键是 `_state_key(mode)` = **(mode, 用户作用域) 元组**——按字符串 pop 永远删不掉
     任何东西。用户清了历史，角色仍背着"连续被忽视 3 次"的降档惩罚和隐藏式冷却，
-    表现就是"清空历史后她依然不肯主动开口"。
+    表现就是"清空历史后角色依然不肯主动开口"。
 
     只清语义上属于"关系重新开始"的两项：
     - `_IGNORED`：忽视降档计数（惩罚必须归零）

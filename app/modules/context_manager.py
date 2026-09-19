@@ -57,6 +57,27 @@ def _estimate_messages_tokens(messages: list) -> int:
     return total
 
 
+# ── 各消费者的历史预算（2026-09-18）────────────────
+# 背景：此前上下文只按"轮数"约束，token 完全不受控（`ContextManager.token_capacity`
+# 存进去后**全代码零读取点**，是个死参数）。轮数 ≠ 长度：一轮可能是 1 句话，
+# 也可能是用户粘一整篇文档。
+#
+# ⚠️ **这些预算是"兜底"，不是"窗口裁剪手段"** —— 取值必须让正常对话（活跃窗口
+# 30–100 轮）永远够用，因为：
+#   分析器/回复器把「## 最近对话」放在 user 消息最前面，DeepSeek 按**前缀**打折。
+#   窗口在 30→100 的增长期里只往后追加 → 老部分是稳定前缀、每轮只有新那一轮没命中。
+#   一旦预算触发**从头部裁剪**，窗口就从"增长"变成"滑动"：第一行每轮都在变，
+#   历史块**永远命中不了缓存**，等于把省的 token 又赔回去。
+# 所以下限定得比 100 轮的实际体量（实测一轮约 100-200 token，100 轮 ≈ 20k）宽一截。
+BUDGET_ANALYZER = 30000    # 分析器：活跃窗口全量（兜底）
+BUDGET_POLISHER = 30000    # 回复器：活跃窗口全量（兜底）
+BUDGET_ORGANIZER = 3000    # 组织器：5 轮
+BUDGET_RETRIEVER = 3000    # 检索器话题锚点：10 轮里只取最后一条 user
+BUDGET_PROACTIVE = 30000   # 主动消息生成：与回复器同窗口
+BUDGET_HYDRATE = 30000     # 重启回灌：活跃窗口全量
+_MIN_TURNS_KEEP = 3        # 无论预算多紧，至少保留最近这么多轮（不给空上下文）
+
+
 # ── 核心类 ────────────────────────────────────────
 class ContextManager:
     """上下文管理器 — 管理对话历史 + token 监控"""
@@ -203,12 +224,23 @@ class ContextManager:
         return sum(1 for m in self._history[last_p + 1:] if m["role"] == "user")
 
     # ── 查询方法 ─────────────────────────────────
-    def get_recent(self, n_turns: int = 10) -> list:
-        """获取最近 n 轮对话，返回副本。
-        按 user 消息数计轮次——历史中夹杂的 system 行为消息不挤占轮数。
+    def get_recent(self, n_turns: int = 10, max_tokens: int | None = None) -> list:
+        """获取最近 n_turns 轮对话（副本），并在 token 预算内尽量多留。
+
+        轮次按 user 消息数计——历史中夹杂的 system 行为消息不挤占轮数。
+
+        max_tokens=None → 用构造时的 token_capacity 兜底。**该参数此前是死字段**
+        （2026-09-18 接上）：只按轮数约束时，用户粘一大段文本就能把单轮成本和
+        上游上下文一起打飞。
+
+        裁剪粒度是**整轮**：从头往前丢轮，永不把一轮切成两半——半轮会让 LLM 看到
+        "没有提问的回答"，比少给几轮更糟。且至少保留 `_MIN_TURNS_KEEP` 轮，
+        宁可超预算也不给空上下文。
         """
         if not isinstance(n_turns, int) or n_turns <= 0:
             raise InputRejected(f"n_turns 必须为正整数，当前: {n_turns}")
+        budget = self._token_capacity if max_tokens is None else max_tokens
+
         seen = 0
         start = 0
         for idx in range(len(self._history) - 1, -1, -1):
@@ -217,7 +249,24 @@ class ContextManager:
                 if seen >= n_turns:
                     start = idx
                     break
-        return deepcopy(self._history[start:])
+
+        starts = [i for i in range(start, len(self._history))
+                  if self._history[i]["role"] == "user"]
+        if not starts:
+            return deepcopy(self._history[start:])
+
+        keep_from = 0
+        if budget and budget > 0:
+            # 从"一轮不丢"开始，超预算才往前丢——**不能反过来**：
+            # 若起点就取 len-_MIN_TURNS_KEEP，预算充足时也会白丢几轮（写完即踩过）。
+            max_drop = max(0, len(starts) - _MIN_TURNS_KEEP)
+            while (keep_from < max_drop
+                   and _estimate_messages_tokens(self._history[starts[keep_from]:]) > budget):
+                keep_from += 1
+            if keep_from:
+                logger.debug("get_recent: token 预算 %d 触发裁剪，丢弃最早 %d 轮",
+                             budget, keep_from)
+        return deepcopy(self._history[starts[keep_from]:])
 
     def get_full(self) -> list:
         """获取完整历史，返回副本"""

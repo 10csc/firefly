@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
-"""后端镜像一致性门禁（R-03）：校验 android/app/src/main/python/backend/{app,knowledge,database}
-与仓库源（app/、knowledge/、database/）是否一致。
+"""后端镜像一致性门禁（R-03）：校验 android/app/src/main/python/backend/{app,database}
+与仓库源（app/、database/）是否一致。
+（2026-09-14 起 knowledge/ 已归位进 app/assets/character/story/knowledge/，随 app/ 校验）
 
 为什么需要：Gradle 的 syncBackend 只在**构建时**把仓库源拷到 APK 内嵌目录，仓库里那份副本
 被 .gitignore 忽略却实际存在——它**不是**安卓端的真源，但却是唯一能离线读到"安卓端 Python"
@@ -22,7 +23,6 @@ ROOT = Path(__file__).resolve().parent.parent
 MIRROR = ROOT / "android" / "app" / "src" / "main" / "python" / "backend"
 SOURCES = {
     "app": ROOT / "app",
-    "knowledge": ROOT / "knowledge",
     "database": ROOT / "database",
 }
 SKIP_DIRS = {"__pycache__", ".git", ".pytest_cache"}
@@ -80,6 +80,11 @@ def do_sync() -> int:
             d = dst_root / rel
             d.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(fp, d)
+        # 与 Gradle Sync 同语义：删除镜像里源已不存在的文件（否则旧文件永久滞留，
+        # 例如 2026-09-14 knowledge 归位后 database/dialogues_compiled 的旧拷贝）
+        for rel, fp in _files(dst_root).items():
+            if not (src_root / rel).is_file():
+                fp.unlink()
     print(f"已同步后端镜像: {MIRROR}")
     return 0
 
@@ -93,7 +98,7 @@ def main() -> int:
         return do_sync()
     missing, changed, extra = compare()
     total = len(missing) + len(changed) + len(extra)
-    print("=== 后端镜像一致性（app/ knowledge/ database/ → android backend/）===")
+    print("=== 后端镜像一致性（app/ database/ → android backend/）===")
     if not total:
         print("结果: 一致 ✓")
         return 0

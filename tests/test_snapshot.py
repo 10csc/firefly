@@ -254,7 +254,11 @@ check("I1 教程不再指向已删除的「主动消息」设置组",
       'data-group="proactive"' not in guide)
 nums = ["①", "②", "③", "④", "⑤", "⑥", "⑦", "⑧", "⑨", "⑩", "⑪", "⑫", "⑬"]
 seq = [n for n in nums if f'title: "{n}' in guide]
-check("I2 教程步骤编号连续（①..⑫ 无跳号）", seq == nums[:12])
+# 口径（2026-09-19 修正）：**连续**才是这条守卫要保证的（无跳号、无重复编号），
+# 步数本身会随产品调整（0.9.0 加了"公告"与"自动修复"两步 → ①..⑩）。
+# 原先写死 `nums[:9]`，一加步骤就假失败 —— 与 routes 数量同类问题，改成"从①起连续"。
+check(f"I2 教程步骤编号连续（无跳号；当前 {len(seq)} 步 ①..{seq[-1] if seq else '-'}）",
+      bool(seq) and seq == nums[:len(seq)])
 check("I3 settings.js 不再写幽灵字段 hidden_reply_enabled",
       "payload.hidden_reply_enabled" not in (ROOT / "app" / "static" / "js" / "settings.js").read_text(encoding="utf-8"))
 html = (ROOT / "app" / "static" / "index.html").read_text(encoding="utf-8")

@@ -67,7 +67,7 @@ except InputRejected:
 # ============================================================
 print("\n=== 正常检索 ===")
 client = MockClient(["开拓者问身体，相关：医疗舱设定、失熵症恢复、银狼态度。"])
-mm = LlmRetriever(client, model="deepseek-v4-flash", temperature=0.2)
+mm = LlmRetriever(client, model="deepseek-flash", temperature=0.2)
 out = mm.retrieve(RetrieveInput(user_input="你还在医疗舱里吗", recent_history=[
     {"role": "user", "content": "晚上好"},
     {"role": "assistant", "content": "晚上好呀"},
@@ -77,7 +77,7 @@ check("输出原文保留", out.raw == out.knowledge)
 kc = client.chat.completions.last_kwargs
 check("Non-think 关闭思考", kc["extra_body"] == {"thinking": {"type": "disabled"}})
 check("temperature 生效传参", kc["temperature"] == 0.2)
-check("model 正确", kc["model"] == "deepseek-v4-flash")
+check("model 正确", kc["model"] == "deepseek-flash")
 check("system 含设定资料库", "设定资料库" in client.chat.completions.last_kwargs["messages"][0]["content"])
 check("user 含用户输入", "你还在医疗舱里吗" in client.chat.completions.last_kwargs["messages"][1]["content"])
 

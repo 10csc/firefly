@@ -15,6 +15,21 @@ memory/data/
 android/keystore/
 android/local.properties
 
+# ── 热更新（见 docs/热更新规范.md）──
+# 私钥**必须**在仓库外（默认 ~/.firefly/hotupdate_key.pem）；这里再挡一道防手滑
+*.pem
+hotupdate_key*
+# 构建区（基线 + serial 计数）与发布区（补丁产物）都不入库：
+#   补丁是**产物**，归档在服务器 + release 附件；代码本体在 git（tag hot-<base>-<serial>）
+.tmp_hotupdate/
+hotupdate_dist/
+
+# ── 公告通道（见 docs/公告通道规范.md）──
+# /notice/ 是**运行期缓存**（PC 开发时 notice_root() = 仓库根/notice，与 /voice/ 同公式），
+# 内容是"服务器下发内容的本地缓存"，可再生，不入库。
+# ⚠️ 内容源在 notice_src/（人写、必须入库）—— 两个目录刻意不同名，别合并。
+/notice/
+
 # ── 构建产物 ──
 build/
 dist/
@@ -51,6 +66,11 @@ dsh-update/
 # 例外：内置表情包是项目资产（app/assets/stickers/ 下的 webp 必须入库）
 !app/assets/stickers/*.webp
 屏幕截图*.png
+
+# ── 语音插件的数据根（模型 872MB + 语气库 + config.json）──
+# PC 开发时 plugin_root() = 仓库根/voice（与安卓的 $FIREFLY_DATA_DIR/voice 同构）。
+# 只在根目录锚定 —— 不影响 app/voice/（那是插件的**代码**，必须入库）。
+/voice/
 /开拓者_*.png
 /流萤_头像.png
 settings.local.json
@@ -64,3 +84,10 @@ _trash/
 _research/
 tests/*.db
 .tmp_test/
+
+# ── 提交前审查补（2026-09-19）──
+# /hotupdate/ = PC 开发时热更的运行期状态（state.json + 覆盖层 web/），是可再生缓存；
+# /notice/ 早已在下面挡掉，这里补齐对称的一项。
+# /.workbuddy/ = 外部工具工作目录，非本项目产物。
+/hotupdate/
+/.workbuddy/

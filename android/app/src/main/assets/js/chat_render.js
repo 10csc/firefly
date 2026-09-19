@@ -3,7 +3,7 @@ import { S, messagesEl } from "./state.js";
 import { stickerSrc } from "./util.js";
 import { API_BASE, IS_SERVER } from "./api.js";
 import { TB_AVATARS, openAvatarPicker, tbChoice } from "./panels.js";
-import { CURRENT_MODE, _modeGen, currentPreset } from "./views.js";
+import { CURRENT_MODE, _modeGen, currentPreset, charName, userName } from "./views.js";
 
 // 消息渲染
 // ═══════════════════════════════════════════
@@ -24,18 +24,63 @@ if (window.visualViewport) {
     });
 }
 
-function _addAvatar(row, who) {    const img = document.createElement("img");
+/** 发送者显示名 —— 统一走 views.js 的 charName()/userName()（**只从当前角色卡取**）。
+ *  取不到返回空串，调用方不渲染名字行。 */
+function _whoName(who) {
+    return who === "user" ? userName() : charName();
+}
+
+/** 消息内容外壳：`.msg-col` = 名字行 +（可选引用卡片）+ 内容。
+ *
+ *  为什么现在**总是**用它（以前只有带引用时才包）：
+ *  名字行要与气泡同一侧对齐，就得有个纵向容器；顺带让 `align-items:flex-start`
+ *  能把头像对到**名字行顶部**（官方就是这样）——以前没有名字行时用 flex-end，
+ *  两行气泡的头像会被拽到气泡底部（用户真机发现"第二行头像又下去了"）。
+ */
+function _mkCol(who, inner, quote) {
+    const col = document.createElement("div");
+    col.className = "msg-col";
+    const nm = _whoName(who);
+    if (nm) {                       // 角色卡没填称呼 → 不渲染名字行（不写死假名字）
+        const el = document.createElement("div");
+        el.className = "msg-who";
+        el.textContent = nm;
+        col.appendChild(el);
+    }
+    if (quote) col.appendChild(_buildQuotePreview(quote));
+    if (inner) col.appendChild(inner);
+    return col;
+}
+
+/** 容错替换：内容节点现在可能不在 row 的直接子层（被 .msg-col 包住），
+ *  所以不能用 `row.replaceChild`（会抛 NotFoundError，表现为"占位不显示"）。 */
+function _replaceNode(oldNode, newNode) {
+    if (oldNode && oldNode.parentNode) oldNode.parentNode.replaceChild(newNode, oldNode);
+}
+
+function _addAvatar(row, who) {
+    const p = who === "user" ? null : currentPreset();
+    if (who !== "user" && !(p && p.avatar)) {
+        // F-5：无头像包 → 首字占位圆（否则每条消息行都是破图）
+        const d = document.createElement("div");
+        d.className = "msg-avatar pack-noimg";
+        d.textContent = ((p && (p.char_name || p.name)) || "？").slice(0, 1);
+        row.insertBefore(d, row.firstChild);
+        return;
+    }
+    const img = document.createElement("img");
     img.className = "msg-avatar";
     if (who === "user") {
-        img.src = TB_AVATARS[tbChoice];
+        // 05：用户头像随当前角色包（包内 user_avatar 资产优先，回落内置穹/星选择）
+        const p = typeof currentPreset === "function" ? currentPreset() : null;
+        img.src = (p && p.user_avatar) || TB_AVATARS[tbChoice];
         img.classList.add("tb-toggle");
         img.title = "点击切换形象";
         img.addEventListener("click", openAvatarPicker);
         img.classList.add("tb-avatar");
     } else {
         // 角色头像按当前预设包（角色预设化）
-        const p = currentPreset();
-        if (p && p.avatar) img.src = p.avatar;
+        img.src = p.avatar;
     }
     row.insertBefore(img, row.firstChild);
 }
@@ -63,19 +108,23 @@ export function addTextMessage(text, who, prepend = false, seq = null, quote = n
     const bubble = document.createElement("div");
     bubble.className = "bubble";
     bubble.textContent = text;
-    if (quote) {
-        // 带引用的消息：气泡上方加引用小卡片（QQ 式）
-        const col = document.createElement("div");
-        col.className = "msg-col";
-        col.appendChild(_buildQuotePreview(quote));
-        col.appendChild(bubble);
-        row.appendChild(col);
-    } else {
-        row.appendChild(bubble);
-    }
+    // 名字行 + 引用卡片 + 气泡统一进 .msg-col（官方每条消息都有名字行；
+    // 头像靠 align-items:flex-start 对到名字行顶部）
+    row.appendChild(_mkCol(who, bubble, quote));
     _addAvatar(row, who);
     if (prepend) { messagesEl.insertBefore(row, messagesEl.firstChild); }
     else { _insertRow(row, seq); scrollToBottom(); }
+    // 已有语音的消息：立刻把语音条贴到气泡下面（缓存表已在内存时走这条快路径；
+    // 首次进聊天还没拉到表的情况由 voiceRestoreBarsAuto() 事后补扫）。
+    try {
+        if (seq !== null && seq !== undefined
+            && typeof voiceHas === "function" && voiceHas(seq)
+            && typeof voiceAttachBar === "function") {
+            const m = (typeof _voiceSeqMap !== "undefined" && _voiceSeqMap)
+                ? _voiceSeqMap[CURRENT_MODE] : null;
+            voiceAttachBar(row, seq, m ? m[String(seq)] : 0);
+        }
+    } catch (e) { /* 语音条失败绝不影响消息渲染 */ }
     return row;
 }
 
@@ -87,7 +136,11 @@ export function _quoteContentText(q) {
     if (q.type === "narration") return q.text || "";
     return q.content || "";
 }
-export function _quoteWhoName(q) { return q && q.who === "user" ? "我" : "流萤"; }
+// 引用卡片里的"谁"：**从当前角色卡取**（原来写死了「流萤」）。
+// 用户侧固定「我」——第一人称代词，不是角色名字面量。
+export function _quoteWhoName(q) {
+    return (q && q.who === "user") ? "我" : charName();
+}
 function _buildQuotePreview(q) {
     const div = document.createElement("div");
     div.className = "quote-preview";
@@ -123,7 +176,7 @@ export async function addSticker(stickerPath, who, prepend = false, seq = null, 
             const span = document.createElement("span");
             span.className = "sticker-fallback";
             span.textContent = "（表情包已失效）";
-            row.replaceChild(span, img);
+            _replaceNode(img, span);
         };
     } else {
         const span = document.createElement("span");
@@ -131,15 +184,7 @@ export async function addSticker(stickerPath, who, prepend = false, seq = null, 
         span.textContent = "（表情包已失效）";
         img = span;
     }
-    if (quote) {
-        const col = document.createElement("div");
-        col.className = "msg-col";
-        col.appendChild(_buildQuotePreview(quote));
-        col.appendChild(img);
-        row.appendChild(col);
-    } else {
-        row.appendChild(img);
-    }
+    row.appendChild(_mkCol(who, img, quote));
     _addAvatar(row, who);
     if (prepend) { messagesEl.insertBefore(row, messagesEl.firstChild); }
     else { _insertRow(row, seq); scrollToBottom(); }
@@ -182,7 +227,7 @@ export async function addImage(msg, who, prepend = false, seq = null, quote = nu
             const span = document.createElement("span");
             span.className = "sticker-fallback";
             span.textContent = desc ? `（图片：${desc}）` : "（图片已失效）";
-            row.replaceChild(span, img);
+            _replaceNode(img, span);
         };
         content = img;
     } else {
@@ -193,15 +238,7 @@ export async function addImage(msg, who, prepend = false, seq = null, quote = nu
         span.dataset.desc = desc;
         content = span;
     }
-    if (quote) {
-        const col = document.createElement("div");
-        col.className = "msg-col";
-        col.appendChild(_buildQuotePreview(quote));
-        col.appendChild(content);
-        row.appendChild(col);
-    } else {
-        row.appendChild(content);
-    }
+    row.appendChild(_mkCol(who, content, quote));
     _addAvatar(row, who);
     if (prepend) { messagesEl.insertBefore(row, messagesEl.firstChild); }
     else { messagesEl.appendChild(row); scrollToBottom(); }

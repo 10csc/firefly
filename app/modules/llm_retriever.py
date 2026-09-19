@@ -60,8 +60,29 @@ def _source_dirs(mode: str = DEFAULT_MODE) -> tuple:
 
 
 def has_knowledge(mode: str = DEFAULT_MODE) -> bool:
-    """该模式是否有知识库可检索（orchestrator 据此决定是否跳过检索阶段）。"""
-    return bool(_source_dirs(mode))
+    """该模式是否有知识库可检索（orchestrator 据此决定是否跳过检索阶段）。
+
+    2026-09-15（阶段 D）：空目录/只有 index.md 的骨架不算——自建包模板带空 knowledge/，
+    若只判目录存在，每轮会白跑一次检索（空摘要照烧一次 LLM 调用）。改为"至少一个有效 md"。
+    2026-09-18（P2）：**历史归档也算知识源**。没有设定知识库的包（如 haruno）一旦攒下
+    长期归档，"三周前那个约定"只能靠检索器捞回来，跳过检索就没意义了。
+    代价（知情）：这类包从"零检索调用"变成"每轮一次检索调用"。归档由自动整理产生，
+    即前 ~10 轮仍未触发；且非思考档 prompt 体量小，属可接受增量。
+    """
+    for d in _source_dirs(mode):
+        if not d.is_dir():
+            continue
+        for fp in d.rglob("*.md"):
+            if fp.name in _EXCLUDE_NAMES or fp.stem.endswith("_draft"):
+                continue
+            return True
+    try:
+        from modules.memory_archive import archive_files
+        if archive_files(mode):
+            return True
+    except Exception as e:
+        logger.debug("has_knowledge 检查历史归档失败: %s", e)
+    return False
 
 
 # 动态用户数据/过长原文/草稿不进知识库（与 build_index 排除规则一致）
@@ -100,6 +121,21 @@ def _load_knowledge(mode: str = DEFAULT_MODE) -> str:
                 total_chars += len(text)
                 file_count += 1
                 parts.append(f"## {fp.relative_to(ROOT)}\n{text}")
+        # 历史归档（P2，2026-09-18）：聊天产生的长期记忆，按月分片、只增不改。
+        # 放在**知识库之后**：设定是"她本来就知道的事"，归档是"你们一起经历的事"，
+        # 后者更近、更该在摘要里被优先引用。
+        # 缓存代价：归档只在整理后变化 → 每次整理后该包下一次检索缓存重建一次，
+        # 与「手账」同一量级（见 docs/设计/提示词系统/01_调用链与实测体量.md「已接受的例外」）。
+        try:
+            from modules.memory_archive import load_archive_text
+            arch = load_archive_text(mode)
+        except Exception as e:
+            arch = ""
+            logger.warning("历史归档加载失败（跳过，不影响检索）: %s", e)
+        if arch:
+            parts.append(arch)
+            total_chars += len(arch)
+            file_count += 1
         _KNOWLEDGE_CACHE[ck] = "\n\n".join(parts)
         _KNOWLEDGE_STATS[ck] = {"files": file_count, "chars": total_chars}
         logger.info("知识库加载[%s]: %d 文件, %d 字符", mode, file_count, total_chars)
@@ -130,7 +166,7 @@ def get_knowledge_stats(mode: str = DEFAULT_MODE) -> dict:
 
 
 # ── Prompt（稳定层：知识库 + 指令，跨请求缓存命中）──
-_SYSTEM_PROMPT = """你是{char_name}的设定资料检索助手。以下是{char_name}的完整设定资料库，包含她的身份、经历、人际关系、关键台词与场景原文。
+_SYSTEM_PROMPT = """你是{char_name}的设定资料检索助手。以下是{char_name}的完整设定资料库，包含{char_name}的身份、经历、人际关系、关键台词与场景原文。
 
 ## 设定资料库
 {knowledge}
@@ -144,7 +180,7 @@ _SYSTEM_PROMPT = """你是{char_name}的设定资料检索助手。以下是{cha
 - 只输出摘要正文，不要任何解释、前后缀或标题
 
 ## 绝对禁止（输出即失败）
-- 禁止输出对话体：任何"{char_name}：""{user_name}："开头的一问一答形式。资料库中的对话原文只能作为引用片段嵌入摘要（如"她说过：'……'"),不得模拟{char_name}当场说话
+- 禁止输出对话体：任何"{char_name}：""{user_name}："开头的一问一答形式。资料库中的对话原文只能作为引用片段嵌入摘要（如"{char_name}说过：'……'"),不得模拟{char_name}当场说话
 - 禁止以第一人称扮演{char_name}回复{user_name}（"我想去……""你愿意和我说说吗"等）
 - 你是检索助手，不是{char_name}。你的读者是分析层，不是{user_name}"""
 
@@ -161,7 +197,7 @@ def get_counters() -> dict:
 
 # ── 子代理类 ──────────────────────────────────────
 class LlmRetriever:
-    def __init__(self, client, model: str = "deepseek-v4-flash-vision-exp",
+    def __init__(self, client, model: str = "deepseek-flash",
                  temperature: float = 0.0, effort: str = "none", mode: str = DEFAULT_MODE):
         self._client = client
         self._model = model

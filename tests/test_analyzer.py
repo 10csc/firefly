@@ -80,3 +80,7 @@ check("token 统计含 cache_hit_rate", "cache_hit_rate" in get_token_stats())
 print(f"\n{'='*50}")
 print(f"  通过: {PASS}  失败: {FAIL}")
 print(f"{'='*50}")
+
+# C3（审计 2026-09-15）：补退出码——原先失败仍返回 0，「退出码全 0 = 绿」的
+# 门禁对分析器（流水线核心）完全失明
+sys.exit(1 if FAIL else 0)

@@ -1,0 +1,53 @@
+{
+ "ref_phones": {
+  "shape": [
+   1,
+   42
+  ],
+  "dtype": "int64"
+ },
+ "ref_bert": {
+  "shape": [
+   42,
+   1024
+  ],
+  "dtype": "float32"
+ },
+ "ssl_content": {
+  "shape": [
+   1,
+   768,
+   249
+  ],
+  "dtype": "float32"
+ },
+ "prompt_semantic": {
+  "shape": [
+   124
+  ],
+  "dtype": "int64"
+ },
+ "refer_spec": {
+  "shape": [
+   1,
+   1025,
+   220
+  ],
+  "dtype": "float32"
+ },
+ "mel2": {
+  "shape": [
+   1,
+   100,
+   440
+  ],
+  "dtype": "float32"
+ },
+ "_source": {
+  "ref": "F:\\CodeFile\\firefly\\voice_samples\\refs_48k\\开心_P2连续段.wav",
+  "ref_sha256": "9eef18e7526dde46ac582a472f927676f5f717c37bc7014f88e48dc27ae04cce",
+  "ref_text": "有朵云就像小猫一样呢。一口就把太阳吞下去了。",
+  "built_at": "2026-09-17 21:31:22",
+  "builder": "FireflyVoiceResearch/_proto/_build_mood_lib.py"
+ }
+}

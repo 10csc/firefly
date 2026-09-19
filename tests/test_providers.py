@@ -150,7 +150,7 @@ def fake_urlopen(req, timeout=None):
         def __enter__(self): return self
         def __exit__(self, *a): return False
         def read(self):
-            return json.dumps({"data": [{"id": "deepseek-v4-flash"}, {"id": "deepseek-v4-pro"}]}).encode()
+            return json.dumps({"data": [{"id": "deepseek-flash"}, {"id": "deepseek-v4-pro"}]}).encode()
     return R()
 
 

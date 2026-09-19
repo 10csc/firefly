@@ -90,11 +90,11 @@ def relay_needs_key() -> bool:
 #   4. package/firefly.iss 的 AppVersion
 # 用 tools/check_version.py 一键校验四者一致；格式 x.y.z 纯数字点分，
 # 禁止 -beta/-rc 后缀（Gitee 无 prerelease 概念，后缀会污染 releases/latest）。
-APP_VERSION = "0.8.1"
+APP_VERSION = "0.9.0"
 API_BASE = "https://api.deepseek.com/v1"
 # OpenCode Go 兼容端点（OpenAI 兼容 chat/completions，模型 ID 与 DeepSeek 一致）
 GO_BASE = "https://opencode.ai/zen/go/v1"
-MODEL = "deepseek-v4-flash-vision-exp"
+MODEL = "deepseek-flash"
 
 # ── 供应商（A8 多供应商；2026-08-21）────────────────
 # 结构：providers=[{id,name,base_url,api_key,models[],caps{}}] + active_provider=id
@@ -104,7 +104,7 @@ MODEL = "deepseek-v4-flash-vision-exp"
 # 内置建议清单（v1 时代 VALID_MODELS/端点白名单的替代物：建议 + 用户自由输入，不做硬白名单）
 SUGGESTED_PROVIDERS = [
     {"id": "deepseek", "name": "DeepSeek", "base_url": "https://api.deepseek.com/v1",
-     "models": ["deepseek-v4-flash", "deepseek-v4-pro", "deepseek-v4-flash-vision-exp"],
+     "models": ["deepseek-flash", "deepseek-v4-pro"],
      "caps": {"thinking": True, "reasoning": True, "vision": True,
               "prompt_cache": True, "models_endpoint": True}},
     {"id": "opencode-go", "name": "OpenCode Go", "base_url": "https://opencode.ai/zen/go/v1",
@@ -113,8 +113,13 @@ SUGGESTED_PROVIDERS = [
               "prompt_cache": False, "models_endpoint": False}},
 ]
 # 模型名：官方英文名（UI 下拉建议用 deepseek 官方清单；不再用「快速/更强」中文档位）
-SUGGESTED_MODELS = ["deepseek-v4-flash", "deepseek-v4-pro", "deepseek-v4-flash-vision-exp"]
+SUGGESTED_MODELS = ["deepseek-flash", "deepseek-v4-pro"]
 VALID_EFFORTS = ("none", "low", "high", "max")
+
+# 旧模型名归一化（2026-09-15）：历史默认 deepseek-v4-flash(-vision-exp) 不在官方 /models 列表
+# （官方实测：deepseek-flash / deepseek-v4-pro），老配置加载时幂等映射到官方名；用户自改的非旧名不动。
+_MODEL_RENAME = {"deepseek-v4-flash": "deepseek-flash",
+                 "deepseek-v4-flash-vision-exp": "deepseek-flash"}
 
 _MODEL_MAX_LEN = 100
 _BASE_MAX_LEN = 300
@@ -188,9 +193,9 @@ def _load_config() -> dict:
         "providers": [_deepseek_preset()],
         # 服务器地址（A7 认证/同步服务器）：默认公网 8787；开发/自建可改
         "auth_server_url": AUTH_SERVER_DEFAULT,
-        "analyzer_model": "deepseek-v4-flash-vision-exp",
-        "organizer_model": "deepseek-v4-flash-vision-exp", "polisher_model": "deepseek-v4-flash-vision-exp",
-        "retriever_model": "deepseek-v4-flash-vision-exp",
+        "analyzer_model": "deepseek-flash",
+        "organizer_model": "deepseek-flash", "polisher_model": "deepseek-flash",
+        "retriever_model": "deepseek-flash",
         "retriever_effort": "none", "analyzer_effort": "high",
         "polisher_effort": "high", "organizer_effort": "none",
         "retriever_temperature": 0.0, "polisher_temperature": 0.5,
@@ -231,14 +236,15 @@ def _load_config() -> dict:
             cfg["api_key"] = _p.get("api_key", "") if _p else ""
             cfg["api_base"] = _p.get("base_url", API_BASE) if _p else API_BASE
             for key in ("analyzer_model", "organizer_model", "polisher_model", "retriever_model"):
-                cfg[key] = _clean_model(data.get(key, "deepseek-v4-flash-vision-exp"))
+                raw_model = data.get(key, "deepseek-flash")
+                cfg[key] = _clean_model(_MODEL_RENAME.get(raw_model, raw_model))
             _effort_defaults = {"retriever_effort": "none", "analyzer_effort": "high",
                                 "polisher_effort": "high", "organizer_effort": "none"}
             for key in _effort_defaults:
                 val = data.get(key, _effort_defaults[key])
                 cfg[key] = val if val in VALID_EFFORTS else _effort_defaults[key]
             if "reply_model" in data and "polisher_model" not in data:
-                rm = data.get("reply_model", "deepseek-v4-flash-vision-exp")
+                rm = data.get("reply_model", "deepseek-flash")
                 cfg["polisher_model"] = _clean_model(rm)
             eff = data.get("polisher_effort", data.get("reply_effort", "high"))
             cfg["polisher_effort"] = eff if eff in VALID_EFFORTS else "high"
@@ -273,8 +279,18 @@ def _load_config() -> dict:
                 cfg["prob_reply_value"] = 0.10
             # 隐藏式回复配置（缺省：跟随概率式开启；独立开关，关前台概率式不影响隐藏式）
             cfg["hidden_reply_enabled"] = bool(data.get("hidden_reply_enabled", True))
-    except Exception:
-        pass
+    except Exception as e:
+        # B1（审计 2026-09-15）：损坏（而非缺失）的 config.json 不再静默吞——先告警
+        # 并备份留证再回退默认值。原逻辑下损坏现场会被下一次 save_config 覆盖，
+        # 用户只看到"要重新填 Key"，没有任何线索可查。
+        if _paths.CONFIG_FILE.exists():
+            logger.warning("config.json 解析失败（回退默认值）: %s", e)
+            _backup_corrupt_config()
+    if data is not None and not isinstance(data, dict):
+        # B1（审计 2026-09-15）：JSON 合法但不是对象（list/str/数字）——同样静默
+        # 回退默认值，同样备份留证
+        logger.warning("config.json 内容不是 JSON 对象（回退默认值）")
+        _backup_corrupt_config()
     # 旧默认值迁移：把“从未改过的旧默认”平滑迁到新推荐值（改过任意一项则尊重用户）。
     # 仅改内存，下一次保存配置时落盘；每次启动判定一致、幂等。
     if isinstance(data, dict):
@@ -380,18 +396,38 @@ def _on_caps_probe(changed: dict):
         pass
 
 
+def _backup_corrupt_config() -> None:
+    """损坏的 config.json 备份留证（B1，审计 2026-09-15）：
+    拷贝为 config.json.corrupt-<时间戳>，失败仅告警（不阻塞启动）。"""
+    try:
+        fp = _paths.CONFIG_FILE
+        if not fp.exists():
+            return
+        import shutil
+        from modules.storage import date_stamp
+        bak = fp.with_name(f"{fp.name}.corrupt-{date_stamp()}")
+        shutil.copy2(fp, bak)
+        logger.warning("已备份损坏配置: %s", bak.name)
+    except OSError as e:
+        logger.warning("损坏配置备份失败: %s", e)
+
+
 def save_config() -> None:
     # 只落盘 providers 结构（containing api_key）、active_provider 与其它设置；
     # 不写顶层 api_key/api_base（旧字段迁移后废除）
-    _paths.CONFIG_FILE.write_text(
-        json.dumps({
+    # B1（审计 2026-09-15）：裸 write_text → 原子写。写盘中断留下截断 JSON，下次
+    # 启动解析失败静默回退默认值——供应商/Key/模型全部消失且无任何提示
+    # （同目录 packs.json 早已用 atomic_write_json，config 漏了）。
+    # 失败仅告警不抛（storage 约定），磁盘上保持旧值。
+    from modules.storage import atomic_write_json
+    atomic_write_json(_paths.CONFIG_FILE, {
             "providers": config.get("providers") or [_deepseek_preset()],
             "active_provider": config.get("active_provider", "deepseek"),
             "auth_server_url": config.get("auth_server_url", AUTH_SERVER_DEFAULT),
-            "analyzer_model": config.get("analyzer_model", "deepseek-v4-flash-vision-exp"),
-            "organizer_model": config.get("organizer_model", "deepseek-v4-flash-vision-exp"),
-            "polisher_model": config.get("polisher_model", "deepseek-v4-flash-vision-exp"),
-            "retriever_model": config.get("retriever_model", "deepseek-v4-flash-vision-exp"),
+            "analyzer_model": config.get("analyzer_model", "deepseek-flash"),
+            "organizer_model": config.get("organizer_model", "deepseek-flash"),
+            "polisher_model": config.get("polisher_model", "deepseek-flash"),
+            "retriever_model": config.get("retriever_model", "deepseek-flash"),
             "retriever_effort": config.get("retriever_effort", "none"),
             "analyzer_effort": config.get("analyzer_effort", "high"),
             "polisher_effort": config.get("polisher_effort", "high"),
@@ -404,8 +440,7 @@ def save_config() -> None:
             "prob_reply_enabled": bool(config.get("prob_reply_enabled", True)),
             "prob_reply_value": max(0.0, min(1.0, float(config.get("prob_reply_value", 0.10)))),
             "hidden_reply_enabled": bool(config.get("hidden_reply_enabled", True)),
-        }, ensure_ascii=False),
-        encoding="utf-8")
+        })
 
 
 def get_api_key() -> str:

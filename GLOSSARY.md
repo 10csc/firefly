@@ -1,4 +1,4 @@
-# 流萤项目术语表（GLOSSARY）
+# Firefly 项目术语表（GLOSSARY）
 
 > 规则：新名词追加，改名/废弃在备注列记录去向。名词尽量映射到代码实体，可验证。
 
@@ -6,7 +6,7 @@
 |------|------|------|------|
 | 本地版 | PC（PyInstaller）+ 安卓（Chaquopy）独立运行形态，用户设备本机跑 Python | app/、android/ | 代码主线的原始形态 |
 | 服务器版 | 云服务器多用户形态：后端在服务器，用户自带 Key，前端打包进 APK（file:// 加载 + 跨域 API） | server/（server_app.py、frontend/）、android/（服务器模式，与本地模式同壳双模式） | 复用 app/modules + app/routes，入口独立 |
-| contextvars 用户上下文 | 每请求线程的用户数据作用域（user_dir/api_key/api_base），Flask 同款模式 | app/modules/app_config.py：set_user_context/reset_user_context/user_scope_key | 本地版不设置时行为零变化 |
+| contextvars 用户上下文 | 每请求线程的用户数据作用域（user_dir/api_key/api_base），Flask 同款模式 | 定义于 `app/core/userctx.py`：set_user_context/reset_user_context/user_scope_key（旧层 `app/modules/app_config.py` 仍再导出，属兼容 shim） | 本地版不设置时行为零变化 |
 | 匿名 UUID | ~~用户浏览器生成的匿名标识（localStorage firefly_uid），请求带 X-User-Id 头~~ | 已删除（2026-08-12 重构） | 废弃：认证改为 Bearer token，数据按 user_id 隔离 |
 | 安装隐藏代码 | install_id：客户端首次启动本地生成的 `inst-`+32hex，一个安装一个，注册一次一用（防不重装重复注册） | server/auth.py `_valid_install_id`、login.html `getInstallId()`、db.users.install_id | 2026-08-13 加固：生成改用 crypto.getRandomValues（密码学随机），格式不变 |
 | 邮箱验证码 | 注册验证：6 位数字发到 QQ 邮箱，5 分钟有效、一次性、60s 重发、每 IP 10 次/小时 | server/mail.py（SMTP smtp.qq.com:465） | 仅接受 @qq.com / @foxmail.com |
@@ -19,7 +19,10 @@
 | 组织器 | 工具调度：story=表情包；haruno=旁白演出 | app/modules/organizer.py | |
 | 检索器 | LLM 子代理：知识库整体注入 → 压缩摘要 | app/modules/llm_retriever.py | 替代旧向量 RAG（已废弃） |
 | RAG | 旧向量检索方案（embedding + top-k 截断） | 已废弃 | 安卓无本地模型约束被弃用，勿按旧文档实现 |
-| 双模式 | story（剧情模式）/ haruno（春日手信）数据独立 | app_config.MODES、user_data/{mode}/ | 各模式独立 character/data/journal |
+| 模式 | 角色包的**演出形态**属性，**仅两类**：①**故事/剧情模式**——以符合角色设定为主要扮演目标；②**剧本模式**——以沉浸式演绎为主要目标（因此有旁白与环境描写）。流萤两类各占一个包（story / haruno） | `preset.presentation`（sticker=故事/剧情，narration=剧本）；`pack_structure.py` 的 `when=` 按此过滤来源 | 2026-09-18 定义统一。**模式是包的属性，不是包的身份**（包身份 = `preset.id`）。旧用法把二者合一，见下方「双模式」 |
+| 角色包 | **角色卡 + 用户私有聊天数据**的整体（对话/记忆/手账/收藏/聊天图片等）。用户保存在本机或服务器的私有数据集合 | `user_data/{pid}/`、`core.paths.pack_root(pid)`、`packs.json` | 与角色卡是**包含关系**：角色包 = 角色卡 + 私有数据 |
+| 角色卡 | **不含用户私人聊天内容**的人设整体＝角色包剔除私有数据后的部分（相当于「还没和这个角色聊过天」的角色包）。可独立分享/导出 | `{pid}/character/**`（core / identity / sms_samples / prompts / knowledge / memory/default.md 出厂记忆 / opening / assets）+ 表情包 | 既有定义见 `app/routes_pack.py:6`；结构规范见 `app/core/pack_structure.py` |
+| 双模式 | ~~story（剧情模式）/ haruno（春日手信）数据独立~~ | `app_config.MODES`、`user_data/{mode}/` | **废弃（2026-09-18）**：改用「模式」词条。旧用法把模式当包 id（身份与属性二合一），已澄清 |
 | 信号量 | 主动性并发控制：REPLY（回复通道锁）/ ACTIVE（主动互斥）/ HIDDEN（隐藏式冷却） | app/modules/proactive.py | 服务器版按 (mode, 用户) 分键 |
 | 主动性 | 流萤主动找开拓者：主动式（轮次+概率）/ 概率式（空闲触发）/ 隐藏式（安卓后台） | app/modules/proactive.py、前端轮询 | |
 | 手账 | 流萤口吻的重要对话与约定记录 | user_data/{mode}/journal/手账.md | 休息时 LLM 更新 |
@@ -38,7 +41,7 @@
 | 首次使用引导 | 纯代码引导（spotlight 高亮 + CSS 气泡，无图片），localStorage firefly_guide_v1_done 一次展示 | app.js GUIDE_STEPS、index.html #guide-mask | |
 | 深入了解引导 | 基础引导结束后可选 8 步详细教程：设置五分组/主动消息/模型/数据/菜单页签/纠错助手/反馈；反馈页可随时重开 | app.js DEEP_GUIDE_STEPS / startDeepGuide / firefly_deep_guide_v1_done | 无图片，纯 DOM 高亮 |
 | 表情包启用开关 | 每个贴纸可在管理页启停；组织器只从启用项选图，聊天面板只显示启用项；默认集合由 tools/sticker_selector 选择后写进 bundled registry | sticker_picker.enabled、`GET /stickers?enabled=1`、管理页卡片网格 stk-toggle | 旧 registry 缺 enabled 视为 true |
-| 表情包选择器 | 本地 HTML 工具：预览全部贴纸、勾选默认启用、编辑详细描述词，保存回 app/assets/stickers/registry.json（自动备份） | tools/sticker_selector.py / .html（127.0.0.1:8767） | 零依赖 |
+| 表情包选择器 | 本地 HTML 工具：预览全部贴纸、勾选默认启用、编辑详细描述词，保存回 app/assets/stickers/registry.json（自动备份） | tools/sticker_dev_selector.py（+ 配套 html，127.0.0.1:8767） | 零依赖 |
 | 概率式静默窗 | 概率式主动的同一次空闲机会只掷一次骰，10 分钟内不再检查——修复 30%×10s 轮询≈1 分钟内必触发 | proactive.prob_gate_open `_PROB_LAST_CHECK`/`_PROB_QUIET_SEC` | 默认概率同步降至 0.10 |
-| 设置页分组 | 设置页重构为五组卡片（账号与连接/主动消息/模型与速度/外观/数据与系统），默认只展开第一组 | index.html .set-group、app.js initSetGroups | 非 Key 设置改动自动保存 |
+| 设置页分组 | 设置页共**四组**卡片（账号与连接 / 模型与速度 / 外观 / 数据），默认只展开第一组 | `index.html` 的 `data-group`（account/model/look/system）、`js/settings.js` initSetGroups | 非 Key 设置改动自动保存。**2026-09-18 订正**：原记「五组」含「主动消息」，实测只有四组——主动消息已迁到角色卡管理按卡配置（见 `guide.js:68`） |
 | 模型预设 | 设置页「快速/更强」两档映射四节点模型；自定义各阶段模型/思考档位折叠保留 | app.js _CFG_DEFAULTS/_applyModelPreset | 快速=全 Flash，更强=全 Pro |

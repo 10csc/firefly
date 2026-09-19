@@ -64,6 +64,23 @@ def set_key(h):
     h._json({"ok": bool(cfg.config["api_key"])})
 
 
+def _clamp_mem_turns(key: str, raw):
+    """记忆窗口三项的审查约束（2026-09-18）。
+
+    为什么要有这些上限：阈值直接决定"多久花一次 LLM 调用"。
+    `memory_window_turns=0` 是**关闭自动整理**（合法，只留手动「休息」）；
+    其余项给宽但有限的范围，防手滑写成 100000 让窗口永远不整理、或写成 1 每轮都整理。
+    """
+    limits = {"memory_window_turns": (0, 1000),
+              "memory_keep_turns": (0, 500),
+              "memory_warn_turns": (0, 1000)}
+    lo, hi = limits.get(key, (0, 1000))
+    try:
+        return max(lo, min(hi, int(raw)))
+    except (TypeError, ValueError):
+        return None      # None → 调用方跳过该键（不覆盖旧值）
+
+
 def set_config(h):
     # 局部绑定：call-time 从 routes 取，保持 patch("routes._read_json") 拦截面不变
     from routes import _read_json
@@ -75,7 +92,9 @@ def set_config(h):
                       "retriever_effort", "analyzer_effort", "polisher_effort", "organizer_effort",
                       "retriever_temperature", "polisher_temperature",
                       "proactive_enabled", "proactive_hard", "proactive_soft",
-                      "prob_reply_enabled", "prob_reply_value", "hidden_reply_enabled")
+                      "prob_reply_enabled", "prob_reply_value", "hidden_reply_enabled",
+                      # 记忆活跃窗口策略（2026-09-18）：轮次上限 / 整理后保留 / 顶部提醒阈值
+                      "memory_window_turns", "memory_keep_turns", "memory_warn_turns")
         _uid = cfg.user_dir_id()
         # C-6.12：整个「读盘 → 改 → 写盘」持该用户的锁，基准取锁内重读的结果
         with _overlay_lock(_uid):
@@ -84,7 +103,7 @@ def set_config(h):
                 if key not in body:
                     continue
                 if key.endswith("_model"):
-                    overlay[key] = "mimo-v2.5" if is_proxy else cfg._clean_model(body[key], "deepseek-v4-flash-vision-exp")
+                    overlay[key] = "mimo-v2.5" if is_proxy else cfg._clean_model(body[key], "deepseek-flash")
                 elif key.endswith("_temperature"):
                     try:
                         overlay[key] = max(0.0, min(2.0, float(body[key])))
@@ -98,6 +117,10 @@ def set_config(h):
                         overlay[key] = max(1, min(10, int(body[key])))
                     except (TypeError, ValueError):
                         pass
+                elif key.startswith("memory_"):
+                    _mv = _clamp_mem_turns(key, body[key])
+                    if _mv is not None:
+                        overlay[key] = _mv
                 elif key in ("proactive_soft", "prob_reply_value"):
                     try:
                         overlay[key] = max(0.0, min(1.0, float(body[key])))
@@ -131,6 +154,9 @@ def set_config(h):
             "prob_reply_enabled": bool(overlay.get("prob_reply_enabled", cfg.config.get("prob_reply_enabled", True))),
             "prob_reply_value": overlay.get("prob_reply_value", cfg.config.get("prob_reply_value", 0.10)),
             "hidden_reply_enabled": bool(overlay.get("hidden_reply_enabled", cfg.config.get("hidden_reply_enabled", True))),
+            "memory_window_turns": overlay.get("memory_window_turns", cfg.config.get("memory_window_turns", 100)),
+            "memory_keep_turns": overlay.get("memory_keep_turns", cfg.config.get("memory_keep_turns", 30)),
+            "memory_warn_turns": overlay.get("memory_warn_turns", cfg.config.get("memory_warn_turns", 80)),
         })
         return
     # ── 本地版（单用户写全站配置，行为同 0.8.0）──
@@ -208,6 +234,12 @@ def set_config(h):
     # 隐藏式回复配置（独立开关，关前台概率式不影响隐藏式）
     if "hidden_reply_enabled" in body:
         cfg.config["hidden_reply_enabled"] = bool(body.get("hidden_reply_enabled"))
+    # 记忆活跃窗口策略（2026-09-18）：轮次上限（0=关自动整理）/ 整理后保留 / 顶部提醒阈值
+    for _mk in ("memory_window_turns", "memory_keep_turns", "memory_warn_turns"):
+        if _mk in body:
+            _mv = _clamp_mem_turns(_mk, body.get(_mk))
+            if _mv is not None:
+                cfg.config[_mk] = _mv
     if new_key:
         # 本地版：Key 写入激活供应商（providers 结构）
         _p = cfg.active_provider()
@@ -234,6 +266,9 @@ def set_config(h):
         "prob_reply_enabled": bool(cfg.eff_cfg("prob_reply_enabled", True)),
         "prob_reply_value": cfg.eff_cfg("prob_reply_value", 0.10),
         "hidden_reply_enabled": bool(cfg.eff_cfg("hidden_reply_enabled", True)),
+        "memory_window_turns": cfg.eff_cfg("memory_window_turns", 100),
+        "memory_keep_turns": cfg.eff_cfg("memory_keep_turns", 30),
+        "memory_warn_turns": cfg.eff_cfg("memory_warn_turns", 80),
     })
 
 
@@ -331,6 +366,9 @@ def get_modes(h):
             "tagline": p.get("tagline") or "",
             "avatar": _pack_asset_url(mode, "avatar.png"),
             "cover": _pack_asset_url(mode, "cover.png"),
+            # 05 用户形象入包：称呼（含包级覆盖）+ 用户头像（无则空串，前端回落内置形象）
+            "user_name": cfg.user_name(mode),
+            "user_avatar": _pack_asset_url(mode, "user_avatar.png"),
             "has_opening": resolve_character_file("opening.json", mode).exists(),
         })
     # 归档区（3.5）：归档 = 不在 MODES 但数据与清单条目都在，界面必须给回程入口

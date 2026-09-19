@@ -8,21 +8,28 @@ import { showChat, showHome } from "./views.js";
 // 使用引导（纯代码：高亮框 + 文字气泡 + CSS 呼吸边，不用任何图片）
 // 基础引导 4 步；结束后可点「深入了解」进入详细引导（设置/菜单/纠错助手）。
 // ═══════════════════════════════════════════
-const GUIDE_KEY = "firefly_guide_v1_done";
-const DEEP_GUIDE_KEY = "firefly_deep_guide_v1_done";
+// 基础引导 5 步；结束后可点「深入了解」进入详细引导（设置/菜单/纠错助手）。
+// ★ 0.9.0 把 KEY 从 v1 升到 v2：引导内容变了（新增"公告与更新说明""自动修复"两步），
+//   不升 key 的话老用户永远看不到新步骤 —— 那等于没更新引导。
+const GUIDE_KEY = "firefly_guide_v2_done";
+const DEEP_GUIDE_KEY = "firefly_deep_guide_v2_done";
 const GUIDE_STEPS = [
     { el: "#home-carousel", title: "从这里进入对话",
-      text: "请实际操作：点「剧情模式」或「春日手信」卡片，进入和流萤的聊天页。\n操作成功会自动进入下一步；如果没反应，点「下一步」。",
+      text: "请实际操作：点任意一张角色卡片（如「剧情模式」），进入和角色的聊天页。\n操作成功会自动进入下一步；如果没反应，点「下一步」。",
       setup: () => { showHome(); },
       done: () => !document.getElementById("home-view").classList.contains("show") },
     { el: "#home-settings-btn", title: "先填 API Key",
       text: "请点右上角 ⚙ 打开设置，把 sk- 开头的 Key 粘进 API Key 输入框。\n没有 Key 之前，聊天只会提示你去设置。",
       setup: () => { showHome(); },
       done: () => document.getElementById("settings-panel").classList.contains("show") },
-    { el: "#fix-module", title: "设定不对？直接告诉她",
-      text: "请点这张卡上的「指出问题 →」进入设定纠错助手。\nAI 会先和你确认问题，再列出修改清单；你点「应用」才生效，随时可撤销。",
+    { el: "#cards-manage-btn", title: "角色卡管理",
+      text: "请点「角色卡管理」。每个角色卡的人设、用户设定、知识库、出厂记忆、表情包都在里面单独编辑（聊天产生的记忆与手账在菜单页「设定文件」里，清除历史会一并清空）。",
       setup: () => { closeSettings(); showHome(); },
-      done: () => document.getElementById("fix-view").classList.contains("show") },
+      done: () => document.getElementById("cards-view").classList.contains("show") },
+    { el: "#home-notice", title: "公告与更新说明",
+      text: "请点首页上方的「公告 · 使用指南」。\n\n更新说明与临时提醒会由服务端下发到这里（有新内容时标题旁会亮一个小圆点）；万一拉不到，这里仍显示 App 内置的使用指南，功能不受影响。",
+      setup: () => { showHome(); },
+      done: () => document.getElementById("notice-panel").classList.contains("show") },
     { el: "#home-feedback-btn", title: "其他问题",
       text: "请点左上角「✉ 反馈」看看。功能建议、安装问题、联系开发者（GitHub / QQ 群 / 邮箱）都在这页。",
       setup: () => { showHome(); },
@@ -65,42 +72,44 @@ const DEEP_GUIDE_STEPS = [
       setup: () => { openSettings(); },
       done: () => _guideGroupOpen("model") },
     { el: '#settings-panel .set-head[data-group="system"]', title: "④ 点开「数据」",
-      text: "请点「📦 数据」展开。\n\n版本更新、数据快照（保存/恢复/导入 zip）、云端同步都在这里；主动消息则按角色卡配（角色卡管理 → 点角色卡 → 主动消息）。",
+      text: "请点「📦 数据」展开。\n\n版本更新、自动修复、数据快照（保存/恢复/导入 zip）、云端同步都在这里；主动消息则按角色卡配（角色卡管理 → 点角色卡 → 主动消息）。",
       setup: () => { openSettings(); },
       done: () => _guideGroupOpen("system") },
-    { el: "#menu-btn", title: "⑤ 到聊天页打开菜单",
-      text: "已经帮你切到聊天页：请点右上角 ☰ 打开菜单。\n\n菜单里是分组页签：与她相关（收藏 / 表情包 / 设定文件）、与系统相关（请求记录 / 流程日志）。",
+    { el: "#hotupdate-check-btn", title: "⑤ 看一眼「自动修复」",
+      text: "请点「检查修复」。\n\n小 bug 修好后服务器会推一个小补丁，App 空闲时自动装上，不必重装；这里能开关、查看当前修复版本，有问题还能「回退修复」退回安装包自带的版本。",
+      setup: () => { openSettings(); _guideOpenGroup("system"); _guideArmHotupdate(); },
+      done: () => _guideHotTouched },
+    { el: "#menu-btn", title: "⑥ 到聊天页打开菜单",
+      text: "已经帮你切到聊天页：请点右上角 ☰ 打开菜单。\n\n菜单里是分组页签：与角色相关（收藏 / 表情包 / 设定文件）、与系统相关（请求记录 / 流程日志）。",
       setup: () => { closeSettings(); showChat(); },
       done: () => document.getElementById("menu-drawer").classList.contains("open") },
-    { el: '.menu-tab[data-tab="sticker"]', title: "⑥ 点「表情包」页签",
+    { el: '.menu-tab[data-tab="sticker"]', title: "⑦ 点「表情包」页签",
       text: "请在菜单顶部点「表情包」。\n\n这一页能添加新表情、打开映射表逐个启用/停用；停用的表情不会出现在聊天面板，也不会被 AI 使用。",
       setup: () => { openMenu(); },
       done: () => _guideStickerTabOpen() },
-    { el: "#sticker-manage-btn", title: "⑦ 展开映射表试开关",
+    { el: "#sticker-manage-btn", title: "⑧ 展开映射表试开关",
       text: "请点「表情包映射表」。\n\n展开后可以试试点某张表情的「启用中 / 已停用」按钮，状态会立刻切换；改分类和描述后要点该卡片「保存」。内置默认表情的「删」是灰色保护。",
       setup: () => { openMenu(); try { document.querySelector('.menu-tab[data-tab="sticker"]')?.click(); } catch (e) {} },
       done: () => { const p = document.getElementById("sticker-manage-panel"); return !!(p && p.style.display !== "none" && p.style.display !== ""); } },
-    { el: "#sticker-add-btn", title: "⑧ 看看添加表情包表单",
+    { el: "#sticker-add-btn", title: "⑨ 看看添加表情包表单",
       text: "请点「+ 添加表情包」展开表单（不用真的上传）。\n\n流程是：选图 → 选分类（可爱/帅气）→ 写一句含义描述 → 保存。描述越清楚，AI 选图越准。",
       setup: () => { openMenu(); try { document.querySelector('.menu-tab[data-tab="sticker"]')?.click(); } catch (e) {} },
       done: () => { const f = document.getElementById("sticker-add-form"); return !!(f && f.style.display !== "none" && f.style.display !== ""); } },
-    { el: "#fix-module .am-btn", title: "⑨ 进入设定纠错",
-      text: "已经回到首页：请点「指出问题 →」进入设定纠错助手。\n\n进去后先选模式：剧情模式 或 春日手信，两个模式的设定和历史完全独立。",
-      setup: () => { closeMenu(); showHome(); },
-      done: () => document.getElementById("fix-view").classList.contains("show") },
-    { el: "#fix-chathist", title: "⑩ 展开最近聊天记录",
-      text: "请点「📜 最近聊天记录」展开它。\n\n这里显示当前模式的最近 20 条聊天，描述问题时可以直接对照她具体说错了哪句，不用切页面。",
-      setup: () => { closeMenu(); if (!document.getElementById("fix-view").classList.contains("show")) openFixView(); },
-      done: () => { const d = document.getElementById("fix-chathist"); return !!(d && d.open); } },
-    { el: "#fix-input", title: "⑪ 点输入框，试着描述问题",
-      text: "请点底部输入框，试着输入一句“她哪里说得不对”（先不用发送，或只发一句真实问题）。\n\n流程是：AI 多轮确认 → 点「开始修改」→ 看修改清单 → 点「应用修改」才生效；顶部状态点会显示：状态正常/对齐中/已对齐/方案待确认。",
-      setup: () => { closeMenu(); if (!document.getElementById("fix-view").classList.contains("show")) openFixView(); },
-      done: () => document.activeElement && document.activeElement.id === "fix-input" },
-    { el: "#home-feedback-btn", title: "⑫ 反馈页可随时重看",
+    { el: "#home-feedback-btn", title: "⑩ 反馈页可随时重看",
       text: "最后请点左上角「✉ 反馈」。\n\n以后想复习：反馈页点「查看详细使用教程」即可重新开始这套实际操作教程；有问题可在 GitHub / QQ 群 / 邮箱反馈。",
       setup: () => { showHome(); },
       done: () => document.getElementById("feedback-panel").classList.contains("show") },
 ];
+
+// 步骤⑤的判定：用户真的点了「检查修复」（而不是"这个按钮存在"——那不叫操作成功）。
+// 监听是一次性的：进入该步时挂上，离开后自然失效（按钮不存在时直接算完成，不卡住流程）。
+let _guideHotTouched = false;
+function _guideArmHotupdate() {
+    _guideHotTouched = false;
+    const btn = document.getElementById("hotupdate-check-btn");
+    if (!btn) { _guideHotTouched = true; return; }
+    btn.addEventListener("click", () => { _guideHotTouched = true; }, { once: true });
+}
 
 let _guideIndex = 0;
 let _guideSteps = GUIDE_STEPS;

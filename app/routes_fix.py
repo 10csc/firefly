@@ -47,7 +47,7 @@ def setting_fix_message(h):
     mode = _body_mode(body)
     text = body.get("text")
     if not isinstance(text, str) or not text.strip():
-        h._json({"ok": False, "error": "请描述她哪里说得不对"})
+        h._json({"ok": False, "error": "请描述角色哪里说得不对"})
         return
     text = text.strip()
 
@@ -56,7 +56,7 @@ def setting_fix_message(h):
                                            append_conversation, load_pending,
                                            save_pending)
     client = cfg.get_client()
-    model = cfg.eff_cfg("polisher_model", "deepseek-v4-flash-vision-exp")
+    model = cfg.eff_cfg("polisher_model", "deepseek-flash")
     effort = cfg.eff_cfg("polisher_effort", "high")
     with locked(mode):
         conversation = load_conversation(mode)
@@ -112,12 +112,12 @@ def setting_fix_start(h):
     from modules.setting_fix import run_proposal
     from modules.setting_fix_store import locked, load_conversation, save_pending
     client = cfg.get_client()
-    model = cfg.eff_cfg("polisher_model", "deepseek-v4-flash-vision-exp")
+    model = cfg.eff_cfg("polisher_model", "deepseek-flash")
     effort = cfg.eff_cfg("polisher_effort", "high")
     with locked(mode):
         conversation = load_conversation(mode)
         if not conversation:
-            h._json({"ok": False, "error": "请先描述她哪里说得不对"})
+            h._json({"ok": False, "error": "请先描述角色哪里说得不对"})
             return
         try:
             result = run_proposal(client, mode, conversation, model, effort)

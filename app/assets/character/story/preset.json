@@ -6,6 +6,5 @@
   "presentation": "sticker",
   "bans": "default",
   "desc": "她的故事，与你共同推进",
-  "tagline": "会找到的，属于我的梦...",
-  "knowledge_dirs": ["knowledge", "database/dialogues_compiled"]
+  "tagline": "会找到的，属于我的梦..."
 }

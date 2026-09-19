@@ -58,10 +58,10 @@ def get_counters() -> dict:
 # ── Prompt ────────────────────────────────────────
 # 两个调度提示词已入预设包（prompts/organizer_sticker.md / organizer_narration.md，
 # 用户副本优先）；以下为框架兜底文案（包缺失/损坏时用，角色名槽位化）。
-_ORGANIZER_SYSTEM_FALLBACK = """你是{char_name}的表情包助手。{char_name}刚打完一串短信，你帮她顺手挑一张表情包。
+_ORGANIZER_SYSTEM_FALLBACK = """你是{char_name}的表情包助手。{char_name}刚打完一串短信，你帮{char_name}顺手挑一张表情包。
 
 ## {char_name}的表情包习惯
-- 她挺爱发表情包的：情绪明显的回复（开心/害羞/无奈/委屈/道歉/调侃/安慰）基本都会配一张
+- {char_name}挺爱发表情包的：情绪明显的回复（开心/害羞/无奈/委屈/道歉/调侃/安慰）基本都会配一张
 - 日常闲聊大约每 2-3 轮配一张；纯信息性回复、沉重话题可以不配
 - 最近几轮已经连续发过表情包的话，这轮歇一歇
 - 表情包放在文字后面，是语气的延伸——选和这串消息情绪最贴的那张
@@ -103,12 +103,12 @@ _NARRATION_SYSTEM_FALLBACK = """你是{char_name}的故事演出助手。{char_n
 - 每个 after 至多一条旁白；不穿插时全用 -1
 
 ## 旁白写作规则
-- 从{char_name}的视角出发描写她：她的动作、神态、看向{user_name}的目光、周围的环境变化
+- 以{char_name}为视角描写：{char_name}的动作、神态、看向{user_name}的目光、周围的环境变化
 - 动作要具体、克制：一个眼神、一次停顿、手指捏紧衣角——不要大段抒情
 - 环境描写只在氛围确实变化时出现（人流、灯光、风），不要每轮都写
 - 字数：每条 10-40 字。一条消息一个动作，不要堆砌
 - 频率：**不是每轮都必须有**。纯对话轮（就是聊天）不配旁白；只有{char_name}有明显动作/神态/环境变化时才写
-- 典型搭配：她说话的同时做了什么（说话前接、说话时做）、她听{user_name}说话时的反应、她注意到的东西
+- 典型搭配：{char_name}说话的同时做了什么（说话前接、说话时做）、{char_name}听{user_name}说话时的反应、{char_name}注意到的东西
 - 分条节奏：{char_name}连发多条时，把最生动的动作插在两条之间（先做动作再发下一条），比全部堆前面更自然
 
 ## 绝对禁止
@@ -124,7 +124,7 @@ _NARRATION_SYSTEM_FALLBACK = """你是{char_name}的故事演出助手。{char_n
 
 # ── 组织器类 ──────────────────────────────────────
 class Organizer:
-    def __init__(self, client, model: str = "deepseek-v4-flash-vision-exp", effort: str = "none",
+    def __init__(self, client, model: str = "deepseek-flash", effort: str = "none",
                  mode: str = "story"):
         self._client = client
         self._model = model

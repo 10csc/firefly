@@ -46,7 +46,8 @@ export function openMenu() {
     menuDrawer.classList.add("open");
     menuOverlay.classList.add("show");
     // 默认 tab 是设定文件（DOM active），无点击事件，需主动加载
-    loadCharFiles(); loadJournal(); loadUserMemory();
+    // （2026-09-18：loadCharFiles 已随「用户设定」编辑器一起去掉——它属角色卡管理域）
+    loadJournal(); loadUserMemory(); loadArchive();
 }
 export function closeMenu() {
     menuDrawer.classList.remove("open");
@@ -88,7 +89,7 @@ document.querySelectorAll(".menu-tab").forEach(btn => {
         btn.classList.add("active");
         const target = document.getElementById("tab-" + btn.dataset.tab);
         if (target) target.classList.add("active");
-        if (btn.dataset.tab === "char") { loadCharFiles(); loadJournal(); loadUserMemory(); }
+        if (btn.dataset.tab === "char") { loadJournal(); loadUserMemory(); loadArchive(); }
         if (btn.dataset.tab === "state") loadStateTab();
         if (btn.dataset.tab === "fav") loadFavorites();
         if (btn.dataset.tab === "log") loadRequestLog();

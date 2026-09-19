@@ -1,5 +1,5 @@
 // 共享状态与 DOM 引用（原 app.js 头部 + 跨模块可变状态 S）
-// 流萤聊天 App — 前端逻辑（统一前端 0.8.0：本地 / 服务器双模式一套代码）
+// Firefly 聊天 App — 前端逻辑（统一前端 0.8.0：本地 / 服务器双模式一套代码）
 
 export const messagesEl = document.getElementById("messages");
 export const inputEl = document.getElementById("msg-input");

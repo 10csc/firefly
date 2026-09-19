@@ -1,7 +1,13 @@
 // 调试面板：请求记录 / 流水线日志（阶段 2.5 自 panels.js 拆出）
 
 import { _esc } from "./util.js";
-import { CURRENT_MODE } from "./views.js";
+import { CURRENT_MODE, userName } from "./views.js";
+
+// 调试面板里的用户称呼随当前角色包（F-6.x 残留：曾硬编码「开拓者」，自建包下称呼错误）
+// 2026-09-18：收敛到 views.userName()，且**不再回落字面量**（取不到就留空）。
+function _userName() {
+    return userName();
+}
 
 // ═══════════════════════════════════════════
 // 请求记录
@@ -25,11 +31,13 @@ async function loadRequestLog() {
             list.innerHTML = '<div style="color:#8a8a8a;padding:10px">暂无记录</div>';
             return;
         }
+        // A6（审计 2026-09-15）：r.module / r.model / r.time 原先未转义直插 innerHTML
+        // （model 来自上游响应/自定义模型名，注入面真实）——已套 _esc，与本文件其余字段一致
         list.innerHTML = rows.map(r => `
         <div style="display:flex;align-items:center;gap:4px;padding:5px 0;border-bottom:1px solid rgba(255,255,255,0.06);font-size:0.8em;color:#c8d0e0">
-            <span style="flex-shrink:0;width:50px;color:#8a8a8a">${r.time || "?"}</span>
-            <span style="flex-shrink:0;width:64px">${r.module}</span>
-            <span style="flex-shrink:0;width:52px">${r.model || "?"}</span>
+            <span style="flex-shrink:0;width:50px;color:#8a8a8a">${_esc(r.time || "?")}</span>
+            <span style="flex-shrink:0;width:64px">${_esc(r.module)}</span>
+            <span style="flex-shrink:0;width:52px">${_esc(r.model || "?")}</span>
             <span style="flex-shrink:0;width:22px;text-align:center">${r.success ? '<span style="color:#6c8">✓</span>' : '<span style="color:#c66">✗</span>'}</span>
             <span style="flex:1;text-align:right">${r.total_tokens || 0}</span>
             <span style="flex-shrink:0;width:70px;text-align:right;color:#8a8a8a">¥${(r.cost_cny || 0).toFixed(6)}</span>
@@ -100,7 +108,7 @@ async function loadPipeline() {
                     ]);
             }
             return `<div style="margin-bottom:14px;padding:8px;border:1px solid rgba(255,255,255,0.08);border-radius:8px;font-size:0.8em;color:#c8d0e0">
-                <div style="margin-bottom:4px"><span style="color:#8a8a8a">${p.time || "?"}</span> 开拓者: <span style="color:#e0d5c1">${_esc(p.user_input)}</span>${p.hint ? ` <span style="color:#8a8a8a">(hint:${p.hint})</span>` : ""}</div>
+                <div style="margin-bottom:4px"><span style="color:#8a8a8a">${_esc(p.time || "?")}</span> ${_esc(_userName())}: <span style="color:#e0d5c1">${_esc(p.user_input)}</span>${p.hint ? ` <span style="color:#8a8a8a">(hint:${_esc(p.hint)})</span>` : ""}</div>
                 ${inner}
             </div>`;
         }).join("");

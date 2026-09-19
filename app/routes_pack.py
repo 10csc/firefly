@@ -1,6 +1,10 @@
 # -*- coding: utf-8 -*-
-"""角色包管理路由（routes.py 拆分）：
-包文件编辑（设定放权）、包资产上传/恢复、包文件清单、自建包创建/删除。
+"""角色卡管理路由（routes.py 拆分）：
+卡文件编辑（设定放权）、卡资产上传/恢复、卡文件清单、自建卡创建/删除。
+
+命名统一（2026-09-18）：入口统称「角色卡管理」——聊天产生的私有数据在菜单页
+（设定文件/收藏）管理，本文件职责是卡本身。唯一的例外是「彻底删除」，它连
+user_data/{id}/ 整个目录（含私有聊天数据）一起删，见 api/pack_lifecycle.delete_pack。
 
 边界（2026-09-08 用户拍板）：
 - 角色卡 = 基础设定：core/identity/sms_samples/prompts/封面/头像/知识库/开场/表情包
@@ -8,16 +12,13 @@
 - 核心三件（core/identity/sms_samples）2026-09-08 起放权可编辑（保存即生效：
   clear_cache 全清角色设定缓存，缓存按内容哈希自然重建）"""
 
-import json
 import logging
 import re
 from pathlib import Path
-from urllib.parse import urlparse, parse_qs
 
 from modules import app_config as cfg
 from modules.app_config import DEFAULT_MODE
-
-from routes_common import _read_json, _body_mode, _query_mode, _is_server
+from routes_common import _read_json, _body_mode, _query_mode
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +31,7 @@ _PACK_PROMPT_FILES = ("prompts/polisher.md", "prompts/analyzer_extra.md",
 _PACK_CORE_FILES = ("core.md", "identity.md", "sms_samples.md")
 _EDITABLE_FILES = frozenset(cfg.PACK_SLOT_FILES)
 
-_PACK_ASSET_SLOTS = ("avatar", "cover")   # 头像 / 封面
+_PACK_ASSET_SLOTS = ("avatar", "cover", "user_avatar")   # 角色头像 / 封面 / 用户形象（05）
 _PACK_ID_RE = re.compile(r"^[a-z0-9_-]{1,32}$")
 
 
@@ -211,10 +212,17 @@ def set_pack_config(h):
             h._json({"ok": False, "error": "prob_value 必须为 0-1 数值"}); return
     if "hidden_enabled" in body:
         updates["hidden_reply_enabled"] = bool(body["hidden_enabled"])
+    # 05 用户形象入包：用户称呼（包级覆盖，最长 20 字）
+    if "user_name" in body:
+        un = str(body.get("user_name") or "").strip()[:20]
+        updates["user_name"] = un   # 空串 = 清除覆盖（读链回落 preset 声明）
     if not updates:
         h._json({"ok": False, "error": "没有可更新的字段"}); return
     cfg.set_pack_cfg(mode, updates)
-    h._json({"ok": True, "proactive": _pack_proactive_view(mode)})
+    resp = {"ok": True, "proactive": _pack_proactive_view(mode)}
+    if "user_name" in updates:
+        resp["user_name"] = cfg.user_name(mode)   # 回读生效值（覆盖被清时回落 preset）
+    h._json(resp)
 
 
 def upload_pack_asset(h):
@@ -228,7 +236,7 @@ def upload_pack_asset(h):
         h._json({"ok": False, "error": "非法模式"}); return
     slot = (fields.get("slot") or "").strip()
     if slot not in _PACK_ASSET_SLOTS:
-        h._json({"ok": False, "error": "slot 必须为 avatar/cover"}); return
+        h._json({"ok": False, "error": "slot 必须为 avatar/cover/user_avatar"}); return
     file_info = files.get("file")
     if not file_info:
         h._json({"ok": False, "error": "缺少图片文件"}); return
@@ -262,7 +270,7 @@ def delete_pack_asset(h):
     mode = _body_mode(body)
     slot = (body.get("slot") or "").strip()
     if slot not in _PACK_ASSET_SLOTS:
-        h._json({"ok": False, "error": "slot 必须为 avatar/cover"}); return
+        h._json({"ok": False, "error": "slot 必须为 avatar/cover/user_avatar"}); return
     if _no_bundled_fallback(mode):
         h._json({"ok": False, "error": "自建角色包没有可恢复的默认图片——"
                                        "删除后该位置将无头像/封面。如确需更换请直接上传新图。"}); return
@@ -278,260 +286,306 @@ def delete_pack_asset(h):
 
 
 # ═══ 自建角色包（仅本地版——服务器版不做自定义整包）═══
-_PACK_CORE_TPL = "# {char_name} · 核心设定\n\n（在这里写：她是谁——身份、经历、价值观。每条一行，以 [事实] 开头）\n"
-_PACK_IDENTITY_TPL = "# {char_name} · 人际关系与认知边界\n\n（在这里写：她与{user_name}的关系、习惯与喜好、她知道什么不知道什么）\n"
-_PACK_SAMPLES_TPL = "# {char_name} · 短信风格示例\n\n（在这里贴几条她说的话的示例，模型会模仿这个语气。越真实越好）\n"
+# 阶段 2.8：建包/AI 向导/归档/两级删除的实现已移至 app/api/pack_lifecycle.py。
+# 此处 re-export，api/router 与 routes.py 兼容层、测试（`import routes_pack as rp`）的取用路径不变。
+# 模板常量保留在本模块：测试经 `rp._PACK_*_TPL = None` 打桩验证建包回滚（test_pack_lifecycle B4/B5），
+# pack_lifecycle.create_pack 在**调用时**从本模块读（保持打桩语义）。
+_PACK_CORE_TPL = "# {char_name} · 核心设定\n\n（在这里写：{char_name}是谁——身份、经历、价值观。每条一行，以 [事实] 开头）\n"
+_PACK_IDENTITY_TPL = "# {char_name} · 人际关系与认知边界\n\n（在这里写：{char_name}与{user_name}的关系、习惯与喜好、{char_name}知道什么不知道什么）\n"
+_PACK_SAMPLES_TPL = "# {char_name} · 短信风格示例\n\n（在这里贴几条{char_name}说的话的示例，模型会模仿这个语气。越真实越好）\n"
+
+from api.pack_lifecycle import (   # noqa: F401,E402
+    archive_pack, create_pack, delete_pack, restore_pack,
+    _force_pack_backup, _is_orphan_pack_dir, _detach_pack_stickers, _pack_target,
+)
+
+# re-export 面（pyflakes 的"已使用"标记；见 core/presets.py 同款处置）
+__all__ = [
+    "character_file_update", "delete_character_file", "get_pack_files", "set_pack_config",
+    "upload_pack_asset", "delete_pack_asset",
+    "archive_pack", "create_pack", "delete_pack", "restore_pack",
+    "_force_pack_backup", "_is_orphan_pack_dir", "_detach_pack_stickers", "_pack_target",
+    "_PACK_CORE_TPL", "_PACK_IDENTITY_TPL", "_PACK_SAMPLES_TPL",
+    "_EDITABLE_FILES", "_PACK_ASSET_SLOTS", "_no_bundled_fallback",
+]
 
 
-def create_pack(h):
-    """POST /pack-create：新建自定义角色包（仅本地版）。
-    包目录 = user_data/{id}/（preset.json 在 character/ 下，与读取语义对齐——
-    自建包的全部内容即用户副本，天然可编辑）。"""
-    if _is_server():
-        h._json({"ok": False, "error": "服务器版暂不支持自建角色包"}); return
+# ═══ 知识库 / 记忆库编辑（阶段 C，2026-09-15）═══
+# 读取链与既有槽位同哲学：用户副本（{pack}/character/knowledge/…）优先 → bundled 包内回落。
+# 写入一律原子写 + 白名单路径 + 写后清知识缓存（R-06 的失效入口在此落地）。
+
+_KB_ALLOWED_TOP = ("world", "factions", "story", "character", "dialogues")   # 五域（02 规范结构）
+_KB_CONTENT_MAX = 500_000        # 单文件写入上限（防巨型文本打爆磁盘）
+
+
+def _kb_user_root(mode: str) -> Path:
+    """知识库用户副本根（写路径唯一落点）。"""
+    return cfg.mode_character_dir(mode) / "knowledge"
+
+
+def _kb_bundled_root(mode: str) -> Path:
+    """知识库 bundled 根（包内；不存在则空——haruno 等包目前没有知识库）。"""
+    return cfg.bundled_character_dir(mode) / "knowledge"
+
+
+def _safe_kb_rel(rel: str) -> str | None:
+    """知识库相对路径白名单审查：五域子目录下的 .md；拒绝 ../绝对/盘符/控制字符。
+    文件名允许中文/空格/括号/句点（"2.0任务对话.md"、"3.8任务对话（超长）.md" 都是合法的）。
+    返回归一化相对路径（posix）或 None。"""
+    if not isinstance(rel, str) or not rel.strip():
+        return None
+    r = rel.strip().replace("\\", "/").lstrip("/")
+    parts = r.split("/")
+    if len(parts) < 2 or parts[0] not in _KB_ALLOWED_TOP:
+        return None
+    if any(p in ("", ".", "..") for p in parts):
+        return None
+    name = parts[-1]
+    if not name.endswith(".md") or ".." in name or re.search(r"[\x00-\x1f]", name):
+        return None
+    return r
+
+
+def _kb_resolve(mode: str, rel: str):
+    """读路径解析：用户副本优先 → bundled。返回 (路径, 是否用户副本) 或 (None, False)。"""
+    u = _kb_user_root(mode) / rel
+    if u.is_file():
+        return u, True
+    b = _kb_bundled_root(mode) / rel
+    if b.is_file():
+        return b, False
+    return None, False
+
+
+def pack_knowledge_list(h):
+    """GET /pack-knowledge?mode= → {ok, files: [{path, size, customized, user_copy}]}"""
+    mode = _query_mode(h)
+    out = {}
+    for root, is_user in ((_kb_bundled_root(mode), False), (_kb_user_root(mode), True)):
+        if not root.is_dir():
+            continue
+        for fp in sorted(root.rglob("*.md")):
+            rel = fp.relative_to(root).as_posix()
+            if _safe_kb_rel(rel) is None:
+                continue   # 检索器同口径：五域之外/非法名不进列表（与 _load_knowledge 的排除分离：它不管顶层）
+            try:
+                st = fp.stat()
+            except OSError:
+                continue
+            cur = out.get(rel)
+            # 用户副本覆盖 bundled 同名条目（读取链同序）
+            if cur is None or is_user:
+                out[rel] = {"path": rel, "size": st.st_size, "user_copy": is_user}
+    h._json({"ok": True, "mode": mode, "files": sorted(out.values(), key=lambda x: x["path"])})
+
+
+def pack_knowledge_read(h):
+    """GET /pack-knowledge/file?mode=&path= → {ok, path, content, user_copy}"""
+    mode = _query_mode(h)
+    from urllib.parse import urlparse, parse_qs
+    rel = _safe_kb_rel(parse_qs(urlparse(h.path).query).get("path", [""])[0])
+    if rel is None:
+        h._json({"ok": False, "error": "非法知识库路径"}); return
+    fp, is_user = _kb_resolve(mode, rel)
+    if fp is None:
+        h._json({"ok": False, "error": "文件不存在"}, 404); return
+    try:
+        h._json({"ok": True, "path": rel, "content": fp.read_text(encoding="utf-8"),
+                 "user_copy": is_user})
+    except OSError as e:
+        h._json({"ok": False, "error": f"读取失败: {e}"}, 500)
+
+
+def pack_knowledge_update(h):
+    """POST /pack-knowledge/update {mode, path, content}：写用户副本（原子写）+ 清知识缓存。"""
     body = _read_json(h)
-    name = str(body.get("name") or "").strip()[:30]
-    cname = str(body.get("char_name") or "").strip()[:20]
-    uname = str(body.get("user_name") or "").strip()[:20]
-    presentation = str(body.get("presentation") or "sticker").strip()
-    if presentation not in ("sticker", "narration", "none"):
-        presentation = "sticker"
-    if not name or not cname or not uname:
-        h._json({"ok": False, "error": "包名称、角色名、对方称呼都必填"}); return
-    pid = str(body.get("id") or "").strip().lower()
-    if not pid:
-        import uuid as _uuid
-        pid = "custom_" + _uuid.uuid4().hex[:8]
-    if not _PACK_ID_RE.fullmatch(pid):
-        h._json({"ok": False, "error": "包 id 只能是小写字母/数字/下划线/短横线"}); return
-    if pid in cfg.PRESETS or (cfg.USER_DIR / pid).exists():
-        h._json({"ok": False, "error": "包 id 已存在"}); return
-    cdir = cfg.USER_DIR / pid / "character"
-    pack_dir = cfg.USER_DIR / pid
+    mode = _body_mode(body)
+    rel = _safe_kb_rel(str(body.get("path") or ""))
+    content = body.get("content")
+    if rel is None:
+        h._json({"ok": False, "error": "非法知识库路径（只允许五域子目录下的 .md）"}); return
+    if not isinstance(content, str) or not content.strip():
+        h._json({"ok": False, "error": "内容不能为空"}); return
+    if len(content) > _KB_CONTENT_MAX:
+        h._json({"ok": False, "error": f"内容过长（上限 {_KB_CONTENT_MAX} 字符）"}); return
+    fp = _kb_user_root(mode) / rel
+    from modules.storage import atomic_write_text
+    if not atomic_write_text(fp, content):
+        h._json({"ok": False, "error": "写入失败"}); return
+    from modules.llm_retriever import clear_knowledge_cache
+    clear_knowledge_cache(mode)
+    logger.info("知识库更新: %s/%s（%d 字符）", mode, rel, len(content))
+    h._json({"ok": True, "path": rel})
+
+
+def pack_knowledge_delete(h):
+    """POST /pack-knowledge/delete {mode, path}：删用户副本（回落 bundled）；
+    自建包无 bundled，删除的是本体——前端已二次确认。"""
+    body = _read_json(h)
+    mode = _body_mode(body)
+    rel = _safe_kb_rel(str(body.get("path") or ""))
+    if rel is None:
+        h._json({"ok": False, "error": "非法知识库路径"}); return
+    fp = _kb_user_root(mode) / rel
+    if not fp.is_file():
+        h._json({"ok": False, "error": "没有可删除的用户副本（该文件当前用的是包自带内容）"}); return
     try:
-        cdir.mkdir(parents=True, exist_ok=True)
-        (cdir / "preset.json").write_text(json.dumps({
-            "id": pid, "name": name, "char_name": cname, "user_name": uname,
-            "presentation": presentation,
-            "desc": str(body.get("desc") or "").strip()[:60],
-            "tagline": str(body.get("tagline") or "").strip()[:60],
-            "schema": cfg.PRESET_SCHEMA,
-        }, ensure_ascii=False, indent=2), encoding="utf-8")
-        from modules.polisher import _EMERGENCY_PERSONA
-        (cdir / "prompts").mkdir(exist_ok=True)
-        (cdir / "prompts" / "polisher.md").write_text(_EMERGENCY_PERSONA, encoding="utf-8")
-        (cdir / "core.md").write_text(_PACK_CORE_TPL.format(char_name=cname, user_name=uname), encoding="utf-8")
-        (cdir / "identity.md").write_text(_PACK_IDENTITY_TPL.format(char_name=cname, user_name=uname), encoding="utf-8")
-        (cdir / "sms_samples.md").write_text(_PACK_SAMPLES_TPL.format(char_name=cname), encoding="utf-8")
-        # 阶段 3.2：包存在性以 packs.json 为权威 —— 先登记再重扫（顺序铁律：reload 是从清单读的）
-        cfg.pack_registry().register(pid, source="custom")
-        cfg.reload_presets()
-    except Exception as e:
-        # R-09（2026-09-13）：建包中途失败必须把已建目录删掉。原来失败就撒手，
-        # 留下一个**孤儿包目录**：没注册进 PRESETS（或只注册了一半），列表里看不见、
-        # 没有任何管理入口，却占着这个 id 让用户无法用同名重建（真实案例：
-        # user_data/custom_f447527f/ 只剩一个空 character/）。
-        import shutil
-        shutil.rmtree(pack_dir, ignore_errors=True)
-        try:
-            cfg.pack_registry().unregister(pid)   # 3.2：清单里也不留半注册条目
-            cfg.reload_presets()      # 目录已删，重扫一遍清掉可能的半注册状态
-        except Exception:
-            pass
-        logger.warning("自建角色包创建失败，已回滚目录 %s: %s", pid, e)
-        h._json({"ok": False, "error": f"创建失败（已回滚，未留下残留目录）: {e}"}); return
-    logger.info("自建角色包创建: %s（%s）", pid, name)
-    h._json({"ok": True, "id": pid, "name": name})
+        fp.unlink()
+    except OSError as e:
+        h._json({"ok": False, "error": f"删除失败: {e}"}); return
+    from modules.llm_retriever import clear_knowledge_cache
+    clear_knowledge_cache(mode)
+    h._json({"ok": True, "path": rel})
 
 
-# ═══ AI 建卡向导（搜索 + 分步生成；仅本地版）═══
-
-def pack_forge_start(h):
-    if _is_server():
-        h._json({"ok": False, "error": "服务器版暂不支持"}); return
-    client = cfg.get_client()
-    if not client:
-        h._json({"ok": False, "error": "请先设置 API Key"}); return
-    from modules.pack_forge import forge_start
-    h._json(forge_start(client, _read_json(h)))
-
-
-def pack_forge_next(h):
-    if _is_server():
-        h._json({"ok": False, "error": "服务器版暂不支持"}); return
-    from modules.pack_forge import forge_next
-    h._json(forge_next(_read_json(h)))
-
-
-def pack_forge_finish(h):
-    if _is_server():
-        h._json({"ok": False, "error": "服务器版暂不支持"}); return
-    from modules.pack_forge import forge_finish
-    h._json(forge_finish(_read_json(h)))
+def pack_knowledge_create(h):
+    """POST /pack-knowledge/create {mode, path, title}：在五域子目录下新建知识文件（骨架落用户副本）。"""
+    body = _read_json(h)
+    mode = _body_mode(body)
+    rel = _safe_kb_rel(str(body.get("path") or ""))
+    title = str(body.get("title") or "").strip()[:60]
+    if rel is None:
+        h._json({"ok": False, "error": "非法知识库路径（如 world/新地区.md）"}); return
+    if not title:
+        h._json({"ok": False, "error": "请填写文件标题"}); return
+    fp = _kb_user_root(mode) / rel
+    if fp.exists() or _kb_resolve(mode, rel)[0] is not None:
+        h._json({"ok": False, "error": "同名文件已存在"}); return
+    skeleton = f"# {title}\n\n> 范围：本文件覆盖……（一句话说明，供检索器与 AI 辅助理解边界）\n\n"
+    from modules.storage import atomic_write_text
+    if not atomic_write_text(fp, skeleton):
+        h._json({"ok": False, "error": "写入失败"}); return
+    from modules.llm_retriever import clear_knowledge_cache
+    clear_knowledge_cache(mode)
+    logger.info("知识库新建: %s/%s", mode, rel)
+    h._json({"ok": True, "path": rel})
 
 
-def _is_orphan_pack_dir(d: Path) -> bool:
-    """孤儿包目录判定（R-09，2026-09-13）：目录存在、不含任何文件，且除空的 character/ 外
-    没有别的子目录。
+# ── 记忆库（出厂记忆 default.md）──
+def _mem_resolve(mode: str):
+    """出厂记忆读取链：用户副本 → bundled 包内 memory/default.md。返回 (路径|None, 是否用户副本)。"""
+    u = cfg.mode_character_dir(mode) / "memory" / "default.md"
+    if u.is_file():
+        return u, True
+    b = cfg.bundled_character_dir(mode) / "memory" / "default.md"
+    if b.is_file():
+        return b, False
+    return None, False
 
-    为什么要求这么严：这是"删除"分支的准入条件，只允许清掉**确定啥也没有**的残留
-    （建包中途失败、早期版本残留）。用户手工塞过东西的目录一律拒绝——
-    宁可留着让用户自己处理，也不能替用户删数据。"""
+
+def pack_memory_read(h):
+    """GET /pack-memory?mode= → {ok, content, user_copy, exists}"""
+    mode = _query_mode(h)
+    fp, is_user = _mem_resolve(mode)
+    if fp is None:
+        h._json({"ok": True, "mode": mode, "content": "", "user_copy": False, "exists": False})
+        return
     try:
-        if not d.is_dir():
-            return False
-        for p in d.rglob("*"):
-            if p.is_file():
-                return False
-            if p.is_dir() and p.relative_to(d).as_posix() != "character":
-                return False
-        return True
-    except OSError:
+        h._json({"ok": True, "mode": mode, "content": fp.read_text(encoding="utf-8"),
+                 "user_copy": is_user, "exists": True})
+    except OSError as e:
+        h._json({"ok": False, "error": f"读取失败: {e}"}, 500)
+
+
+def pack_memory_update(h):
+    """POST /pack-memory/update {mode, content}：写出厂记忆用户副本（原子写）。"""
+    body = _read_json(h)
+    mode = _body_mode(body)
+    content = body.get("content")
+    if not isinstance(content, str) or not content.strip():
+        h._json({"ok": False, "error": "内容不能为空"}); return
+    if len(content) > 200_000:
+        h._json({"ok": False, "error": "内容过长"}); return
+    fp = cfg.mode_character_dir(mode) / "memory" / "default.md"
+    from modules.storage import atomic_write_text
+    if not atomic_write_text(fp, content):
+        h._json({"ok": False, "error": "写入失败"}); return
+    logger.info("出厂记忆更新: %s（%d 字符）", mode, len(content))
+    h._json({"ok": True})
+
+
+# ═══ 通用包文件（/pack-file 族）═══
+# 白名单 = PACK_STRUCTURE 里 type=="file" 声明的 path（规范驱动：规范加一条 file 来源，
+# 端点自动放行，无需改这里）。覆盖：memory/default.md、opening.json、_时态标记规范.md……
+def _declared_file_paths() -> frozenset:
+    from core.pack_structure import PACK_STRUCTURE
+    return frozenset(s["path"] for d in PACK_STRUCTURE for s in d["sources"]
+                     if s.get("type") == "file" and s.get("path"))
+
+
+def _check_file_path(h, path: str) -> bool:
+    if path not in _declared_file_paths():
+        h._json({"ok": False, "error": f"不允许的包文件: {path}"})
         return False
+    return True
 
 
-def _pack_target(pid: str) -> Path:
-    """包数据目录（3.3 起用 `pack_root`：归档包不在 MODES，`mode_root` 会静默回退默认包）。"""
-    return cfg.pack_root(pid)
+def pack_file_read(h):
+    """GET /pack-file?mode=&path= → {ok, content, user_copy, exists}（用户副本 → bundled 回落）。"""
+    mode = _query_mode(h)
+    from urllib.parse import urlparse, parse_qs
+    path = (parse_qs(urlparse(h.path).query).get("path") or [""])[0].strip()
+    if not _check_file_path(h, path):
+        return
+    from api.pack_paths import read_pack_text
+    text = read_pack_text(mode, path)
+    h._json({"ok": True, "mode": mode, "path": path, "content": text,
+             "user_copy": (cfg.mode_character_dir(mode) / path).is_file(),
+             "exists": bool(text)})
 
 
-def _detach_pack_stickers(pid: str) -> int:
-    """把归属该包的表情包条目降级为全局共享（3.5）。失败不致命（返回 0 并告警）：
-    贴纸降级失败不该让归档/抹除整个操作失败——包的状态已经改了，日志留痕即可。"""
-    try:
-        from domain.stickers.picker import detach_pack
-        n = detach_pack(pid)
-        if n:
-            logger.info("表情包降级为全局共享: pack=%s 条目数=%d", pid, n)
-        return n
-    except Exception as e:
-        logger.warning("表情包降级失败（pack=%s）: %s", pid, e)
-        return 0
-
-
-def _force_pack_backup(pid: str) -> Path:
-    """抹除前的**强制保险**（3.5）：先打一份全量快照（3.8 的白名单含 archived，所以
-    "即将被抹除的这个包"一定在里面）落 `backups/`。
-
-    为什么是全量而不是"只备这个包"：单包 zip 的恢复入口要求该包当时存在（mode 必须合法），
-    包被抹除后恰恰不满足——而全量快照走的是"按包分发恢复"，新机器/空环境也能直接恢复，
-    是真正可用的保险。失败**抛异常**，由调用方中止删除（没备份成功就不许抹除）。
-    文件名前缀 `pack-erase-` 是刻意的：不进备份管理列表（`/backups` 只列 `{mode}-*.zip`），
-    也不被 auto-/pre-restore 的滚动裁剪碰到 —— 这份保险不会被自动淘汰。"""
-    import time as _time
-    from routes_snapshot import build_full_snapshot_zip
-    from infra.sync.restore import _backup_dir
-    data = build_full_snapshot_zip()
-    if not data.startswith(b"PK"):
-        raise OSError("快照打包结果不是 zip")
-    bdir = _backup_dir(cfg.DEFAULT_MODE)                  # {用户根}/backups（与模式目录平级）
-    bdir.mkdir(parents=True, exist_ok=True)
-    fp = bdir / f"pack-erase-{pid}-{_time.strftime('%Y%m%d-%H%M%S')}.zip"
-    fp.write_bytes(data)
-    if not fp.is_file() or fp.stat().st_size != len(data):
-        raise OSError("备份写入校验失败")
-    logger.info("抹除前强制备份: %s（%d 字节）", fp.name, len(data))
-    return fp
-
-
-def archive_pack(h):
-    """POST /pack-archive {id}：归档自建包（3.5 的"一级删除"）。
-
-    归档 ≠ 删除：清单条目与数据目录都留着，只是 `state=archived` → 不进 MODES
-    （模式列表/切换里消失）。这是本卡的核心行为变化：删包不再一步灭失数据。
-    副作用：该包专属的表情包条目降级为**全局共享**（贴纸是用户资产，包不在了也该继续可用）。"""
-    if _is_server():
-        h._json({"ok": False, "error": "服务器版暂不支持自建角色包"}); return
+def pack_file_update(h):
+    """POST /pack-file/update {mode, path, content}：写用户副本（备份 → 原子写 → 清缓存）。"""
     body = _read_json(h)
-    pid = str(body.get("id") or "").strip()
-    if not _PACK_ID_RE.fullmatch(pid):
-        h._json({"ok": False, "error": "非法包 id"}); return
-    reg = cfg.pack_registry()
-    meta = reg.get(pid)
-    if not meta:
-        if pid in cfg.PRESETS:
-            h._json({"ok": False, "error": "内置包不能归档"}); return
-        h._json({"ok": False, "error": "包不存在（清单里没有）"}); return
-    if not _pack_target(pid).is_dir():
-        h._json({"ok": False, "error": "包目录不存在，无法归档"}); return
-    changed = reg.set_state(pid, "archived")
-    detached = _detach_pack_stickers(pid)
-    cfg.reload_presets()          # 重扫：让 archived 立刻从 MODES 消失
-    if pid in cfg.MODES:
-        # 输出验证：归档后该包必须已不在可用列表里，否则状态与投影不一致（宁可报错也别假装成功）
-        h._json({"ok": False, "error": "归档后该包仍在可用列表（状态未生效）"}); return
-    logger.info("自建角色包归档: %s（贴纸降级 %d 条）", pid, detached)
-    h._json({"ok": True, "id": pid, "state": "archived",
-             "changed": changed, "stickers_detached": detached})
-
-
-def restore_pack(h):
-    """POST /pack-restore {id}：取消归档（archived → active）。数据本来就在，只是重新可见。"""
-    if _is_server():
-        h._json({"ok": False, "error": "服务器版暂不支持自建角色包"}); return
-    body = _read_json(h)
-    pid = str(body.get("id") or "").strip()
-    if not _PACK_ID_RE.fullmatch(pid):
-        h._json({"ok": False, "error": "非法包 id"}); return
-    reg = cfg.pack_registry()
-    if reg.get(pid) is None:
-        h._json({"ok": False, "error": "包不存在（清单里没有）"}); return
-    if not (_pack_target(pid) / "character" / "preset.json").is_file():
-        h._json({"ok": False, "error": "包定义缺失（character/preset.json）"}); return
-    changed = reg.set_state(pid, "active")
-    cfg.reload_presets()
-    if pid not in cfg.MODES:
-        h._json({"ok": False, "error": "取消归档后仍未进入可用列表（包定义非法？）"}); return
-    logger.info("自建角色包取消归档: %s", pid)
-    h._json({"ok": True, "id": pid, "state": "active", "changed": changed})
-
-
-def delete_pack(h):
-    """POST /pack-delete：**彻底删除**自定义角色包（仅本地版；内置包 story/haruno 拒绝）。
-
-    3.5 起改为**两级删除**的第二级：
-    - 只有 `state=archived` 的包才允许抹除（活跃包必须先归档 —— 归档不删数据，可反悔）；
-    - 抹除前**强制**打一份全量快照落 `backups/`（失败即中止，数据一个字节都不动）；
-    - 该包专属贴纸条目降级为全局共享。
-    连数据一起删（user_data/{id}/ 整个目录）——前端要求输入包名二次确认。
-
-    R-09（2026-09-13，保留）：不要求"必须已注册"的另一条分支仍在——孤儿包目录
-    （建包中途失败/早期版本残留）在"确认啥也没有"时可直接清掉。"""
-    if _is_server():
-        h._json({"ok": False, "error": "服务器版暂不支持自建角色包"}); return
-    body = _read_json(h)
-    pid = str(body.get("id") or "").strip()
-    if not _PACK_ID_RE.fullmatch(pid):
-        h._json({"ok": False, "error": "非法包 id"}); return
-    target = _pack_target(pid)
-    p = cfg.PRESETS.get(pid) or {}
-    meta = cfg.pack_registry().get(pid)
-    if pid in cfg.PRESETS and not p.get("custom"):
-        h._json({"ok": False, "error": "内置包不能删除"}); return
-    if meta is None:
-        # 未注册：只允许删"孤儿残留"，不碰可能有内容的目录
-        if not _is_orphan_pack_dir(target):
-            h._json({"ok": False, "error": "该包未注册且目录非空，为免误删数据已拒绝"}); return
-        logger.info("清理孤儿包目录: %s", pid)
-    elif (meta.get("state") or "active") != "archived":
-        # 已注册的自建包：必须已归档（归档不删数据、可随时恢复；抹除不可恢复）
-        h._json({"ok": False,
-                 "error": "请先「归档」再彻底删除——归档不删数据、可随时恢复；"
-                          "彻底删除不可恢复"}); return
-    backup_name = ""
-    if meta is not None:      # 只有"真删一个已归档的包"才需要保险（孤儿目录无数据可保）
+    mode = _body_mode(body)
+    path = str(body.get("path") or "").strip()
+    if not _check_file_path(h, path):
+        return
+    content = body.get("content")
+    if not isinstance(content, str) or not content.strip():
+        h._json({"ok": False, "error": "内容不能为空"}); return
+    if len(content) > 200_000:
+        h._json({"ok": False, "error": "内容过长"}); return
+    if path.endswith(".json"):
         try:
-            backup_name = _force_pack_backup(pid).name
-        except Exception as e:
-            logger.warning("抹除前强制备份失败，已中止删除 %s: %s", pid, e)
-            h._json({"ok": False, "error": f"备份失败，已中止删除（数据未动）: {e}"}); return
-    detached = _detach_pack_stickers(pid)
-    import shutil
-    shutil.rmtree(target, ignore_errors=True)
-    if _pack_target(pid).exists():
-        # 输出验证：目录必须真的没了，否则清单先注销会让"删不掉的包"彻底失联
-        h._json({"ok": False, "error": "目录删除失败（清单未改动，可重试）"}); return
-    cfg.pack_registry().unregister(pid)   # 3.2：目录删除与清单注销成对出现
-    cfg.reload_presets()
-    logger.info("自建角色包彻底删除: %s（备份 %s，贴纸降级 %d 条）", pid, backup_name or "-", detached)
-    h._json({"ok": True, "id": pid, "backup": backup_name, "stickers_detached": detached})
+            json.loads(content)
+        except ValueError as e:
+            h._json({"ok": False, "error": f"JSON 格式错误: {e}"}); return
+    from api.pack_paths import write_pack_text
+    err = write_pack_text(mode, path, content, backup_tag="edit")
+    if err:
+        h._json({"ok": False, "error": err}); return
+    from modules.llm_base import clear_cache
+    clear_cache()
+    logger.info("包文件更新: %s/%s（%d 字符）", mode, path, len(content))
+    h._json({"ok": True})
+
+
+def pack_file_delete(h):
+    """POST /pack-file/delete {mode, path}：删用户副本（回落 bundled = 恢复默认）。"""
+    body = _read_json(h)
+    mode = _body_mode(body)
+    path = str(body.get("path") or "").strip()
+    if not _check_file_path(h, path):
+        return
+    if _no_bundled_fallback(mode):
+        h._json({"ok": False, "error": "自建角色包没有可恢复的默认内容——这个文件就是唯一副本，"
+                                       "只能修改不能删除"}); return
+    fp = cfg.mode_character_dir(mode) / path
+    if not fp.is_file():
+        h._json({"ok": False, "error": "没有可删除的用户副本（该文件当前用的是包自带内容）"}); return
+    try:
+        fp.unlink()
+    except OSError as e:
+        h._json({"ok": False, "error": f"删除失败: {e}"}); return
+    from modules.llm_base import clear_cache
+    clear_cache()
+    logger.info("包文件恢复默认: %s/%s", mode, path)
+    h._json({"ok": True})
+
+
+def pack_structure(h):
+    """GET /pack-structure?mode=：角色卡结构规范树 + 实态（前端管理树的唯一数据源，2026-09-15）。"""
+    mode = _query_mode(h)
+    from core.pack_structure import build_tree
+    h._json({"ok": True, **build_tree(mode)})

@@ -14,6 +14,7 @@ import logging
 from dataclasses import dataclass, field
 
 from modules.app_config import DEFAULT_MODE, char_name, user_name
+from modules.context_manager import BUDGET_PROACTIVE, BUDGET_ORGANIZER
 from modules.llm_base import load_slot
 from modules.proactive_gate import _load_log
 
@@ -40,7 +41,7 @@ class ProactiveResult:
 def _decide_motivation(client, memory_head: str, journal: str, environment: str,
                        recent_topics: str, mode: str = DEFAULT_MODE,
                        allow_casual: bool = False, recent_said: str = "",
-                       model: str = "deepseek-v4-flash-vision-exp") -> dict:
+                       model: str = "deepseek-flash") -> dict:
     """判断流萤现在该不该主动说话、为什么。返回 JSON dict。
 
     allow_casual=False（主动式）：严格动机——无真实来源就拒绝（避免打扰）。
@@ -63,7 +64,7 @@ def _decide_motivation(client, memory_head: str, journal: str, environment: str,
         f"即使没有上述具体动机，也可以随便聊点什么——想想{user_name(mode)}此刻可能在做什么、"
         "分享当下的一件小事、一句轻轻的问候都可以。总之要说话，不要沉默。"
     ) if allow_casual else ""
-    system = f"""你是{char_name(mode)}的内心判断层。判断她现在是否应该主动给{user_name(mode)}发消息。
+    system = f"""你是{char_name(mode)}的内心判断层。判断{char_name(mode)}现在是否应该主动给{user_name(mode)}发消息。
 触发机会已经由频率控制把关（每 N 轮一次机会 + 概率）——**机会到来时，默认应该说**，
 你的判断重心是"说什么"，不是"要不要说"。
 
@@ -173,10 +174,10 @@ user 消息里列出的"已说过话题"——禁止原样重复，但允许开�
 
 # ── 生成（复用 polisher + organizer，跳过 analyzer）─
 def generate_proactive(session: dict, client, mode: str = DEFAULT_MODE,
-                       polisher_model: str = "deepseek-v4-flash-vision-exp",
+                       polisher_model: str = "deepseek-flash",
                        polisher_effort: str = "high",
                        polisher_temperature: float = 0.5,
-                       organizer_model: str = "deepseek-v4-flash-vision-exp",
+                       organizer_model: str = "deepseek-flash",
                        organizer_effort: str = "none",
                        memory_head: str = "",
                        use_reply_flow: bool = False,
@@ -194,7 +195,7 @@ def generate_proactive(session: dict, client, mode: str = DEFAULT_MODE,
     from modules.llm_base import load_journal
     from orchestrator import _get_environment
     environment = _get_environment(mode)
-    recent = session["context"].get_recent(8)
+    recent = session["context"].get_recent(8, max_tokens=BUDGET_PROACTIVE)
     recent_topics = "\n".join(
         f"[{user_name(mode) if m.get('role') == 'user' else char_name(mode)}]: {m.get('content', '')}"
         for m in recent if m.get("content")
@@ -255,7 +256,7 @@ def generate_proactive(session: dict, client, mode: str = DEFAULT_MODE,
             ),
             analyzer_summary=f"（本条消息由概率式回复触发，{char_name(mode)}想起{user_name(mode)}）主题：{topic_hint}。原因：{reason}",
             analyzer_intent="proactive",
-            recent_history=session["context"].get_recent(15),
+            recent_history=session["context"].get_recent(15, max_tokens=BUDGET_PROACTIVE),
             memory_head=memory_head,
             environment=environment,
         ))
@@ -264,7 +265,7 @@ def generate_proactive(session: dict, client, mode: str = DEFAULT_MODE,
             user_input=topic_hint,
             analyzer_summary=f"（本条消息是{char_name(mode)}主动发给{user_name(mode)}的，不是回复）主题：{topic_hint}。原因：{reason}",
             analyzer_intent="proactive",
-            recent_history=session["context"].get_recent(15),
+            recent_history=session["context"].get_recent(15, max_tokens=BUDGET_PROACTIVE),
             memory_head=memory_head,
             environment=environment,
             proactive_context=(
@@ -286,7 +287,7 @@ def generate_proactive(session: dict, client, mode: str = DEFAULT_MODE,
             org = organizer.organize(OrganizerInput(
                 user_input=topic_hint,
                 reply_texts=[m["content"] for m in messages if m.get("type") == "text"],
-                recent_history=session["context"].get_recent(5),
+                recent_history=session["context"].get_recent(5, max_tokens=BUDGET_ORGANIZER),
                 mode=mode,
             ))
             if org.sticker_label:

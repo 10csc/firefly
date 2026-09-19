@@ -1,6 +1,6 @@
-# 流萤 Android App（0.8.0 双模式）
+# Firefly Android App（0.8.0 双模式）
 
-流萤聊天的 Android 客户端：Kotlin WebView 壳 + Chaquopy 内嵌 Python 3.12 引擎 + 打包前端资产。
+Firefly 的 Android 客户端：Kotlin WebView 壳 + Chaquopy 内嵌 Python 3.12 引擎 + 打包前端资产。
 
 ## 双模式
 

@@ -141,10 +141,11 @@ def sync(check_only: bool) -> int:
         return 1
 
     # 1) server/frontend：三份共享前端文件（config.js/login.html/admin.html 为 server 独有，不动）
-    sf_targets = ("index.html", "style.css")
+    #    pc.css：PC 三栏外壳样式（2026-09-19 起独立成文件，见 docs/设计/PC端前端重构.md）
+    sf_targets = ("index.html", "style.css", "pc.css")
     # 2) 安卓 assets：app/static 全部 + assets 子集 + server 版 config.js/login.html
     # 注：模式封面/角色头像已入预设包（assets/character/{包}/assets/），经 syncBackend 随 app/ 进 APK
-    aa_static = ("index.html", "style.css",
+    aa_static = ("index.html", "style.css", "pc.css",
                  "开拓者_穹.png", "开拓者_星.png")
 
     if check_only:
@@ -155,6 +156,15 @@ def sync(check_only: bool) -> int:
         ok &= _check_dir("server/vendor", STATIC / "vendor", SERVER_FRONT / "vendor")
         if (SERVER_FRONT / "app.js").exists():
             print("  X 漂移: server/frontend 旧 app.js 未清理")
+            ok = False
+        if (SERVER_FRONT / "vendor").exists() and not any((SERVER_FRONT / "vendor").iterdir()):
+            print("  X 漂移: server/frontend/vendor 空目录未清理（petite-vue 已退役）")
+            ok = False
+        if (SERVER_FRONT / "js" / "pc_nav.js").exists():
+            print("  X 漂移: server/frontend 旧 pc_nav.js 未清理（已由 pc_shell.js 取代）")
+            ok = False
+        if (ANDROID_ASSETS / "js" / "pc_nav.js").exists():
+            print("  X 漂移: android assets 旧 pc_nav.js 未清理（已由 pc_shell.js 取代）")
             ok = False
         if (ANDROID_ASSETS / "app.js").exists():
             print("  X 漂移: android assets 旧 app.js 未清理")
@@ -180,10 +190,10 @@ def sync(check_only: bool) -> int:
                 if fp.is_file():
                     _copy(fp, SERVER_FRONT / sub / fp.relative_to(src_dir))
             print(f"  -> server/frontend/{sub}/（{sum(1 for _ in src_dir.rglob('*') if _.is_file())} 文件）")
-    _remove_stale(SERVER_FRONT, ("app.js",))
+    _remove_stale(SERVER_FRONT, ("app.js", "js/pc_nav.js"))
 
     _copy_static(ANDROID_ASSETS, exclude=("config.js",))
-    _remove_stale(ANDROID_ASSETS, ("app.js",))
+    _remove_stale(ANDROID_ASSETS, ("app.js", "js/pc_nav.js"))
     print("  -> android assets（app/static 全量 + js/ + vendor/，config.js 除外）")
     _copy_assets(ANDROID_ASSETS / "assets")
     print("  -> android assets/assets（背景/字体/图标 9 件）")

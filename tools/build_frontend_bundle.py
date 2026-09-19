@@ -25,16 +25,19 @@ INDEX = ROOT / "app" / "static" / "index.html"
 # 各模块顶层只注册事件（跨模块引用全部发生在事件/函数调用期），家族内顺序无 TDZ 约束
 # 2.5 拆分：panels 按面板再拆成 js/panels/{packs,data,debug}.js（外壳仍是 js/panels.js）——
 #   子目录模块用相对路径登记（"panels/packs"），紧随外壳之后。
-ORDER = ["state", "util", "imgzip", "api",
-         "panels", "panels/packs", "panels/data", "panels/debug",
+ORDER = ["state", "util", "ui_select", "imgzip", "api",
+         "panels", "panels/packs", "panels/data", "panels/debug", "panels/stickers", "panels/pack_assist", "panels/pack_tree",
          "settings", "update", "sync",
-         "chat_render", "chat", "chat_media", "chat_history",
-         "fix", "views", "proactive", "relay", "guide", "main"]
+         "chat_render", "chat", "chat_media", "chat_history", "voice_plugin",
+         "fix", "views", "proactive", "relay", "guide", "main", "hotupdate", "notice"]
 
 # 不参与 bundle 的 js 模块名（写模块名，不带 .js，子目录用相对路径；各自有独立加载方式）：
 # - bundle：本脚本的产物，不能自我包含
-# - pc_nav：PC 双栏左侧导航，index.html 用独立 <script> 加载（petite-vue 挂载，桌面档才用）
-NON_BUNDLE = {"bundle", "pc_nav"}
+# - pc_shell：PC 三栏外壳，index.html 用独立 <script> 加载（只在 ≥1100px 激活；
+#   放在 bundle 外是为了"PC 逻辑不参与移动端那一个作用域"——见 docs/设计/PC端前端重构.md）
+# 退役记录：pc_nav.js（petite-vue 双栏导航）已删除，由 pc_shell.js 取代；连同
+# vendor/petite-vue.iife.js 一并移除（PC 端不再下载框架）。
+NON_BUNDLE = {"bundle", "pc_shell"}
 
 try:
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -106,6 +109,18 @@ def _style_ref() -> str:
     return hashlib.md5((ROOT / "app" / "static" / "style.css").read_bytes()).hexdigest()[:8]
 
 
+def _pc_css_ref() -> str:
+    """pc.css 的内容指纹（同 style.css 的理由：内容变 → URL 变 → 客户端必然拉新版）。
+
+    2026-09-19 PC 重构新增：pc.css 是 PC 三栏外壳的唯一样式源（见 docs/设计/PC端前端重构.md），
+    它同样要被 sync_frontends 同步到三端，所以指纹也必须在 index.html 里跟着更新。
+    """
+    fp = ROOT / "app" / "static" / "pc.css"
+    if not fp.is_file():
+        return ""
+    return hashlib.md5(fp.read_bytes()).hexdigest()[:8]
+
+
 def main() -> int:
     if not check_module_set():
         return 1
@@ -121,6 +136,10 @@ def main() -> int:
         if f"js/bundle.js?v={_bundle_ref(content)}" not in idx:
             print("X index.html 的 bundle 引用版本指纹过期（运行 python tools/build_frontend_bundle.py 更新）")
             return 1
+        pcv = _pc_css_ref()
+        if pcv and f"pc.css?v={pcv}" not in idx:
+            print("X index.html 的 pc.css 引用版本指纹过期（运行 python tools/build_frontend_bundle.py 更新）")
+            return 1
         print("bundle.js 与模块源码一致 ✓")
         return 0
     BUNDLE.write_text(content, encoding="utf-8")
@@ -128,8 +147,13 @@ def main() -> int:
     v = _bundle_ref(content)
     sv = _style_ref()
     idx_text = INDEX.read_text(encoding="utf-8")
-    idx_new = re.sub(r'js/bundle\.js(\?v=[0-9a-f]{8})?', f'js/bundle.js?v={v}', idx_text)
-    idx_new = re.sub(r'style\.css(\?v=[0-9a-f]{8})?', f'style.css?v={sv}', idx_new)
+    # ★ 只替换 **href/src 属性里的** 引用：早期写法用裸文件名正则，把注释里的
+    #   `pc.css` 也替换成了 `pc.css?v=xxxx`（2026-09-19 实际踩到，注释被改花）。
+    idx_new = re.sub(r'(src="js/bundle\.js)(\?v=[0-9a-f]{8})?"', rf'\1?v={v}"', idx_text)
+    idx_new = re.sub(r'(href="style\.css)(\?v=[0-9a-f]{8})?"', rf'\1?v={sv}"', idx_new)
+    pcv = _pc_css_ref()
+    if pcv:
+        idx_new = re.sub(r'(href="pc\.css)(\?v=[0-9a-f]{8})?"', rf'\1?v={pcv}"', idx_new)
     if idx_new != idx_text:
         INDEX.write_text(idx_new, encoding="utf-8")
         print(f"index.html 引用指纹已更新（bundle ?v={v}, style ?v={sv}）")

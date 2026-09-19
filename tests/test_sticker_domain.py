@@ -126,8 +126,10 @@ for p in list((ROOT / "tools").rglob("*")) + list((ROOT / "docs").rglob("*.md"))
                 _hits.append(p.relative_to(ROOT).as_posix())
         except Exception:
             pass
+# 「审计」前缀放行（2026-09-15）：带日期的审计报告是历史存档，引用旧名属于记录事实
+# 而非活引用（本次触发源：docs/审计-全量代码-2026-09-15.md 的 P2 发现本身）
 check("E5 仅剩历史记录/计划书提及旧名，无活引用",
-      all(("协作记忆" in h or "架构重构计划" in h) for h in _hits))
+      all(("协作记忆" in h or "架构重构计划" in h or "审计" in h) for h in _hits))
 if _hits:
     print("    提及处:", _hits)
 

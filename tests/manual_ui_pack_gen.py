@@ -135,7 +135,7 @@ try:
         b.close()
 
     checks = [
-        ("haruno 详情页确实打开了（展示包名=春日手信）", scene == "春日手信"),
+        ("haruno 详情页确实打开了（展示包名=剧本模式）", scene == "剧本模式"),
         ("切换后 A 页保存写回的是 A（mode=haruno，不是 story）", mode_sent == "haruno"),
         ("反向 sanity：重开 B 页保存写回 B（mode=story）", mode_sent2 == "story"),
     ]

@@ -15,6 +15,7 @@
 沙箱纪律：USER_DIR/CONFIG_FILE 的写入在用例结束时还原。
 """
 import subprocess
+import re
 import sys
 import tempfile
 from pathlib import Path
@@ -129,6 +130,10 @@ for first in ("presets", "paths", "config", "migrations", "userctx"):
     if p.returncode != 0:
         print("   ", (p.stdout or "") + (p.stderr or "")[-400:])
 
+# 版本号现读，别写死（2026-09-19：0.8.1 → 0.9.0 时这里假失败过一次）
+_VER = re.search(r'APP_VERSION\s*=\s*"([^"]+)"',
+                 (ROOT / "app" / "core" / "config.py").read_text(encoding="utf-8")).group(1)
+
 print("=== F. 环境差异：安卓模式（FIREFLY_ANDROID=1）必须照常导入 ===")
 import os
 _env = dict(os.environ)
@@ -144,7 +149,7 @@ _F = ("import sys; sys.path.insert(0, r'{app}');\n"
 p = subprocess.run([sys.executable, "-c", _F], capture_output=True, encoding="utf-8",
                    errors="replace", env=_env, cwd=str(ROOT))
 _out = (p.stdout or "")
-check("F1 安卓模式导入成功", p.returncode == 0 and "VER 0.8.1" in _out)
+check("F1 安卓模式导入成功", p.returncode == 0 and f"VER {_VER}" in _out)
 check("F2 安卓模式下 APP_DIR 仍不存在（与拆分前一致，不是被兼容层造假）",
       "APPDIR absent" in _out)
 check("F3 安卓模式数据根来自 FIREFLY_DATA_DIR", "USER user_data" in _out)

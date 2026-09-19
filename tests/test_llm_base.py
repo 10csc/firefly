@@ -18,7 +18,7 @@ from modules.llm_base import (
 
 
 # ── helper：构造 mock LLM response ──
-def _mock_resp(model="deepseek-v4-flash", prompt=100, completion=50, hit=60, miss=40, reasoning=0):
+def _mock_resp(model="deepseek-flash", prompt=100, completion=50, hit=60, miss=40, reasoning=0):
     usage = Mock()
     usage.prompt_tokens = prompt
     usage.completion_tokens = completion
@@ -38,7 +38,7 @@ def _mock_resp(model="deepseek-v4-flash", prompt=100, completion=50, hit=60, mis
 print("=== Token 统计 ===")
 
 # 清空累积状态（模块级变量，需手动重置）
-record_usage("analyzer", _mock_resp(model="deepseek-v4-flash", prompt=200, completion=80, hit=120, miss=80))
+record_usage("analyzer", _mock_resp(model="deepseek-flash", prompt=200, completion=80, hit=120, miss=80))
 record_usage("organizer", _mock_resp(model="deepseek-v4-pro", prompt=300, completion=120, hit=200, miss=100))
 record_usage("polisher", _mock_resp(model="deepseek-v4-pro", prompt=150, completion=90, hit=80, miss=70))
 
@@ -47,11 +47,11 @@ assert stats["prompt_tokens"] == 200 + 300 + 150
 assert stats["completion_tokens"] == 80 + 120 + 90
 assert stats["cache_hit_tokens"] == 120 + 200 + 80
 assert stats["cache_miss_tokens"] == 80 + 100 + 70
-assert "deepseek-v4-flash" in stats["by_model"]
+assert "deepseek-flash" in stats["by_model"]
 assert "deepseek-v4-pro" in stats["by_model"]
-assert stats["by_model"]["deepseek-v4-flash"]["prompt_tokens"] == 200
+assert stats["by_model"]["deepseek-flash"]["prompt_tokens"] == 200
 assert stats["by_model"]["deepseek-v4-pro"]["prompt_tokens"] == 300 + 150
-assert stats["by_model"]["deepseek-v4-flash"]["completion_tokens"] == 80
+assert stats["by_model"]["deepseek-flash"]["completion_tokens"] == 80
 assert stats["by_model"]["deepseek-v4-pro"]["completion_tokens"] == 120 + 90
 print("  ✓ 累计统计正确")
 
