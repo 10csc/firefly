@@ -128,6 +128,7 @@ EXPECTED_GET = {
     "/check-key",
     "/config",
     "/export-data",
+    "/export-diagnostics",
     "/favorites",
     "/history",
     "/image",

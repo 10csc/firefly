@@ -32,6 +32,7 @@ from routes_fix import (
     setting_fix_apply, setting_fix_dismiss, setting_fix_message, setting_fix_reset,
     setting_fix_rollback, setting_fix_start, setting_fix_status,
 )
+from api.diag import export_diagnostics
 from api.pack_assist import pack_assist, pack_assist_apply
 from routes_pack import (
     archive_pack, character_file_update, create_pack, delete_character_file, delete_pack,
@@ -169,6 +170,8 @@ GET_ROUTES = {
     "/archive": get_archive,
     "/journal": get_journal,
     "/export-data": export_data,
+    # 诊断包导出（本地导出，不经服务器；见 app/api/diag.py）
+    "/export-diagnostics": export_diagnostics,
     "/backups": backups_list,
     "/snapshot/list": snapshot_list,
     "/snapshot/download": snapshot_download,

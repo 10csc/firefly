@@ -516,6 +516,30 @@ svg.ico{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:1.8;st
         <a class="fb-link" href="https://github.com/10csc/firefly/issues" target="_blank" rel="noopener"><svg class="ico"><use href="#i-ext"/></svg>GitHub Issue（推荐：提 bug / 建议）</a>
         <div class="fb-item"><svg class="ico"><use href="#i-chat"/></svg>QQ交流群：<b style="color:var(--fg-main)">1097936258</b></div>
         <div class="fb-item"><svg class="ico"><use href="#i-mail"/></svg>邮箱：<a href="mailto:fangliang2604@163.com" style="color:var(--fg-bright)">fangliang2604@163.com</a></div>
+
+        <!-- 诊断包：本地导出，不经服务器（app/api/diag.py）。
+             导出后**立刻**给出"下一步"——用户在这一步最容易找不到文件（所以有跳 QQ / 复制群号）。 -->
+        <div class="field" style="margin-top:18px;padding-top:14px;border-top:1px solid rgba(255,255,255,0.08)">
+            <label style="color:var(--fg-main);font-size:0.86em">报 bug 用：导出诊断包</label>
+            <div class="field-tip" style="color:var(--fg-muted);font-size:0.74em;line-height:1.7;margin:6px 0 8px">
+                导出一份 zip 到<b>你自己设备</b>的下载目录，<b>不会上传到服务器</b>。
+                里面有版本、运行环境、每次模型调用的 token/耗时、四个阶段的耗时与长度。<br>
+                <b>不含</b>你的 API Key、也<b>不含</b>任何对话正文 / 记忆 / 手账原文。
+            </div>
+            <div class="btn-row" style="display:flex;gap:8px;flex-wrap:wrap">
+                <button id="diag-export-btn" type="button" onclick="exportDiagnostics()">导出诊断包（zip）</button>
+            </div>
+            <div id="diag-msg" style="font-size:0.74em;color:var(--fg-muted);margin-top:6px"></div>
+            <div id="diag-next" hidden style="margin-top:10px">
+                <div style="color:var(--fg-muted);font-size:0.74em;line-height:1.7;margin-bottom:6px">
+                    下一步：把下载好的 zip 发到群里 —— 顺手写一句"点了什么 / 期望什么 / 实际怎样"。
+                </div>
+                <div class="btn-row" style="display:flex;gap:8px;flex-wrap:wrap">
+                    <button id="diag-qq-btn" type="button" onclick="openQQGroup()">打开 QQ 群</button>
+                    <button id="diag-copy-btn" type="button" onclick="copyQQGroup()">复制群号</button>
+                </div>
+            </div>
+        </div>
     </div>
 </div>
 
@@ -1056,7 +1080,7 @@ svg.ico{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:1.8;st
 </script>
 <script src="config.js"></script>
 <!-- 运行时入口：bundle.js（classic script，file:// 兼容；ES Module 在安卓服务器模式 file:// 下被 CORS 拦截） -->
-<script src="js/bundle.js?v=229846b0"></script>
+<script src="js/bundle.js?v=2b6a993f"></script>
 <script src="js/pc_shell.js"></script>
 </body>
 </html>
