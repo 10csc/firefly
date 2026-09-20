@@ -526,20 +526,13 @@ svg.ico{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:1.8;st
                 里面有版本、运行环境、每次模型调用的 token/耗时、四个阶段的耗时与长度。<br>
                 <b>不含</b>你的 API Key、也<b>不含</b>任何对话正文 / 记忆 / 手账原文。
             </div>
-            <div class="btn-row" style="display:flex;gap:8px;flex-wrap:wrap">
-                <button id="diag-export-btn" type="button" onclick="exportDiagnostics()">导出诊断包（zip）</button>
+            <div class="btn-row" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+                <button id="diag-export-btn" type="button" onclick="exportDiagnostics()">导出并发送</button>
+                <button id="diag-clear-btn" type="button" onclick="clearDiagnostics()"
+                        style="margin-left:auto">清理</button>
             </div>
             <div id="diag-msg" style="font-size:0.74em;color:var(--fg-muted);margin-top:6px"></div>
-            <div id="diag-next" hidden style="margin-top:10px">
-                <div style="color:var(--fg-muted);font-size:0.74em;line-height:1.7;margin-bottom:6px">
-                    下一步：点「打开 QQ」把刚导出的 zip 发给我 —— 顺手写一句"点了什么 / 期望什么 / 实际怎样"。
-                </div>
-                <div class="btn-row" style="display:flex;gap:8px;flex-wrap:wrap">
-                    <button id="diag-qq-btn" type="button" onclick="openQQGroup()">打开 QQ</button>
-                    <button id="diag-copy-btn" type="button" onclick="copyQQGroup()">复制群号</button>
-                </div>
-            </div>
-        </div>
+                    </div>
     </div>
 </div>
 
@@ -1080,7 +1073,7 @@ svg.ico{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:1.8;st
 </script>
 <script src="config.js"></script>
 <!-- 运行时入口：bundle.js（classic script，file:// 兼容；ES Module 在安卓服务器模式 file:// 下被 CORS 拦截） -->
-<script src="js/bundle.js?v=7a203e63"></script>
+<script src="js/bundle.js?v=7556e1c9"></script>
 <script src="js/pc_shell.js"></script>
 </body>
 </html>

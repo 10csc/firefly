@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- FileProvider 路径白名单：**只暴露诊断包目录**（cacheDir/diagnostics/）。
+     最小暴露面：分享出去的是本应用缓存里的诊断包，不含 user_data（那里有 API Key 与会话）。 -->
+<paths>
+    <cache-path name="diagnostics" path="diagnostics/" />
+</paths>

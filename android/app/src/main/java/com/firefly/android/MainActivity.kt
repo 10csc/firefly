@@ -328,6 +328,186 @@ class MainActivity : AppCompatActivity() {
                 KeepAliveService.notify(title, content)
             }
         }
+
+        /** 把结果回执给网页（必须是主线程碰 WebView；消息做 JS 字符串转义）。 */
+        private fun diagResult(msg: String, ok: Boolean) {
+            val safe = msg.replace("\\", "\\\\").replace("'", "\\'").replace("\n", " ")
+            runOnUiThread {
+                try {
+                    webView?.evaluateJavascript(
+                        "window.__diagResult && window.__diagResult('$safe', $ok)", null)
+                } catch (e: Exception) {
+                    Log.w(TAG, "[Diag] 回执失败: ${e.message}")
+                }
+            }
+        }
+
+        /**
+         * 导出诊断包并**直接调系统分享面板**（QQ 在里面 → 附件已经带好，用户只需选发给谁）。
+         *
+         * 为什么不是"让网页下载 + 只启动 QQ"：那样用户得自己去下载目录找文件、在 QQ 里找联系人、
+         * 再手动加附件——三步都可能失败（2026-09-19 用户指出："打开QQ后肯定要发包的啊，逻辑呢？"）。
+         *
+         * 实现要点：
+         *  · 从**当前页面 origin** 推本地后端地址（本地模式 = http://127.0.0.1:8765），不硬编码端口；
+         *    服务器模式下该端点返 403，这里会 Toast 说明。
+         *  · 网络必须在后台线程（主线程禁网）。
+         *  · 分享必须用 FileProvider 的 content:// URI —— Android 7+ 用 file:// 会
+         *    FileUriExposedException 直接崩（白名单见 res/xml/file_paths.xml，只暴露 diagnostics/）。
+         */
+        @JavascriptInterface
+        fun sendDiagnostics(pageOrigin: String?): Boolean {
+            // ★ 地址由 **JS 传进来**，Kotlin 侧**绝不读 WebView**：
+            //   @JavascriptInterface 方法跑在 'JavaBridge' 线程，而 WebView 的方法只能在主线程调 ——
+            //   真机实测 `webView.url` 在这里直接抛：
+            //     "A WebView method was called on thread 'JavaBridge' … at WebView.getUrl"
+            //   （第一版"拿不到本地地址"就是这个异常被 catch 掉的表现。）
+            val candidates = ArrayList<String>()
+            val po = (pageOrigin ?: "").trim()
+            if (po.startsWith("http")) candidates.add(po.trimEnd('/'))
+            candidates.add(SERVER_URL)
+            Log.i(TAG, "[Diag] 候选地址: $candidates")
+            Thread {
+                val err = try {
+                    var conn: java.net.HttpURLConnection? = null
+                    var code = 0
+                    for (base in candidates.distinct()) {
+                        conn = (java.net.URL("$base/export-diagnostics")
+                            .openConnection() as java.net.HttpURLConnection).apply {
+                            connectTimeout = 8000
+                            readTimeout = 30000
+                        }
+                        code = conn.responseCode
+                        Log.i(TAG, "[Diag] 试 $base → HTTP $code")
+                        if (code == 200) break
+                        conn.disconnect()
+                        conn = null
+                    }
+                    if (conn == null) {
+                        "所有候选地址都失败（HTTP $code）"
+                    } else {
+                        val dir = java.io.File(cacheDir, "diagnostics").apply { mkdirs() }
+                        val f = java.io.File(dir,
+                            "firefly-diagnostics-" + System.currentTimeMillis() + ".zip")
+                        conn.inputStream.use { ins -> f.outputStream().use { ins.copyTo(it) } }
+                        conn.disconnect()
+                        if (f.length() < 200L) {
+                            "文件异常（${f.length()} 字节）"
+                        } else {
+                            val uri = androidx.core.content.FileProvider.getUriForFile(
+                                this@MainActivity, "com.firefly.android.fileprovider", f)
+                            val send = Intent(Intent.ACTION_SEND).apply {
+                                type = "application/zip"
+                                putExtra(Intent.EXTRA_STREAM, uri)
+                                putExtra(Intent.EXTRA_SUBJECT, "Firefly 诊断包")
+                                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                // ★ 必须同时给 ClipData：只靠 EXTRA_STREAM 时，部分接收方
+                                //   （含 QQ）拿不到该 URI 的读权限，附件会打不开。真机日志：
+                                //   "Could not read content://… stream types. call Intent#setClipData()"
+                                clipData = android.content.ClipData.newUri(
+                                    contentResolver, "firefly-diagnostics", uri)
+                            }
+                            diagResult("已生成诊断包并打开分享面板：选 QQ 发给我即可", true)
+                            runOnUiThread {
+                                try {
+                                    startActivity(Intent.createChooser(send, "发送诊断包"))
+                                } catch (e: Exception) {
+                                    Log.w(TAG, "[Diag] 分享失败: ${e.message}")
+                                    diagResult("分享失败：${e.message}", false)
+                                    Toast.makeText(this@MainActivity, "分享失败：${e.message}",
+                                        Toast.LENGTH_LONG).show()
+                                }
+                            }
+                            ""
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "[Diag] 生成诊断包失败: ${e.message}")
+                    "${e.javaClass.simpleName}: ${e.message}"
+                }
+                if (err.isNotEmpty()) {
+                    diagResult("诊断包导出失败：$err", false)
+                    runOnUiThread {
+                        Toast.makeText(this@MainActivity, "诊断包导出失败：$err",
+                            Toast.LENGTH_LONG).show()
+                    }
+                }
+            }.start()
+            return true
+        }
+
+        /**
+         * 一键清理已导出的诊断包（前端「清理」按钮）。
+         *
+         * 清两处，缺一不可：
+         *  ① `<cacheDir>/diagnostics/ 下的 zip` —— 分享用的那份（每次导出都会新增）；
+         *  ② DownloadManager 里本应用发起的 `firefly-diagnostics-*.zip` —— 下载目录那份
+         *     （WebView 下载兜底会落盘到 Download/；`remove()` 会连文件一起删）。
+         * 返回给前端一句人话摘要。
+         */
+        @JavascriptInterface
+        fun clearDiagnostics(): String {
+            var files = 0
+            var bytes = 0L
+            try {
+                val dir = java.io.File(cacheDir, "diagnostics")
+                dir.listFiles()?.forEach { f ->
+                    if (f.isFile && f.name.endsWith(".zip")) {
+                        val len = f.length()
+                        if (f.delete()) { files++; bytes += len }
+                    }
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "[Diag] 清理缓存失败: ${e.message}")
+            }
+            var records = 0
+            try {
+                val dm = getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
+                val c = dm.query(DownloadManager.Query())
+                if (c != null) {
+                    try {
+                        val idCol = c.getColumnIndex(DownloadManager.COLUMN_ID)
+                        val titleCol = c.getColumnIndex(DownloadManager.COLUMN_TITLE)
+                        val uriCol = c.getColumnIndex(DownloadManager.COLUMN_LOCAL_URI)
+                        while (c.moveToNext()) {
+                            val title = if (titleCol >= 0) c.getString(titleCol) ?: "" else ""
+                            val uri = if (uriCol >= 0) c.getString(uriCol) ?: "" else ""
+                            if (title.contains("firefly-diagnostics-") ||
+                                uri.contains("firefly-diagnostics-")) {
+                                if (idCol >= 0) { dm.remove(c.getLong(idCol)); records++ }
+                            }
+                        }
+                    } finally {
+                        c.close()
+                    }
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "[Diag] 清理下载记录失败: ${e.message}")
+            }
+            // ★ 补一刀：DownloadManager.remove() 在部分机型只删记录、文件留在 Download/（真机实测），
+            //   所以再用 MediaStore 删掉本应用贡献的 firefly-diagnostics-*.zip。
+            var media = 0
+            try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    val sel = android.provider.MediaStore.MediaColumns.DISPLAY_NAME + " LIKE ?"
+                    media = contentResolver.delete(
+                        android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI,
+                        sel, arrayOf("firefly-diagnostics-%"))
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "[Diag] 清理下载目录失败: ${e.message}")
+            }
+            val msg = if (files == 0 && records == 0 && media == 0) {
+                "没有需要清理的诊断包"
+            } else {
+                "已清理 $files 个缓存文件（${bytes / 1024} KB）" +
+                    (if (media > 0) "、下载目录 $media 个文件" else "") +
+                    (if (records > 0) "，并移除 $records 条下载记录" else "")
+            }
+            Log.i(TAG, "[Diag] $msg")
+            diagResult(msg, true)
+            return msg
+        }
     }
 
     /** 返回键策略：遮罩/全屏页（设置/反馈/菜单/角色卡列表/包详情/纠错）先关闭，

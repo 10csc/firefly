@@ -412,7 +412,81 @@ def _backup_corrupt_config() -> None:
         logger.warning("损坏配置备份失败: %s", e)
 
 
+def _preserve_key_from_disk() -> list:
+    """★ 写入期不变量（2026-09-20）：**不许用"空 Key"覆盖磁盘上已有的非空 Key**。
+
+    真机事故：用户手机里的 API Key 被清空，且**没有任何提示**（`/config` 里
+    `has_key` 变 false，登录态却仍在 ⇒ 不是数据目录被清，而是配置被回写时 Key 丢了）。
+    会写配置的路径至少四条，任何一条漏判都会造成这种静默数据丢失；因此在**唯一落盘口**
+    统一设防，将来新增端点也自动安全。
+
+    做三件事：
+      1) 内存里某个 provider 的 Key 为空、而磁盘上同 id 是非空 → 把磁盘的救回来；
+      2) 内存的 providers 列表**整表替换**时把"磁盘上有 Key 但已不在列表里"的那一项补回；
+      3) 救回后重新派生顶层字段（`_sync_derived`），否则 `/config` 仍显示 has_key=false。
+
+    返回被救回的 provider id 列表（供日志与测试断言）。
+    """
+    import json as _json
+    import logging as _logging
+    saved = []
+    try:
+        fp = _paths.CONFIG_FILE
+        if not fp.exists():
+            return saved
+        disk = _json.loads(fp.read_text(encoding="utf-8"))
+        if not isinstance(disk, dict):
+            return saved
+        disk_providers = [d for d in (disk.get("providers") or []) if isinstance(d, dict)]
+        by_id = {str(d.get("id")): d for d in disk_providers}
+        mem = config.get("providers") or []
+        # (1) 同 id 救回
+        for it in mem:
+            if not isinstance(it, dict):
+                continue
+            if not (it.get("api_key") or "").strip():
+                old = by_id.get(str(it.get("id")))
+                old_key = (old or {}).get("api_key") or ""
+                if old_key.strip():
+                    it["api_key"] = old_key
+                    saved.append(str(it.get("id")))
+        # (2) 列表被整表替换：磁盘上"有 Key 但已不在内存列表里"的项补回
+        mem_ids = {str(i.get("id")) for i in mem if isinstance(i, dict)}
+        for d in disk_providers:
+            if str(d.get("id")) not in mem_ids and (d.get("api_key") or "").strip():
+                mem.append(d)
+                saved.append(str(d.get("id")) + "(补回)")
+        if not mem and disk_providers:
+            config["providers"] = disk_providers
+            saved.append("*全部补回")
+        if saved:
+            try:
+                _sync_derived()
+            except Exception:
+                pass
+            # 只记"发生了 Key 救回"，**绝不记录 Key 本身**
+            caller = "?"
+            try:
+                import sys as _sys
+                fr = _sys._getframe(2)          # 0=本函数 1=save_config 2=真正的调用方
+                caller = f"{fr.f_code.co_filename.split(chr(92))[-1].split('/')[-1]}:" \
+                         f"{fr.f_lineno}:{fr.f_code.co_name}"
+            except Exception:
+                pass
+            _logging.getLogger(__name__).warning(
+                "保存配置时拦下 Key 清空（已从磁盘救回 %s）；调用方 %s", saved, caller)
+    except Exception as e:      # 不变量本身失败也不能阻塞保存
+        try:
+            import logging as _l
+            _l.getLogger(__name__).warning("Key 保留检查失败（按原样继续）: %s", e)
+        except Exception:
+            pass
+    return saved
+
+
 def save_config() -> None:
+    # ★ 先跑写入期不变量：空 Key 不许覆盖磁盘上已有的非空 Key（见 _preserve_key_from_disk）
+    _preserve_key_from_disk()
     # 只落盘 providers 结构（containing api_key）、active_provider 与其它设置；
     # 不写顶层 api_key/api_base（旧字段迁移后废除）
     # B1（审计 2026-09-15）：裸 write_text → 原子写。写盘中断留下截断 JSON，下次

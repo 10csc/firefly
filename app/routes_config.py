@@ -57,11 +57,15 @@ def set_key(h):
         return
     body = _read_json(h)
     # A8：Key 写入激活供应商（providers 结构，不再写顶层字段）
-    _p = cfg.active_provider()
-    _p["api_key"] = (body.get("api_key") or "").strip()
-    cfg._sync_derived()
+    # ★ 2026-09-20：空值 = **保留原 Key**（旧实现无条件覆盖 ⇒ 传空串就把用户 Key 清成 ""，
+    #   与设置面板文案「已设置，留空则保留原 Key」直接矛盾；真机已出现 Key 被清且无提示）。
+    new_key = (body.get("api_key") or "").strip()
+    if new_key:
+        _p = cfg.active_provider()
+        _p["api_key"] = new_key
+        cfg._sync_derived()
     cfg.save_config()
-    h._json({"ok": bool(cfg.config["api_key"])})
+    h._json({"ok": bool(cfg.config["api_key"]), "kept": not new_key})
 
 
 def _clamp_mem_turns(key: str, raw):

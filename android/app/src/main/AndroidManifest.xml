@@ -25,7 +25,7 @@
         android:allowBackup="false"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher_round"
-        android:label="流萤"
+        android:label="@string/app_name"
         android:supportsRtl="true"
         android:theme="@style/Theme.Firefly"
         android:usesCleartextTraffic="true">
@@ -39,6 +39,18 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- 诊断包分享：ACTION_SEND 带附件要用 content:// URI（Android 7+ 禁 file://），
+             所以必须有 FileProvider；白名单只放 cacheDir/diagnostics/（见 res/xml/file_paths.xml） -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="com.firefly.android.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
 
         <!-- 后台保活：对话流程期间进程不被系统回收 -->
         <service

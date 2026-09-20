@@ -72,27 +72,31 @@ def _migrate_legacy_providers(data: dict) -> dict:
 _LEGACY_PRE_MOVE_ZIP = "legacy_pre_move.zip"
 
 
-def _legacy_targets():
+def _legacy_targets(root=None):
     """迁移映射：(源, 目标路径字符串) 列表（含旧手账位置）。
+
+    `root` 默认 `_paths.USER_DIR`；**服务器版按 uid 迁移时传入 `USER_DIR/{uid}`**，
+    这样"只在给定账号的数据根内搬" —— 不跨账号，归属无歧义（2026-09-20）。
 
     注意：这里**只做纯路径计算**，不能调用 mode_root/mode_character_dir 等派生函数——
     它们内部有 mkdir 副作用，会让"无待迁移内容即零副作用"的承诺失效
     （2026-09-10 自测发现：原写法在无旧布局时也会凭空建出 user_data/story/）。"""
+    base = Path(root) if root is not None else _paths.USER_DIR
     return [
-        (_paths.USER_DIR / "character", _paths.USER_DIR / "story" / "character"),
-        (_paths.USER_DIR / "data", _paths.USER_DIR / "story" / "data"),
-        (_paths.USER_DIR / "story" / "手账.md", _paths.USER_DIR / "story" / "journal" / "手账.md"),
+        (base / "character", base / "story" / "character"),
+        (base / "data", base / "story" / "data"),
+        (base / "story" / "手账.md", base / "story" / "journal" / "手账.md"),
     ]
 
 
-def _backup_legacy_sources() -> Path:
-    """迁移前把涉及源打包到 user_data/{_LEGACY_PRE_MOVE_ZIP}（失败抛异常，由调用方中止迁移）。"""
+def _backup_legacy_sources(root=None) -> Path:
+    """迁移前把涉及源打包到 {root}/{_LEGACY_PRE_MOVE_ZIP}（失败抛异常，由调用方中止迁移）。"""
     import zipfile
-    out = _paths.USER_DIR / _LEGACY_PRE_MOVE_ZIP
+    out = (Path(root) if root is not None else _paths.USER_DIR) / _LEGACY_PRE_MOVE_ZIP
     out.parent.mkdir(parents=True, exist_ok=True)
     n = 0
     with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as zf:
-        for src, _dst in _legacy_targets():
+        for src, _dst in _legacy_targets(root):
             if not src.exists():
                 continue
             if src.is_file():
@@ -113,8 +117,8 @@ def _backup_legacy_sources() -> Path:
     return out
 
 
-def run_legacy_migration() -> dict:
-    """显式执行旧布局迁移（幂等）。返回统计 dict。
+def run_legacy_migration(root=None) -> dict:
+    """显式执行旧布局迁移（幂等）。返回统计 dict。`root` 见 `_legacy_targets`。
 
     仅由本地版入口 app/server.py 的 main() 调用——**服务器版不得调用**
     （服务器 model 下 user_data 根是多账号共享的，迁移会产生跨账号归属歧义）。
@@ -126,14 +130,25 @@ def run_legacy_migration() -> dict:
       内容不同    → 可能是用户数据，**保留原处**并告警（宁可留冗余，不误删）。"""
     import shutil as _sh
     moved, failed, skipped, discarded = 0, 0, 0, 0
-    pending = [t for t in _legacy_targets() if t[0].exists()]
+    def _has_files(src: Path) -> bool:
+        """源里**真的有文件**才算待迁移。只看 exists() 会把"搬完剩下的空目录"当成待迁移，
+        导致每次启动都重跑备份逻辑，而 n==0 时 _backup_legacy_sources 会 unlink 掉
+        **上一次的迁移备份**（2026-09-20 由测试抓到）。"""
+        try:
+            if src.is_file():
+                return True
+            return any(f.is_file() for f in src.rglob("*"))
+        except OSError:
+            return False
+
+    pending = [t for t in _legacy_targets(root) if _has_files(t[0])]
     if not pending:
         return {"pending": 0, "moved": 0, "failed": 0, "skipped": 0,
                 "discarded": 0, "aborted": False}
 
     # ③ 迁移前先备份；备份失败即中止（不再"无备份地移动用户数据"）
     try:
-        _backup_legacy_sources()
+        _backup_legacy_sources(root)
     except Exception as e:
         logger.error("旧布局迁移已中止：迁移前备份失败 %s", e)
         return {"pending": len(pending), "moved": 0, "failed": 0, "skipped": 0,
@@ -176,6 +191,20 @@ def run_legacy_migration() -> dict:
             r = _handle(_f, _dst / _f.name)
             moved += r == "moved"; discarded += r == "discarded"
             skipped += r == "skipped"; failed += r == "failed"
+    # 搬完顺手收掉**空**的旧目录：否则它们会让 pending 永远非空（见上面 _has_files 的注释）。
+    # 只删空目录，非空一律留着（里面有别的数据）。
+    for _src, _dst in pending:
+        if _src.is_dir():
+            try:
+                for d in sorted((x for x in _src.rglob("*") if x.is_dir()),
+                                key=lambda x: -len(x.parts)):
+                    try:
+                        d.rmdir()
+                    except OSError:
+                        pass
+                _src.rmdir()
+            except OSError:
+                pass
     if moved or failed or skipped or discarded:
         logger.warning("旧布局迁移完成：moved=%d discarded=%d skipped=%d failed=%d",
                        moved, discarded, skipped, failed)
@@ -278,3 +307,51 @@ def run_startup_init() -> dict:
     except Exception as e:
         logger.warning("包槽位三态刷新失败（继续启动）: %s", e)
     return {"dirs_created": created, "files_copied": 0, "stale_removed": cleaned}
+
+
+# ── 服务器版：按 uid 逐个迁移（2026-09-20 补）──────────────────────────────
+def run_legacy_migration_all_users() -> dict:
+    """**服务器版**专用：对 `USER_DIR/{uid}/` 逐个执行旧布局迁移。
+
+    为什么不是直接跑 `run_legacy_migration()`：服务器 `user_data` 根是多账号共享的，
+    在根上搬会把 A 账号的 `character/` 搬进共享的 `story/`，产生**跨账号归属歧义**
+    （原实现因此被限制为"服务器版不得调用"）。按 uid 逐个搬则每个账号只在**自己的**
+    数据根里移动，语义与本地版完全一致。
+
+    安全性沿用本地版那一套：迁移前**每账号各自备份**（`{uid}/legacy_pre_move.zip`，
+    备份失败即跳过该账号并告警）、幂等、目标内容相同则丢弃陈旧副本、内容不同则保留源文件。
+
+    只处理**纯数字名**的子目录（uid），其它目录/文件一律不碰。
+    返回 {"users": N, "moved": n, "skipped": n, "failed": n, "discarded": n, "aborted": [uid...]}
+    """
+    base = _paths.USER_DIR
+    agg = {"users": 0, "moved": 0, "skipped": 0, "failed": 0, "discarded": 0, "aborted": []}
+    try:
+        if not base.is_dir():
+            return agg
+        uids = sorted((d for d in base.iterdir() if d.is_dir() and d.name.isdigit()),
+                      key=lambda d: int(d.name))
+    except OSError as e:
+        logger.warning("按 uid 迁移：无法列出 %s: %s", base, e)
+        return agg
+    for d in uids:
+        try:
+            r = run_legacy_migration(root=d)
+        except Exception as e:      # 单个账号失败不影响其它账号
+            logger.warning("按 uid 迁移：uid=%s 异常（跳过）: %s", d.name, e)
+            continue
+        if not r.get("pending"):
+            continue
+        agg["users"] += 1
+        for k in ("moved", "skipped", "failed", "discarded"):
+            agg[k] += int(r.get(k) or 0)
+        if r.get("aborted"):
+            agg["aborted"].append(d.name)
+            logger.warning("按 uid 迁移：uid=%s 已中止（备份失败）：%s", d.name, r.get("error"))
+        else:
+            logger.warning("按 uid 迁移：uid=%s moved=%s discarded=%s skipped=%s failed=%s",
+                           d.name, r.get("moved"), r.get("discarded"),
+                           r.get("skipped"), r.get("failed"))
+    if agg["users"]:
+        logger.warning("按 uid 迁移汇总：%s", agg)
+    return agg
