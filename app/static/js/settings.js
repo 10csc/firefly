@@ -1,6 +1,6 @@
 // 设置面板配置：供应商与模型管理 / 主动性预设 / 配置加载（loadConfig）与自动保存（_scheduleAutoSave）
 import { S } from "./state.js";
-import { getLocalApiKey, escapeHtml } from "./util.js";
+import { getLocalApiKey, escapeHtml, showToast } from "./util.js";
 import { IS_SERVER, applyApiSource } from "./api.js";
 import { uiSelectEnhance } from "./ui_select.js";
 
@@ -292,6 +292,69 @@ function _scheduleAutoSave() {
     }, 400);
 }
 
+// ═══════════════════════════════════════════
+// 运行版本三元组（用户报障时的唯一凭据）
+//
+// 为什么要有它：热更新**不改版本号**（改了会破坏“补丁针对哪个底座”的契约），
+// 所以“用户在跑哪份代码”= 底座版本 + 热更序号 + 清单指纹 三者合起来才说得清。
+// 用户 2026-09-25 的问题正是“不然无法确定用户处于哪个版本”，这是它的答案：
+// 让用户一句话（或一次点击）就能把这三项给我们，并且随诊断包一起发。
+// ═══════════════════════════════════════════
+let _runningIdText = "";
+
+function _renderRunningInfo(running) {
+    const el = document.getElementById("running-id-text");
+    const msg = document.getElementById("running-id-msg");
+    if (msg) msg.textContent = "";
+    if (!el) return;
+    if (!running || typeof running !== "object") {
+        el.textContent = "运行版本：读取失败";
+        _runningIdText = "";
+        return;
+    }
+    const base = String(running.base_version || "");
+    const serial = Number(running.hot_serial || 0);
+    const hash = String(running.patch_hash || "");
+    const layer = String(running.layer || "");
+    // 展示口径（用户 2026-09-25 拍板）：0.9.0_hot1 —— 下划线后缀，hot=热更新、数字=第几个。
+    // 没打补丁就只显示底座版本（不显示 _hot0：后缀的含义就是"打过补丁"）。
+    const disp = String(running.display_version || "") ||
+        (serial ? base + "_hot" + serial : base);
+    _runningIdText = String(running.id || "") || disp;
+    el.textContent = "运行版本：" + disp +
+        (serial && layer ? `（${layer} 层）` : "") +
+        (hash ? ` · ${hash}` : "");
+}
+
+function _runningMsg(text, ok) {
+    const el = document.getElementById("running-id-msg");
+    if (!el) return;
+    el.textContent = text || "";
+    el.style.color = ok ? "var(--fg-accent)" : "var(--fg-muted)";
+}
+
+/** 复制运行版本串（报障时直接贴给我们）。老 WebView 无 clipboard API → 退回选中提示。 */
+export async function copyRunningId() {
+    const text = _runningIdText || "（还没读到运行版本，先打开设置面板）";
+    try {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+            await navigator.clipboard.writeText(text);
+        } else {
+            throw new Error("no clipboard api");
+        }
+        _runningMsg("已复制：" + text, true);
+        try { showToast("运行版本已复制，报问题时贴给我即可"); } catch (e) {}
+    } catch (e) {
+        _runningMsg("复制失败，请手动记下：" + text);
+    }
+}
+
+const _copyRunningBtn = document.getElementById("copy-running-id-btn");
+if (_copyRunningBtn) {
+    _copyRunningBtn.addEventListener("click", () => { copyRunningId(); });
+}
+window.copyRunningId = copyRunningId;
+
 export async function loadConfig() {
     const ids = {
         a: "analyzer-model-input", r: "retriever-model-input",
@@ -310,6 +373,7 @@ export async function loadConfig() {
     try {
         const resp = await fetch("/config");
         const data = await resp.json();
+        _renderRunningInfo(data.running);   // ← 运行版本三元组（拿到配置就顺手刷新）
         const el = {};
         for (const [k, id] of Object.entries(ids)) el[k] = document.getElementById(id);
 

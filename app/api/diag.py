@@ -125,12 +125,19 @@ def _summary() -> dict:
     for name, fn in (("hotupdate", "/hotupdate/status"), ("notice", "/notice/status")):
         pass
     try:
+        from hotupdate import running_id as _hu_running
+        # ★ 排障第一问"你在跑哪份代码"：三元组必须是诊断包里的**顶层字段**，
+        #   不要只塞在 hotupdate 子对象里（以后改字段容易连带漏掉）。
+        d["running"] = _hu_running()
+    except Exception as e:
+        d["running"] = {"error": f"{type(e).__name__}: {e}"}
+    try:
         from hotupdate import status as hu_status
         s = hu_status()
         d["hotupdate"] = {k: s.get(k) for k in
-                          ("base_version", "applied_serial", "applied_hash", "pending_serial",
-                           "boot_fail_count", "overlay_files", "enabled", "verify_backend",
-                           "verify_ok", "last_error", "rolled_back_reason")}
+                          ("base_version", "applied_serial", "applied_hash", "applied_layer",
+                           "pending_serial", "boot_fail_count", "overlay_files", "enabled",
+                           "verify_backend", "verify_ok", "last_error", "rolled_back_reason")}
     except Exception as e:
         d["hotupdate"] = {"error": f"{type(e).__name__}: {e}"}
     try:
@@ -183,6 +190,9 @@ README = """Firefly 诊断包（本地导出）
 包里有什么
 ----------
 summary.json            版本 / 平台 / 热更状态 / 公告状态 / 记忆窗口（**无正文**）
+                        ★ 其中 running = 运行版本三元组（底座 + 热更序号 + 清单指纹）：
+                          热更新不改版本号，所以这三项合起来才说明"你在跑哪份代码"。
+                          如果应用里点过「复制运行版本」，把它一起贴过来更快。
 config.redacted.json    配置（API Key 只留"是否已设置 + 长度"）
 requests.json           每次模型调用的 模块/模型/token/费用（**无正文**）
 pipeline.shape.json     四个阶段的名字、耗时、输入输出的**长度**（**正文已丢弃**）
