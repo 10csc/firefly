@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>Firefly</title>
-<link rel="stylesheet" href="style.css?v=0bf84d71">
+<link rel="stylesheet" href="style.css?v=aee4884c">
 <style>
 /* 服务器版：轮播图下登录/用户模块 */
 /* 首页卡片族：账号模块 / 设定纠错 / 服务器云端版入口共用（原先只写了两份 scoped 副本，
@@ -679,6 +679,15 @@ svg.ico{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:1.8;st
                 <div class="field">
                     <label>版本与更新</label>
                     <div style="margin-top:6px"><span id="current-version"></span></div>
+                    <!-- 运行版本三元组（2026-09-25）：热更**不改版本号**，所以"用户在跑哪份代码"
+                         只能靠 base + hot序列 + 清单指纹 三者合起来说清。给一键复制，
+                         用户报障时直接贴给我们即可（也随诊断包一起发）。 -->
+                    <div id="running-id" style="margin-top:4px;font-size:0.75em;color:var(--fg-muted)">
+                        <span id="running-id-text">运行版本读取中…</span>
+                        <button id="copy-running-id-btn" type="button"
+                                style="margin-left:6px;font-size:0.9em;padding:1px 6px">复制</button>
+                        <div id="running-id-msg" style="margin-top:4px"></div>
+                    </div>
                     <button id="check-update-btn" type="button" style="margin-top:8px">检查更新</button>
                     <div id="update-msg" style="color:var(--fg-muted);font-size:0.75em;margin-top:6px"></div>
                 </div>
@@ -736,36 +745,68 @@ svg.ico{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:1.8;st
        · #notice-server —— 由 js/notice.js 渲染服务端下发的公告/更新说明（含图片）。
          它可能永远是空的（离线、服务不可用、没发过公告），所以**不能**只靠它。
        · #notice-static —— APK 内置的使用指南。离线也有内容，是"功能不因公告服务挂掉而缺失"的保证。
+     两个 Tab 分开装（2026-09-24 重构）：0.9.0 把更新说明和使用手册摞在同一页，
+     用户根本分不清哪段是"新公告"、哪段是"常驻说明"。分开后各自有空状态和滚动位置。
      安全约定（见 docs/公告通道规范.md §四）：服务端文本一律用 textContent 写入，
      绝不拼 HTML —— 公告通道因此**结构上不存在注入面**。 -->
-<div id="notice-panel">
+<div id="notice-panel" role="dialog" aria-modal="true" aria-label="公告与使用指南">
     <div class="notice-header">
-        <span><img class="notice-icon-sm" src="assets/notice_speaker.png?v=1" alt=""> 公告 · 使用指南</span>
-        <button onclick="closeNotice()">✕</button>
+        <span class="notice-title-row">
+            <img class="notice-icon-sm" src="assets/notice_speaker.png?v=1" alt="">
+            <span>公告与使用指南</span>
+            <span class="notice-badge" id="notice-badge" hidden></span>
+        </span>
+        <button class="notice-close" onclick="closeNotice()" aria-label="关闭">✕</button>
     </div>
+
+    <!-- Tab：公告 / 使用指南。role=tablist 供读屏正确播报 -->
+    <div class="notice-tabs" role="tablist">
+        <button class="notice-tab" id="notice-tab-entries" role="tab"
+                aria-selected="true" aria-controls="notice-pane-entries"
+                onclick="noticeTab('entries')">公告</button>
+        <button class="notice-tab" id="notice-tab-guide" role="tab"
+                aria-selected="false" aria-controls="notice-pane-guide"
+                onclick="noticeTab('guide')">使用指南</button>
+    </div>
+
+    <!-- 分类筛选（仅公告 Tab 可见）。按 level 筛，见 style.css 的说明 -->
+    <div class="notice-chips" id="notice-chips" role="group" aria-label="按类型筛选公告">
+        <button class="notice-chip" data-lv="" aria-pressed="true" onclick="noticeFilter('')">全部</button>
+        <button class="notice-chip" data-lv="info" aria-pressed="false" onclick="noticeFilter('info')">更新</button>
+        <button class="notice-chip" data-lv="warn" aria-pressed="false" onclick="noticeFilter('warn')">提醒</button>
+        <button class="notice-chip" data-lv="critical" aria-pressed="false" onclick="noticeFilter('critical')">重要</button>
+    </div>
+
     <div class="notice-body">
-        <div id="notice-server"></div>
-        <div id="notice-static">
-        <p class="notice-tip">Firefly 是 AI 角色扮演应用（非真人），请勿透露个人敏感信息。</p>
-        <h3>一、开始使用</h3>
-        <p>1. 首页右上角 ⚙ 设置 → 填入 DeepSeek API Key → 保存</p>
-        <p>2. 回到首页，点击角色卡片进入聊天</p>
-        <p class="notice-tip">Key 在 platform.deepseek.com 申请，仅存本机，不上传。</p>
-        <h3>二、模式</h3>
-        <p>首页的每一张卡片是一个角色包（角色卡 + 你与该角色的聊天数据），各自的人设与数据相互独立；同一个角色可以有多个包（如剧情与剧本各一个）。</p>
-        <h3>三、常用功能</h3>
-        <p><b>自动修复（热更新）</b>：小 bug 修好后由服务器推送补丁，App 空闲时自动装上，不必重装。⚙ 设置 →「数据」→「自动修复」可开关、查看当前修复版本、手动检查或回退。</p>
-        <p><b>公告</b>：就是这一页。更新说明与临时提醒由服务端下发，有新内容时首页公告栏会亮小圆点；拉不到时仍显示这份内置指南。</p>
-        <p><b>主动消息</b>：在「角色卡管理」→ 点角色卡 →「主动消息」里开关与调频率（按角色独立）。</p>
-        <p><b>让角色休息</b>：☰ 菜单 →「让角色休息」，把这段对话整理进记忆与手账。</p>
-        <p><b>撤回 / 清除</b>：☰ 菜单 →「撤回上一轮」或「清除历史」。</p>
-        <p><b>表情 / 图片</b>：输入框右侧 😊 表情包、🖼 发图（图片压缩后上传，原图不出设备）。</p>
-        <p><b>设定文件</b>：☰ 菜单 →「设定文件」，三样都是<b>聊天产生</b>的私有数据——用户记忆（压缩摘要）、历史对话存档（整理后的<b>原文</b>，可按月查看/编辑/「AI 压缩」）、手账；<b>「清除历史」会一并清空它们</b>。你手写的「用户设定」在「角色卡管理 → 人设与口吻」里，不受清除影响。</p>
-        <p><b>记忆怎么走</b>：分析器与回复器读的是<b>活跃窗口</b>（自上次整理以来、常驻 30–100 轮的完整对话原文）；攒到 100 轮时在回复发出后自动把「最近 30 轮以外」的部分搬进历史对话存档（只进检索器），并在聊天页顶部提示。也可以随时点菜单里的「让角色休息」立刻整理。</p>
-        <p><b>外观</b>：首页 ☀️/🌙 切换主题；⚙ 设置里可调界面大小。</p>
-        <p><b>返回</b>：聊天页返回 → 首页；首页返回 → 双击退出。</p>
-        <h3>四、交流与反馈</h3>
-        <p>QQ 群：<b>1097936258</b>；反馈：首页左上「反馈」或 GitHub Issue。</p>
+        <!-- 公告 Tab -->
+        <div id="notice-pane-entries" role="tabpanel" aria-labelledby="notice-tab-entries">
+            <div id="notice-server"></div>
+        </div>
+
+        <!-- 使用指南 Tab（默认隐藏；内置，离线可用） -->
+        <div id="notice-pane-guide" role="tabpanel" aria-labelledby="notice-tab-guide" hidden>
+            <div id="notice-static">
+            <p class="notice-tip">Firefly 是 AI 角色扮演应用（非真人），请勿透露个人敏感信息。</p>
+            <h3>一、开始使用</h3>
+            <p>1. 首页右上角 ⚙ 设置 → 填入 DeepSeek API Key → 保存</p>
+            <p>2. 回到首页，点击角色卡片进入聊天</p>
+            <p class="notice-tip">Key 在 platform.deepseek.com 申请，仅存本机，不上传。</p>
+            <h3>二、模式</h3>
+            <p>首页的每一张卡片是一个角色包（角色卡 + 你与该角色的聊天数据），各自的人设与数据相互独立；同一个角色可以有多个包（如剧情与剧本各一个）。</p>
+            <h3>三、常用功能</h3>
+            <p><b>自动修复（热更新）</b>：小 bug 修好后由服务器推送补丁，App 空闲时自动装上，不必重装。⚙ 设置 →「数据」→「自动修复」可开关、查看当前修复版本、手动检查或回退。</p>
+            <p><b>公告</b>：就是这一页。更新说明与临时提醒由服务端下发，有新内容时首页公告栏会亮小圆点；拉不到时切到「使用指南」这一栏，内容照常可看。</p>
+            <p><b>主动消息</b>：在「角色卡管理」→ 点角色卡 →「主动消息」里开关与调频率（按角色独立）。</p>
+            <p><b>让角色休息</b>：☰ 菜单 →「让角色休息」，把这段对话整理进记忆与手账。</p>
+            <p><b>撤回 / 清除</b>：☰ 菜单 →「撤回上一轮」或「清除历史」。</p>
+            <p><b>表情 / 图片</b>：输入框右侧 😊 表情包、🖼 发图（图片压缩后上传，原图不出设备）。</p>
+            <p><b>设定文件</b>：☰ 菜单 →「设定文件」，三样都是<b>聊天产生</b>的私有数据——用户记忆（压缩摘要）、历史对话存档（整理后的<b>原文</b>，可按月查看/编辑/「AI 压缩」）、手账；<b>「清除历史」会一并清空它们</b>。你手写的「用户设定」在「角色卡管理 → 人设与口吻」里，不受清除影响。</p>
+            <p><b>记忆怎么走</b>：分析器与回复器读的是<b>活跃窗口</b>（自上次整理以来、常驻 30–100 轮的完整对话原文）；攒到 100 轮时在回复发出后自动把「最近 30 轮以外」的部分搬进历史对话存档（只进检索器），并在聊天页顶部提示。也可以随时点菜单里的「让角色休息」立刻整理。</p>
+            <p><b>外观</b>：首页 ☀️/🌙 切换主题；⚙ 设置里可调界面大小。</p>
+            <p><b>返回</b>：聊天页返回 → 首页；首页返回 → 双击退出。</p>
+            <h3>四、交流与反馈</h3>
+            <p>QQ 群：<b>1097936258</b>；反馈：首页左上「反馈」或 GitHub Issue。</p>
+            </div>
         </div>
     </div>
 </div>
@@ -1073,7 +1114,7 @@ svg.ico{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:1.8;st
 </script>
 <script src="config.js"></script>
 <!-- 运行时入口：bundle.js（classic script，file:// 兼容；ES Module 在安卓服务器模式 file:// 下被 CORS 拦截） -->
-<script src="js/bundle.js?v=7556e1c9"></script>
+<script src="js/bundle.js?v=8926371e"></script>
 <script src="js/pc_shell.js"></script>
 </body>
 </html>

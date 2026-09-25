@@ -16,6 +16,13 @@
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
     <!-- 忽略电池优化：后台回复流程防进程冻结（OPPO/ColorOS 会冻结后台进程，即使前台服务） -->
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+    <!-- 热更新（仅 py 层补丁）：生效需要短暂重启进程，用 AlarmManager 自拉起（热更新规范 §5.2）。
+         Android 12+ 没有该权限时降级为非精确闹钟 —— 差几秒不影响"重启生效"，绝不因此让功能失效 -->
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+    <!-- APP 内更新（2026-09-25）：检查更新 → 下载安装包 → 交系统安装器覆盖安装。
+         这是本项目唯一会把可执行文件交给系统的入口，故权限单独列出并注明用途。
+         用户仍须在系统里为本应用开启"安装未知应用"（Android 8+，代码会引导到那一页）。 -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
     <!-- 安全审查 2026-08-25：allowBackup 改 false——user_data 含 API Key（config.json）与
          登录凭证（auth.json），自动云备份会经 adb/厂商通道把密钥带出设备；项目自带

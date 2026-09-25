@@ -280,12 +280,21 @@ class FakeH:
         self.rfile = _R(raw)
     def _json(self, d): self.out = d
 
-# E1 正常：返回 ok/tag/current/html_url（断言具体值）
+# E1 正常：返回 ok/tag/current/html_url
+# ⚠️ 2026-09-24 起 `check_update` 改为**服务器主导**：除上面四项外还返回
+#    `notes_url` / `min_supported` / `source`（公告与最低版本支持由服务器清单下发）。
+#    断言写成"包含"而不是"逐字相等"—— 否则每次给响应加一个字段都会报假失败
+#    （见 docs/错误总结.md #12：断言要写性质，不要写当前快照）。
 urllib.request.urlopen = fake_urlopen({GH: build_release("v0.9.0")})
 try:
     h = FakeH(); routes.check_update(h)
-    check("E1 ok=True tag=0.9.0", h.out == {"ok": True, "tag": "0.9.0",
-          "current": cfg.APP_VERSION, "html_url": "https://github.com/10csc/firefly/releases"})
+    base = {"ok": True, "tag": "0.9.0",
+            "current": cfg.APP_VERSION, "html_url": "https://github.com/10csc/firefly/releases"}
+    got = h.out or {}
+    check("E1 ok=True tag=0.9.0", all(got.get(k) == v for k, v in base.items()))
+    check("E1b 新增字段形状正确（source / notes_url / min_supported 均为字符串）",
+          isinstance(got.get("source"), str) and isinstance(got.get("notes_url"), str)
+          and isinstance(got.get("min_supported"), str))
 finally:
     urllib.request.urlopen = _orig_open
 
@@ -346,6 +355,13 @@ try:
         with open(h.out["path"], "rb") as f:
             data_ok = f.read() == apk_bytes
     check("F1 apk 下载成功且内容完整", data_ok)
+    # ★ 2026-09-25：落盘文件名改为**固定名**，并把 `name` 回执给调用方 ——
+    #   安卓壳靠这个固定名定位安装包（它不接受任意路径）。契约由
+    #   tests/test_android_install.py 与 tools/check_android_install_contract.py 双向钉死。
+    check("F1b 回执带固定名 firefly-update.apk",
+          h.out.get("name") == "firefly-update.apk")
+    check("F1c 落盘路径的 basename == 回执 name",
+          ok and os.path.basename(h.out["path"]) == h.out.get("name"))
     if ok:
         os.unlink(h.out["path"])
 finally:
@@ -406,8 +422,14 @@ try:
     h = FakeH()
     routes.update_download(h)
     check("F5 非 frozen→不 installing（无安装器启动）", h.out.get("installing") is None)
-    if h.out.get("ok") and h.out.get("path"):
-        os.unlink(h.out["path"])
+    # 该分支的资产列表为空（`build_release("v0.8.0", [])`）⇒ 正常情况下拿不到 URL、ok=False；
+    # 只有真的下到了才谈得上 name，避免把"下载失败"误判成契约违反。
+    if h.out.get("ok"):
+        check("F5b exe 也用固定名", h.out.get("name") == "firefly-update.exe")
+        try:
+            os.unlink(h.out["path"])
+        except (OSError, KeyError):
+            pass
 finally:
     urllib.request.urlopen = _orig_open
 

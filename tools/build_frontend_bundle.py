@@ -25,7 +25,7 @@ INDEX = ROOT / "app" / "static" / "index.html"
 # 各模块顶层只注册事件（跨模块引用全部发生在事件/函数调用期），家族内顺序无 TDZ 约束
 # 2.5 拆分：panels 按面板再拆成 js/panels/{packs,data,debug}.js（外壳仍是 js/panels.js）——
 #   子目录模块用相对路径登记（"panels/packs"），紧随外壳之后。
-ORDER = ["state", "util", "ui_select", "imgzip", "api",
+ORDER = ["state", "util", "session_crypto", "ui_select", "imgzip", "api",
          "panels", "panels/packs", "panels/data", "panels/debug", "panels/stickers", "panels/pack_assist", "panels/pack_tree",
          "settings", "update", "sync",
          "chat_render", "chat", "chat_media", "chat_history", "voice_plugin",

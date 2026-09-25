@@ -113,11 +113,23 @@
             lines.push('<div style="opacity:.75">热更新已关闭（只保留安全吊销）</div>');
         } else if (st.available) {
             lines.push('<div>可更新：修复 ' + st.available.serial + " · " +
-                esc(st.available.note || "") + "</div>");
+                esc(st.available.note || "") +
+                (st.available.layer === "py" || st.available.layer === "web+py"
+                    ? ' <span style="opacity:.6">（含程序层，安装后需重启）</span>' : "") +
+                "</div>");
         } else if (st.overlay_files) {
-            lines.push('<div style="opacity:.75">已应用 ' + st.overlay_files + " 个文件</div>");
+            lines.push('<div style="opacity:.75">已应用 ' + st.overlay_files + " 个文件" +
+                (st.applied_layer ? "（" + esc(st.applied_layer) + "）" : "") + "</div>");
         } else {
             lines.push('<div style="opacity:.6">没有待安装的修复</div>');
+        }
+        // ★ v2：含 py 层的补丁必须重启进程才生效 —— 由壳负责重启，前端只如实告知，
+        //   并明确"不会吞掉你正在打的内容"（与服务端空闲判据同一条承诺）
+        if (st.restart_pending) {
+            lines.push('<div style="color:var(--fg-accent)">修复已就绪，空闲时会自动重启以生效</div>');
+        }
+        if (st.restart_note) {
+            lines.push('<div style="opacity:.7">' + esc(st.restart_note) + "</div>");
         }
         if (st.rolled_back_reason) {
             lines.push('<div style="color:#e0a05c">上次修复已回退：' + esc(st.rolled_back_reason) + "</div>");
@@ -140,8 +152,10 @@
             .then(function (st) {
                 _last = st;
                 render(st);
-                // ★ 生效：后端说可以刷新了，而且此刻确实空闲 → 存草稿后刷新
-                if (st.reload_pending && st.idle) {
+                // ★ 生效：后端说可以刷新了，而且此刻确实空闲 → 存草稿后刷新。
+                //   `restart_pending` 时不刷新：页面 reload **换不掉已 import 的 Python 模块**，
+                //   只会白白闪一次屏（真重启由壳用 AlarmManager 自拉起）。
+                if (st.reload_pending && !st.restart_pending && st.idle) {
                     saveDraft();
                     location.reload();
                 }
@@ -178,7 +192,11 @@
                 post("/hotupdate/action", { action: "apply" }).then(function (r) {
                     return r ? r.json() : null;
                 }).then(function (d) {
-                    if (m) m.textContent = (d && d.ok) ? "已安装，即将生效" : ("安装失败：" + ((d && d.error) || ""));
+                    if (m) {
+                        m.textContent = (d && d.ok)
+                            ? (d.restart ? "已安装，空闲时会自动重启以生效" : "已安装，即将生效")
+                            : ("安装失败：" + ((d && d.error) || ""));
+                    }
                     poll();
                 }).catch(function () { if (m) m.textContent = "安装失败"; });
             });
