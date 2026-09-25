@@ -6,17 +6,19 @@
 
     python tools/check_hotupdate.py                      # 查默认发布区最新一个
     python tools/check_hotupdate.py --all                # 查全部 serial
-    python tools/check_hotupdate.py --dist <dir> --base 0.8.1
+    python tools/check_hotupdate.py --dist <dir> --base 0.9.0
 
 校验项（与规范一一对应）：
   1. patch-<N>.json 结构合法、manifest 字段完整
   2. **签名可用公钥验证**（用私钥导出公钥做对照；公钥在 Kotlin 侧，这里用私钥自洽性验证）
   3. zip 本体 sha256 == 清单声明
   4. 包内文件与 files 清单**完全一致**（不多不少）
-  5. 每个文件 sha256 匹配；**路径不越界**、只允许 `web/` 前缀
+  5. 每个文件 sha256 匹配；**路径不越界**、只允许 `web/` 与 `py/` 前缀
   6. **无删除语义**：累积式 ⇒ 相对 base 基线，清单必须是"基线之外的变更"，
      且不得出现基线里有、包里没有的情况被当成删除（由 build 阶段拦；这里复查 serial 单调与累积性）
   7. serial 单调递增、latest 指向最大 serial
+  8. `layer` 字段与 files 前缀**互相印证**；`py/` 里不许出现非 `.py`、不许动 `hotupdate/`
+  9. **py 层注入点仍然存在**（契约 §七：注入漏了 = 补丁装上了代码却没换，且不报错）
 """
 from __future__ import annotations
 
@@ -24,6 +26,7 @@ import argparse
 import base64
 import hashlib
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -129,7 +132,6 @@ def check_one(dist: Path, serial: int, key: Path) -> None:
     check("manifest 字段完整", not missing, f"缺 {missing}" if missing else "")
     check("serial 与文件名一致", int(m.get("serial", -1)) == serial)
     check("cumulative 为 true（v1 只接受累积式）", m.get("cumulative") is True)
-    check("layer 为 web（v1 范围）", m.get("layer") == "web")
 
     # 3. zip 本体 sha256
     zsha = hashlib.sha256(zf.read_bytes()).hexdigest()
@@ -140,28 +142,184 @@ def check_one(dist: Path, serial: int, key: Path) -> None:
     # 4/5. 包内容与逐文件校验
     files = m.get("files") or []
     check("files 非空", bool(files), f"{len(files)} 个")
-    bad_path, bad_sha, bad_prefix = [], [], []
+    bad_path, bad_prefix, bad_sha, py_data, py_self = [], [], [], [], []
     with zipfile.ZipFile(zf) as z:
         names = set(z.namelist())
         for f in files:
             p = str(f.get("path") or "")
             if (not p or p.startswith("/") or "\\" in p or ".." in p.split("/")):
                 bad_path.append(p)
-            elif not p.startswith("web/"):
+            elif not (p.startswith("web/") or p.startswith("py/")):
                 bad_prefix.append(p)
             else:
                 data = z.read(p) if p in names else b""
                 if hashlib.sha256(data).hexdigest() != str(f.get("sha256")):
                     bad_sha.append(p)
+                # ★ v2 py 层的两条窄口径（与 tools/build_hotupdate.py 的 PY_SKIP_DIRS 对应）
+                if p.startswith("py/"):
+                    if not p.endswith(".py"):
+                        py_data.append(p)
+                    elif p.startswith("py/hotupdate/"):
+                        py_self.append(p)
         check("★ 路径合法（无 .. / 绝对路径 / 反斜杠）", not bad_path, str(bad_path[:3]))
-        check("★ 只含 web/ 前缀（v1 不许碰 py/ 与其它目录）", not bad_prefix, str(bad_prefix[:3]))
+        check("★ 只含 web/ 或 py/ 前缀（不许碰其它目录）", not bad_prefix, str(bad_prefix[:3]))
         check("★ 每个文件 sha256 匹配", not bad_sha, str(bad_sha[:3]))
+        check("★ py/ 里只有 .py（数据资产不进热更）", not py_data, str(py_data[:3]))
+        check("★ py/ 里没有热更自身（hotupdate/ 改它必须发整包）",
+              not py_self, str(py_self[:3]))
         check("★ 包内文件与清单完全一致（不多不少）",
               names == {f["path"] for f in files},
               f"多 {sorted(names - {f['path'] for f in files})[:3]} "
               f"缺 {sorted({f['path'] for f in files} - names)[:3]}")
         total = sum(zi.file_size for zi in z.infolist())
     print(f"    （解压后 {total / 1024:.1f} KB，压缩包 {zf.stat().st_size / 1024:.1f} KB）")
+
+    # ★ 8. layer 字段与 files 前缀互相印证（任一单边错都会让客户端走错生效方式：
+    #      "含 py 却报 web" ⇒ 只 reload 页面 ⇒ 代码根本没换，且看起来"已生效"）
+    have = [l for l in ("web", "py")
+            if any(str(f.get("path") or "").startswith(l + "/") for f in files)]
+    want_layer = "+".join(have)
+    check("★ layer 字段与实际文件前缀一致", m.get("layer") == want_layer,
+          f"字段 {m.get('layer')!r} vs 实际 {want_layer!r}")
+    if "py" in have:
+        print("    ! 本包含 py 层：客户端会走「重启进程」生效路径（契约 §七）")
+
+
+def check_session_crypto() -> None:
+    """★ 会话加密（敏感头）的密钥与往返（2026-09-25 新增，见审计 §2.1 / P0-2）。
+
+    三条，缺一条线上就会**静默退回明文**（没人看日志的话，等于加密从来没上过）：
+      1. JS 里内置的公钥 n **就是**这把私钥的公钥（不一致 ⇒ 服务器解不开自己签发的信封）；
+      2. 真跑一次 JS 加密 → Python 解密（跨语言往返；Node 不在则退回 Python 侧自造信封）；
+      3. `SESSION_DAYS` 已收紧（防被顺手改回 30 天）。
+    没配私钥（开发机/没生成）→ 打 SKIP 并**明确提示**，不阻塞普通发版。
+    """
+    import os
+    print("\n--- 会话加密（敏感头应用层加密）---")
+    sys.path.insert(0, str(ROOT / "app"))
+    try:
+        import session_crypto as SC
+    except Exception as ex:
+        check("session_crypto 可导入", False, f"{type(ex).__name__}: {ex}")
+        return
+    key = Path(os.environ.get("FIREFLY_ENC_KEY")
+               or (Path.home() / ".firefly" / "session_priv.pem")).expanduser()
+    if not key.is_file():
+        print(f"  - SKIP 会话密钥检查：没有私钥（{key}）")
+        print("        发布机必须先生成：python tools/build_session_keys.py --gen")
+        return
+    os.environ["FIREFLY_ENC_KEY"] = str(key)
+    os.environ["FIREFLY_ENC_ENABLED"] = "1"
+    SC.reset_for_test()
+    k = SC.load_key()
+    check("私钥可解析（PKCS#8 / RSA-2048）", k is not None and k[0].bit_length() == 2048)
+    if not k:
+        return
+    js_file = ROOT / "app" / "static" / "js" / "session_crypto.js"
+    txt = js_file.read_text(encoding="utf-8")
+    m = re.search(r'n_b64:\s*"([^"]+)"', txt)
+    check("前端有 n_b64 常量", bool(m))
+    if m:
+        n_js = base64.b64decode(m.group(1))
+        n_py = k[0].to_bytes((k[0].bit_length() + 7) // 8, "big")
+        check("★ 前端公钥 == 私钥的公钥（否则线上永远退回明文）", n_js == n_py,
+              f"js={hashlib.sha256(n_js).hexdigest()[:12]} py={hashlib.sha256(n_py).hexdigest()[:12]}")
+    # 跨语言往返（Node 在就跑真的 JS；不在就用 Python 侧造信封验解密链路）
+    node = shutil.which("node")
+    ok_round = False
+    detail = "node 不在，用 Python 造信封"
+    if node:
+        import subprocess as _sp
+        import tempfile as _tf
+        out_f = Path(_tf.mkdtemp(prefix="hu_gate_")) / "cases.json"
+        env = dict(os.environ)
+        env["FIREFLY_ROOT"] = str(ROOT).replace("\\", "/")
+        r = _sp.run([node, str(ROOT / "tests" / "js" / "test_session_crypto.mjs"), str(out_f)],
+                    capture_output=True, text=True, env=env)
+        if r.returncode == 0 and out_f.is_file():
+            cases = json.loads(out_f.read_text(encoding="utf-8")).get("cases") or []
+            for c in cases:
+                if SC.decrypt_envelope(c["env"]).get("Authorization") or \
+                        SC.decrypt_envelope(c["env"]).get("X-API-Key"):
+                    ok_round = True
+                else:
+                    ok_round = False
+                    detail = f"{c['name']} 解出来是空"
+                    break
+            detail = f"node 真加密 {len(cases)} 条"
+        else:
+            detail = (r.stdout or "")[-80:] + (r.stderr or "")[-120:]
+    else:
+        import hashlib as _h
+        import os as _os
+        n, e = SC.pubkey_params()
+        payload = json.dumps({"v": 1, "h": {"Authorization": "Bearer gate"}},
+                             separators=(",", ":")).encode("utf-8")
+        body = payload + _h.sha256(payload).digest()
+        ck, iv = _os.urandom(32), _os.urandom(16)
+        ks = SC._keystream(ck, iv, len(body))
+        ct = bytes(a ^ b for a, b in zip(body, ks))
+        klen = (n.bit_length() + 7) // 8
+        lhash = _h.sha256(b"").digest()
+        ps = b"\x00" * (klen - len(ck) - 2 * 32 - 2)
+        db = lhash + ps + b"\x01" + ck
+        seed = _os.urandom(32)
+        db = bytes(a ^ b for a, b in zip(db, SC._mgf1(seed, klen - 32 - 1)))
+        seed = bytes(a ^ b for a, b in zip(seed, SC._mgf1(db, 32)))
+        em = b"\x00" + seed + db
+        wrapped = pow(int.from_bytes(em, "big"), e, n).to_bytes(klen, "big")
+        b64u = lambda b: base64.urlsafe_b64encode(b).decode().rstrip("=")
+        env_str = f"enc.v1.{b64u(wrapped)}.{b64u(iv)}.{b64u(ct)}"
+        ok_round = SC.decrypt_envelope(env_str).get("Authorization") == "Bearer gate"
+    check("★ 信封真加密 → 真解密往返一致", ok_round, detail)
+    SC.reset_for_test()
+    # 会话期限收紧（审计 §2.1 方案 2）
+    try:
+        sys.path.insert(0, str(ROOT / "server"))
+        import auth as _auth
+        check("会话期限已收紧到 7 天（防被改回 30）", int(_auth.SESSION_DAYS) <= 7,
+              f"SESSION_DAYS={_auth.SESSION_DAYS}")
+        check("续期阈值 < 有效期（否则每次请求都写库）",
+              0 < int(_auth.RENEW_BEFORE_DAYS) < int(_auth.SESSION_DAYS),
+              f"RENEW_BEFORE_DAYS={_auth.RENEW_BEFORE_DAYS}")
+    except Exception as ex:
+        check("auth.py 可导入以核对会话期限", False, f"{type(ex).__name__}: {ex}")
+
+
+def check_py_injection() -> None:
+    """★ py 层注入点必须仍然存在（v2 新增）。
+
+    为什么必须有这条：py 层能生效的**全部前提**是"进程启动早期把覆盖层插进 sys.path 首位"。
+    注入代码一旦被重构删掉/挪晚，症状是**补丁应用成功、重启后代码一点没变，且零报错**
+    —— 和 2026-09-19 那个"前端补丁不刷新"是同一类循环依赖坑，只能靠门禁钉。
+    真相源在 `app/core/paths.py::STARTUP_PATH_INSERTS`（声明哪些文件负责这件事）。
+    """
+    sys.path.insert(0, str(ROOT / "app"))
+    print("\n--- py 层注入点（契约 §七）---")
+    try:
+        from core.paths import STARTUP_PATH_INSERTS, overlay_py_dir, hotupdate_root
+    except Exception as ex:
+        check("能读到 STARTUP_PATH_INSERTS", False, f"{type(ex).__name__}: {ex}")
+        return
+    for rel in STARTUP_PATH_INSERTS:
+        fp = ROOT / rel
+        if not fp.is_file():
+            check(f"{rel} 存在", False, "文件不存在")
+            continue
+        txt = fp.read_text(encoding="utf-8")
+        check(f"★ {rel} 仍在启动早期挂载 py 覆盖层",
+              "hotupdate" in txt and "py" in txt and "sys.path" in txt)
+    # 两处路径公式必须指同一个目录（一处走 paths.py、一处是 server.py 里的字面公式，
+    # 这是"同一件事写两份"的经典分裂点：改一处忘另一处 = 补丁挂在 A 目录、代码只认 B 目录）
+    check("★ overlay_py_dir() == hotupdate_root()/'py'（两层覆盖层同源）",
+          overlay_py_dir() == hotupdate_root() / "py",
+          f"{overlay_py_dir()} vs {hotupdate_root() / 'py'}")
+    srv = ROOT / "app" / "server.py"
+    if srv.is_file():
+        t = srv.read_text(encoding="utf-8")
+        check("★ PC 入口 server.py 也挂载了 py 覆盖层",
+              "hotupdate" in t and '"py"' in t and "sys.path.insert" in t)
+
 
 
 def _pem_body(text: str) -> str:
@@ -275,8 +433,11 @@ def main() -> int:
 
     dist = Path(a.dist) / a.base
     print(f"=== 热更新门禁：{dist} ===")
-    # 信任根与公告：**无论本次有没有补丁都要查**（它们与补丁共用同一个信任根）
+    # 信任根、公告、py 注入点：**无论本次有没有补丁都要查**
+    # （它们与补丁无关，但一坏就是"整条通道静默失效"）
     check_keys()
+    check_py_injection()
+    check_session_crypto()
     check_notice(Path(a.dist) / "notice", Path(a.key).expanduser())
     if not dist.is_dir():
         # 语义要分清（否则会挡住正常发版）：

@@ -95,11 +95,31 @@ def hotupdate_root() -> Path:
     （备份/快照/导出/同步/清理历史）**结构上碰不到它**；卸载清空、覆盖升级保留。
 
     ⚠️ **安卓覆盖安装不会清它** —— 装了新整包后，旧覆盖层会盖住新 APK 的代码。
-       所以"base 版本变了就清空"必须由启动逻辑主动做（`hotupdate/state.py::on_startup`）。
+       所以"base 版本变了就清空"必须由启动逻辑主动做（`hotupdate/__init__.py::on_startup`）。
 
     开发机：{仓库根}/hotupdate/（gitignored）；安卓：{FIREFLY_DATA_DIR}/hotupdate/。
     """
     return USER_DIR.parent / "hotupdate"
+
+
+def overlay_py_dir() -> Path:
+    """热更新 `py/` 覆盖层目录（v2，见 docs/热更新/02_实现契约.md §七）。
+
+    进程启动时要把它插进 `sys.path` **首位**，`import modules.x` 才会先命中补丁。
+    时序要求：必须在 Chaquopy `Python.start()` **之后**、且**尽可能早**地插
+    （只对当时尚未 import 的模块生效）。落地位置见 `STARTUP_PATH_INSERTS`。
+    """
+    return hotupdate_root() / "py"
+
+
+# ★ 覆盖层注入点登记表（**给门禁用的单一真相源**，别删）：
+#   `tools/check_hotupdate.py` 会核对这里列出的每个文件**确实**在启动早期插了
+#   `overlay_py_dir()`。这一条是防"py 层协议做完了、注入忘了做"的 ——
+#   那种情况的症状是"补丁应用成功、重启后代码一点没变"，且**没有任何报错**。
+STARTUP_PATH_INSERTS = (
+    "android/app/src/main/python/start_server.py",   # 安卓：Chaquopy 之后、import server 之前
+    "app/server.py",                                  # PC：任何 app 模块 import 之前
+)
 
 
 def notice_root() -> Path:

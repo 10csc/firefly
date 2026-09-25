@@ -2,17 +2,27 @@
 # -*- coding: utf-8 -*-
 """热更新 · 补丁回归 harness（规范 §九「补丁级回归」）。
 
-把补丁应用到一个**干净的 base 目录**，然后交给调用方去跑测试/冒烟。不碰仓库本体。
+把补丁应用到一个**干净的 base 副本**，然后交给调用方去跑测试/冒烟。不碰仓库本体。
 
-    python tools/apply_hotupdate.py --patch hotupdate_dist/0.8.1/patch-1.zip \\
-        --base <干净 checkout 的 app/static 目录> --out .tmp_hotupdate/regress
+    # v1 用法（只看前端一层）
+    python tools/apply_hotupdate.py --patch hotupdate_dist/0.9.0/patch-1.zip \\
+        --manifest hotupdate_dist/0.9.0/patch-1.json --verify-key ~/.firefly/hotupdate_key.pem \\
+        --out .tmp_hotupdate/regress
 
-输出就是一个"打过补丁的 app/static"，可直接 `--static <out>` 挂给测试用。
+    # v2 用法（两层一起，`--base` 指 app/ 目录）
+    python tools/apply_hotupdate.py --patch ... --base app --out .tmp_hotupdate/regress
+
+产物是一份**打过补丁的 app 副本**（结构与 app/ 一致，前端覆盖层落在 `static/`）：
+可直接 `FIREFLY_STATIC_OVERRIDE` 指过去，或把 `out/` 本身当成"运行版 app 目录"跑测试。
 **不需要新代码树**（规范 §八：运行版 = base + 补丁序列，可重建）。
+
+为什么保留这个工具而不是只用 `tests/test_hotupdate.py`：它验的是**真实产物**
+（真 zip、真签名、真目录树），单测里那份是现造的包。两者的盲区不重合。
 """
 from __future__ import annotations
 
 import argparse
+import base64
 import hashlib
 import json
 import shutil
@@ -26,7 +36,9 @@ except Exception:
     pass
 
 ROOT = Path(__file__).resolve().parent.parent
-DEFAULT_STATIC = ROOT / "app" / "static"
+DEFAULT_APP = ROOT / "app"
+# 层前缀 → 副本内的落点。`web/` 在 app/ 下叫 `static/`，`py/` 就是 app/ 根。
+LAYER_TARGET = {"web": "static", "py": ""}
 
 
 def _find_openssl() -> str:
@@ -48,11 +60,18 @@ def _find_openssl() -> str:
     return ""
 
 
+def _layer_of(arc: str) -> str:
+    layer = arc.split("/", 1)[0]
+    if layer not in LAYER_TARGET:
+        raise ValueError(f"包内有未知层级前缀：{arc}")
+    return layer
+
+
 def main() -> int:
-    ap = argparse.ArgumentParser(description="把热更补丁应用到一份干净的 base 目录")
+    ap = argparse.ArgumentParser(description="把热更补丁应用到一份干净的 base 副本")
     ap.add_argument("--patch", required=True, help="patch-N.zip")
     ap.add_argument("--manifest", default="", help="patch-N.json（给了就顺带验签）")
-    ap.add_argument("--base", default=str(DEFAULT_STATIC), help="干净 base 的 static 目录")
+    ap.add_argument("--base", default=str(DEFAULT_APP), help="干净 base 的 app/ 目录")
     ap.add_argument("--out", required=True, help="输出目录（base 的副本 + 补丁覆盖）")
     ap.add_argument("--verify-key", default="", help="私钥路径（给了就做签名自洽校验）")
     a = ap.parse_args()
@@ -76,7 +95,6 @@ def main() -> int:
             print(f"X 清单不存在：{mf}")
             return 2
         payload = json.loads(mf.read_text(encoding="utf-8"))
-        import base64
         raw = base64.b64decode(payload["manifest_b64"])
         m = json.loads(raw.decode("utf-8"))
         files = m.get("files") or []
@@ -105,24 +123,32 @@ def main() -> int:
                 print("X 签名校验失败")
                 return 2
             print("  V 签名校验通过")
-        print(f"  V 清单声明 {len(files)} 个文件（base={m.get('base_version')} serial={m.get('serial')}）")
+        print(f"  V 清单声明 {len(files)} 个文件（base={m.get('base_version')} "
+              f"serial={m.get('serial')} layer={m.get('layer')}）")
 
     print(f"\n=== 应用 {patch.name} → {out} ===")
     if out.exists():
         shutil.rmtree(out, ignore_errors=True)
-    shutil.copytree(base, out)
+    shutil.copytree(base, out, ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
     n_before = sum(1 for p in out.rglob("*") if p.is_file())
 
-    written = 0
+    written, seen_layers, py_written = 0, set(), []
     with zipfile.ZipFile(patch) as z:
         declared = {f["path"]: f["sha256"] for f in files} if files else None
         for arc in z.namelist():
-            if not arc.startswith("web/"):
-                print(f"X 包内有非 web/ 前缀的文件：{arc}")
+            try:
+                layer = _layer_of(arc)
+            except ValueError as e:
+                print(f"X {e}")
                 return 2
-            rel = arc[len("web/"):]
+            seen_layers.add(layer)
+            rel = arc.split("/", 1)[1]
             if ".." in rel.split("/") or rel.startswith("/"):
                 print(f"X 路径越界：{arc}")
+                return 2
+            sub = LAYER_TARGET[layer]
+            if layer == "py" and not rel.endswith(".py"):
+                print(f"X py 层出现非 .py 文件：{arc}")
                 return 2
             data = z.read(arc)
             got = hashlib.sha256(data).hexdigest()
@@ -133,18 +159,35 @@ def main() -> int:
                 if declared[arc] != got:
                     print(f"X {arc} 校验不符")
                     return 2
-            dst = out / rel
+            dst = (out / sub / rel) if sub else (out / rel)
             dst.parent.mkdir(parents=True, exist_ok=True)
             dst.write_bytes(data)
+            if layer == "py":
+                py_written.append(dst)
             written += 1
     n_after = sum(1 for p in out.rglob("*") if p.is_file())
-    print(f"  V 覆盖 {written} 个文件；文件数 {n_before} → {n_after}"
-          f"（只增只改 ⇒ 不应减少）")
+    print(f"  V 覆盖 {written} 个文件（层：{'+'.join(sorted(seen_layers))}）；"
+          f"文件数 {n_before} → {n_after}（只增只改 ⇒ 不应减少）")
     if n_after < n_before:
         print("X 文件数变少 —— 补丁不许删文件")
         return 2
-    print(f"\n结果: PASS  打过补丁的静态目录：{out}")
-    print("  回归用法：把该目录的内容与 base 做 diff 跑测试，或设 FIREFLY_STATIC_OVERRIDE 指过去。")
+
+    # ★ py 层额外一道：语法自检（打过的补丁若把某个模块写成语法错误，
+    #   真机症状是"重启后服务起不来"——比崩溃更糟，因为连日志入口都可能没起来）
+    bad = []
+    for p in py_written:
+        r = __import__("subprocess").run(
+            [sys.executable, "-m", "py_compile", str(p)], capture_output=True)
+        if r.returncode != 0:
+            bad.append(p.relative_to(out).as_posix())
+    if bad:
+        print(f"X 打过补丁的 py 文件语法检查失败：{bad}")
+        return 2
+    if py_written:
+        print(f"  V 打过补丁的 {len(py_written)} 个 py 文件全部通过语法检查")
+
+    print(f"\n结果: PASS  打过补丁的 app 副本：{out}")
+    print("  回归用法：FIREFLY_STATIC_OVERRIDE 指过去跑冒烟，或把 out/ 当运行版 app 跑测试。")
     return 0
 
 

@@ -39,6 +39,23 @@ _PROJECT_ROOT = str(Path(__file__).resolve().parent.parent)
 if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 
+# ── 热更新 py 层注入（v2，契约 §七 / 规范 §5.3）─────────────────
+# 必须**尽可能早**（只对当时尚未 import 的模块生效），且必须在 Chaquopy `Python.start()`
+# 之后 —— 安卓那条路径由 `android/.../python/start_server.py` 负责（它比本文件更早），
+# 所以这里用 FIREFLY_ANDROID 守卫避免重复。PC（本地版）没有那层壳，注入点就在这一处。
+#
+# ★ 为什么用 `USER_DIR.parent` 这个字面公式而不是 `paths.overlay_py_dir()`：
+#   此刻还不能 import `core.paths`（那正是要被覆盖的模块之一）。公式与
+#   `core/paths.py::hotupdate_root()` **同一处定义**，改一处必须改两处 ——
+#   `tools/check_hotupdate.py` 门禁会核对两层目录是否指的是同一个地方。
+if not os.environ.get("FIREFLY_ANDROID"):
+    _hu_data = os.environ.get("FIREFLY_DATA_DIR")
+    _hu_user = (Path(_hu_data) / "user_data") if _hu_data else (Path(_PROJECT_ROOT) / "user_data")
+    _hu_py = _hu_user.parent / "hotupdate" / "py"
+    if _hu_py.is_dir() and str(_hu_py) not in sys.path:
+        sys.path.insert(0, str(_hu_py))
+        print(f"  [热更新] 已挂载 py 覆盖层：{_hu_py}", flush=True)
+
 from modules import app_config as cfg
 import routes
 from shared_http import (ResponseMixin, setup_stdio_utf8, preload_knowledge,

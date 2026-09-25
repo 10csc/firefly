@@ -2,8 +2,10 @@ package com.firefly.android
 
 import android.annotation.SuppressLint
 import android.app.Activity
+import android.app.AlarmManager
 import android.app.AlertDialog
 import android.app.DownloadManager
+import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -15,6 +17,7 @@ import android.os.Environment
 import android.os.Handler
 import android.os.Looper
 import android.os.PowerManager
+import android.os.SystemClock
 import android.provider.Settings
 import android.util.Log
 import android.view.ViewGroup
@@ -58,6 +61,21 @@ class MainActivity : AppCompatActivity() {
     companion object {
         private const val SERVER_URL = "http://127.0.0.1:8765"
         private const val HOTUPDATE_POLL_MS = 8000L   // 热更新待生效时的轮询间隔（本地请求，代价可忽略）
+        // ★ v2：含 py 层的补丁只能靠**重启 App 进程**生效（Chaquopy 一进程只能 Python.start() 一次）。
+        //   重启器：AlarmManager 定一个 800ms 后的 PendingIntent 自拉起，然后 finishAffinity()
+        //   结束当前 Activity（进程随 KeepAliveService 之后自然换新）。与规范 §5.2 表格一致。
+        private const val HOTUPDATE_RESTART_ACTION = "com.firefly.android.HOTUPDATE_RESTART"
+        private const val HOTUPDATE_RESTART_DELAY_MS = 800L
+        // ★ APP 内安装更新包（2026-09-25）：
+        //   · `UPDATE_DIR` + `ANDROID_UPDATE_APK` 是**壳自己拼路径**用的固定值，
+        //     与 `app/routes_update.py::_DOWNLOAD_FILENAMES["apk"]` 逐字对应，
+        //     由 `tools/check_android_install_contract.py` 钉死（两边漂移的症状是
+        //     "下载成功但提示找不到安装包"）。`HOTUPDATE_APK_NAME` 仅用于兼容空参调用。
+        //   · `APK_INSTALL_REQUEST` 是给系统安装器的请求码（onActivityResult 里回执用户取消）。
+        private const val UPDATE_DIR = "update"            // cacheDir/update/（FileProvider 白名单内）
+        private const val ANDROID_UPDATE_APK = "firefly-update.apk"
+        private const val HOTUPDATE_APK_NAME = "firefly-update.apk"
+        private const val APK_INSTALL_REQUEST = 1004   // ★ 不能与 1003（图片权限）撞号
         private const val LOCAL_HOME = "file:///android_asset/index.html"
         private const val READY_TIMEOUT_MS = 12_000L   // A7c：本地引擎启动探测窗口（超时自动回落服务器）
         private const val NOTIF_PERMISSION_REQUEST = 1001
@@ -327,6 +345,69 @@ class MainActivity : AppCompatActivity() {
             if (!KeepAliveService.isAppForeground()) {
                 KeepAliveService.notify(title, content)
             }
+        }
+
+        /**
+         * ★ APP 内安装更新包（2026-09-25）：把**后端已经下好并验过 sha256** 的 APK
+         * 交给系统安装器。
+         *
+         * 为什么必须由壳做：WebView 不能触发 APK 安装 —— 旧实现是"下载完 85MB 之后，
+         * 让用户再去下载页下一次"（等于一个包下两遍、一次都不装）。系统安装器只能由
+         * Activity 用 `ACTION_VIEW` + FileProvider 的 `content://` 拉起。
+         *
+         * 安全设计（这是本项目里唯一会把可执行文件交给系统的入口）：
+         *  · **只认固定文件名** `firefly-update.apk`，且只从 `cacheDir/update/` 取 ——
+         *    路径由壳自己拼，**不接受页面传来的任何路径**（`fileName` 只用于比对，不参与拼接）。
+         *  · 文件必须存在且非空；下载后的 sha256 校验在 Python 侧完成（清单里有 sha256 时强制）。
+         *  · 未知来源安装需要用户在系统里授权（Android 8+），未授权时把用户送到那一页。
+         *  · 必须给 `clipData`：部分系统安装器只从 ClipData 取 URI 读权限（与诊断包分享同源问题）。
+         */
+        @JavascriptInterface
+        fun installApk(fileName: String?): String {
+            val want = (fileName ?: "").trim().ifEmpty { HOTUPDATE_APK_NAME }
+            if (want != ANDROID_UPDATE_APK) {
+                // 只允许契约里的那一个名字（routes_update._DOWNLOAD_FILENAMES["apk"]）
+                return "拒绝：未知的安装包名（$want）"
+            }
+            val f = java.io.File(java.io.File(cacheDir, UPDATE_DIR), ANDROID_UPDATE_APK)
+            if (!f.isFile || f.length() < 64 * 1024) {
+                // 64KB 下限：APK 不可能这么小，通常是下载残留或错误页
+                return "没找到下好的安装包（请先点「自动更新」下载）"
+            }
+            runOnUiThread {
+                try {
+                    // Android 8.0+ 每个应用需要"安装未知应用"授权；没有就把用户送到那一页
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
+                        && !packageManager.canRequestPackageInstalls()) {
+                        Toast.makeText(this@MainActivity,
+                            "请先允许本应用安装其他应用，返回后再点一次「自动更新」",
+                            Toast.LENGTH_LONG).show()
+                        try {
+                            startActivity(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                                Uri.parse("package:$packageName")))
+                        } catch (e: Exception) {
+                            Log.w(TAG, "[Update] 打不开未知来源设置页: ${e.message}")
+                        }
+                        return@runOnUiThread
+                    }
+                    val uri = androidx.core.content.FileProvider.getUriForFile(
+                        this@MainActivity, "com.firefly.android.fileprovider", f)
+                    val it = Intent(Intent.ACTION_VIEW).apply {
+                        setDataAndType(uri, "application/vnd.android.package-archive")
+                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                        // ★ 同时给 ClipData：只靠 data URI 时部分安装器拿不到读权限
+                        clipData = android.content.ClipData.newUri(
+                            contentResolver, "firefly-update", uri)
+                    }
+                    startActivityForResult(it, APK_INSTALL_REQUEST)
+                    Log.i(TAG, "[Update] 已交给系统安装器：${f.absolutePath} (${f.length()} B)")
+                } catch (e: Exception) {
+                    Log.w(TAG, "[Update] 拉起安装器失败: ${e.message}")
+                    Toast.makeText(this@MainActivity, "安装失败：${e.message}",
+                        Toast.LENGTH_LONG).show()
+                }
+            }
+            return ""
         }
 
         /** 把结果回执给网页（必须是主线程碰 WebView；消息做 JS 字符串转义）。 */
@@ -706,7 +787,16 @@ class MainActivity : AppCompatActivity() {
             // 数据导出下载：/export-data 返回 attachment → 下载到系统"下载"目录。
             // 文件名取响应头 Content-Disposition（带模式+时间戳，多模式不互相覆盖）；
             // 解析失败回退 firefly-backup.zip。
+            //
+            // ★ 2026-09-25 分叉：若下载的正是**更新包**，不能丢进系统下载目录 ——
+            //   那条路只能"让用户自己去文件管理里找并点安装"（真机反馈：找不着 / 白下 85MB）。
+            //   改由壳下载到 `cacheDir/update/firefly-update.apk`（FileProvider 白名单内），
+            //   下完直接交给系统安装器。
             setDownloadListener { url, _, contentDisposition, mimeType, _ ->
+                if (isUpdatePackage(mimeType, contentDisposition, url)) {
+                    downloadAndInstallUpdate(url)
+                    return@setDownloadListener
+                }
                 try {
                     var fname = "firefly-backup.zip"
                     try {
@@ -750,6 +840,15 @@ class MainActivity : AppCompatActivity() {
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == APK_INSTALL_REQUEST) {
+            // 系统安装器回来了：用户点确定 → 新版本会覆盖安装（系统自己重启进程）；
+            // 点取消 → 如实告知，不假装成功（旧包还在，用户可再点一次）。
+            if (resultCode != Activity.RESULT_OK) {
+                Toast.makeText(this, "已取消安装（可再次点「自动更新」重试）",
+                    Toast.LENGTH_LONG).show()
+            }
+            return
+        }
         if (requestCode != FILE_CHOOSER_REQUEST) return
         val cb = pendingFileCallback ?: return
         pendingFileCallback = null
@@ -770,7 +869,65 @@ class MainActivity : AppCompatActivity() {
         super.onDestroy()
     }
 
-    // ── 热更新：补丁就绪时由**壳**触发刷新（见 docs/热更新规范.md §5.2）────────
+    // ── APP 内更新（2026-09-25）：下载更新包 → 交系统安装器 ──────────────
+    //
+    // 分工（与后端 `app/routes_update.py` 的契约）：
+    //   后端 `/update-download` 负责**找地址 + 校验 + 下载**（清单 sha256 强制比对）；
+    //   壳负责**把文件交出去**——因为只有 Activity 能拉起系统安装器。
+    //   壳下载的那条路（页面直接给 URL 时）只对后端本地地址放行，不做出网下载器。
+    private fun isUpdatePackage(mimeType: String?, contentDisposition: String?, url: String): Boolean {
+        val low = (url + " " + (contentDisposition ?: "") + " " + (mimeType ?: "")).lowercase()
+        if (!low.contains("update-download") && !low.contains(ANDROID_UPDATE_APK)) return false
+        val u = Uri.parse(url)
+        val host = (u.host ?: "").lowercase()
+        return host == "127.0.0.1" || host == "localhost"
+    }
+
+    /** 壳自己下载更新包（后端本地地址 → cacheDir/update/），随后交系统安装器。 */
+    private fun downloadAndInstallUpdate(url: String) {
+        Toast.makeText(this, "正在下载更新包…请勿关闭应用", Toast.LENGTH_LONG).show()
+        Thread {
+            val err = try {
+                val dir = java.io.File(cacheDir, UPDATE_DIR).apply { mkdirs() }
+                val f = java.io.File(dir, ANDROID_UPDATE_APK)
+                val tmp = java.io.File(dir, "$ANDROID_UPDATE_APK.part")
+                val conn = java.net.URL(url).openConnection() as java.net.HttpURLConnection
+                conn.connectTimeout = 15000
+                conn.readTimeout = 600000
+                var n = 0L
+                conn.inputStream.use { ins ->
+                    tmp.outputStream().use { out ->
+                        val buf = ByteArray(1 shl 16)
+                        while (true) {
+                            val k = ins.read(buf)
+                            if (k <= 0) break
+                            n += k
+                            if (n > 100L * 1024 * 1024) throw java.io.IOException("包体超过 100MB")
+                            out.write(buf, 0, k)
+                        }
+                    }
+                }
+                conn.disconnect()
+                if (n < 64L * 1024) throw java.io.IOException("下载内容异常（$n 字节）")
+                if (f.exists()) f.delete()
+                if (!tmp.renameTo(f)) throw java.io.IOException("落盘失败")
+                Log.i(TAG, "[Update] 更新包就绪：${f.absolutePath} ($n B)")
+                ""
+            } catch (e: Exception) {
+                "${e.javaClass.simpleName}: ${e.message}"
+            }
+            uiHandler.post {
+                if (err.isNotEmpty()) {
+                    Log.w(TAG, "[Update] 下载失败: $err")
+                    Toast.makeText(this, "下载失败：$err", Toast.LENGTH_LONG).show()
+                    return@post
+                }
+                FireflyJsBridge().installApk(ANDROID_UPDATE_APK)
+            }
+        }.start()
+    }
+
+    // ── 热更新：补丁就绪时由**壳**触发生效（见 docs/热更新规范.md §5.2）────────
     //
     // 为什么触发权必须在壳这一份、不能只靠前端 JS：
     //   要修的往往就是那段前端 JS —— 一旦坏的是它本身，页面里就没有任何代码会去
@@ -779,13 +936,22 @@ class MainActivity : AppCompatActivity() {
     //
     // 空闲判据由后端复合给出（它合并了前端上报的 typing/playing 与"模型下载中"等）；
     // 壳在这里**再查一次输入框**做兜底：里面有字就不刷，绝不吞掉用户正在打的内容。
+    //
+    // ★ v2（0.9.1）：分两条路 ——
+    //   · `reload_pending`（只有 web 层）→ WebView reload，几乎无感；
+    //   · `restart_pending`（含 py 层）  → **重启 App 进程**。reload 换不掉已经 import
+    //     的 Python 模块，所以这两种情况必须分开（后端把两个标志分开报）。
     private fun startHotUpdateWatcher() {
         val tick = object : Runnable {
             override fun run() {
                 try {
                     Thread {
-                        if (hotUpdateReloadPending()) {
-                            uiHandler.post { maybeReloadForHotUpdate() }
+                        val st = hotUpdateStatus()
+                        if (st != null &&
+                            (st.optBoolean("reload_pending") || st.optBoolean("restart_pending")) &&
+                            st.optBoolean("idle")) {
+                            val restart = st.optBoolean("restart_pending")
+                            uiHandler.post { maybeApplyHotUpdate(restart) }
                         }
                     }.start()
                 } catch (_: Exception) {
@@ -796,29 +962,72 @@ class MainActivity : AppCompatActivity() {
         uiHandler.postDelayed(tick, HOTUPDATE_POLL_MS)
     }
 
-    /** 问后端：补丁是否已应用待生效、且此刻空闲。任何异常都当"不需要刷新"。 */
-    private fun hotUpdateReloadPending(): Boolean = try {
+    /** 问后端状态。任何异常都当"不需要刷新"（后端可能正在重启）。 */
+    private fun hotUpdateStatus(): org.json.JSONObject? = try {
         val c = URL("$SERVER_URL/hotupdate/status").openConnection() as HttpURLConnection
         c.connectTimeout = 3000
         c.readTimeout = 3000
         val body = c.inputStream.bufferedReader().use { it.readText() }
         c.disconnect()
-        val o = org.json.JSONObject(body)
-        o.optBoolean("reload_pending") && o.optBoolean("idle")
+        org.json.JSONObject(body)
     } catch (_: Exception) {
-        false
+        null
     }
 
-    private fun maybeReloadForHotUpdate() {
+    /** 生效前最后一道闸：输入框里有字就什么都不做（下一轮再看）。 */
+    private fun maybeApplyHotUpdate(restart: Boolean) {
         val wv = webView ?: return
         wv.evaluateJavascript(
             "(function(){var i=document.getElementById('msg-input');" +
                 "return (i&&i.value&&i.value.trim())?'BUSY':'OK';})()"
         ) { r ->
-            if (r != null && r.contains("OK")) {
+            if (r == null || !r.contains("OK")) return@evaluateJavascript
+            if (restart) {
+                Log.i("FireflyHotUpdate", "含 py 层的补丁就绪且空闲 → 壳重启 App 进程")
+                restartForHotUpdate()
+            } else {
                 Log.i("FireflyHotUpdate", "补丁已就绪且空闲 → 壳触发刷新")
                 wv.reload()
             }
+        }
+    }
+
+    /** 自拉起式重启：先定一个短延时闹钟把 App 叫回来，再结束当前界面。
+     *
+     *  为什么用 AlarmManager 而不是 `Process.killProcess()`：杀进程是"没有回头路"的写法 ——
+     *  一旦被系统限制（后台/电池策略）就永远起不来了，用户只能手动点图标。
+     *  闹钟自拉起是规范 §5.2 定的路子，且**不需要任何新依赖**。
+     *  失败兜底：闹钟排不进去时退回 `Process.killProcess()`（前台服务会随进程结束，
+     *  用户下次点图标就是新进程，同样生效）。 */
+    private fun restartForHotUpdate() {
+        try {
+            val intent = Intent(this, MainActivity::class.java).apply {
+                action = HOTUPDATE_RESTART_ACTION
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+            }
+            val pi = PendingIntent.getActivity(
+                this, 0, intent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+            val am = getSystemService(Context.ALARM_SERVICE) as AlarmManager
+            val at = SystemClock.elapsedRealtime() + HOTUPDATE_RESTART_DELAY_MS
+            // Android 12+ 精确闹钟需要 SCHEDULE_EXACT_ALARM 权限；没有就退到非精确闹钟
+            // （差几秒对"重启生效"没有影响，绝不为了精确而让功能失效）
+            val exact = Build.VERSION.SDK_INT < Build.VERSION_CODES.S || am.canScheduleExactAlarms()
+            if (exact) {
+                am.setExactAndAllowWhileIdle(AlarmManager.ELAPSED_REALTIME_WAKEUP, at, pi)
+            } else {
+                am.set(AlarmManager.ELAPSED_REALTIME_WAKEUP, at, pi)
+            }
+            Toast.makeText(this, "修复已生效，正在重启…", Toast.LENGTH_SHORT).show()
+            uiHandler.postDelayed({ finishAffinity() }, 300)
+        } catch (e: Exception) {
+            Log.w("FireflyHotUpdate", "重启排程失败，退回结束进程: ${e.message}")
+            try {
+                Toast.makeText(this, "修复已生效，正在重启…", Toast.LENGTH_SHORT).show()
+            } catch (_: Exception) {
+            }
+            android.os.Process.killProcess(android.os.Process.myPid())
         }
     }
 }

@@ -267,6 +267,138 @@ import notice as NT                        # noqa: E402
 r = NT.check(force=True)
 check("J1 本地源没有公告也算正常（不抛异常）", isinstance(r, dict) and "ok" in r)
 
+print("\n=== K. py 层（v2）：真签名 → 覆盖层 → 导入真的换掉代码 ===")
+# 用一个**当前进程没 import 过**的探针模块（关键：已 import 的模块重启也换不掉，
+# 那是 v2 的已知边界，见 `hotupdate._overlay_effective`）。
+#
+# ⚠️ K 段用**独立的 dist/ 与更新源**：前面 A 段已经在 `DIST/<base>/` 里放了 serial 1，
+#   而"已发布的 serial 永不覆盖"是硬规则 ⇒ 复用同一个发布区会直接 die（而且它把原因打在
+#   stdout 上，只读 stderr 会看到一句空失败）。独立目录既避开这条，也让断言不依赖前文残留。
+KDIST = TMP / "kdist"
+KBUILD = TMP / "kbuild"
+
+
+class KHandler(http.server.BaseHTTPRequestHandler):
+    def log_message(self, *a):
+        pass
+
+    def do_GET(self):
+        fp = KDIST / self.path.split("?")[0].lstrip("/")
+        if not fp.is_file():
+            self.send_response(404)
+            self.end_headers()
+            return
+        self.send_response(200)
+        self.send_header("Content-Length", str(fp.stat().st_size))
+        self.end_headers()
+        self.wfile.write(fp.read_bytes())
+
+
+ksrv = socketserver.TCPServer(("127.0.0.1", 0), KHandler)
+ksrv.allow_reuse_address = True
+KPORT = ksrv.server_address[1]
+threading.Thread(target=ksrv.serve_forever, daemon=True).start()
+
+probe = ROOT / "app" / "modules" / "hu_e2e_probe.py"
+probe.write_text("# E2E 探针（测试结束即删）\nE2E_VALUE = 'base'\n", encoding="utf-8")
+try:
+    HU.reset_for_test()
+    HU._clear_overlay()
+    st = HU.load_state()
+    st.update({"enabled": True, "applied_serial": 0, "applied_hash": "",
+               "applied_layer": "", "pending_serial": 0, "boot_fail_count": 0,
+               "base_version": cfg.APP_VERSION, "rolled_back_reason": "", "last_error": "",
+               "url_roots": [f"http://127.0.0.1:{KPORT}"]})
+    HU.save_state(st)
+    HU._RT["available"] = None
+
+    # K1：先用**当前工作区**重建基线（含刚写的探针），确保"基线里已有它"
+    r = subprocess.run([PY, str(ROOT / "tools" / "build_hotupdate.py"), "--init",
+                        "--base", cfg.APP_VERSION, "--dist", str(KDIST),
+                        "--build-dir", str(KBUILD), "--key", str(KEY)],
+                       capture_output=True, encoding="utf-8", errors="replace")
+    check("K1 基线重建（含 py 层）成功", r.returncode == 0,
+          ((r.stdout or "")[-160:] + (r.stderr or "")[-80:]).strip())
+
+    # K2：改探针 → 产出累积补丁（这一次是纯 py 层改动）
+    probe.write_text("# E2E 探针（测试结束即删）\nE2E_VALUE = 'patched'\n", encoding="utf-8")
+    r = subprocess.run([PY, str(ROOT / "tools" / "build_hotupdate.py"),
+                        "--base", cfg.APP_VERSION, "--dist", str(KDIST),
+                        "--build-dir", str(KBUILD), "--key", str(KEY), "--note", "E2E py 层"],
+                       capture_output=True, encoding="utf-8", errors="replace")
+    check("K2 产出 py 层补丁", r.returncode == 0,
+          ((r.stdout or "")[-160:] + (r.stderr or "")[-80:]).strip())
+    KBASE = KDIST / cfg.APP_VERSION
+    man = json.loads(_b64.b64decode(json.loads(
+        (KBASE / "patch-1.json").read_text(encoding="utf-8"))["manifest_b64"]))
+    check("K3 清单 layer 如实报 py", man.get("layer") == "py", str(man.get("layer")))
+    check("K4 清单路径带 py/ 前缀",
+          [f["path"] for f in man["files"]] == ["py/modules/hu_e2e_probe.py"],
+          str([f["path"] for f in man["files"]]))
+
+    # K5：客户端应用 → 必须走"重启生效"那一路
+    rr = HU.check(manual=True)
+    check("K5 check 拉到 py 补丁", rr.get("ok") and rr.get("serial") == 1, str(rr.get("error") or ""))
+    a = HU.apply_available()
+    check("K6 apply 成功且 layer=py", a.get("ok") and a.get("layer") == "py",
+          f"{a.get('error')} layer={a.get('layer')}")
+    check("K7 ★ restart_pending 置位（py 层不能靠 reload）",
+          HU.status()["restart_pending"] is True)
+    check("K8 reload_pending 为假（纯 py 层 reload 无意义）",
+          HU.status()["reload_pending"] is False)
+    pv = HU.py_dir() / "modules" / "hu_e2e_probe.py"
+    check("K9 py 覆盖层落盘且不带重复 py/ 前缀",
+          pv.is_file() and "patched" in pv.read_text(encoding="utf-8"),
+          str(pv.relative_to(HU.root()) if pv.is_file() else "缺失"))
+
+    # K10：真导入 —— 覆盖层插到 sys.path 首位后，导入到的是**打过补丁的代码**
+    sys.path.insert(0, str(HU.py_dir()))
+    try:
+        import importlib
+        mod = importlib.import_module("modules.hu_e2e_probe")
+        check("K10 ★ 导入到的是补丁内容（这是 py 层热更的最终判据）",
+              getattr(mod, "E2E_VALUE", None) == "patched",
+              str(getattr(mod, "E2E_VALUE", None)))
+    finally:
+        sys.path.remove(str(HU.py_dir()))
+        sys.modules.pop("modules.hu_e2e_probe", None)
+
+    # K11：boot_ok（新进程启动确认）清掉重启标志
+    HU.boot_ok()
+    check("K11 boot_ok 清掉 restart_pending",
+          HU.status()["restart_pending"] is False
+          and HU.status()["pending_serial"] == 0)
+
+    # K12~K15：★ 安全模式对 **py 层**同样成立（坏 py 补丁不能把用户钉死）
+    #   G 组只覆盖了 web 层；py 层更危险 —— 坏补丁可能让"服务根本起不来"，
+    #   而"起不来"恰恰是它自己无法上报的状态，只有**下一次启动**的 on_startup 能判。
+    #   这里把状态摆成"刚应用完、还没等到 boot_ok 就崩了/被杀了"：
+    _d = HU.load_state()
+    _d["pending_serial"] = 1            # = 已应用但未确认启动
+    _d["boot_fail_count"] = 0
+    HU.save_state(_d)
+    HU.reset_for_test()                 # 内存态清空 = 模拟进程重启
+    note1 = HU.on_startup()["note"]
+    st = HU.status()
+    check("K12 ★ 第 1 次未确认的启动：只计数、不清 py 覆盖层（补丁仍在生效中）",
+          st["boot_fail_count"] == 1 and st["py_files"] > 0, f"{note1} py={st['py_files']}")
+    HU.reset_for_test()
+    note2 = HU.on_startup()["note"]
+    st = HU.status()
+    check("K13 ★ 第 2 次未确认 → 自动回退，两层覆盖层全清",
+          st["applied_serial"] == 0 and st["overlay_files"] == 0
+          and not HU.py_dir().exists(), f"{note2} files={st['overlay_files']}")
+    check("K14 回退原因可读", "未能完成启动" in (st["rolled_back_reason"] or ""),
+          (st["rolled_back_reason"] or "")[:40])
+
+    # K15：显式回滚幂等（两层都空时再调一次不许出错）
+    HU.rollback("E2E 收尾")
+    check("K15 回滚后两层覆盖层都空",
+          HU.status()["overlay_files"] == 0 and not HU.py_dir().exists())
+finally:
+    probe.unlink(missing_ok=True)
+    ksrv.shutdown()
+
 print(f"\n统计: PASS={PASS} FAIL={FAIL}")
 print(f"（沙箱：{TMP}）")
 shutil.rmtree(TMP, ignore_errors=True)

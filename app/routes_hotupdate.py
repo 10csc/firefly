@@ -1,8 +1,9 @@
 # -*- coding: utf-8 -*-
 """热更新路由（见 docs/热更新规范.md 与 热更新/02_实现契约.md §五）。
 
-四个端点都很轻：status 只读状态；action 是唯一会改盘/联网的入口；boot-ok 与 activity
-是前端的心跳（分别用于"启动成功判据"和"空闲判定"）。
+五个端点都很轻：status 只读状态；action 是唯一会改盘/联网的入口；boot-ok 与 activity
+是前端的心跳（分别用于"启动成功判据"和"空闲判定"）；restart 是壳/用户问
+"现在该不该重启进程"（v2：含 py 层的补丁只能靠重启生效）。
 
 **仅本地版可用**：服务器版跑的是同一份代码，但热更是端侧覆盖层的事，服务器上既无意义
 又是个"任意登录用户可触发联网下载"的口子（与 /metrics 同理）。
@@ -63,3 +64,18 @@ def hotupdate_activity(h):
     body = _read_json(h) or {}
     from hotupdate import note_activity
     h._json(note_activity(bool(body.get("busy")), str(body.get("why") or "")))
+
+
+def hotupdate_restart(h):
+    """壳问：现在该重启进程吗？（v2）
+
+    ★ 与 `reload_pending` 的分工：reload 只换前端，**换不掉已 import 的 Python 模块**。
+    含 py 层的补丁必须走这里的"重启进程"分支（契约 §七）。
+    只看不行动 —— 真正的重启动作在 Kotlin 壳（`MainActivity.maybeRestartForHotUpdate`），
+    前端没有重启自己的能力，所以它只把这件事显示给用户。
+    """
+    if _deny(h):
+        return
+    from hotupdate import idle, restart_ready, status as hu_status
+    h._json({"ok": True, "restart": restart_ready(), "idle": idle(),
+             "status": hu_status()})
