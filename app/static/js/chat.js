@@ -330,14 +330,18 @@ function importData() {
 }
 window.importData = importData;
 
-// ══ 导出当前角色（2026-09-10 加）══
+// ══ 导出备份（2026-09-10 加；2026-09-25 改名）══
 // 为什么需要它：此前前端只有「导入」没有「导出」——用户无法自助备份，唯一的备份入口是
 // 全量快照，而快照对自建角色包曾存在丢包问题（R-01）。导出走既有 GET /export-data?mode=，
 // 产出本地 zip（含该角色的包定义与全部对话/手账/记忆，_config.json 已剥离 Key），
 // 可离线留存、也可用「导入」在本机或其他设备还原。
+//
+// ★ 2026-09-25 改名「导出当前角色」→「导出备份」：那一列按钮里「保存快照（全部角色）」
+//   已经用括号标注了范围，导出再标范围就会让人以为是两种并列的东西；而它与「导入备份」
+//   本来就是一对（导出→导入 是同一个闭环），叫「备份」才对上。功能没变：仍然导**当前角色**。
 function exportData() {
     const name = MODE_NAMES[CURRENT_MODE] || CURRENT_MODE;
-    if (!confirm(`导出「${name}」的全部数据为本地 zip？\n\n包含：角色设定、对话记录、手账、记忆（不含 API Key）。\n可用于离线备份或换机迁移。`)) return;
+    if (!confirm(`导出「${name}」的全部数据为本地 zip 备份？\n\n包含：角色设定、对话记录、手账、记忆（不含 API Key）。\n可用「导入备份」在本机或其他设备还原。`)) return;
     _toast("正在打包导出…");
     const url = API_BASE + "/export-data?mode=" + encodeURIComponent(CURRENT_MODE);
     // 用隐藏链接触发下载（保留 Content-Disposition 文件名；window.open 在部分 WebView 会被拦）

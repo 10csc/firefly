@@ -192,6 +192,23 @@ check("C4 HTML 只作为**纯文本**保留（不解析、不转义决策在端�
       blocks and blocks[0]["text"] == "<b>粗</b>")
 check("C5 非法图片名（含 ../）被丢弃", all(b["t"] != "img" for b in blocks))
 
+# ★ C7/C8 前向兼容（2026-09-25 用户提的问题："服务器若新增公告类型，岂不是还要更新客户端？"）
+#   口径：未知类型**带纯文本** → 降级成段落保留内容（老客户端至少能读到字）；
+#        未知类型**带标记** → 丢弃（别把 <script> 当正文显示出来）。
+m = manifest(entries=[{
+    "id": "e-fwd", "title": "T",
+    "blocks": [{"t": "table", "text": "新增了两种表格式排版"},
+               {"t": "quote", "text": "<b>不在白名单且带标记</b>"},
+               {"t": "badge", "text": "纯文本新类型"}],
+}])
+v = NT.validate(HN.canonical_bytes(m))
+fwd = v["entries"][0]["blocks"]
+check("C7 ★ 未知类型（纯文本）降级成段落且内容保留",
+      [b["t"] for b in fwd] == ["p", "p"] and fwd[0]["text"] == "新增了两种表格式排版",
+      str([(b["t"], b["text"][:12]) for b in fwd]))
+check("C8 ★ 未知类型但带标记的仍被丢弃（不把标记当正文显示）",
+      all("不在白名单" not in b.get("text", "") for b in fwd))
+
 m = manifest(entries=[{"id": "../bad", "title": "T", "blocks": [{"t": "p", "text": "x"}]},
                       {"id": "ok", "title": "T2", "blocks": [{"t": "p", "text": "y"}]}])
 v = NT.validate(HN.canonical_bytes(m))
@@ -339,8 +356,12 @@ check("I1 顶层字段齐备",
       all(k in p for k in ("ok", "serial", "generated_at", "app_version",
                            "entries", "unread", "refreshing", "last_error")))
 e = p["entries"][0]
+# ★ 2026-09-25：`pinned` 字段按用户要求**移除**（公告是时间流，不设置顶位；
+#   之前给 0.9.0 更新说明打了 pinned，列表头永远挂一个"置顶"组）。新增 `has_new_type`
+#   用于前端提示"这条含新形态内容"（见 app/notice.py::validate 的前向兼容说明）。
 check("I2 条目字段齐备",
-      all(k in e for k in ("id", "title", "date", "level", "pinned", "blocks", "unread")))
+      all(k in e for k in ("id", "title", "date", "level", "blocks", "unread")))
+check("I2b 已移除 pinned 字段（不再有置顶语义）", "pinned" not in e)
 check("I3 块字段齐备（含 img 的 name/alt）",
       all(k in b for b in e["blocks"] for k in (("t", "text") if b["t"] != "img"
                                                 else ("t", "name", "sha256", "size", "alt"))))

@@ -78,15 +78,38 @@ function _renderBlock(b) {
     return _el(tag, "notice-b-" + b.t, b.text);
 }
 
+// 哪几条是展开的（按 id 记）。★ 必须记在模块级而不是 DOM 上：
+//   `_paintEntries()` 会整块重建 DOM（筛选/刷新/标已读都会触发），
+//   状态只存在 DOM 里的话，用户点开一条、后台刷新一次就又折回去了。
+const _open = new Set();
+
 function _renderEntry(e) {
     const box = _el("div", "notice-entry notice-lv-" + (e.level || "info"));
-    if (e.pinned) box.classList.add("notice-pinned");
-    const head = _el("div", "notice-ent-head");
-    head.appendChild(_el("span", "notice-ent-title", e.title));
-    if (e.date) head.appendChild(_el("span", "notice-ent-date", e.date));
-    if (e.unread) head.appendChild(_el("span", "notice-ent-new", "新"));
-    box.appendChild(head);
-    for (const b of (e.blocks || [])) box.appendChild(_renderBlock(b));
+    if (_open.has(e.id)) box.classList.add("notice-open");
+
+    // ★ 折叠开关 = 整行标题（2026-09-25 改：列表默认折叠，点开看详情）
+    const toggle = _el("button", "notice-ent-toggle");
+    toggle.type = "button";
+    toggle.setAttribute("aria-expanded", _open.has(e.id) ? "true" : "false");
+    toggle.appendChild(_el("span", "notice-ent-arrow", "▾"));
+    if (e.unread) toggle.appendChild(_el("span", "notice-ent-dot"));
+    toggle.appendChild(_el("span", "notice-ent-title", e.title));
+    if (e.date) toggle.appendChild(_el("span", "notice-ent-date", e.date));
+    if (e.unread) toggle.appendChild(_el("span", "notice-ent-new", "新"));
+    // 收起时提示"点开有多少内容"，省得逐条试点
+    const n = (e.blocks || []).length;
+    toggle.appendChild(_el("span", "notice-ent-hint", n ? n + " 段" : ""));
+    toggle.addEventListener("click", () => {
+        const open = !box.classList.contains("notice-open");
+        box.classList.toggle("notice-open", open);
+        toggle.setAttribute("aria-expanded", open ? "true" : "false");
+        if (open) _open.add(e.id); else _open.delete(e.id);
+    });
+    box.appendChild(toggle);
+
+    const body = _el("div", "notice-ent-body");
+    for (const b of (e.blocks || [])) body.appendChild(_renderBlock(b));
+    box.appendChild(body);
     return box;
 }
 
@@ -150,10 +173,12 @@ function _paintEntries() {
         return;
     }
 
-    // 分组：置顶的永远最前；其余按日期倒序（服务端已排过，这里只做分组不做重排）
+    // 分组：按日期倒序（服务端已排过，这里只做分组不做重排）。
+    // ★ 2026-09-25 去掉"置顶"：公告是**时间流**，谁都不该抢第一位；
+    //   之前给 0.9.0 更新说明打了 pinned:true，结果列表头永远挂一个"置顶"组。
     let lastGroup = null;
     for (const e of list) {
-        const label = e.pinned ? "置顶" : _groupLabel(e.date);
+        const label = _groupLabel(e.date);
         if (label !== lastGroup) {
             lastGroup = label;
             host.appendChild(_el("div", "notice-group", label));

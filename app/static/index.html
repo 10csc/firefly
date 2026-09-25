@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>Firefly</title>
-<link rel="stylesheet" href="style.css?v=aee4884c">
+<link rel="stylesheet" href="style.css?v=60c285fc">
 <style>
 /* 服务器版：轮播图下登录/用户模块 */
 /* 首页卡片族：账号模块 / 设定纠错 / 服务器云端版入口共用（原先只写了两份 scoped 副本，
@@ -713,10 +713,10 @@ svg.ico{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:1.8;st
                     <div style="margin-top:6px">
                         <button id="snapshot-create-btn" type="button">保存快照（全部角色）</button>
                         <button id="import-btn" type="button" onclick="importData()">导入备份（zip）</button>
-                        <button id="export-btn" type="button" onclick="exportData()">导出当前角色（zip）</button>
+                        <button id="export-btn" type="button" onclick="exportData()">导出备份（zip）</button>
                         <input id="import-file" type="file" accept=".zip,application/zip" style="display:none">
                     </div>
-                    <div style="color:var(--fg-muted);font-size:0.7em;margin-top:6px">快照包含所有角色卡与聊天记录（不含 Key），存服务器，每账号留最近 5 份——换手机也能恢复。<b>「导出当前角色」下载本地 zip（含角色包与对话），是唯一可离线留存的备份方式。</b></div>
+                    <div style="color:var(--fg-muted);font-size:0.7em;margin-top:6px">快照包含所有角色卡与聊天记录（不含 Key），存服务器，每账号留最近 5 份——换手机也能恢复。<b>「导出备份」下载本地 zip（当前角色的角色包与全部对话），是唯一可离线留存的备份方式。</b></div>
                     <div id="snapshot-list" style="margin-top:8px"></div>
                 </div>
                 <div class="field" id="sync-now-field" style="margin-top:10px">
@@ -1114,7 +1114,7 @@ svg.ico{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:1.8;st
 </script>
 <script src="config.js"></script>
 <!-- 运行时入口：bundle.js（classic script，file:// 兼容；ES Module 在安卓服务器模式 file:// 下被 CORS 拦截） -->
-<script src="js/bundle.js?v=d3d5d1c6"></script>
+<script src="js/bundle.js?v=313830a2"></script>
 <script src="js/pc_shell.js"></script>
 </body>
 </html>
