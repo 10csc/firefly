@@ -295,6 +295,16 @@ def get_config(h):
     key = cfg.active_provider().get("api_key", "") or cfg.config.get("api_key", "")
     # 服务器版不返回 key_prefix：全局/env 兜底 Key 的前缀也不能向登录用户暴露
     key_prefix = "" if _is_server() else (key[:12] + "..." if key else "")
+    # ★ 运行版本三元组（契约 §五）：热更不改版本号，所以"用户在跑哪份代码"只能靠
+    #   base + hot_serial + patch_hash 三者合起来说清。服务器版也返回（它同样可能被热更，
+    #   而且排障时"服务器版跑的是哪份"同样是高频问题）；纯读、不涉密。
+    try:
+        from hotupdate import running_id as _hu_running
+        running = _hu_running()
+    except Exception:
+        running = {"base_version": cfg.APP_VERSION, "hot_serial": 0, "patch_hash": "",
+                   "layer": "", "display_version": cfg.APP_VERSION,
+                   "id": cfg.APP_VERSION}
     # 供应商列表：Key 只回 has_key + 前缀（不回全量），服务器版供应商配置在浏览器（localStorage）
     providers = []
     for p in (cfg.config.get("providers") or []):
@@ -309,6 +319,7 @@ def get_config(h):
         })
     h._json({
         "platform": _platform_tag(),
+        "running": running,
         "has_key": bool(cfg.get_api_key()),
         "key_prefix": key_prefix,
         "active_provider": cfg.config.get("active_provider", "deepseek"),

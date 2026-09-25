@@ -1,6 +1,7 @@
 // 双模式与请求封装：FIREFLY_MODE / fetch 鉴权注入 / 登录与注册表单
 import { showToast, getLocalApiKey } from "./util.js";
 import { initAssets } from "./relay.js";
+import { encHead, ENC_HEADER, SECRET_HEADERS } from "./session_crypto.js";
 
 // ═══════════════════════════════════════════
 // 双模式（0.8.0）
@@ -23,7 +24,17 @@ export const API_BASE = IS_SERVER ? (window.FIREFLY_SERVER_BASE || "") : "";
 export const _serverFetch = window.fetch;
 
 // 服务器模式：账号 + Key 请求头注入（本地模式原样直通，同源无跨域）
-window.fetch = function (url, opts) {
+//
+// ★ 2026-09-25 敏感头应用层加密（见 docs/审计-服务器与开发版-2026-09-18.md §2.1）：
+//   全站明文 HTTP 的零成本对策 —— `Authorization` / `X-API-Key` / `X-API-Base` 三个头的
+//   值用服务器公钥加密后放进 `X-Firefly-Enc`，链路上看不到明文 token/Key。
+//   实现要点：
+//     · 加密是**异步**的（crypto.subtle / BigInt 模幂）⇒ 本包装器改成 `async` 返回 Promise
+//       （调用方本来就在 await / .then，语义不变）。
+//     · **加密失败绝不放行加密头但漏掉明文头**：失败时按原样发明文（旧客户端行为），
+//       服务器两种情况都收 —— 宁可暂时退回明文，也不能让用户登不进去。
+//     · 只对**服务器模式**加密：本地版同源 127.0.0.1，加解密纯属浪费。
+window.fetch = async function (url, opts) {
     if (!IS_SERVER) return _serverFetch(url, opts);
     opts = opts || {};
     const headers = new Headers(opts.headers || {});
@@ -40,20 +51,34 @@ window.fetch = function (url, opts) {
     // 服务器版账号：登录态带 Bearer token（Key 仍只存本机，token 是账号会话）
     let t = ""; try { t = localStorage.getItem("firefly_token") || ""; } catch (e) {}
     if (t) headers.set("Authorization", "Bearer " + t);
+    // ── 敏感头加密（失败退回明文，见上方说明）──
+    try {
+        const pairs = [];
+        SECRET_HEADERS.forEach(function (name) {
+            const v = headers.get(name);
+            if (v) pairs.push([name, v]);
+        });
+        if (pairs.length) {
+            const r = await encHead(pairs);
+            if (r && r.enc) {
+                SECRET_HEADERS.forEach(function (name) { headers.delete(name); });
+                headers.set(ENC_HEADER, r.enc);
+            }
+        }
+    } catch (e) { /* 保持明文 —— 服务器两种都收 */ }
     // 相对路径 → 服务器绝对 URL（本地 file:// 页面无同源相对路径）
     let fullUrl = String(url);
     if (fullUrl.startsWith("/")) fullUrl = API_BASE + fullUrl;
     opts = Object.assign({}, opts, { headers: headers });
-    return _serverFetch(fullUrl, opts).then(resp => {
-        // 401：登录失效/未登录。仅对用户主动操作（/chat）提示并亮出登录模块；
-        // 后台轮询端点（proactive-status/config/history/relay 等）静默——否则
-        // 未登录时「请先登录后使用」toast 每 10s 弹一次刷屏。
-        if (resp.status === 401 && String(url).indexOf("/chat") >= 0 && !String(url).includes("/auth/")) {
-            try { showToast("请先登录后使用"); } catch (e) {}
-            try { showAuthModule(); } catch (e) {}
-        }
-        return resp;
-    });
+    const resp = await _serverFetch(fullUrl, opts);
+    // 401：登录失效/未登录。仅对用户主动操作（/chat）提示并亮出登录模块；
+    // 后台轮询端点（proactive-status/config/history/relay 等）静默——否则
+    // 未登录时「请先登录后使用」toast 每 10s 弹一次刷屏。
+    if (resp.status === 401 && String(url).indexOf("/chat") >= 0 && !String(url).includes("/auth/")) {
+        try { showToast("请先登录后使用"); } catch (e) {}
+        try { showAuthModule(); } catch (e) {}
+    }
+    return resp;
 };
 
 // API 来源切换：托管模式隐藏 Key/供应商输入，显示隐私提示
