@@ -1294,8 +1294,13 @@ body {
     background: none; border: none; color: var(--fg-main);
     font-size: 1.2em; cursor: pointer;
 }
+/* ★ min-height: 0 不能删（2026-09-24 排查）：本元素是 #notice-panel（flex column）的
+   flex 子项，而 flex 子项默认 min-height:auto —— 内容一长，元素被撑到内容高度，
+   overflow-y:auto 就**永不触发**，滚动条出现在面板外层甚至整页。
+   表现是"公告上下滚不动"。这是 flex 滚动容器最经典的陷阱，务必保留。 */
 .notice-body {
-    flex: 1; overflow-y: auto;
+    flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden;
+    -webkit-overflow-scrolling: touch;
     padding: 16px clamp(16px, 5vw, 24px);
     color: var(--fg-bright); line-height: 1.8; font-size: clamp(13px, 4vw, 15px);
 }
@@ -1304,19 +1309,103 @@ body {
 .notice-body p { margin: 4px 0; }
 .notice-tip { color: var(--fg-muted); font-size: 0.85em; }
 
+/* ── 面板头：标题 + 未读徽标 + 关闭 ──────────────────
+   徽标**只计未读公告**，不含使用指南：指南是常驻参考，把它算进"新消息"
+   会让小圆点永远不灭（用户点掉也还是亮的，等于失效）。 */
+.notice-title-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.notice-badge {
+    min-width: 17px; height: 17px; border-radius: 9px;
+    background: #ff6b6b; color: #fff; font-size: 0.62em; line-height: 17px;
+    text-align: center; padding: 0 5px; margin-left: 4px; flex-shrink: 0; box-sizing: border-box;
+}
+.notice-badge[hidden] { display: none; }
+.notice-header .notice-close {
+    background: none; border: none; color: var(--fg-main);
+    font-size: 1.2em; cursor: pointer; padding: 2px 6px;
+    min-width: 34px; min-height: 34px;   /* 无障碍：触摸目标 ≥ 34px */
+}
+.notice-header .notice-stats { color: var(--fg-muted); font-size: 0.72em; font-weight: 400; }
+
+/* ── 公告 Tab 条（公告 / 使用指南）────────────────────
+   这一条存在的唯一理由：0.9.0 把更新说明和使用手册**摞在同一页**，
+   用户分不清哪段是"新公告"、哪段是"常驻说明"。拆成两个 Tab 后，
+   各自有各自的空状态与滚动位置。 */
+.notice-tabs {
+    display: flex; gap: 4px; padding: 0 clamp(16px, 5vw, 24px);
+    border-bottom: 1px solid var(--ctrl-bg); flex-shrink: 0;
+}
+.notice-tab {
+    flex: 1; background: none; border: none; cursor: pointer;
+    color: var(--fg-muted); font-family: inherit; font-size: 0.92em;
+    padding: 10px 4px 9px; border-bottom: 2px solid transparent;
+    display: flex; align-items: center; justify-content: center; gap: 6px;
+    min-height: 40px; box-sizing: border-box;
+}
+.notice-tab[aria-selected="true"] {
+    color: var(--fg-bright); font-weight: 600; border-bottom-color: var(--fg-accent);
+}
+.notice-tab .notice-badge { margin-left: 0; }
+
+/* 分类筛选 chips（只看当前 Tab 的公告）。用 level 而不是新造的 category 字段：
+   旧客户端（0.9.x）的 notice.py 会丢弃未知字段，用新字段筛会直接筛成空列表。 */
+.notice-chips {
+    display: flex; gap: 6px; padding: 10px clamp(16px, 5vw, 24px) 2px;
+    flex-wrap: wrap; flex-shrink: 0;
+}
+.notice-chips[hidden] { display: none; }
+.notice-chip {
+    background: rgba(255,255,255,0.05); border: 1px solid var(--ctrl-bg);
+    border-radius: 999px; color: var(--fg-muted);
+    font-family: inherit; font-size: 0.78em; cursor: pointer;
+    padding: 4px 11px; min-height: 26px; box-sizing: border-box;
+}
+.notice-chip[aria-pressed="true"] {
+    background: var(--btn-bg); border-color: var(--fg-accent); color: var(--fg-bright);
+}
+.notice-chip .notice-chip-n { color: var(--fg-muted); font-size: 0.88em; }
+
+/* 日期分组头（sticky：滚到哪儿都知道自己在看哪天的公告） */
+.notice-group {
+    position: sticky; top: -16px; z-index: 1;
+    background: var(--panel-veil); backdrop-filter: blur(6px);
+    color: var(--fg-muted); font-size: 0.75em; letter-spacing: 0.04em;
+    padding: 6px 0 5px; margin: 2px 0 8px;
+}
+
+/* 三态空状态（有内容 / 空 / 拉取失败）——"拉取失败"必须说出来，
+   否则用户看到空面板会以为"这功能压根没做"。 */
+.notice-empty {
+    color: var(--fg-muted); text-align: center;
+    padding: 36px 16px; font-size: 0.88em; line-height: 1.9;
+}
+.notice-empty .notice-empty-ico { font-size: 1.8em; display: block; margin-bottom: 8px; opacity: 0.6; }
+.notice-empty .notice-empty-sub { font-size: 0.85em; opacity: 0.75; }
+.notice-stale {
+    background: rgba(255,200,120,0.08); border: 1px solid rgba(255,200,120,0.35);
+    border-radius: 8px; color: var(--fg-muted);
+    font-size: 0.78em; padding: 8px 11px; margin: 0 0 12px;
+}
+
 /* ── 服务端下发的公告条目（js/notice.js 渲染；见 docs/公告通道规范.md §四）──
-   与下面的内置指南刻意做出层次差：条目是"新内容"（有卡片底、有日期、置顶有强调边），
-   指南是"常驻参考"。分隔线上写一句"以下为 App 内置使用指南"，避免用户以为是两条公告。 */
+   层次差是做出来的：条目是"新内容"（卡片底 + 类型色条 + 日期），
+   指南是"常驻参考"（走单独的 Tab，页面上不再混排）。 */
 .notice-entry {
     background: rgba(255,255,255,0.045);
     border: 1px solid var(--ctrl-bg);
+    border-left: 3px solid var(--fg-muted);
     border-radius: 10px;
     padding: 12px 14px;
     margin: 0 0 12px;
+    overflow-wrap: break-word; min-width: 0;
 }
-.notice-entry.notice-lv-warn { border-color: rgba(255,200,120,0.45); }
-.notice-entry.notice-lv-critical { border-color: rgba(255,120,120,0.55); background: rgba(255,80,80,0.07); }
-.notice-entry.notice-pinned { box-shadow: inset 3px 0 0 var(--fg-accent); }
+.notice-entry.notice-lv-info { border-left-color: var(--fg-accent); }
+.notice-entry.notice-lv-warn { border-color: rgba(255,200,120,0.45); border-left-color: #ffc878; }
+.notice-entry.notice-lv-critical { border-color: rgba(255,120,120,0.55); border-left-color: #ff7878; background: rgba(255,80,80,0.07); }
+.notice-entry.notice-pinned { box-shadow: inset 0 1px 0 rgba(255,255,255,0.04); }
+.notice-entry.notice-pinned::before {
+    content: "置顶"; float: right; color: var(--fg-muted);
+    font-size: 0.66em; letter-spacing: 0.06em; margin-left: 8px;
+}
 .notice-ent-head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; margin-bottom: 6px; }
 .notice-ent-title { color: var(--fg-accent); font-size: 1.05em; font-weight: 600; }
 .notice-ent-date { color: var(--fg-muted); font-size: 0.78em; }
@@ -1340,6 +1429,11 @@ body {
 }
 .notice-divider::before { left: 0; }
 .notice-divider::after { right: 0; }
+
+/* 使用指南 Tab 的正文容器（原 #notice-static 的排版规则迁到这里，
+   因为现在它自己独占一个 Tab，不再是公告下面的"续页"）。 */
+#notice-static { padding: 0; }
+#notice-static h3:first-of-type { margin-top: 4px; }
 
 /* 首页公告栏"有新公告"小圆点（.notice-dot 由 js/notice.js 显隐） */
 .notice-dot {

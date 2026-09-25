@@ -1,6 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- FileProvider 路径白名单：**只暴露诊断包目录**（cacheDir/diagnostics/）。
-     最小暴露面：分享出去的是本应用缓存里的诊断包，不含 user_data（那里有 API Key 与会话）。 -->
+<!-- FileProvider 路径白名单：**只暴露两个应用私有目录**，保持最小暴露面。
+     ① cacheDir/diagnostics/ —— 诊断包（分享给开发者；不含 user_data，那里有 API Key 与会话）
+     ② cacheDir/update/      —— APP 内更新下载的安装包（2026-09-25）
+        只有系统安装器会读它；文件名由壳写死（firefly-update.apk），
+        **不接受页面/后端传来的任何路径** —— 少了这一条就是"任意文件交给安装器"的口子。 -->
 <paths>
     <cache-path name="diagnostics" path="diagnostics/" />
+    <cache-path name="update" path="update/" />
 </paths>

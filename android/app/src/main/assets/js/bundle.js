@@ -135,6 +135,305 @@ async function stickerSrc(file, isServer, apiBase) {
 }
 
 
+/* ── 来源：js/session_crypto.js ── */
+// 会话密钥 · 敏感请求头加密（见 docs/审计-服务器与开发版-2026-09-18.md §2.1）
+//
+// 背景：服务器只有明文 HTTP（不买域名/证书，用户明确约束），于是登录凭证与用户自己的
+// API Key 在链路上裸奔 —— 同一 WiFi 下的人抓包即得。零成本对策：**应用层加密敏感头**。
+//
+// 做什么：把 `Authorization` / `X-API-Key` / `X-API-Base` 三个头的值装进一个信封，
+// 用服务器公钥加密后放在 `X-Firefly-Enc` 里发出去；服务器用私钥解开。
+// 抓包者看到的是密文（**能防"链路偷看"**；防重放需要时间戳+nonce，属第二步，本版不做）。
+//
+// 信封格式（`enc.v1.<b64url(key)>.<b64url(iv)>.<b64url(ct)>`）：
+//   · key = RSA-2048 / OAEP-SHA256(公开指数 65537) 加密的 32 字节内容密钥
+//   · iv  = 16 字节随机数（每次请求都换 ⇒ 同一内容两次的密文不同）
+//   · ct  = 用 HMAC-SHA256 计数器流（keystream = HMAC(key, iv||counter_be32)）异或的明文
+//
+// 为什么用 HMAC 流而不是 AES：AES 在 JS 里只能靠 WebCrypto；而 WebView 在 file:// 页面
+// （安卓服务器模式就是这个形态）**没有 crypto.subtle** —— 于是必须有纯 BigInt 的自实现兜底。
+// HMAC 只需要 SHA-256，`crypto.subtle` 没有时可以用纯 JS SHA-256 顶上，两条路都短、都能测。
+// 明文不加密时保持原样（服务器两种都收），旧客户端不受影响。
+//
+// ⚠️ 明文内容里**再带一份 SHA-256 摘要**：不是为了防篡改（没有 MAC），而是为了让"解错了"
+//    变成一个**必然失败**而不是"碰巧解出一串乱码凭据"——服务器解出的 JSON 必须字段齐全
+//    且 sha256 对得上，否则整条信封丢弃（退回明文，宁可不加密也不要用错凭据）。
+
+const ENC_PREFIX = "enc.v1";
+
+/** 服务器公钥（SHA-256 用）：由 tools/build_session_keys.py 生成，勿手改。 */
+const SESSION_PUBKEY = {
+    n_b64: "9KNHioGtk7fZxARe7cAaIUpdz/mDq33ZYbpGw0OusocCLL3EDmDVi2viOTOBmBVy3pDQSP1Jw4ZnKaj8Tav+fsQGsa+h8p1m88qrQf4mIEZTaJv7l7Q9+gh4P4unl4FioI4hF6MZitELRYKoJuuZMZ8WO81kVgembPFRRFyaqcTRzvrutCdBExqNoq0mn5YFSdMfB4jdBmI0T2DzbCKkmP0PtrnSbQredP5OBSZj6A6PJj6kaoPnBMvZwKuSYtbJp5W1oifuB5OqG+b45KbkWVZj5CzPx5c7HdxmSMJ1PLfIREtBz58S+zIkKM6nLrUZWt2CwMB64aGr1ozU0DpSZQ==",
+    e: 65537,
+};
+const ENC_HEADER = "X-Firefly-Enc";
+// 只有这几个头值得加密（值里有凭证或用户自填地址）；其余头保持明文，
+// 免得把每个请求都拖进 RSA 运算（一次 BigInt 模幂 ~1ms，够用但没必要人人有份）
+const SECRET_HEADERS = ["Authorization", "X-API-Key", "X-API-Base"];
+
+const _enc = new TextEncoder();
+
+// ── base64url ─────────────────────────────────────
+function _b64u(bytes) {
+    let s = "";
+    for (let i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]);
+    return btoa(s).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+// ── 纯 JS SHA-256（WebCrypto 不可用时兜底；只在 file:// WebView 上被用到）──
+const _K = [
+    0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
+    0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+    0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+    0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+    0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+    0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+    0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+    0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2];
+
+function _sha256Raw(bytes) {
+    const l = bytes.length;
+    const withPad = new Uint8Array((((l + 9) >> 6) + 1) << 6);
+    withPad.set(bytes);
+    withPad[l] = 0x80;
+    const bitLen = l * 8;
+    // 长度按 64 位大端写在末尾（JS 数字安全整数 2^53，够表示任何现实长度）
+    withPad[withPad.length - 4] = (bitLen >>> 24) & 0xff;
+    withPad[withPad.length - 3] = (bitLen >>> 16) & 0xff;
+    withPad[withPad.length - 2] = (bitLen >>> 8) & 0xff;
+    withPad[withPad.length - 1] = bitLen & 0xff;
+    let h0 = 0x6a09e667, h1 = 0xbb67ae85, h2 = 0x3c6ef372, h3 = 0xa54ff53a,
+        h4 = 0x510e527f, h5 = 0x9b05688c, h6 = 0x1f83d9ab, h7 = 0x5be0cd19;
+    const w = new Array(64);
+    for (let off = 0; off < withPad.length; off += 64) {
+        for (let i = 0; i < 16; i++) {
+            w[i] = (withPad[off + i * 4] << 24) | (withPad[off + i * 4 + 1] << 16)
+                 | (withPad[off + i * 4 + 2] << 8) | (withPad[off + i * 4 + 3]);
+        }
+        for (let i = 16; i < 64; i++) {
+            const x = w[i - 15], y = w[i - 2];
+            const s0 = ((x >>> 7) | (x << 25)) ^ ((x >>> 18) | (x << 14)) ^ (x >>> 3);
+            const s1 = ((y >>> 17) | (y << 15)) ^ ((y >>> 19) | (y << 13)) ^ (y >>> 10);
+            w[i] = (w[i - 16] + s0 + w[i - 7] + s1) | 0;
+        }
+        let a = h0, b = h1, c = h2, d = h3, e = h4, f = h5, g = h6, h = h7;
+        for (let i = 0; i < 64; i++) {
+            const S1 = ((e >>> 6) | (e << 26)) ^ ((e >>> 11) | (e << 21)) ^ ((e >>> 25) | (e << 7));
+            const ch = (e & f) ^ (~e & g);
+            const t1 = (h + S1 + ch + _K[i] + w[i]) | 0;
+            const S0 = ((a >>> 2) | (a << 30)) ^ ((a >>> 13) | (a << 19)) ^ ((a >>> 22) | (a << 10));
+            const maj = (a & b) ^ (a & c) ^ (b & c);
+            const t2 = (S0 + maj) | 0;
+            h = g; g = f; f = e; e = (d + t1) | 0;
+            d = c; c = b; b = a; a = (t1 + t2) | 0;
+        }
+        h0 = (h0 + a) | 0; h1 = (h1 + b) | 0; h2 = (h2 + c) | 0; h3 = (h3 + d) | 0;
+        h4 = (h4 + e) | 0; h5 = (h5 + f) | 0; h6 = (h6 + g) | 0; h7 = (h7 + h) | 0;
+    }
+    const out = new Uint8Array(32);
+    [h0, h1, h2, h3, h4, h5, h6, h7].forEach((v, i) => {
+        out[i * 4] = (v >>> 24) & 0xff; out[i * 4 + 1] = (v >>> 16) & 0xff;
+        out[i * 4 + 2] = (v >>> 8) & 0xff; out[i * 4 + 3] = v & 0xff;
+    });
+    return out;
+}
+
+// ── HMAC-SHA256（keystream 与摘要共用；优先 WebCrypto，缺失时用纯 JS）──
+let _subtleKey = null, _subtleKeyUse = null;
+
+async function _hmac(keyBytes, data) {
+    // 备注：`crypto.subtle` 在 file:// 页面不存在 —— 此时直接走纯 JS。
+    try {
+        const subtle = (typeof crypto !== "undefined" && crypto.subtle) ? crypto.subtle : null;
+        if (subtle) {
+            if (!_subtleKey || _subtleKeyUse !== keyBytes) {
+                _subtleKey = await subtle.importKey(
+                    "raw", keyBytes, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+                _subtleKeyUse = keyBytes;
+            }
+            const buf = await subtle.sign("HMAC", _subtleKey, data);
+            return new Uint8Array(buf);
+        }
+    } catch (e) { /* 落回纯 JS */ }
+    const block = 64;
+    let k = keyBytes;
+    if (k.length > block) k = _sha256Raw(k);
+    const kp = new Uint8Array(block);
+    kp.set(k);
+    const ipad = new Uint8Array(block), opad = new Uint8Array(block);
+    for (let i = 0; i < block; i++) {
+        ipad[i] = kp[i] ^ 0x36;
+        opad[i] = kp[i] ^ 0x5c;
+    }
+    const inner = new Uint8Array(block + data.length);
+    inner.set(ipad); inner.set(data, block);
+    const outer = new Uint8Array(block + 32);
+    outer.set(opad); outer.set(_sha256Raw(inner), block);
+    return _sha256Raw(outer);
+}
+
+async function _sha256(bytes) {
+    try {
+        const subtle = (typeof crypto !== "undefined" && crypto.subtle) ? crypto.subtle : null;
+        if (subtle) {
+            const buf = await subtle.digest("SHA-256", bytes);
+            return new Uint8Array(buf);
+        }
+    } catch (e) { /* 落回纯 JS */ }
+    return _sha256Raw(bytes);
+}
+
+async function _keystream(keyBytes, iv, len) {
+    const out = new Uint8Array(len);
+    let off = 0, counter = 0;
+    while (off < len) {
+        const block = new Uint8Array(iv.length + 4);
+        block.set(iv);
+        block[iv.length] = (counter >>> 24) & 0xff;
+        block[iv.length + 1] = (counter >>> 16) & 0xff;
+        block[iv.length + 2] = (counter >>> 8) & 0xff;
+        block[iv.length + 3] = counter & 0xff;
+        const ks = await _hmac(keyBytes, block);
+        for (let i = 0; i < ks.length && off < len; i++, off++) out[off] = ks[i];
+        counter++;
+    }
+    return out;
+}
+
+// ── RSA-OAEP(SHA-256) 公钥加密 ────────────────────
+function _b64ToBytes(s) {
+    const bin = atob(String(s).replace(/-/g, "+").replace(/_/g, "/"));
+    const out = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+    return out;
+}
+
+function _bytesToBigInt(bytes) {
+    let hex = "";
+    for (let i = 0; i < bytes.length; i++) hex += bytes[i].toString(16).padStart(2, "0");
+    return BigInt("0x" + (hex || "0"));
+}
+
+function _bigIntToBytes(v, len) {
+    let hex = v.toString(16);
+    if (hex.length % 2) hex = "0" + hex;
+    const out = new Uint8Array(hex.length / 2);
+    for (let i = 0; i < out.length; i++) out[i] = parseInt(hex.substr(i * 2, 2), 16);
+    if (out.length === len) return out;
+    if (out.length > len) throw new Error("整数超长");
+    const pad = new Uint8Array(len);
+    pad.set(out, len - out.length);
+    return pad;
+}
+
+function _modPow(base, exp, mod) {
+    let result = 1n, b = base % mod, e = exp;
+    while (e > 0n) {
+        if (e & 1n) result = (result * b) % mod;
+        b = (b * b) % mod;
+        e >>= 1n;
+    }
+    return result;
+}
+
+async function _mgf1(seed, len) {
+    const out = new Uint8Array(len);
+    let off = 0, counter = 0;
+    while (off < len) {
+        const input = new Uint8Array(seed.length + 4);
+        input.set(seed);
+        input[seed.length] = (counter >>> 24) & 0xff;
+        input[seed.length + 1] = (counter >>> 16) & 0xff;
+        input[seed.length + 2] = (counter >>> 8) & 0xff;
+        input[seed.length + 3] = counter & 0xff;
+        const h = await _sha256(input);
+        for (let i = 0; i < h.length && off < len; i++, off++) out[off] = h[i];
+        counter++;
+    }
+    return out;
+}
+
+async function _oaepEncrypt(msg, nB64, e) {
+    const nBytes = _b64ToBytes(nB64);
+    const k = nBytes.length;
+    const n = _bytesToBigInt(nBytes);
+    const hLen = 32;
+    if (msg.length > k - 2 * hLen - 2) throw new Error("消息过长（OAEP 上限 " + (k - 2 * hLen - 2) + "B）");
+    const lHash = await _sha256(new Uint8Array(0));
+    const ps = new Uint8Array(k - msg.length - 2 * hLen - 2);
+    const db = new Uint8Array(k - hLen - 1);
+    db.set(lHash);
+    db.set(ps, hLen);                       // ps 全 0，set 即写入
+    db[hLen + ps.length] = 0x01;
+    db.set(msg, hLen + ps.length + 1);
+    const seed = new Uint8Array(hLen);
+    (typeof crypto !== "undefined" && crypto.getRandomValues)
+        ? crypto.getRandomValues(seed)
+        : seed.set(_randomFallback(hLen));
+    const dbMask = await _mgf1(seed, k - hLen - 1);
+    for (let i = 0; i < db.length; i++) db[i] ^= dbMask[i];
+    const seedMask = await _mgf1(db, hLen);
+    for (let i = 0; i < seed.length; i++) seed[i] ^= seedMask[i];
+    // ★ EM = 0x00 || maskedSeed || maskedDB（RFC 8017 §7.1.1 step 2(i)）
+    //   这个前导 0x00 极易漏：第一版就漏了 —— 漏掉后 EM 成了 seed||DB（还少 1 字节），
+    //   客户端自己"看着正常"，只有服务端 OAEP 会以 "EM 首字节非 0" 拒绝全部请求。
+    //   抓住它的是 tests/test_session_crypto.py 的**跨语言往返**（不是文案断言）。
+    const em = new Uint8Array(k);
+    em[0] = 0x00;
+    em.set(seed, 1);
+    em.set(db, 1 + hLen);
+    const m = _bytesToBigInt(em);
+    if (m >= n) throw new Error("EM 超模数");
+    return _bigIntToBytes(_modPow(m, BigInt(e), n), k);
+}
+
+/** 极少数环境连 getRandomValues 都没有时的兜底（Math.random 不可用于密钥，
+ *  但这里只用于"至少不崩"；调用方在真正加密前会先确认 crypto 存在）。 */
+function _randomFallback(n) {
+    const out = new Uint8Array(n);
+    for (let i = 0; i < n; i++) out[i] = Math.floor(Math.random() * 256);
+    return out;
+}
+
+// ── 对外：把敏感头装进信封 ────────────────────────
+/**
+ * 从 headers 里挑出敏感头 → 加密 → 返回 {enc: "<信封>", rest: {…剩余明文头…}}。
+ * 任何异常都返回 {enc: "", rest: 原样}（**加密失败不能挡住请求**，服务器两种都收）。
+ */
+async function encHead(headerPairs) {
+    const secrets = {}, rest = {};
+    for (const [name, value] of headerPairs) {
+        if (!value) continue;
+        if (SECRET_HEADERS.some(h => h.toLowerCase() === String(name).toLowerCase())) secrets[name] = value;
+        else rest[name] = value;
+    }
+    const names = Object.keys(secrets);
+    if (!names.length) return { enc: "", rest };
+    try {
+        const payload = _enc.encode(JSON.stringify({ v: 1, h: secrets }));
+        const digest = await _sha256(payload);
+        const body = new Uint8Array(payload.length + digest.length);
+        body.set(payload); body.set(digest, payload.length);
+        const key = new Uint8Array(32);
+        const iv = new Uint8Array(16);
+        if (typeof crypto === "undefined" || !crypto.getRandomValues) throw new Error("无安全随机源");
+        crypto.getRandomValues(key);
+        crypto.getRandomValues(iv);
+        const ks = await _keystream(key, iv, body.length);
+        const ct = new Uint8Array(body.length);
+        for (let i = 0; i < body.length; i++) ct[i] = body[i] ^ ks[i];
+        // 先取 SHA-256 明文摘要，再剥掉（服务器解出后再核一次）
+        const wrappedKey = await _oaepEncrypt(key, SESSION_PUBKEY.n_b64, SESSION_PUBKEY.e);
+        return {
+            enc: [ENC_PREFIX, _b64u(wrappedKey), _b64u(iv), _b64u(ct)].join("."),
+            rest,
+        };
+    } catch (e) {
+        return { enc: "", rest: Object.assign({}, rest, secrets) };
+    }
+}
+
+
 /* ── 来源：js/ui_select.js ── */
 // 自绘下拉组件（ui_select）：替代原生 <select> 的系统弹窗
 // 背景：安卓 WebView 的 <select> 点击弹系统级白色选项弹窗，页面 CSS 管不到（图1 实测）。
@@ -330,7 +629,17 @@ const API_BASE = IS_SERVER ? (window.FIREFLY_SERVER_BASE || "") : "";
 const _serverFetch = window.fetch;
 
 // 服务器模式：账号 + Key 请求头注入（本地模式原样直通，同源无跨域）
-window.fetch = function (url, opts) {
+//
+// ★ 2026-09-25 敏感头应用层加密（见 docs/审计-服务器与开发版-2026-09-18.md §2.1）：
+//   全站明文 HTTP 的零成本对策 —— `Authorization` / `X-API-Key` / `X-API-Base` 三个头的
+//   值用服务器公钥加密后放进 `X-Firefly-Enc`，链路上看不到明文 token/Key。
+//   实现要点：
+//     · 加密是**异步**的（crypto.subtle / BigInt 模幂）⇒ 本包装器改成 `async` 返回 Promise
+//       （调用方本来就在 await / .then，语义不变）。
+//     · **加密失败绝不放行加密头但漏掉明文头**：失败时按原样发明文（旧客户端行为），
+//       服务器两种情况都收 —— 宁可暂时退回明文，也不能让用户登不进去。
+//     · 只对**服务器模式**加密：本地版同源 127.0.0.1，加解密纯属浪费。
+window.fetch = async function (url, opts) {
     if (!IS_SERVER) return _serverFetch(url, opts);
     opts = opts || {};
     const headers = new Headers(opts.headers || {});
@@ -347,20 +656,34 @@ window.fetch = function (url, opts) {
     // 服务器版账号：登录态带 Bearer token（Key 仍只存本机，token 是账号会话）
     let t = ""; try { t = localStorage.getItem("firefly_token") || ""; } catch (e) {}
     if (t) headers.set("Authorization", "Bearer " + t);
+    // ── 敏感头加密（失败退回明文，见上方说明）──
+    try {
+        const pairs = [];
+        SECRET_HEADERS.forEach(function (name) {
+            const v = headers.get(name);
+            if (v) pairs.push([name, v]);
+        });
+        if (pairs.length) {
+            const r = await encHead(pairs);
+            if (r && r.enc) {
+                SECRET_HEADERS.forEach(function (name) { headers.delete(name); });
+                headers.set(ENC_HEADER, r.enc);
+            }
+        }
+    } catch (e) { /* 保持明文 —— 服务器两种都收 */ }
     // 相对路径 → 服务器绝对 URL（本地 file:// 页面无同源相对路径）
     let fullUrl = String(url);
     if (fullUrl.startsWith("/")) fullUrl = API_BASE + fullUrl;
     opts = Object.assign({}, opts, { headers: headers });
-    return _serverFetch(fullUrl, opts).then(resp => {
-        // 401：登录失效/未登录。仅对用户主动操作（/chat）提示并亮出登录模块；
-        // 后台轮询端点（proactive-status/config/history/relay 等）静默——否则
-        // 未登录时「请先登录后使用」toast 每 10s 弹一次刷屏。
-        if (resp.status === 401 && String(url).indexOf("/chat") >= 0 && !String(url).includes("/auth/")) {
-            try { showToast("请先登录后使用"); } catch (e) {}
-            try { showAuthModule(); } catch (e) {}
-        }
-        return resp;
-    });
+    const resp = await _serverFetch(fullUrl, opts);
+    // 401：登录失效/未登录。仅对用户主动操作（/chat）提示并亮出登录模块；
+    // 后台轮询端点（proactive-status/config/history/relay 等）静默——否则
+    // 未登录时「请先登录后使用」toast 每 10s 弹一次刷屏。
+    if (resp.status === 401 && String(url).indexOf("/chat") >= 0 && !String(url).includes("/auth/")) {
+        try { showToast("请先登录后使用"); } catch (e) {}
+        try { showAuthModule(); } catch (e) {}
+    }
+    return resp;
 };
 
 // API 来源切换：托管模式隐藏 Key/供应商输入，显示隐私提示
@@ -2291,6 +2614,69 @@ function _scheduleAutoSave() {
     }, 400);
 }
 
+// ═══════════════════════════════════════════
+// 运行版本三元组（用户报障时的唯一凭据）
+//
+// 为什么要有它：热更新**不改版本号**（改了会破坏“补丁针对哪个底座”的契约），
+// 所以“用户在跑哪份代码”= 底座版本 + 热更序号 + 清单指纹 三者合起来才说得清。
+// 用户 2026-09-25 的问题正是“不然无法确定用户处于哪个版本”，这是它的答案：
+// 让用户一句话（或一次点击）就能把这三项给我们，并且随诊断包一起发。
+// ═══════════════════════════════════════════
+let _runningIdText = "";
+
+function _renderRunningInfo(running) {
+    const el = document.getElementById("running-id-text");
+    const msg = document.getElementById("running-id-msg");
+    if (msg) msg.textContent = "";
+    if (!el) return;
+    if (!running || typeof running !== "object") {
+        el.textContent = "运行版本：读取失败";
+        _runningIdText = "";
+        return;
+    }
+    const base = String(running.base_version || "");
+    const serial = Number(running.hot_serial || 0);
+    const hash = String(running.patch_hash || "");
+    const layer = String(running.layer || "");
+    // 展示口径（用户 2026-09-25 拍板）：0.9.0_hot1 —— 下划线后缀，hot=热更新、数字=第几个。
+    // 没打补丁就只显示底座版本（不显示 _hot0：后缀的含义就是"打过补丁"）。
+    const disp = String(running.display_version || "") ||
+        (serial ? base + "_hot" + serial : base);
+    _runningIdText = String(running.id || "") || disp;
+    el.textContent = "运行版本：" + disp +
+        (serial && layer ? `（${layer} 层）` : "") +
+        (hash ? ` · ${hash}` : "");
+}
+
+function _runningMsg(text, ok) {
+    const el = document.getElementById("running-id-msg");
+    if (!el) return;
+    el.textContent = text || "";
+    el.style.color = ok ? "var(--fg-accent)" : "var(--fg-muted)";
+}
+
+/** 复制运行版本串（报障时直接贴给我们）。老 WebView 无 clipboard API → 退回选中提示。 */
+async function copyRunningId() {
+    const text = _runningIdText || "（还没读到运行版本，先打开设置面板）";
+    try {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+            await navigator.clipboard.writeText(text);
+        } else {
+            throw new Error("no clipboard api");
+        }
+        _runningMsg("已复制：" + text, true);
+        try { showToast("运行版本已复制，报问题时贴给我即可"); } catch (e) {}
+    } catch (e) {
+        _runningMsg("复制失败，请手动记下：" + text);
+    }
+}
+
+const _copyRunningBtn = document.getElementById("copy-running-id-btn");
+if (_copyRunningBtn) {
+    _copyRunningBtn.addEventListener("click", () => { copyRunningId(); });
+}
+window.copyRunningId = copyRunningId;
+
 async function loadConfig() {
     const ids = {
         a: "analyzer-model-input", r: "retriever-model-input",
@@ -2309,6 +2695,7 @@ async function loadConfig() {
     try {
         const resp = await fetch("/config");
         const data = await resp.json();
+        _renderRunningInfo(data.running);   // ← 运行版本三元组（拿到配置就顺手刷新）
         const el = {};
         for (const [k, id] of Object.entries(ids)) el[k] = document.getElementById(id);
 
@@ -2511,11 +2898,20 @@ _$("key-save")?.addEventListener("click", () => saveConfigNow(true));
 
 
 /* ── 来源：js/update.js ── */
-// 检查更新（GitHub 优先，失败自动降级 Gitee）与自动更新下载
+// 检查更新（★ 2026-09-24 改为**服务器主导**，见 docs/版本更新规范.md）
 // 注意：CURRENT_VERSION 是前端版本号单一来源，tools/check_version.py 校验本文件（及 server/frontend 同步副本）
 
 // ═══════════════════════════════════════════
-// 检查更新（GitHub 优先，失败自动降级 Gitee——国内网络 Gitee 更稳）
+// 检查更新（主通道 = 服务器 /update-manifest；GitHub/Gitee 仅作最后兜底）
+//
+// 为什么改（旧实现的两个硬伤）：
+//   1. GitHub 国内不稳 —— 用户侧超时/被墙，检测时好时坏；
+//   2. "成功即返回"吞掉更新 —— 旧代码按 GitHub→Gitee 顺序，**先成功者胜**。
+//      GitHub 停留在 v0.8.1 时直接 return，Gitee 上的 v0.9.0 被静默丢弃，
+//      0.8.1 客户端于是永远显示「已是最新版本」。
+//      （实测：Gitee 有 0.9.0、GitHub 忘发 → 大量用户收不到更新提示。）
+// 现在：服务器统一管理版本号与下载直链，客户端只认一个端点；
+//      兜底阶段也改为**按版本号取最高**，而非先到先得。
 // ═══════════════════════════════════════════
 const CURRENT_VERSION = "0.9.0";   // 与 android versionName / 安装器 AppVersion 保持一致
 // PC 三栏外壳（pc_shell.js，独立 classic script）底部状态栏要显示版本号，
@@ -2539,6 +2935,9 @@ function compareVersions(a, b) {
     }
     return 0;
 }
+function _isAndroid() {
+    return /Android/i.test(navigator.userAgent) && !/Windows|Mac|Linux/i.test(navigator.userAgent);
+}
 // 资产匹配：PC 装包 exe / 安卓 apk（Gitee 资产名可能带前缀，模糊匹配）
 function _matchAsset(assets, re) {
     if (!Array.isArray(assets)) return "";
@@ -2548,29 +2947,60 @@ function _matchAsset(assets, re) {
     }
     return "";
 }
+// 从服务器清单挑本平台的下载直链；未随发（url 空）→ 回退下载页
+function _pickFromManifest(m, isAndroid) {
+    const a = (m && m.assets && (isAndroid ? m.assets.apk : m.assets.exe)) || {};
+    return String(a.url || "").trim();
+}
+// 渲染「发现新版本」——三种可下载形态（服务器自动下载 / 清单直链 / 下载页）
+function _renderFound(msg, latest, cur, opts) {
+    const notes = opts.notes ? ` ｜ <a href="${escapeHtml(opts.notes)}" target="_blank" rel="noopener" style="color:var(--fg-muted)">发行说明</a>` : "";
+    const head = `发现新版本 <b style="color:var(--fg-accent)">${escapeHtml(latest)}</b>（当前 ${escapeHtml(cur)}）`;
+    if (opts.auto) {
+        msg.innerHTML = head + `<br>` +
+            `<button id="auto-update-btn" style="margin-top:6px;padding:4px 12px;border-radius:6px;border:none;background:var(--fg-accent);color:#fff;cursor:pointer">自动更新</button>` +
+            notes;
+        const btn = document.getElementById("auto-update-btn");
+        if (btn) btn.addEventListener("click", () => autoUpdate(opts.isAndroid));
+        return;
+    }
+    if (opts.directUrl) {
+        msg.innerHTML = head + `<br>` +
+            `<a href="${escapeHtml(opts.directUrl)}" target="_blank" rel="noopener" style="color:var(--fg-bright)">下载安装包</a>` + notes;
+        return;
+    }
+    msg.innerHTML = head + `<br>` +
+        `<a href="${DOWNLOAD_PAGE_URL}" target="_blank" rel="noopener" style="color:var(--fg-bright)">前往下载页</a>` + notes;
+}
 async function checkUpdate() {
     const msg = document.getElementById("update-msg");
     if (!msg) return;
     msg.textContent = "检查中…";
+    const isAndroid = _isAndroid();
     if (IS_SERVER) {
-        // 服务器模式：检查更新读服务器 version.json（由服务器管理员维护），不走 GitHub/Gitee
+        // 服务器模式：问本进程的 /update-manifest（服务器管理员维护 update.json）
         try {
-            const resp = await fetch("/version.json", {cache: "no-store"});
-            const d = await resp.json();
-            const latest = String(d.tag || "").replace(/^v/i, "");
+            const resp = await fetch("/update-manifest", {cache: "no-store"});
+            const m = await resp.json();
+            if (!m.ok) throw new Error(m.error || "no manifest");
+            const latest = String(m.tag || "").replace(/^v/i, "");
             const cur = String(CURRENT_VERSION);
             if (!latest) throw new Error("no tag");
             if (compareVersions(latest, cur) > 0) {
-                msg.innerHTML = `发现新版本 <b style="color:var(--fg-accent)">${escapeHtml(latest)}</b>（当前 ${escapeHtml(cur)}）<br>新版本由服务器管理员发布`;
+                _renderFound(msg, latest, cur, {
+                    notes: m.notes_url,
+                    directUrl: _pickFromManifest(m, isAndroid),
+                });
             } else {
                 msg.textContent = `已是最新版本 ${cur} ✓`;
             }
         } catch (e) {
-            msg.textContent = "检查失败（服务器 version.json 不可达）";
+            msg.textContent = "检查失败（服务器更新清单不可达）";
         }
         return;
     }
-    // 本地模式：优先走本地后端（权威版本源 + 自动下载能力），失败退回纯前端双源检测
+    // 本地模式：优先走本地后端（后端会去问服务器清单，权威版本源 + 自动下载能力），
+    // 失败退回纯前端双源检测（取版本最高者）
     try {
         // /check-update 只注册在 POST_ROUTES（GET 会 404，曾长期被前端双源兜底掩盖）
         const lr = await fetch("/check-update", {method: "POST", cache: "no-store"});
@@ -2580,20 +3010,19 @@ async function checkUpdate() {
             const latest = String(d.tag || "").replace(/^v/i, "");
             const cur = String(d.current || CURRENT_VERSION);
             if (!latest) throw new Error("no tag");
-            const isAndroid = /Android/i.test(navigator.userAgent) && !/Windows|Mac|Linux/i.test(navigator.userAgent);
             if (compareVersions(latest, cur) > 0) {
-                msg.innerHTML = `发现新版本 <b style="color:var(--fg-accent)">${escapeHtml(latest)}</b>（当前 ${escapeHtml(cur)}）<br>` +
-                    `<button id="auto-update-btn" style="margin-top:6px;padding:4px 12px;border-radius:6px;border:none;background:var(--fg-accent);color:#fff;cursor:pointer">自动更新</button>` +
-                    ` ｜ <a href="${escapeHtml(d.html_url || "#")}" target="_blank" rel="noopener" style="color:var(--fg-muted)">发行说明</a>`;
-                const btn = document.getElementById("auto-update-btn");
-                if (btn) btn.addEventListener("click", () => autoUpdate(isAndroid));
+                _renderFound(msg, latest, cur, {
+                    auto: true, isAndroid,
+                    notes: d.notes_url || d.html_url,
+                });
             } else {
                 msg.textContent = `已是最新版本 ${cur} ✓`;
             }
             return;
         }
     } catch (e) { /* 降级到前端直连 */ }
-    // 前端直连双源（后端接口不可用时）
+    // 前端直连双源（后端接口不可用时）——★ 取**版本最高**者，不再"先成功者胜"
+    let best = null;
     for (const src of UPDATE_SOURCES) {
         try {
             const resp = await fetch(src.api, {cache: "no-store"});
@@ -2601,28 +3030,36 @@ async function checkUpdate() {
             const data = await resp.json();
             const latest = String(data.tag_name || "").replace(/^v/i, "");
             if (!latest) throw new Error("no tag");
-            const isAndroid = /Android/i.test(navigator.userAgent) && !/Windows|Mac|Linux/i.test(navigator.userAgent);
-            const exeUrl = _matchAsset(data.assets, /\.exe$/i);
-            const apkUrl = _matchAsset(data.assets, /\.apk$/i);
-            const dlUrl = isAndroid ? (apkUrl || src.html) : (exeUrl || src.html);
-            if (compareVersions(latest, CURRENT_VERSION) > 0) {
-                msg.innerHTML = `发现新版本 <b style="color:var(--fg-accent)">${escapeHtml(latest)}</b>（当前 ${escapeHtml(CURRENT_VERSION)}）<br>` +
-                    `<a href="${escapeHtml(dlUrl || "#")}" target="_blank" rel="noopener" style="color:var(--fg-bright)">下载安装包</a>` +
-                    ` ｜ <a href="${escapeHtml(src.html || "#")}" target="_blank" rel="noopener" style="color:var(--fg-muted)">发行说明</a>`;
-            } else {
-                msg.textContent = `已是最新版本 ${CURRENT_VERSION} ✓`;
+            if (!best || compareVersions(latest, best.latest) > 0) {
+                best = { latest, data, src };
             }
-            return;
-        } catch (e) {
-            msg.textContent = "检查失败（网络或仓库不可达）";
-        }
+        } catch (e) { /* 单源失败继续看下一个 */ }
+    }
+    if (!best) {
+        msg.textContent = "检查失败（网络或仓库不可达）";
+        return;
+    }
+    const { latest, data, src } = best;
+    if (compareVersions(latest, CURRENT_VERSION) > 0) {
+        const exeUrl = _matchAsset(data.assets, /\.exe$/i);
+        const apkUrl = _matchAsset(data.assets, /\.apk$/i);
+        _renderFound(msg, latest, CURRENT_VERSION, {
+            notes: src.html,
+            directUrl: isAndroid ? (apkUrl || "") : (exeUrl || ""),
+        });
+    } else {
+        msg.textContent = `已是最新版本 ${CURRENT_VERSION} ✓`;
     }
 }
 // 检查更新按钮接线（设置面板版本区；修复前该按钮无任何事件绑定，点击无反应）
 const checkUpdateBtn = document.getElementById("check-update-btn");
 if (checkUpdateBtn) checkUpdateBtn.addEventListener("click", checkUpdate);
 
-// 自动更新：后端下载安装包 → PC 静默安装并重启；安卓引导系统安装器
+// 自动更新：后端下载安装包 → PC 静默安装并重启；安卓交**系统安装器**（APP 内装完，不用再下第二遍）
+//
+// ★ 2026-09-25 修掉的那半：旧实现在安卓上"下载完 85MB 之后，提示用户去下载页再下一次"
+//   —— 等于一个包下两遍、一次都不装。现在由壳（FireflyJs.installApk）把**已经校验过 sha256**
+//   的包交给系统安装器；没有壳（PC 浏览器 / 服务器模式）才退回旧路径。
 async function autoUpdate(isAndroid) {
     const msg = document.getElementById("update-msg");
     if (!msg) return;
@@ -2636,9 +3073,24 @@ async function autoUpdate(isAndroid) {
         const data = await resp.json();
         if (!data.ok) { msg.textContent = "下载失败：" + (data.error || ""); return; }
         if (isAndroid) {
-            // WebView 无法直接用 file:// 装 APK：跳系统浏览器打开公共下载页
-            // （下载页自动分流：标准浏览器走 Gitee，微信/QQ 等走服务器直连正确 MIME）
-            msg.innerHTML = `下载完成 → 请从 <a href="${DOWNLOAD_PAGE_URL}" target="_blank" rel="noopener" style="color:var(--fg-bright)">下载页</a> 下载 APK 安装（系统限制需手动确认；如从 Gitee 页下载变成 .zip，把文件名改回 firefly.apk 即可）`;
+            // 安卓：后端已下好并校验 → 让壳交系统安装器。
+            // 壳返回空串 = 已经拉起安装器；非空 = 拒绝/失败原因（如实显示，不假装成功）
+            let err = "";
+            try {
+                const sh = (window.FireflyJs
+                    && typeof window.FireflyJs.installApk === "function")
+                    ? window.FireflyJs : null;
+                if (sh) err = String(sh.installApk(data.name || "") || "");
+                else err = "（当前环境不是应用内，无法自动安装）";
+            } catch (e) {
+                err = (e && e.message) ? e.message : String(e);
+            }
+            if (err) {
+                msg.textContent = "下载完成，但自动安装未启动：" + err
+                    + " ｜ 也可前往下载页手动安装";
+                return;
+            }
+            msg.textContent = "下载完成 → 请在系统弹窗里点「安装」（覆盖安装，聊天数据保留）";
             return;
         }
         if (data.installing) {
@@ -6291,11 +6743,23 @@ if (IS_SERVER) startRelay();   // relay 引擎仅服务器模式（本地为 dir
             lines.push('<div style="opacity:.75">热更新已关闭（只保留安全吊销）</div>');
         } else if (st.available) {
             lines.push('<div>可更新：修复 ' + st.available.serial + " · " +
-                esc(st.available.note || "") + "</div>");
+                esc(st.available.note || "") +
+                (st.available.layer === "py" || st.available.layer === "web+py"
+                    ? ' <span style="opacity:.6">（含程序层，安装后需重启）</span>' : "") +
+                "</div>");
         } else if (st.overlay_files) {
-            lines.push('<div style="opacity:.75">已应用 ' + st.overlay_files + " 个文件</div>");
+            lines.push('<div style="opacity:.75">已应用 ' + st.overlay_files + " 个文件" +
+                (st.applied_layer ? "（" + esc(st.applied_layer) + "）" : "") + "</div>");
         } else {
             lines.push('<div style="opacity:.6">没有待安装的修复</div>');
+        }
+        // ★ v2：含 py 层的补丁必须重启进程才生效 —— 由壳负责重启，前端只如实告知，
+        //   并明确"不会吞掉你正在打的内容"（与服务端空闲判据同一条承诺）
+        if (st.restart_pending) {
+            lines.push('<div style="color:var(--fg-accent)">修复已就绪，空闲时会自动重启以生效</div>');
+        }
+        if (st.restart_note) {
+            lines.push('<div style="opacity:.7">' + esc(st.restart_note) + "</div>");
         }
         if (st.rolled_back_reason) {
             lines.push('<div style="color:#e0a05c">上次修复已回退：' + esc(st.rolled_back_reason) + "</div>");
@@ -6318,8 +6782,10 @@ if (IS_SERVER) startRelay();   // relay 引擎仅服务器模式（本地为 dir
             .then(function (st) {
                 _last = st;
                 render(st);
-                // ★ 生效：后端说可以刷新了，而且此刻确实空闲 → 存草稿后刷新
-                if (st.reload_pending && st.idle) {
+                // ★ 生效：后端说可以刷新了，而且此刻确实空闲 → 存草稿后刷新。
+                //   `restart_pending` 时不刷新：页面 reload **换不掉已 import 的 Python 模块**，
+                //   只会白白闪一次屏（真重启由壳用 AlarmManager 自拉起）。
+                if (st.reload_pending && !st.restart_pending && st.idle) {
                     saveDraft();
                     location.reload();
                 }
@@ -6356,7 +6822,11 @@ if (IS_SERVER) startRelay();   // relay 引擎仅服务器模式（本地为 dir
                 post("/hotupdate/action", { action: "apply" }).then(function (r) {
                     return r ? r.json() : null;
                 }).then(function (d) {
-                    if (m) m.textContent = (d && d.ok) ? "已安装，即将生效" : ("安装失败：" + ((d && d.error) || ""));
+                    if (m) {
+                        m.textContent = (d && d.ok)
+                            ? (d.restart ? "已安装，空闲时会自动重启以生效" : "已安装，即将生效")
+                            : ("安装失败：" + ((d && d.error) || ""));
+                    }
                     poll();
                 }).catch(function () { if (m) m.textContent = "安装失败"; });
             });
@@ -6397,14 +6867,30 @@ if (IS_SERVER) startRelay();   // relay 引擎仅服务器模式（本地为 dir
 //     公告是"顺带看一眼"的东西，绝不能让人打开面板时卡在网络上。
 //  ② **不拼 HTML**：服务端文本一律 createTextNode/textContent 写入。
 //     这样即便签名密钥泄露、服务端被投毒，也**注入不进来** —— 结构上不存在 XSS 面。
-//  ③ **不依赖网络**：拿不到就什么都不加，Index.html 里的内置指南照常显示。
+//  ③ **不依赖网络**：拿不到就什么都不加，「使用指南」Tab 里的内置指南照常显示。
+//
+// 2026-09-24 重构（用户报障："公告没做好上下滚动和内容区分，0.9.0 的公告
+// 还是塞在一个使用手册里"）：
+//   · 拆两个 Tab：「公告」（服务端下发）与「使用指南」（内置常驻）。
+//   · 公告按 level 分档筛选（全部 / 更新 / 提醒 / 重要），按日期分组 + sticky 组头。
+//   · 三态：有内容 / 空 / 拉取失败——**失败必须说出来**，否则空面板会被当成"功能没做"。
+//   · 滚动位置按 Tab 记住（切回来还在原处）。
+//   · 面板头徽标**只计未读公告**，不含使用指南（否则点掉也不灭，等于失效）。
 
 const CACHE_KEY = "firefly_notice_cache";     // 最近一次成功的 payload（含已读态镜像）
 const SEEN_OPEN_KEY = "firefly_notice_opened"; // 上次打开面板的时间（节流刷新用）
+const TAB_KEY = "firefly_notice_tab";         // 上次停留的 Tab（下次打开还回到那儿）
 const REFRESH_MS = 30 * 60 * 1000;            // 打开面板时最多 30 分钟联网一次
 
 let _payload = null;
 let _readTimer = null;
+let _tab = "entries";                         // "entries"（公告）| "guide"（使用指南）
+let _filter = "";                             // ""（全部）| info | warn | critical
+let _scroll = { entries: 0, guide: 0 };       // 两个 Tab 各自的滚动位置
+let _fetchState = "idle";                     // idle | loading | ok | fail
+
+// 没有日期、或日期格式异常时归到这里，永远排最后
+const _NO_DATE = "更早";
 
 function _ls(key, val) {
     try {
@@ -6464,28 +6950,179 @@ function _renderEntry(e) {
     return box;
 }
 
-function _paint(p) {
+// 日期分组：服务端 date 是 "YYYY-MM-DD"。今天/昨天用人话，其余原样。
+function _groupLabel(date) {
+    if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return _NO_DATE;
+    const d = new Date(date + "T00:00:00");
+    if (isNaN(d.getTime())) return _NO_DATE;
+    const now = new Date();
+    const day = (x) => Math.floor((x.getTime() - x.getTimezoneOffset() * 60000) / 86400000);
+    const diff = day(now) - day(d);
+    if (diff === 0) return "今天";
+    if (diff === 1) return "昨天";
+    if (d.getFullYear() === now.getFullYear()) return (d.getMonth() + 1) + " 月 " + d.getDate() + " 日";
+    return date;
+}
+
+function _filtered() {
+    const all = (_payload && _payload.entries) || [];
+    return _filter ? all.filter(e => (e.level || "info") === _filter) : all;
+}
+
+function _paintEmpty(host, icon, title, sub) {
+    const box = _el("div", "notice-empty");
+    box.appendChild(_el("span", "notice-empty-ico", icon));
+    box.appendChild(_el("div", null, title));
+    if (sub) box.appendChild(_el("div", "notice-empty-sub", sub));
+    host.appendChild(box);
+}
+
+// 公告 Tab 的正文
+function _paintEntries() {
     const host = document.getElementById("notice-server");
     if (!host) return;
     host.textContent = "";                       // 清空（只走 textContent，全程不碰标记字符串）
-    const entries = (p && p.entries) || [];
-    if (!entries.length) {
-        // 一条都没有：整块不留痕迹（静态兜底照常显示）
+
+    // 缓存过、但联网失败过 → 先说清楚"你看到的可能不是最新的"
+    if (_fetchState === "fail") {
+        host.appendChild(_el("div", "notice-stale",
+            "暂时连不上公告服务，以下为上次同步的内容。"));
+    }
+
+    const list = _filtered();
+    if (!list.length) {
+        const total = ((_payload && _payload.entries) || []).length;
+        if (!total) {
+            // 真的没有公告。给一句人话，别让空面板看起来像坏了
+            if (_fetchState === "loading") {
+                _paintEmpty(host, "⏳", "正在获取公告…");
+            } else if (_fetchState === "fail") {
+                _paintEmpty(host, "📡", "暂时连不上公告服务",
+                    "你的网络可能不稳定：切到「使用指南」仍可正常阅读。");
+            } else {
+                _paintEmpty(host, "📢", "暂无新公告",
+                    "更新说明与临时提醒会出现在这里。");
+            }
+        } else {
+            // 有公告，只是这个筛选档下没有
+            _paintEmpty(host, "🔍", "这个分类下暂无公告", "换一个筛选条件看看。");
+        }
         return;
     }
-    for (const e of entries) host.appendChild(_renderEntry(e));
-    const divider = _el("div", "notice-divider");
-    divider.appendChild(document.createTextNode("以下为 App 内置使用指南"));
-    host.appendChild(divider);
+
+    // 分组：置顶的永远最前；其余按日期倒序（服务端已排过，这里只做分组不做重排）
+    let lastGroup = null;
+    for (const e of list) {
+        const label = e.pinned ? "置顶" : _groupLabel(e.date);
+        if (label !== lastGroup) {
+            lastGroup = label;
+            host.appendChild(_el("div", "notice-group", label));
+        }
+        host.appendChild(_renderEntry(e));
+    }
 }
 
-function _paintDot(n) {
+// 徽标与 chips 计数：**只算公告，不算使用指南**
+function _paintBadges() {
+    const entries = (_payload && _payload.entries) || [];
+    const unread = entries.filter(e => e.unread).length;
+
+    const badge = document.getElementById("notice-badge");
+    if (badge) {
+        badge.hidden = !unread;
+        badge.textContent = unread > 9 ? "9+" : String(unread || "");
+        badge.title = unread ? `有 ${unread} 条新公告` : "";
+    }
+    const tab = document.getElementById("notice-tab-entries");
+    if (tab) {
+        tab.textContent = "公告";
+        if (unread) {
+            const b = _el("span", "notice-badge", unread > 9 ? "9+" : String(unread));
+            tab.appendChild(b);
+        }
+    }
+    // 首页公告栏的小圆点（结构在 index.html，样式 .notice-dot）
     const dot = document.getElementById("notice-dot");
     if (dot) {
-        dot.hidden = !n;
-        dot.textContent = n > 9 ? "9+" : String(n || "");
-        dot.title = n ? `有 ${n} 条新公告` : "";
+        dot.hidden = !unread;
+        dot.textContent = unread > 9 ? "9+" : String(unread || "");
+        dot.title = unread ? `有 ${unread} 条新公告` : "";
     }
+    // chips 上的计数
+    const counts = { "": entries.length, info: 0, warn: 0, critical: 0 };
+    for (const e of entries) {
+        const lv = e.level || "info";
+        if (counts[lv] !== undefined) counts[lv]++;
+    }
+    const chips = document.querySelectorAll("#notice-chips .notice-chip");
+    for (const c of chips) {
+        const lv = c.getAttribute("data-lv") || "";
+        const n = counts[lv] || 0;
+        // 计数值重建（避免重复追加）：先清掉上次追加的计数节点
+        const old = c.querySelector(".notice-chip-n");
+        if (old) old.remove();
+        const base = { "": "全部", info: "更新", warn: "提醒", critical: "重要" }[lv] || lv;
+        c.textContent = base;
+        if (n) c.appendChild(_el("span", "notice-chip-n", " " + n));
+        c.hidden = (lv !== "" && n === 0);      // 空档位直接收起，别留一排没用的按钮
+    }
+}
+
+function _paint(p) {
+    if (p) _payload = p;
+    _paintEntries();
+    _paintBadges();
+}
+
+// ── Tab / 筛选 / 滚动位置 ────────────────────────
+function noticeTab(name) {
+    if (name !== "entries" && name !== "guide") return;
+    _scroll[_tab] = _bodyScroll();
+    _tab = name;
+    _ls(TAB_KEY, name);
+
+    const entries = document.getElementById("notice-pane-entries");
+    const guide = document.getElementById("notice-pane-guide");
+    const tE = document.getElementById("notice-tab-entries");
+    const tG = document.getElementById("notice-tab-guide");
+    const chips = document.getElementById("notice-chips");
+    if (entries) entries.hidden = name !== "entries";
+    if (guide) guide.hidden = name !== "guide";
+    if (tE) tE.setAttribute("aria-selected", name === "entries" ? "true" : "false");
+    if (tG) tG.setAttribute("aria-selected", name === "guide" ? "true" : "false");
+    if (chips) chips.hidden = name !== "entries";
+
+    _setBodyScroll(_scroll[name] || 0);
+}
+
+function noticeFilter(lv) {
+    _filter = lv || "";
+    const chips = document.querySelectorAll("#notice-chips .notice-chip");
+    for (const c of chips) {
+        c.setAttribute("aria-pressed", (c.getAttribute("data-lv") || "") === _filter ? "true" : "false");
+    }
+    _paintEntries();
+    _scroll[_tab] = 0;                        // 换筛选回到顶部，并把记录一起归零
+    _setBodyScroll(0);
+}
+
+// 滚动的是 .notice-body（两个 Tab 共用它，所以必须自己记位置）
+function _bodyEl() { return document.querySelector("#notice-panel .notice-body"); }
+function _bodyScroll() { const b = _bodyEl(); return b ? b.scrollTop : 0; }
+
+// 恢复滚动位置。★ 必须"先取消上一次待执行的 rAF"：
+//   切 Tab 是"存旧位置 → 恢复新位置"两步，若用户连点两个 Tab（或代码里连续调两次），
+//   两个 rAF 都会在下一帧排队执行，**先入队的那个会后跑**的概率存在 ⇒ 恢复成错的 Tab 的位置。
+//   2026-09-24 实测 G1 用例就是这么失败的（连续 noticeTab × 2，最终 scrollTop 被盖回 0）。
+let _scrollRaf = 0;
+function _setBodyScroll(v) {
+    const b = _bodyEl();
+    if (!b) return;
+    if (_scrollRaf) cancelAnimationFrame(_scrollRaf);
+    _scrollRaf = requestAnimationFrame(() => {
+        _scrollRaf = 0;
+        try { b.scrollTop = v; } catch (e) {}
+    });
 }
 
 // ── 联网（失败一律静默：公告不配打断用户）────────────
@@ -6497,25 +7134,31 @@ async function refreshNotice(force) {
                 body: JSON.stringify({ action: "check" }) }
             : {};
         const r = await fetch(url, opts);
-        if (!r.ok) return null;
+        if (!r.ok) { _fetchState = "fail"; _paintEntries(); return null; }
         const d = await r.json();
         const p = force ? (d.payload || null) : d;
         if (p && p.ok) {
             _payload = p;
             _writeCache(p);
+            // 注意顺序：先落状态再 paint，否则空态文案会慢一帧
+            _fetchState = "ok";
             _paint(p);
-            _paintDot(p.unread);
             // ★ 后端是「先回缓存、后台联网刷新」（见 app/notice.py::payload 的说明）：
             //   首次安装 / 缓存过期时，这一次拿到的就是**空的**，而刷新结果要几百毫秒后才有。
             //   不跟一次的话：首页永远不亮小圆点、面板永远只有内置指南，
             //   直到用户下次再打开面板 —— 表现为"公告功能像没做"。
             //   （2026-09-19 真机实测抓到的：后端 serial=1、前端渲染 0 条。）
-            if (p.refreshing) _scheduleRetry();
-            else _retry = 0;
+            if (p.refreshing) { _fetchState = "loading"; _scheduleRetry(); }
+            else { _retry = 0; }
+            return p;
         }
+        _fetchState = "fail";
+        _paintEntries();
         return p;
     } catch (e) {
-        return null;                             // 离线/服务端没开：保持现状
+        _fetchState = "fail";                    // 离线/服务端没开：说清楚，别装作没公告
+        _paintEntries();
+        return null;
     }
 }
 
@@ -6551,12 +7194,14 @@ function _markReadSoon() {
             _payload.unread = 0;
         }
         _paint(_payload);
-        _paintDot(0);
     }, 1500);
 }
 
 // 面板打开时调用（views.js 的 toggleNotice 会调）
 function noticeOnOpen() {
+    // 回到上次停留的 Tab（第一次打开默认"公告"）
+    const saved = _ls(TAB_KEY);
+    noticeTab(saved === "guide" ? "guide" : "entries");
     _markReadSoon();
     let last = 0;
     try { last = parseInt(_ls(SEEN_OPEN_KEY) || "0", 10) || 0; } catch (e) {}
@@ -6570,7 +7215,8 @@ function initNotice() {
     _payload = _readCache();
     if (_payload) {
         _paint(_payload);
-        _paintDot(_payload.unread);
+    } else {
+        _paintBadges();                          // 无缓存也要把 chips/徽标置成干净的初始态
     }
     // 冷启动先让首页把首帧画完，别跟聊天/历史的启动请求抢带宽
     setTimeout(() => { refreshNotice(false); }, 2500);
@@ -6583,6 +7229,8 @@ function initNotice() {
 //   （后端一切正常、界面什么都没有，52 项单测全绿）。
 //   挂在 DOMContentLoaded 上还有第二个好处：DOM 一定就绪，首帧就能画。
 window.noticeOnOpen = noticeOnOpen;
+window.noticeTab = noticeTab;         // 面板内联 onclick
+window.noticeFilter = noticeFilter;
 
 function _bootNotice() { try { initNotice(); } catch (e) { /* 公告不配拖垮启动 */ } }
 if (document.readyState === "loading") {
