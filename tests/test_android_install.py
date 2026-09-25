@@ -117,6 +117,29 @@ check("E4 下载有大小上限与下限",
 check("E5 DownloadListener 对更新包分叉处理",
       "if (isUpdatePackage(mimeType, contentDisposition, url))" in MAIN)
 
+print("=== E2. ★ 热更新重启：真机实测抓出的 BAL_BLOCK 死循环（2026-09-25）===")
+# 真机日志（704c2441，Android 15）：
+#   I FireflyHotUpdate: 含 py 层的补丁就绪且空闲 → 壳重启 App 进程
+#   W ActivityTaskManager: Background activity launch blocked … (BAL_BLOCK) result code=102
+# 闹钟被系统拦掉，而界面已经被 finishAffinity() 结束 ⇒ 补丁永不生效且每 8 秒重试一次。
+# 这三条断言钉住修复，任何一条回退都会让"后台时自杀"的写法复活。
+check("E2-1 ★ 重启前必须检查 App 是否在前台", "KeepAliveService.isAppForeground()" in MAIN
+      and "推迟到下次冷启动" in MAIN)
+# 断言"性质"而不是"某段文字的行号顺序"（错误总结 #12：写快照的断言，一加注释就假失败 —— 本轮现踩）
+# ⚠️ 必须**限定在 restartForHotUpdate 函数体内**取下标：文件里还有另一处 finishAffinity
+#   （handleBackPressed 的双击退出），全局 index 会取到它，断言就恒假。
+_fn = MAIN.index("private fun restartForHotUpdate()")
+_body = MAIN[_fn:_fn + 4000]
+_guard = _body.index("if (!KeepAliveService.isAppForeground())")
+_finish = _body.index("finishAffinity()")
+check("E2-2 ★ 后台守卫出现在 finishAffinity 之前（不许在后台自杀）",
+      0 < _guard < _finish and "return" in _body[_guard:_guard + 400],
+      f"guard@{_guard} finish@{_finish}")
+check("E2-3 ★ 有 30 秒重启节流（防排程失败后每轮都杀进程）",
+      "RESTART_THROTTLE_MS = 30_000L" in MAIN and "now - lastRestartAt < RESTART_THROTTLE_MS" in MAIN)
+check("E2-4 ★ 节流只在真的要重启时计时（否则用户切回前台要白等）",
+      MAIN.index("if (now - lastRestartAt < RESTART_THROTTLE_MS) return") < MAIN.index("lastRestartAt = now"))
+
 print("=== F. 权限与 FileProvider 白名单 ===")
 check("F1 ★ manifest 声明 REQUEST_INSTALL_PACKAGES",
       "android.permission.REQUEST_INSTALL_PACKAGES" in MANIFEST)

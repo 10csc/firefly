@@ -363,11 +363,13 @@ try:
         sys.path.remove(str(HU.py_dir()))
         sys.modules.pop("modules.hu_e2e_probe", None)
 
-    # K11：boot_ok（新进程启动确认）清掉重启标志
+    # K11：★ 同进程的 boot_ok **不算** py 层的启动确认（真机实测：页面 reload 会重跑
+    #      前端 boot() 并上报 boot-ok，若无条件清 pending，安全模式就形同虚设）。
+    #      真·新进程的确认路径由 tests/test_hotupdate_py.py 的 M 组覆盖。
     HU.boot_ok()
-    check("K11 boot_ok 清掉 restart_pending",
-          HU.status()["restart_pending"] is False
-          and HU.status()["pending_serial"] == 0)
+    check("K11 ★ 同进程 boot_ok 不清 py 层的 restart_pending（防伪造启动确认）",
+          HU.status()["restart_pending"] is True
+          and HU.status()["pending_serial"] == 1)
 
     # K12~K15：★ 安全模式对 **py 层**同样成立（坏 py 补丁不能把用户钉死）
     #   G 组只覆盖了 web 层；py 层更危险 —— 坏补丁可能让"服务根本起不来"，

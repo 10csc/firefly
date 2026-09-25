@@ -190,9 +190,12 @@ check("B2 reload_pending 为真（前端层也变了，但前端不该自己 rel
 check("B3 pending 已置位（等新进程 boot_ok）", st["pending_serial"] == 1)
 r = HU.boot_ok()
 st = HU.status()
-check("B4 boot_ok 同时清掉两个标志",
-      st["restart_pending"] is False and st["reload_pending"] is False)
-check("B5 pending 清零", st["pending_serial"] == 0)
+# ★ 2026-09-25 真机实测改语义：同进程的 boot-ok（页面 reload 触发）**不构成 py 层的启动确认**，
+#   否则"pending 被自己伪造清掉"会让安全模式（坏补丁自动回滚）失效。清 pending 的判据见 M 组。
+check("B4 ★ 同进程 boot-ok 不清 py 层的 pending（防伪造启动确认）",
+      st["pending_serial"] == 1 and st["restart_pending"] is True, str(r.get("same_process")))
+check("B5 但前端那条 reload 标志确实清了（它本来就该清）",
+      st["reload_pending"] is False)
 
 print("=== C. ★ 只有 web 层时不报 restart（别让壳白重启用户）===")
 reset_env()
@@ -427,8 +430,39 @@ check("K7 ★ 门禁能抓出 layer 与文件前缀不一致（假 web 实 py）
       f"{gate_fail} 条 FAIL")
 check("K8 门禁同时报出「本包含 py 层」提示", "本包含 py 层" in gate_out)
 
-print("=== L. ★ 运行版本三元组（用户报障时的唯一凭据）===")
-# 热更不改版本号 ⇒ "用户在跑哪份代码" 只能靠 base + hot序列 + 清单指纹 合起来说清。
+print("=== M. ★ boot-ok 不许伪造 py 层的启动确认（真机实测抓到的坑）===")
+# 真机现象：壳的重启被系统推迟后，前端 polling 触发了页面 reload → 页面重跑 boot() →
+# 无条件上报 boot-ok ⇒ pending 被清、安全模式（坏补丁自动回滚）形同虚设。
+# 真机日志里进程 PID 没变，却打印"新进程已完成启动确认"。
+reset_env()
+STATE["files"] = {"py/hu_probe_mod.py": PY["py/hu_probe_mod.py"]}
+HU.check()
+HU.apply_available()
+st = HU.status()
+check("M1 纯 py 层补丁应用后 pending 置位", st["pending_serial"] == 1)
+check("M2 状态里记下了应用补丁的进程号", int(HU.load_state().get("applied_pid") or 0) == os.getpid())
+r = HU.boot_ok()
+st = HU.status()
+check("M3 ★ 同进程的 boot-ok 不清 py 层的 pending", st["pending_serial"] == 1, str(r))
+check("M4 ★ 此时 restart_pending 仍在（还没真重启）", st["restart_pending"] is True)
+# 模拟"真·新进程"：把 applied_pid 改成别的进程号（等价于 os.getpid() 变了）
+d = HU.load_state()
+d["applied_pid"] = int(os.getpid()) + 12345
+HU.save_state(d)
+HU.boot_ok()
+st = HU.status()
+check("M5 ★ 新进程的 boot-ok 才清 pending", st["pending_serial"] == 0)
+check("M6 并清掉 restart_pending", st["restart_pending"] is False)
+# web 层补丁不受影响：它的生效方式本来就是 reload，同进程确认是正确语义
+reset_env()
+STATE["files"] = dict(WEB)
+HU.check()
+HU.apply_available()
+HU.boot_ok()
+check("M7 web 层补丁仍由同进程 boot-ok 确认（不该被这条修复误伤）",
+      HU.status()["pending_serial"] == 0 and HU.status()["reload_pending"] is False)
+
+print("=== L. ★ 运行版本三元组（用户报障时的唯一凭据）===")# 热更不改版本号 ⇒ "用户在跑哪份代码" 只能靠 base + hot序列 + 清单指纹 合起来说清。
 # 用户 2026-09-25 明确提的就是这个需求，所以它必须有测试。
 reset_env()
 rid = HU.running_id()
