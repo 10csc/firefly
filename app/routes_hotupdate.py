@@ -32,13 +32,17 @@ def hotupdate_action(h):
         return
     body = _read_json(h) or {}
     act = str(body.get("action") or "").strip()
-    from hotupdate import apply_available, check, rollback, set_enabled, set_url_roots
+    from hotupdate import (apply_available, check, clear_note, rollback,
+                           set_enabled, set_url_roots)
     if act == "check":
         h._json(check(manual=True))
     elif act == "apply":
         h._json(apply_available())
     elif act == "rollback":
         h._json(rollback("用户手动回滚"))
+    elif act == "clear_note":
+        # 清掉"上次修复已回退/上次检查失败"的提示（提示只写不清会让用户永远看着它）
+        h._json(clear_note())
     elif act == "set_enabled":
         h._json(set_enabled(bool(body.get("enabled"))))
     elif act == "set_urls":

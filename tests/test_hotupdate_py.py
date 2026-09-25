@@ -514,5 +514,36 @@ HU.reset_for_test()
 srv.shutdown()
 shutil.rmtree(_shared, ignore_errors=True)
 shutil.rmtree(_TMP, ignore_errors=True)
+print("=== N. 「知道了」：回退/报错提示不许只写不清 ===")
+# 真机实测发现：rolled_back_reason 与 last_error 一旦写上就**永远挂着**，
+# 设置页一直显示"上次修复已回退"，用户没有任何办法消掉（只能怀疑是不是又坏了）。
+reset_env()
+HU.rollback("测试回退原因")
+check("N1 回退后原因可见", "测试回退原因" in HU.status()["rolled_back_reason"])
+d = HU.load_state()
+d["last_error"] = "上次检查失败了"
+HU.save_state(d)
+HU.clear_note()
+st = HU.status()
+check("N2 clear_note 清掉回退原因", st["rolled_back_reason"] == "")
+check("N3 clear_note 也清掉报错提示", st["last_error"] == "")
+# 关键：清的是**提示**不是**状态** —— 已应用的补丁与覆盖层必须原样保留
+reset_env()
+STATE["files"] = dict(WEB)
+HU.check()
+HU.apply_available()
+d = HU.load_state()
+d["applied_serial"] = 1
+d["rolled_back_reason"] = "旧提示"
+HU.save_state(d)
+HU.clear_note()
+st = HU.status()
+check("N4 ★ clear_note 只清提示，不动 applied_serial", st["applied_serial"] == 1,
+      str(st["applied_serial"]))
+check("N5 也不动 pending/boot_fail_count",
+      st["pending_serial"] == 0 and st["boot_fail_count"] == 0)
+
+HU.reset_for_test()
+srv.shutdown()
 print(f"\n统计: PASS={PASS} FAIL={FAIL}")
 sys.exit(1 if FAIL else 0)
