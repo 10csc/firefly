@@ -6762,12 +6762,27 @@ if (IS_SERVER) startRelay();   // relay 引擎仅服务器模式（本地为 dir
             lines.push('<div style="opacity:.7">' + esc(st.restart_note) + "</div>");
         }
         if (st.rolled_back_reason) {
-            lines.push('<div style="color:#e0a05c">上次修复已回退：' + esc(st.rolled_back_reason) + "</div>");
+            lines.push('<div style="color:#e0a05c">上次修复已回退：' + esc(st.rolled_back_reason) +
+                ' <button id="hotupdate-dismiss-btn" type="button" ' +
+                'style="font-size:0.9em;padding:0 6px;margin-left:4px">知道了</button></div>');
         }
         if (st.last_error) {
-            lines.push('<div style="opacity:.7">' + esc(st.last_error) + "</div>");
+            lines.push('<div style="opacity:.7">' + esc(st.last_error) +
+                ' <button id="hotupdate-dismiss-btn2" type="button" ' +
+                'style="font-size:0.9em;padding:0 6px;margin-left:4px">知道了</button></div>');
         }
         box.innerHTML = lines.join("");
+        // 「知道了」：清掉"上次修复已回退/上次检查失败"的提示。
+        // 为什么必要：这两行原本**只写不清**，用户看一次之后再也消不掉，
+        // 只能一直怀疑"是不是又坏了"（清的是提示，不是状态）。
+        ["hotupdate-dismiss-btn", "hotupdate-dismiss-btn2"].forEach(function (id) {
+            var b = $(id);
+            if (b) {
+                b.addEventListener("click", function () {
+                    post("/hotupdate/action", { action: "clear_note" }).then(poll);
+                });
+            }
+        });
         var rb = $("hotupdate-rollback-btn");
         if (rb) rb.style.display = st.applied_serial ? "" : "none";
         var ap = $("hotupdate-apply-btn");

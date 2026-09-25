@@ -621,6 +621,23 @@ def restart_ready() -> bool:
     return bool(_RT["restart_pending"]) and idle()
 
 
+def clear_note() -> dict:
+    """清掉"上次修复已回退（原因）"与上次的错误提示（用户在设置页点「知道了」）。
+
+    为什么需要它：`rolled_back_reason` / `last_error` 原本**只写不清** ——
+    一旦回退过一次（或某次检查失败过），设置页会永远挂着那行字，
+    用户没有任何办法让它消失，只能看着它怀疑"是不是又坏了"。
+    清的是**提示**，不是状态：`applied_serial` / 覆盖层该是什么还是什么。
+    """
+    d = load_state()
+    d["rolled_back_reason"] = ""
+    d["last_error"] = ""
+    save_state(d)
+    with _LOCK:
+        _RT["last_note"] = ""
+    return {"ok": True, "status": status()}
+
+
 # ── 运行版本标识（用户排障的唯一凭据）────────────────
 def running_id() -> dict:
     """当前**真正在跑**的代码版本 = 底座 + 热更序号。
