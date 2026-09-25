@@ -133,6 +133,7 @@ EXPECTED_GET = {
     "/history",
     "/image",
     "/hotupdate/status",
+    "/hotupdate/restart",
     "/journal",
     "/metrics",
     "/models",

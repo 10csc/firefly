@@ -128,15 +128,21 @@ def download_zip(base_url: str, zip_name: str, dst: Path, sha_expect: str,
 
 
 def extract_verified(zip_path: Path, files_meta: list, dst_dir: Path,
-                     strip_prefix: str = "web/") -> int:
+                     strip_prefix: str = "web/", expect_names: set | None = None) -> int:
     """把 zip 解到 dst_dir，**每个文件先校验 sha256 再落盘**；任何不符 → 整目录清掉后抛异常。
 
     防 TUF 的 mix-and-match：要么全部可信，要么一个都不留。
     路径越界（`..`、绝对路径）一律拒绝。
 
-    ★ `strip_prefix`：清单里的路径带层级前缀（`web/js/x.js`），而 `dst_dir` **就是覆盖层的根**
-      （即 `hotupdate/web/`）。所以落盘时要剥掉前缀，否则会变成 `hotupdate/web/web/js/x.js`
-      ——第一版就是这么写的，被测试 A6 抓出来（文件数对、路径全错）。
+    ★ `strip_prefix`：清单里的路径带层级前缀（`web/js/x.js` / `py/modules/x.py`），
+      而 `dst_dir` **就是该层的根**（`hotupdate/web/` 或 `hotupdate/py/`）。所以落盘时要剥掉前缀，
+      否则会变成 `hotupdate/web/web/js/x.js` ——第一版就是这么写的，被测试 A6 抓出来
+      （文件数对、路径全错）。v2 起这个前缀由调用方按层传（`hotupdate/__init__._stage_layers`）。
+
+    ★ `expect_names`：本人应该从包里看到的**全部** arc 名（一层一调时 = 整个包的 namelist；
+      单层调用时不传 = 就用本层清单）。为什么必须显式传：v2 把"包内文件与清单完全一致
+      （不多不少）"这条校验按层做，若仍拿**本层子集**去比整个 zip，另一层的文件会被当成
+      "多出来的"而整包拒收 —— 双层的包永远装不上（v2 联调时实测踩到）。
     """
     import shutil
     import zipfile
@@ -158,8 +164,9 @@ def extract_verified(zip_path: Path, files_meta: list, dst_dir: Path,
     try:
         with zipfile.ZipFile(zip_path) as z:
             names = set(z.namelist())
-            extra = names - set(want)
-            missing = set(want) - names
+            expect = set(expect_names) if expect_names is not None else set(want)
+            extra = names - expect
+            missing = expect - names
             if extra or missing:
                 raise ValueError(f"包内文件与清单不一致（多 {sorted(extra)} 缺 {sorted(missing)}）")
             for arc, sha in want.items():

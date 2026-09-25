@@ -36,8 +36,19 @@ def _setup_env():
 def start():
     """在调用线程中启动服务（阻塞至服务退出）。"""
     _setup_env()
+    # ★ 热更新 py 层注入（契约 §七 / 规范 §5.3）—— 本函数是**安卓侧最早**能插 sys.path 的地方：
+    #   · Chaquopy 的 `Python.start()` 已经在 Kotlin 侧调过（MainActivity.startEmbeddedServer），
+    #     本函数必然在它**之后**执行 —— 满足"Chaquopy 重写 sys.path 之后再插"的时序要求；
+    #   · 又必须赶在 `import server` 之前 —— 覆盖层只对**尚未 import** 的模块生效。
+    #   所以只有这一个点是对的：往前往后都会静默失效（补丁装上了、代码还是旧的，且不报错）。
+    _overlay_py = join(os.environ.get("FIREFLY_DATA_DIR", ""), "hotupdate", "py")
     sys.path.insert(0, _BACKEND)
     sys.path.insert(0, join(_BACKEND, "app"))
+    # ★ 覆盖层必须插在**这两条之后**（insert(0) ⇒ 最后插的在最前）。
+    #   若先插覆盖层再插 `_BACKEND/app`，`import modules.x` 会先命中 APK 里的底座代码，
+    #   补丁形同没装 —— 这是一个不报错的静默失效，故写死顺序。
+    if os.path.isdir(_overlay_py) and _overlay_py not in sys.path:
+        sys.path.insert(0, _overlay_py)
     import server
     server.main()
 

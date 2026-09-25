@@ -16,7 +16,8 @@ from routes_assets import (
 )
 from routes_auth import _AUTH_PROXY_MAP, _mk_auth_proxy, auth_state
 from routes_hotupdate import (
-    hotupdate_action, hotupdate_activity, hotupdate_boot_ok, hotupdate_status,
+    hotupdate_action, hotupdate_activity, hotupdate_boot_ok, hotupdate_restart,
+    hotupdate_status,
 )
 from routes_notice import notice_action, notice_get, notice_image
 from routes_config import (
@@ -165,6 +166,7 @@ GET_ROUTES = {
     "/user-memory": get_user_memory,
     "/memory-status": get_memory_status,
     "/hotupdate/status": hotupdate_status,
+    "/hotupdate/restart": hotupdate_restart,
     "/notice": notice_get,
     "/notice-image": notice_image,
     "/archive": get_archive,
