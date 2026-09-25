@@ -57,6 +57,11 @@ _TIMEOUT = 20
 
 _BLOCK_TYPES = ("p", "h", "li", "tip", "img")
 _LEVELS = ("info", "warn", "critical")
+# "看起来像标记"的检测（前向兼容降级用）：`<tag` / `</tag` / `<!--` / 数字实体。
+# 为什么要它：未知类型会被降级成纯文本显示，但**纯标记文本不该显示给用户**
+# （`<script>alert(1)</script>` 变成可见文字，既丑又像 XSS 演示）。
+# 允许的"新类型"是**承载自然语言的新块**，不是标记载体。
+_MARKUP_RE = re.compile(r"</?[A-Za-z!]|&#\d+;|&#x[0-9a-fA-F]+;")
 _NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 _VER_RE = re.compile(r"\d+")
 
@@ -163,14 +168,25 @@ def _in_range(ent: dict, app_ver: str) -> bool:
 
 
 def _clean_blocks(raw_blocks, allow_imgs: bool) -> list:
-    """块级校验：只留白名单类型 + 定长字段。**丢弃**而不是报错（一条坏块不该毁掉整条公告）。"""
+    """块级校验：只留白名单类型 + 定长字段。**丢弃**而不是报错（一条坏块不该毁掉整条公告）。
+
+    ★ 2026-09-25 前向兼容（用户 2026-09-25 提的问题："服务器若新增公告类型，
+    岂不是还要重新更新客户端？"）：
+      · 白名单内的类型 → 按各自规则渲染（p/h/li/tip/img）；
+      · **白名单外、但带 text 的类型 → 降级成段落文本显示**（不丢内容、不报错）。
+      这样服务端加一种新块（表格/按钮/引用/代码…）时，**老客户端至少能读到纯文本**，
+      新客户端才享受富形态 —— 这是"忽略未知字段/类型"这条通用前向兼容原则的落地。
+      旧行为是 `continue`（静默丢弃），后果是"新类型在老版本上整段消失"，
+      而公告是没有版本定向兜底的（用户不会为了看公告去升级）。
+      · 完全没有可读文本的未知类型（例如纯装饰/纯跳转）→ 丢弃（老客户端无从渲染）；
+      · **未知类型但文本里带标记**（`<script>` 之类）→ 丢弃（别把那串东西当正文显示出来）；
+      · img 永远只在 allow_imgs 时放行（图片要联网下载 + sha256 对账）。
+    """
     out = []
     for b in (raw_blocks or [])[:MAX_BLOCKS]:
         if not isinstance(b, dict):
             continue
         t = str(b.get("t") or "")
-        if t not in _BLOCK_TYPES:
-            continue
         if t == "img":
             if not allow_imgs:
                 continue
@@ -190,7 +206,11 @@ def _clean_blocks(raw_blocks, allow_imgs: bool) -> list:
         text = str(b.get("text") or "").strip()
         if not text:
             continue
-        out.append({"t": t, "text": text[:MAX_TEXT]})
+        if t in _BLOCK_TYPES:
+            out.append({"t": t, "text": text[:MAX_TEXT]})
+        elif not _MARKUP_RE.search(text):
+            # 未知类型 + 纯文本 → 降级成段落保留内容（见上方前向兼容说明）
+            out.append({"t": "p", "text": text[:MAX_TEXT]})
     return out
 
 
@@ -231,7 +251,6 @@ def validate(raw: bytes) -> dict:
             "title": title[:MAX_TITLE],
             "date": str(e.get("date") or "")[:10],
             "level": lvl if lvl in _LEVELS else "info",
-            "pinned": bool(e.get("pinned")),
             "min_app_version": str(e.get("min_app_version") or "")[:16],
             "max_app_version": str(e.get("max_app_version") or "")[:16],
             "blocks": blocks,

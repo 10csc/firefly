@@ -1394,25 +1394,47 @@ body {
     border: 1px solid var(--ctrl-bg);
     border-left: 3px solid var(--fg-muted);
     border-radius: 10px;
-    padding: 12px 14px;
     margin: 0 0 12px;
     overflow-wrap: break-word; min-width: 0;
+    /* 折叠态就是卡片本身；展开后 .notice-body 才出现（见下方 .notice-ent-body） */
 }
 .notice-entry.notice-lv-info { border-left-color: var(--fg-accent); }
 .notice-entry.notice-lv-warn { border-color: rgba(255,200,120,0.45); border-left-color: #ffc878; }
 .notice-entry.notice-lv-critical { border-color: rgba(255,120,120,0.55); border-left-color: #ff7878; background: rgba(255,80,80,0.07); }
-.notice-entry.notice-pinned { box-shadow: inset 0 1px 0 rgba(255,255,255,0.04); }
-.notice-entry.notice-pinned::before {
-    content: "置顶"; float: right; color: var(--fg-muted);
-    font-size: 0.66em; letter-spacing: 0.06em; margin-left: 8px;
+
+/* 条目标题行 = 折叠开关（整行可点，触屏友好）。
+   ★ 2026-09-25 改：公告列表**默认折叠**，点标题展开详情。
+   为什么：此前每条公告把全部块直接铺开，一条长更新说明能占满好几屏，
+   列表一眼看不到有哪几条 —— 成熟产品的 changelog 都是"先列标题、点开看内容"。 */
+.notice-ent-toggle {
+    display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap;
+    width: 100%; box-sizing: border-box;
+    background: none; border: 0; padding: 12px 14px; margin: 0;
+    color: inherit; font: inherit; text-align: left; cursor: pointer;
 }
-.notice-ent-head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; margin-bottom: 6px; }
+.notice-ent-toggle:hover { background: rgba(255,255,255,0.03); }
+.notice-ent-arrow {
+    color: var(--fg-muted); font-size: 0.85em; flex: none;
+    transition: transform 0.15s ease; transform: rotate(-90deg);   /* 收起：箭头朝右 */
+}
+.notice-entry.notice-open .notice-ent-arrow { transform: rotate(0deg); }   /* 展开：朝下 */
+.notice-entry.notice-open .notice-ent-toggle { border-bottom: 1px solid var(--ctrl-bg); }
+.notice-ent-body { padding: 6px 14px 12px; }
+.notice-entry:not(.notice-open) .notice-ent-body { display: none; }
+.notice-ent-head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
 .notice-ent-title { color: var(--fg-accent); font-size: 1.05em; font-weight: 600; }
 .notice-ent-date { color: var(--fg-muted); font-size: 0.78em; }
+/* 未读：标题左侧一个小圆点 + 右侧"新"标签（收起状态下也要能一眼看出哪条没看） */
+.notice-ent-dot {
+    width: 7px; height: 7px; border-radius: 50%; background: var(--fg-accent);
+    flex: none; align-self: center;
+}
 .notice-ent-new {
     background: var(--fg-accent); color: #201a10; border-radius: 4px;
     font-size: 0.68em; padding: 0 5px; line-height: 1.6;
 }
+/* 收起时给一行"有几节内容"，让用户知道点开值不值 */
+.notice-ent-hint { color: var(--fg-muted); font-size: 0.72em; margin-left: auto; flex: none; }
 .notice-b-h { color: var(--fg-accent); margin: 12px 0 6px; font-size: 1em; }
 .notice-b-p { margin: 4px 0; }
 .notice-b-li { margin: 3px 0 3px 1.1em; list-style: disc; }
