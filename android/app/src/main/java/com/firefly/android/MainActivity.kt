@@ -53,6 +53,7 @@ class MainActivity : AppCompatActivity() {
     private var webView: WebView? = null
     private val uiHandler = Handler(Looper.getMainLooper())
     private var exitBackPressedAt = 0L   // 双击退出计时
+    private var lastRestartAt = 0L       // 热更新重启节流（见 restartForHotUpdate）
     private var wakeLock: PowerManager.WakeLock? = null
     private var wifiLock: WifiManager.WifiLock? = null
     private var pendingFileCallback: ValueCallback<Array<Uri>>? = null   // 导入文件选择回调
@@ -76,6 +77,8 @@ class MainActivity : AppCompatActivity() {
         private const val ANDROID_UPDATE_APK = "firefly-update.apk"
         private const val HOTUPDATE_APK_NAME = "firefly-update.apk"
         private const val APK_INSTALL_REQUEST = 1004   // ★ 不能与 1003（图片权限）撞号
+        // 热更新重启的节流（真机实测：排程失败时每轮都杀一遍进程会变成死循环）
+        private const val RESTART_THROTTLE_MS = 30_000L
         private const val LOCAL_HOME = "file:///android_asset/index.html"
         private const val READY_TIMEOUT_MS = 12_000L   // A7c：本地引擎启动探测窗口（超时自动回落服务器）
         private const val NOTIF_PERMISSION_REQUEST = 1001
@@ -992,14 +995,29 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    /** 自拉起式重启：先定一个短延时闹钟把 App 叫回来，再结束当前界面。
+    /** 自拉起式重启：**只在 App 处于前台时做**，先定一个短延时闹钟把界面叫回来，再结束当前界面。
      *
-     *  为什么用 AlarmManager 而不是 `Process.killProcess()`：杀进程是"没有回头路"的写法 ——
-     *  一旦被系统限制（后台/电池策略）就永远起不来了，用户只能手动点图标。
-     *  闹钟自拉起是规范 §5.2 定的路子，且**不需要任何新依赖**。
-     *  失败兜底：闹钟排不进去时退回 `Process.killProcess()`（前台服务会随进程结束，
-     *  用户下次点图标就是新进程，同样生效）。 */
+     *  ★ 2026-09-25 真机实测暴露的设计缺陷（已修）：原实现无条件 `finishAffinity()`，
+     *  而 Android 10+ 会**拦截后台应用的 Activity 启动**（真机日志：
+     *  `Background activity launch blocked … (BAL_BLOCK) result code=102`）。
+     *  于是 App 在后台时：闹钟被拦 → 界面却已经被结束 → **补丁永远不生效，而且每 8 秒
+     *  重试一次**（真机实测循环了十几分钟）。修法三条：
+     *    ① 只有 `isAppForeground()` 为真才走重启（前台点名自己不受 BAL 限制）；
+     *    ② 后台时**什么都不做**（覆盖层已落盘，用户下次冷启动就带上了 —— 规范 §5.2.1 的
+     *       "长时间不空闲 ⇒ 推迟到下次冷启动"本来就是允许的路径）；
+     *    ③ 加 30 秒节流，防"排程失败后每轮都杀一遍进程"。
+     */
     private fun restartForHotUpdate() {
+        if (!KeepAliveService.isAppForeground()) {
+            Log.i("FireflyHotUpdate", "补丁待生效，但 App 在后台 —— 推迟到下次冷启动（不在后台自杀）")
+            return
+        }
+        val now = android.os.SystemClock.elapsedRealtime()
+        // ★ 节流只挡"反复发起重启"，**不能挡"用户把 App 切回前台后的第一次启动"**：
+        //   所以时间戳只在真的要发起重启时更新（后台推迟不消耗窗口）——
+        //   否则用户重新打开 App 还得白等最多 30 秒才看到修复生效（真机联调时踩到）。
+        if (now - lastRestartAt < RESTART_THROTTLE_MS) return
+        lastRestartAt = now
         try {
             val intent = Intent(this, MainActivity::class.java).apply {
                 action = HOTUPDATE_RESTART_ACTION
@@ -1010,7 +1028,7 @@ class MainActivity : AppCompatActivity() {
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
             )
             val am = getSystemService(Context.ALARM_SERVICE) as AlarmManager
-            val at = SystemClock.elapsedRealtime() + HOTUPDATE_RESTART_DELAY_MS
+            val at = android.os.SystemClock.elapsedRealtime() + HOTUPDATE_RESTART_DELAY_MS
             // Android 12+ 精确闹钟需要 SCHEDULE_EXACT_ALARM 权限；没有就退到非精确闹钟
             // （差几秒对"重启生效"没有影响，绝不为了精确而让功能失效）
             val exact = Build.VERSION.SDK_INT < Build.VERSION_CODES.S || am.canScheduleExactAlarms()
@@ -1019,6 +1037,7 @@ class MainActivity : AppCompatActivity() {
             } else {
                 am.set(AlarmManager.ELAPSED_REALTIME_WAKEUP, at, pi)
             }
+            Log.i("FireflyHotUpdate", "已排程自拉起（${HOTUPDATE_RESTART_DELAY_MS}ms 后），随后结束当前界面")
             Toast.makeText(this, "修复已生效，正在重启…", Toast.LENGTH_SHORT).show()
             uiHandler.postDelayed({ finishAffinity() }, 300)
         } catch (e: Exception) {

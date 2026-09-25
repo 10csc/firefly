@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import sys
 import threading
 import time
@@ -64,6 +65,7 @@ _DEFAULTS = {
     "applied_serial": 0,
     "applied_hash": "",
     "applied_layer": "",          # v2：本 serial 含哪些层（"web" / "py" / "web+py"）
+    "applied_pid": 0,             # 应用补丁时的进程号（见 boot_ok：同进程的 boot-ok 不算 py 层启动确认）
     "pending_serial": 0,
     "boot_fail_count": 0,
     "last_check": 0.0,
@@ -504,6 +506,7 @@ def apply_available() -> dict:
         d["applied_serial"] = int(avail["serial"])
         d["applied_hash"] = avail["hash"]
         d["applied_layer"] = layer
+        d["applied_pid"] = os.getpid()      # 供 boot_ok 判断"是不是新进程在确认"
         d["pending_serial"] = int(avail["serial"])
         d["boot_fail_count"] = 0
         d["last_error"] = ""
@@ -544,6 +547,7 @@ def rollback(reason: str = "") -> dict:
     d["applied_serial"] = 0
     d["applied_hash"] = ""
     d["applied_layer"] = ""
+    d["applied_pid"] = 0
     d["pending_serial"] = 0
     d["boot_fail_count"] = 0
     d["rolled_back_reason"] = reason or "手动回滚"
@@ -574,8 +578,23 @@ def boot_ok() -> dict:
     """前端首帧渲染完成 → 清 pending（规范 §5.5 的"启动成功判据"）。
 
     ★ 也是重启生效的完成信号：新进程起来 → 前端报到 → 清掉 `restart_pending`。
+
+    ★ 2026-09-25 真机实测暴露的坑（已修）：**页面 reload 也会重跑前端的 boot()**，
+    而它无条件上报 boot-ok ⇒ 含 py 层的补丁在**根本没重启**的情况下被标成"启动成功"，
+    于是安全模式的"回滚坏补丁"保护形同虚设（真机日志：进程 PID 没变，却打印
+    "新进程已完成启动确认"）。
+    判据：应用补丁时记下 `os.getpid()`，boot-ok 若来自**同一个进程**且本次补丁含 py 层，
+    就**不清 pending**（页面 reload 换不掉 Python 代码，这类补丁只能靠新进程确认）。
+    web 层补丁不受影响：它的生效方式本来就是 reload，同进程确认是正确语义。
     """
     d = load_state()
+    layer = str(d.get("applied_layer") or applied_layer())
+    same_process = bool(d.get("applied_pid")) and int(d["applied_pid"]) == os.getpid()
+    if same_process and "py" in layer:
+        logger.info("热更新：同进程的 boot-ok（页面 reload）不构成 py 层启动确认，pending 保留")
+        with _LOCK:
+            _RT["reload_pending"] = False
+        return {"ok": True, "same_process": True, "status": status()}
     changed = False
     if int(d["pending_serial"]):
         d["pending_serial"] = 0
