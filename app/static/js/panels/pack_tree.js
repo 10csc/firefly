@@ -263,8 +263,13 @@ async function _toggleKB(body, head) {
             for (const top of Object.keys(groups)) {
                 html += `<div class="pt-kb-grp">${escapeHtml(_KB_GROUPS[top] || top)}/</div>`;
                 for (const f of groups[top]) {
+                    // ★ 显示名（2026-10-01 修真实显示 bug）：契约 06 §3.1 现在**允许扁平知识名**
+                    //   `knowledge/世界观.md` —— 那种路径 split("/") 只有一段，`.slice(1)` 会是空串，
+                    //   于是行内文件名整个空掉（能点能编辑，但用户看不见点的是哪个文件）。
+                    //   规则：有分组就去掉 `knowledge/` 前缀保留"域/名.md"；扁平就用完整 path。
+                    const label = f.path.includes("/") ? f.path.split("/").slice(1).join("/") : f.path;
                     html += `<div class="pt-row pt-kb-file" data-path="${escapeHtml(f.path)}">
-                        <span class="pt-name" style="font-size:0.78em">${escapeHtml(f.path.split("/").slice(1).join("/"))}</span>
+                        <span class="pt-name" style="font-size:0.78em">${escapeHtml(label)}</span>
                         ${f.user_copy ? '<span class="pt-tag">已改</span>' : ""}
                         <span class="assist-ico" data-ai="${escapeHtml(f.path)}" title="AI 辅助修改本文件">✨</span>
                     </div>`;

@@ -97,6 +97,61 @@ check("memory.md 含核心记忆头部", "核心记忆头部" in content)
 
 
 # ============================================================
+# 2.4 活跃窗口 < keep_turns 时仍须整理（2026-09-24 修复）
+#
+# 用户报障："点让流萤休息，显示截止时间是 9/20"。
+# 根因：旧实现让**记忆区间**与**存档区间**共用同一个上界
+#   archive_end = 总轮数 − keep_turns
+# 窗口不足 keep_turns 轮时 archive_end <= last_integrated 恒真 → 整体跳过，
+# 返回 success=True + "活跃窗口不足 N 轮，无需整理"，前端显示"已休息"，零报错。
+# 修复后：记忆区间 = (last_integrated, 总轮数]（不受 keep_turns 约束），
+#         keep_turns 只决定**原文**搬多少进存档。
+# ============================================================
+print("\n=== 活跃窗口 < keep_turns 仍须整理（2026-09-24）===")
+
+_mem_a, _idx_a = _make_mem_path(), _make_idx_path()
+mm_small = MemoryManager(
+    MockClient([json.dumps({"new_head": "小窗口也整理。", "resolved": [], "added": []})]),
+    memory_file=_mem_a, index_file=_idx_a,
+)
+# 10 轮历史，keep_turns=30（远大于总轮数），游标 0
+_hist_small = []
+for i in range(1, 11):
+    _hist_small.append({"role": "user", "content": f"第{i}句", "time": "2026-09-24 10:00:00"})
+    _hist_small.append({"role": "assistant", "content": f"回应{i}", "time": "2026-09-24 10:00:05"})
+_res_small = mm_small.rest(_hist_small, 10, keep_turns=30)
+check("S1 窗口<keep 时仍然 success", _res_small.success is True)
+check("S2 窗口<keep 时确实做了整理（头部已更新）", _res_small.new_head == "小窗口也整理。")
+check("S3 游标推进到总轮数 10", _res_small.integrated_turn == 10)
+# 再整理一次：无新对话 → 才是真正的"跳过"
+_res_small2 = mm_small.rest(_hist_small, 10, keep_turns=30)
+check("S4 二次整理无新对话→跳过", _res_small2.integrated_turn == 10
+      and "无新对话" in _res_small2.error)
+# 游标落盘正确（供 auto_rest.active_turns / 游标自愈读）
+check("S5 游标已落盘为 10",
+      json.loads(_idx_a.read_text(encoding="utf-8"))["last_integrated_turn"] == 10)
+
+# 对照组：窗口足够大时，记忆区间仍然覆盖全部新轮次，而存档只搬窗口外的部分
+_mem_b, _idx_b = _make_mem_path(), _make_idx_path()
+mm_big = MemoryManager(
+    MockClient([json.dumps({"new_head": "大窗口整理。", "resolved": [], "added": []})]),
+    memory_file=_mem_b, index_file=_idx_b,
+)
+_hist_big = []
+for i in range(1, 41):
+    _hist_big.append({"role": "user", "content": f"第{i}句", "time": "2026-09-24 10:00:00"})
+    _hist_big.append({"role": "assistant", "content": f"回应{i}", "time": "2026-09-24 10:00:05"})
+_res_big = mm_big.rest(_hist_big, 40, keep_turns=30)
+check("S6 窗口>keep 时 success", _res_big.success is True)
+check("S7 游标推进到 40（记忆覆盖全部新轮次）", _res_big.integrated_turn == 40)
+# 存档只搬 (0, 40-30=10] 这 10 轮
+from modules.memory_archive import read_archive, _month_file  # noqa: E402
+_arch = read_archive(mm_big._mode)
+check("S8 存档只含窗口外的原文（第1轮在、第31轮不在）",
+      "第1句" in _arch and "第31句" not in _arch)
+check("S9 存档小标题标注轮次区间", "第 1–10 轮" in _arch)
+
+# ============================================================
 # 2.5 日期 bug 修复回归（2026-08-22）：模板示例日期不再硬编码
 # ============================================================
 print("\n=== 日期 bug 回归 ===")

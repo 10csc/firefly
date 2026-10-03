@@ -1,0 +1,222 @@
+{
+ "generated_at": "2026-10-02 01:04:28",
+ "pass": 30,
+ "fail": 0,
+ "pending": 0,
+ "strict": false,
+ "results": [
+  {
+   "layer": "L2",
+   "id": "L2-0",
+   "name": "拿到空闲端口（bind(0)）10237",
+   "status": "PASS",
+   "note": "port=10237"
+  },
+  {
+   "layer": "L2",
+   "id": "L2-1",
+   "name": "真实服务器起来并可访问 /health",
+   "status": "PASS",
+   "note": "port=10237"
+  },
+  {
+   "layer": "L2",
+   "id": "H01",
+   "name": "HTTP 拒绝且原因可读：files[].path 越界 ../evil.md",
+   "status": "PASS",
+   "note": "status=400 body='{\"ok\": false, \"error\": \"卡片校验未通过（CARD_UNKNOWN_FILE）：文本只能放在 character/ 根或 character/knowledg'"
+  },
+  {
+   "layer": "L2",
+   "id": "H02",
+   "name": "HTTP 拒绝且原因可读：缺 thumb（新格式）",
+   "status": "PASS",
+   "note": "status=400 body='{\"ok\": false, \"error\": \"卡片校验未通过（CARD_MISSING_THUMB）：缺少列表缩略图 thumb（列表只发 thumb：请用 ≤320px、≤12'"
+  },
+  {
+   "layer": "L2",
+   "id": "H03",
+   "name": "HTTP 必须接受：§3.4 结案：JPEG（SOF 320、scan 塞 800×800 数据）**应被接受**",
+   "status": "PASS",
+   "note": "status=200 body='{\"ok\": true, \"draft\": {\"id\": \"h03\", \"status\": \"draft\", \"updated_at\": 1790874268}}'"
+  },
+  {
+   "layer": "L2",
+   "id": "H03b",
+   "name": "HTTP 必须接受：§3.4 结案：PNG（IHDR 320×10、IDAT 塞 4000×10）**应被接受**",
+   "status": "PASS",
+   "note": "status=200 body='{\"ok\": true, \"draft\": {\"id\": \"h03b\", \"status\": \"draft\", \"updated_at\": 1790874268}}'"
+  },
+  {
+   "layer": "L2",
+   "id": "H03c",
+   "name": "HTTP 拒绝且原因可读：★反证：真实 320px、头部谎报 4000px **必须被拒**（判据在头部）",
+   "status": "PASS",
+   "note": "status=400 body='{\"ok\": false, \"error\": \"卡片校验未通过（CARD_BAD_IMAGE）：assets/thumb.jpg 像素数过大（4000x2667）\"}'"
+  },
+  {
+   "layer": "L2",
+   "id": "H04",
+   "name": "HTTP 拒绝且原因可读：第 9 张表情包",
+   "status": "PASS",
+   "note": "status=400 body='{\"ok\": false, \"error\": \"卡片校验未通过（CARD_TOO_BIG）：表情包最多 8 张（收到第 9 张）\"}'"
+  },
+  {
+   "layer": "L2",
+   "id": "H05",
+   "name": "HTTP 必须接受：25 个文件**通过**（上限已抬到 500）",
+   "status": "PASS",
+   "note": "status=200 body='{\"ok\": true, \"draft\": {\"id\": \"h05\", \"status\": \"draft\", \"updated_at\": 1790874268}}'"
+  },
+  {
+   "layer": "L2",
+   "id": "H05b",
+   "name": "HTTP 必须接受：33 个文件**通过**（用户现场）",
+   "status": "PASS",
+   "note": "status=200 body='{\"ok\": true, \"draft\": {\"id\": \"h05b\", \"status\": \"draft\", \"updated_at\": 1790874268}}'"
+  },
+  {
+   "layer": "L2",
+   "id": "H05c",
+   "name": "HTTP 拒绝且原因可读：501 个文件被拒（新上限 500）",
+   "status": "PASS",
+   "note": "status=400 body='{\"ok\": false, \"error\": \"卡片校验未通过（CARD_TOO_BIG）：卡内文件过多：当前 501 个，上限 500 个（文本总量另有 8MB 上限）\"}'"
+  },
+  {
+   "layer": "L2",
+   "id": "H06",
+   "name": "HTTP 拒绝且原因可读：知识库两层（knowledge/a/b/c.md）",
+   "status": "PASS",
+   "note": "status=400 body='{\"ok\": false, \"error\": \"卡片校验未通过（CARD_BAD_PATH）：知识库最多一层分组：knowledge/a/b/c.md（只允许 knowledge/'"
+  },
+  {
+   "layer": "L2",
+   "id": "H07",
+   "name": "合法新格式卡（含分组知识库 + 带 label 表情包）能存草稿",
+   "status": "PASS",
+   "note": "status=200 '{\"ok\": true, \"draft\": {\"id\": \"acc_good\", \"status\": \"draft\", \"updated_at\": 1790874268}}'"
+  },
+  {
+   "layer": "L2",
+   "id": "H08",
+   "name": "旧 payload（core/identity）能存草稿",
+   "status": "PASS",
+   "note": "status=200 '{\"ok\": true, \"draft\": {\"id\": \"acc_legacy\", \"status\": \"draft\", \"updated_at\": 1790874268}}'"
+  },
+  {
+   "layer": "L2",
+   "id": "H09",
+   "name": "按真实形状把审核结论写进沙箱草稿（2 张）",
+   "status": "PASS",
+   "note": "patched=2"
+  },
+  {
+   "layer": "L2",
+   "id": "H10",
+   "name": "旧格式草稿能**发布**",
+   "status": "PASS",
+   "note": "status=200 '{\"ok\": true, \"card\": {\"id\": \"acc_legacy\", \"name\": \"对抗验收卡\", \"char_name\": \"小萤\", \"user_name\": \"你\", \"present'"
+  },
+  {
+   "layer": "L2",
+   "id": "H11",
+   "name": "新格式草稿能**发布**",
+   "status": "PASS",
+   "note": "status=200 '{\"ok\": true, \"card\": {\"id\": \"acc_good\", \"name\": \"对抗验收卡\", \"char_name\": \"小萤\", \"user_name\": \"你\", \"presentat'"
+  },
+  {
+   "layer": "L2",
+   "id": "T01",
+   "name": "列表 20 张响应 ≤60KB（实测 1.2KB）",
+   "status": "PASS",
+   "note": "status=200 bytes=1194"
+  },
+  {
+   "layer": "L2",
+   "id": "T02",
+   "name": "列表响应里**没有** display/sticker/cover 图片地址",
+   "status": "PASS",
+   "note": "命中 []"
+  },
+  {
+   "layer": "L2",
+   "id": "T03",
+   "name": "列表条目不含非空 cover/display 字段（只给 thumb）",
+   "status": "PASS",
+   "note": "命中字段 []"
+  },
+  {
+   "layer": "L2",
+   "id": "T04",
+   "name": "列表条目**含** thumb 地址（列表离不开它）",
+   "status": "PASS",
+   "note": "items=2 thumbs=['thumb.png', None]"
+  },
+  {
+   "layer": "L2",
+   "id": "T05",
+   "name": "单张 thumb ≤12KB（实测 6.2KB）",
+   "status": "PASS",
+   "note": "status=200 bytes=6341"
+  },
+  {
+   "layer": "L2",
+   "id": "T06",
+   "name": "thumb 带长缓存与 ETag（翻回上一页不重复花钱）",
+   "status": "PASS",
+   "note": "etag='\"0fc140f938db2b3dd6a6ea080273bf48\"' cc='public, max-age=86400'"
+  },
+  {
+   "layer": "L2",
+   "id": "T07",
+   "name": "thumb 二次请求 304、正文 0 字节",
+   "status": "PASS",
+   "note": "status=304 bytes=0"
+  },
+  {
+   "layer": "L2",
+   "id": "T08",
+   "name": "详情页才返回 display 地址（大图只在详情）",
+   "status": "PASS",
+   "note": "card keys=['author', 'avatar', 'category', 'char_name', 'cover', 'created_at', 'desc', 'digest', 'display', 'downloads', 'id', 'name', 'presentation', 'published_at']"
+  },
+  {
+   "layer": "L2",
+   "id": "T08b",
+   "name": "详情页返回 thumb（列表与详情同源）",
+   "status": "PASS",
+   "note": "thumb='thumb.png'"
+  },
+  {
+   "layer": "L2",
+   "id": "T09",
+   "name": "列表 20 张 gzip 后 547B（浏览器实收口径）",
+   "status": "PASS",
+   "note": "547B"
+  },
+  {
+   "layer": "L2",
+   "id": "T10",
+   "name": "一屏 20 张合计（列表 + 20×thumb）125.0KB",
+   "status": "PASS",
+   "note": "128014B"
+  },
+  {
+   "layer": "L2",
+   "id": "T11",
+   "name": "一屏图片流量相对改造前基线下降 96.0%（基线 3129.8KB → 实测 123.8KB）",
+   "status": "PASS",
+   "note": "baseline=3204880"
+  },
+  {
+   "layer": "L2",
+   "id": "T12",
+   "name": "未登录读列表 → 401（实际 401）",
+   "status": "PASS",
+   "note": "401"
+  }
+ ],
+ "sandbox": "C:\\Users\\FANGL\\AppData\\Local\\Temp\\ff_accept_v2_inoli1fi",
+ "baseline_reference": "F:\\CodeFile\\firefly\\_harden\\baseline_plaza_traffic.json",
+ "layer": "L2"
+}

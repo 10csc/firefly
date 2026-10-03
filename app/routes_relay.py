@@ -81,9 +81,12 @@ def relay_proxy(h):
         try:
             data = resp.json()
         except ValueError:
-            data = {"error": {"message": f"中转响应解析失败（HTTP {resp.status_code}）"}}
+            logger.warning("中转响应非 JSON（HTTP %s）：%s",
+                           resp.status_code, (getattr(resp, "text", "") or "")[:200])
+            data = {"error": {"message": "代发失败：服务返回异常，请稍后重试"}}
         # 带真实状态码回传：错误响应（401/402/429/5xx）由服务器转成分类错误唤醒流水线
         _result(user_key, call_id, data, status=resp.status_code)
         h._json({"ok": True, "response": data})
     except Exception as e:
-        h._json({"ok": False, "error": f"中转失败: {e}"}, 502)
+        logger.warning("中转失败: %s", e)
+        h._json({"ok": False, "error": "代发失败，请检查网络后重试"}, 502)

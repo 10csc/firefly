@@ -285,7 +285,7 @@ def _last_active_mode() -> str:
     """
     best, best_ts = DEFAULT_MODE, 0.0
     from modules import app_config as cfg
-    for m in cfg.MODES:
+    for m in cfg.all_modes():
         ts = _last_user_msg_ts(m)
         if ts > best_ts:
             best, best_ts = m, ts
@@ -300,7 +300,7 @@ def backdoor_proactive_check(mode: str = None) -> list:
     mode 缺省/非法 → 自动判定最后活跃模式（Android 不再硬编码 story）。
     """
     from modules import app_config as cfg
-    if not mode or mode not in cfg.MODES:
+    if not mode or not cfg.valid_mode(mode):
         mode = _last_active_mode()
     if not reply_try_lock(mode):
         return []

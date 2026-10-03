@@ -84,6 +84,29 @@ app = S.fallback_verdict(dict(REAL, fail2ban_bans=0, rate_limited=9))
 check("C7 非封禁类兜底 → severity=medium 且需要人看", app["severity"] == "medium"
       and app["need_user"] is True)
 
+print("=== D. P4-8：新巡检事件（单 IP 大流量 / 证书临期）必须能各自成事件 ===")
+big_a = {"detected": True, "kind": "big_ip", "time": "2026-10-01 12:00:00",
+         "big_ip": "1.1.1.1", "big_bytes": 400000000, "fail2ban_bans": 0}
+big_b = dict(big_a, big_ip="2.2.2.2", time="2026-10-01 12:05:00")
+check("D1 不同 IP 的大流量 → 签名不同（旧实现只比封禁/计数，会被并成一次弹窗）",
+      S.event_signature(big_a) != S.event_signature(big_b))
+check("D2 同一 IP、时间戳不同 → 签名相同（冷却窗口内不重复弹）",
+      S.event_signature(big_a) == S.event_signature(dict(big_a, time="2026-10-01 12:09:00")))
+tls_1 = {"detected": True, "kind": "tls_expiry", "time": "2026-10-01 12:00:00",
+         "tls_not_after": "2026-10-07T00:00:00Z", "tls_days_left": 6, "fail2ban_bans": 0}
+check("D3 不同到期日的证书事件 → 签名不同",
+      S.event_signature(tls_1) != S.event_signature(dict(tls_1, tls_not_after="2026-10-20T00:00:00Z")))
+check("D4 大流量不算 SSH 扫描噪声（否则新巡检永远不会弹窗）", S.is_noise(big_a) is False)
+check("D5 证书临期不算噪声", S.is_noise(tls_1) is False)
+vb = S.fallback_verdict(big_a)
+check("D6 大流量兜底说清了 IP 与字节数",
+      "1.1.1.1" in vb["analysis"] and "400000000" in vb["analysis"] and vb["need_user"] is True)
+vt = S.fallback_verdict(tls_1)
+check("D7 证书临期兜底给出续期动作并点明不是攻击",
+      "续期" in " ".join(vt["actions"]) and "不是攻击" in vt["attack_type"] and vt["need_user"] is True)
+check("D8 证书 <3 天升级为 high",
+      S.fallback_verdict(dict(tls_1, tls_days_left=2))["severity"] == "high")
+
 print("=== D. 服务器侧脚本的「新封禁」语义（静态检查）===")
 sh = (ROOT / "server" / "attack_watch.sh").read_text(encoding="utf-8")
 check("D1 有状态文件（记住已上报的 Ban 时间）", ".attack_seen" in sh)

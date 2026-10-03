@@ -20,9 +20,12 @@ logger = logging.getLogger(__name__)
 
 
 def _modes() -> tuple:
-    """当前 MODES（lazy import 防循环：presets.py 顶层 import 本模块）。"""
+    """当前可用包（lazy import 防循环：presets.py 顶层 import 本模块）。
+
+    共创平台 M1.5：用 `all_modes()` 而不是 `MODES` —— 服务器模式下用户经广场安装的
+    角色卡不在全局 MODES 里，用 MODES 会让槽位三态刷新漏掉这些包。"""
     from core import presets as _p
-    return _p.MODES
+    return _p.all_modes()
 
 
 class PackRegistry:
@@ -147,11 +150,16 @@ class PackRegistry:
 
     # ── 变更 ──
     def register(self, pid: str, source: str = "custom", parsed: dict | None = None) -> dict | None:
-        """登记（幂等）。parsed=None 时从 `USER_DIR/{pid}/character/preset.json` 解析。"""
+        """登记（幂等）。parsed=None 时从 `{当前用户数据根}/{pid}/character/preset.json` 解析。
+
+        注意：兜底查找必须跟随用户上下文（与 `__init__` 的 fp 同口径）——服务器模式下
+        `_paths.USER_DIR` 是全局根，写死它会在**别的账号下面**找文件、登记进错账号的清单。
+        """
         if parsed is None:
-            fp = _paths.USER_DIR / pid / "character" / "preset.json"
+            base = _user_ctx_dir() or _paths.USER_DIR
+            fp = base / pid / "character" / "preset.json"
             if not fp.exists():
-                fp = _paths.USER_DIR / pid / "preset.json"
+                fp = base / pid / "preset.json"
             parsed = _parse_preset(fp, pid) if fp.exists() else None
         if not parsed:
             logger.warning("注册包失败（preset.json 缺失或非法）: %s", pid)

@@ -33,14 +33,21 @@ a = Analysis(
     ],
     hiddenimports=[
         "modules.memory_manager",
+        # 2026-10-02：PC 语音引擎（V1）。这几个是**动态 import**（宿主/worker 分发/同目录模块），
+        # 静态分析不一定覆盖，显式声明以确保进包。
+        "voice.pc_engine", "voice.pc_worker", "voice.pc_host", "voice.text_frontend",
+        "text_frontend",
     ],
     hookspath=[str(ROOT / "_pyinstaller_hooks")],
     hooksconfig={},
     runtime_hooks=[],
     excludes=[
-        "numpy", "sentence_transformers", "torch", "torchvision", "torchaudio",
+        # 2026-10-02（任务单 V0）：**只放开 onnxruntime 与 numpy** —— PC 语音引擎需要它们，
+        # 用户已批准作为「唯一零依赖铁律例外」。其余重型包（torch/torchvision/...）引擎侧
+        # 一律不用，保持排除。★ 只影响 PC 打包，不动安卓。
+        "sentence_transformers", "torch", "torchvision", "torchaudio",
         "PIL", "matplotlib", "scipy", "pandas",
-        "cv2", "onnxruntime",
+        "cv2",
         # 2026-09-08：以下四包代码零 import（urllib3.contrib.pyopenssl 可选路径带入），
         # 实测占 _internal ~12.2MB，排除后不影响任何功能
         "cryptography", "bcrypt", "zstandard", "chardet",

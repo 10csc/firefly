@@ -4,13 +4,11 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>Firefly</title>
-<link rel="stylesheet" href="style.css?v=60c285fc">
+<link rel="stylesheet" href="style.css?v=703aefb5">
 <style>
 /* 服务器版：轮播图下登录/用户模块 */
-/* 首页卡片族：账号模块 / 设定纠错 / 服务器云端版入口共用（原先只写了两份 scoped 副本，
-   导致 #server-web-entry 的卡片裸渲染） */
+/* 首页卡片族：账号模块 / 设定纠错共用（原先只写了两份 scoped 副本，导致卡片裸渲染） */
 #auth-module{margin:14px 10px 0}
-#server-web-entry{margin:14px 10px 0}
 .am-card{
   display:flex;align-items:center;justify-content:space-between;gap:12px;
   background:var(--ctrl-bg-2);border:1px solid var(--border-mid);border-radius:14px;
@@ -208,7 +206,7 @@ svg.ico{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:1.8;st
 <!-- ★ PC 覆盖样式必须**放在这个内联 <style> 之后**：内联块里有针对
      `#settings-panel .settings-body > *` 的限宽规则，同优先级下后加载的才生效。
      （2026-09-19 实测：放在 <head> 开头时，PC 的设置两栏栅格被这条 720px 规则压回单列。） -->
-<link rel="stylesheet" href="pc.css?v=6be0ae6d">
+<link rel="stylesheet" href="pc.css?v=9cdd5abe">
 </head>
 <body>
 <!-- SVG 图标精灵（用 <use href="#i-…"> 引用） -->
@@ -244,6 +242,46 @@ svg.ico{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:1.8;st
      而人一旦找到一条就不再找另一条（微软 UX 指南：Present each command on only one tab）。
      见 docs/设计/PC端前端重构.md。 -->
 <footer id="pc-statusbar"></footer>
+
+<!-- ═══ PC 三栏外壳（骨架，2026-10-02；IA 见 docs/设计/PC端重构-IA方案.md）
+     信息架构：**侧边栏只放"卡外"功能**（首页/卡库/广场/语音/公告/设置/账号）；
+     **角色卡 = 联系人**（中列，点一下即切卡）；**卡内一切留在聊天页**（右侧既有 #app 等视图层）。
+     ⚠ 手机端零影响的三条：① 本容器默认 `display:none`，只有 pc.css 的 @media (min-width:1100px)
+     才显形；② 只**追加** DOM，既有 view 的 id/class/window 入口一律未改；③ 行为逻辑只在
+     js/pc_shell.js 且 `matchMedia(min-width:1100px)` 守卫。 -->
+<div id="pc-shell">
+    <nav id="pc-nav" aria-label="PC 侧边栏（卡外功能）">
+        <button class="pc-nav-btn" type="button" data-pc="home" onclick="showHome()" title="首页">
+            <svg class="ico"><use href="#i-chat"/></svg><span>首页</span></button>
+        <button class="pc-nav-btn" type="button" data-pc="cards" onclick="openCardsView()" title="角色卡库（本机全部卡）">
+            <svg class="ico"><use href="#i-book"/></svg><span>卡库</span></button>
+        <button class="pc-nav-btn" type="button" data-pc="plaza" onclick="openPlaza()" title="角色卡广场（共创平台）">
+            <svg class="ico"><use href="#i-ext"/></svg><span>广场</span></button>
+        <button class="pc-nav-btn" type="button" data-pc="voice" onclick="openVoiceView()" title="语音插件（全局）">
+            <svg class="ico"><use href="#i-voice"/></svg><span>语音</span></button>
+        <span class="pc-nav-gap"></span>
+        <button class="pc-nav-btn" type="button" data-pc="notice" onclick="toggleNotice()" title="公告与更新说明">
+            <svg class="ico"><use href="#i-bell"/></svg><span>公告</span></button>
+        <button class="pc-nav-btn" type="button" data-pc="settings" onclick="openSettings()" title="设置（账号/模型/外观/数据）">
+            <svg class="ico"><use href="#i-gear"/></svg><span>设置</span></button>
+        <button class="pc-nav-btn" type="button" data-pc="feedback" onclick="openFeedback()" title="反馈与诊断导出（全局支持面）">
+            <svg class="ico"><use href="#i-mail"/></svg><span>反馈</span></button>
+    </nav>
+    <aside id="pc-contacts" aria-label="角色卡（联系人）">
+        <div class="pc-col-head">角色卡</div>
+        <div id="pc-contact-list"></div>
+        <!-- 「新建角色」与「卡库」**意图不同**（不是同一命令两个入口）：卡库=浏览/管理，
+             这里直达新建表单 ⇒ 显式带上"打开新建"的意图参数。 -->
+        <button id="pc-contact-new" type="button" onclick="openCardsView(); togglePackCreate(true)">+ 新建角色</button>
+    </aside>
+    <!-- 聊天页右缘的菜单把手（用户 2026-10-02：「菜单页的收起展开放在聊天页的右侧，点击后向左展出」）。
+         菜单本体仍是既有 #menu-drawer（PC 上就停靠在聊天页右侧、宽 --pc-menu-w），
+         把手只调既有 openMenu/closeMenu，**不新增业务逻辑**；窄屏随 #pc-shell 一起 display:none。 -->
+    <button id="pc-menu-handle" type="button" title="菜单（点击向左展出 / 再点收起）"
+            aria-expanded="false" onclick="pcMenuToggle()">
+        <span class="pc-handle-bar" aria-hidden="true"></span><span class="pc-handle-txt">菜单</span>
+    </button>
+</div>
 
 <!-- ═══ 首页（独立视图） ═══ -->
 <div id="home-view">
@@ -328,16 +366,6 @@ svg.ico{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:1.8;st
                 <button class="am-btn ghost" onclick="logout()">退出登录</button>
             </div>
         </div>
-        <!-- PC 专用：服务器云端版入口（浏览器新标签打开云端网页；安卓由壳自动回落不显示，服务器网页自身不显示） -->
-        <div id="server-web-entry" style="display:none">
-            <div class="am-card">
-                <div class="am-info">
-                    <div class="am-title">服务器云端版（网页）</div>
-                    <div class="am-sub">登录账号后在云端运行 · 账号数据云端隔离 · Key 仍只存本机浏览器 · 支持托管额度</div>
-                </div>
-                <button class="am-btn" onclick="openServerWeb()">打开服务器版 →</button>
-            </div>
-        </div>
     </div>
 </div>
 
@@ -355,6 +383,8 @@ svg.ico{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:1.8;st
     <div class="cv-head">
         <button class="cv-back" type="button" onclick="closeCardsView()">←</button>
         <div class="cv-title">角色卡管理</div>
+        <!-- 角色卡广场入口：与管理页同一个域（都在"角色卡"），不另起一套导航 -->
+        <button id="cv-plaza-btn" type="button" onclick="openPlaza()" title="浏览共创平台上公开的角色卡">角色卡广场</button>
     </div>
     <div class="cv-list" id="cv-list"></div>
     <div class="cv-new">
@@ -379,6 +409,58 @@ svg.ico{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:1.8;st
             <div class="field-tip">创建后点列表里的卡片进详情页，编辑人设与头像封面。</div>
         </div>
     </div>
+</div>
+
+<!-- ═══ 角色卡广场：独立全屏页（浏览 → 筛选 → 详情 → 安装/卸载）
+     父容器自己滚（列表与详情共用同一个滚动体）；详情是覆盖在列表上的一层。
+     数据全部来自 /plaza/api/*（相对路径，服务器模式与本地模式同一套代码）。
+     封面/头像必须走 fetch + objectURL（带 Authorization），不能用 <img src> 直连。 ═══ -->
+<div id="plaza-view">
+    <div id="plaza-list">
+        <div class="cv-head">
+            <button class="cv-back" type="button" onclick="plazaBack()">←</button>
+            <div class="cv-title">角色卡广场</div>
+            <!-- 管理台入口：与广场同一个域。**前端不猜角色**——非 admin 点进去会拿到后端 403，
+                 就地给人话提示（不隐藏入口，也不假装自己是管理员）。 -->
+            <button id="pz-admin-btn" type="button" onclick="openPlazaAdmin()"
+                    title="广场管理台：看未公开的卡与举报，下架 / 恢复（只有管理员能用）">管理台</button>
+            <!-- 制卡入口：与广场/角色卡管理同一个域，不另起导航 -->
+            <button id="pz-forge-btn" type="button" onclick="openPlazaForge()"
+                    title="在站内填表做一张角色卡，审核通过后发布到广场">✦ 制作角色卡</button>
+        </div>
+        <div class="pz-bar">
+            <div class="pz-chips" id="pz-cats"></div>
+            <div class="pz-search-row">
+                <input type="search" id="pz-search" placeholder="搜卡名 / 角色名 / 简介 / 标签" maxlength="40">
+                <select id="pz-sort" aria-label="排序方式">
+                    <option value="new">最新发布</option>
+                    <option value="hot">最受欢迎</option>
+                    <option value="name">按名称</option>
+                </select>
+            </div>
+            <div class="pz-tags" id="pz-tags"></div>
+        </div>
+        <div class="pz-quota" id="pz-quota"></div>
+        <div class="pz-msg" id="plaza-msg"></div>
+        <div class="pz-grid" id="plaza-grid"></div>
+        <div class="pz-more" id="plaza-more">加载更多</div>
+        <div class="pz-sentinel" id="plaza-sentinel"></div>
+    </div>
+    <div id="plaza-detail"></div>
+    <!-- 制卡层（共创平台 M2）：广场面板内的一层。
+         ⚠ `#pf-body` 是**必须**的中间层：plaza_forge.js 建表单时会清空它自己的容器，
+         若把 #pf-review / #pf-modal 直接放在被清空的节点里，那两个节点会被一起删掉
+         （2026-10-01 真浏览器抓到：点「提交审核」毫无反应，弹窗根本不存在）。 -->
+    <div id="plaza-forge">
+        <div id="pf-body"></div>
+        <div id="pf-review"></div>
+        <div id="pf-modal"></div>
+    </div>
+    <!-- 治理层（共创平台 P4-3）：管理台是与制卡层同级的一层；举报弹层覆盖整个广场面板。
+         ⚠ `#pz-modal` 必须是 `#plaza-detail` 的**兄弟**而不是子节点：详情页每次重渲染都会
+         清空 `#plaza-detail` 的 innerHTML，放在里面会被一起删掉（制卡层踩过同一个坑）。 -->
+    <div id="plaza-admin"></div>
+    <div id="pz-modal"></div>
 </div>
 
 <!-- ═══ 角色编辑页：独立全屏页（封面横幅 + 大头像 + 人设编辑；点图即换） ═══ -->
@@ -787,6 +869,7 @@ svg.ico{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:1.8;st
         <div id="notice-pane-guide" role="tabpanel" aria-labelledby="notice-tab-guide" hidden>
             <div id="notice-static">
             <p class="notice-tip">Firefly 是 AI 角色扮演应用（非真人），请勿透露个人敏感信息。</p>
+            <p class="notice-tip">遇到报错先看「使用指南 → 排障对照表」：它会告诉你这是不是你的问题、下一步该做什么。</p>
             <h3>一、开始使用</h3>
             <p>1. 首页右上角 ⚙ 设置 → 填入 DeepSeek API Key → 保存</p>
             <p>2. 回到首页，点击角色卡片进入聊天</p>
@@ -866,10 +949,16 @@ svg.ico{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:1.8;st
             <button class="menu-tab" data-tab="pipeline"><svg class="ico"><use href="#i-flow"/></svg><span>流程日志</span></button>
         </div>
         <div class="menu-actions">
-            <button onclick="showHome()"><img class="menu-act-icon" src="assets/icon_home.png?v=1" alt=""> 返回首页</button>
+            <!-- ⚠ PC 上**隐藏**这条：侧边栏已有「首页」，同一命令出现两处会让人只认一条
+                 （微软 UX 指南）；手机上它仍是回首页的主路径 ⇒ 只加 data 标记，PC 用 CSS 隐藏。 -->
+            <button data-pc-hide="dup-home" onclick="showHome()"><img class="menu-act-icon" src="assets/icon_home.png?v=1" alt=""> 返回首页</button>
             <button id="menu-undo-btn"><img class="menu-act-icon" src="assets/icon_undo.png?v=1" alt=""> 撤回上一轮</button>
             <button id="menu-rest-btn"><img class="menu-act-icon" src="assets/icon_rest.png?v=1" alt=""> <span data-tpl="让{c}休息">让角色休息</span></button>
             <button id="menu-clear-btn"><img class="menu-act-icon" src="assets/icon_trash.png?v=1" alt=""> 清除历史</button>
+            <!-- PC 档「卡详情」：进聊天页内的卡详情抽屉（人设/知识库/形象/主动消息都在 #pack-view 里）。
+                 这是**卡内命令**，只在聊天页菜单页出现（侧边栏无同名入口）。
+                 手机端隐藏（class=pc-only：pc.css 块外 display:none、仅 ≥1100px 显形）⇒ 手机端一行不变。 -->
+            <button class="pc-only" onclick="pcOpenPackDrawer()"><svg class="ico"><use href="#i-book"/></svg> 卡详情</button>
         </div>
 
         <!-- Tab: 设定文件（用户记忆 / 角色手账）——
@@ -1114,7 +1203,7 @@ svg.ico{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:1.8;st
 </script>
 <script src="config.js"></script>
 <!-- 运行时入口：bundle.js（classic script，file:// 兼容；ES Module 在安卓服务器模式 file:// 下被 CORS 拦截） -->
-<script src="js/bundle.js?v=313830a2"></script>
+<script src="js/bundle.js?v=2f8e0006"></script>
 <script src="js/pc_shell.js"></script>
 </body>
 </html>

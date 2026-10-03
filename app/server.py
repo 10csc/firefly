@@ -17,6 +17,18 @@ from pathlib import Path
 from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
 from urllib.parse import urlparse, unquote
 
+# ── PC 语音引擎 worker 分发（必须**尽可能早**，且在重依赖 import 之前）──────────
+# 冻结（PyInstaller）时，语音引擎子进程通过 `firefly.exe --voice-worker` 复用同一个 exe
+# 把自己跑成 worker（见 app/voice/pc_host.py 的 _resolve_launch）。开发态不触发（走
+# `python app/voice/pc_worker.py`，见同处）。这一支只做「导入 worker → 跑主循环 → 退出」，
+# 绝不进入 HTTP 服务，也不碰下面的日志重定向。
+if "--voice-worker" in sys.argv:
+    _app_dir = str(Path(__file__).resolve().parent)
+    if _app_dir not in sys.path:
+        sys.path.insert(0, _app_dir)
+    from voice.pc_worker import main as _voice_worker_main
+    sys.exit(_voice_worker_main())
+
 # PyInstaller console=False（windowed）下 sys.stdout/stderr 为 None：
 # print/logging 会直接崩。此时把输出重定向到 user_data/logs/firefly.log（与 exe 同级）。
 # 开发者直接 python server.py 不受影响（终端正常输出）。

@@ -56,9 +56,13 @@ def _presets_mod():
 
 
 def _resolve_mode(mode: str | None) -> str:
-    """非法/空 mode → 默认包（审查约束：调用方传坏值不炸，静默回退默认包）。"""
+    """非法/空 mode → 默认包（审查约束：调用方传坏值不炸，静默回退默认包）。
+
+    共创平台 M1.5 起用 `valid_mode()` 而不是 `mode in MODES`：服务器模式下用户
+    经广场安装的角色卡**不在全局 MODES 里**，直接判 MODES 会把合法 mode 判成非法、
+    静默回退默认包 → 读写落到**别的角色的目录**（本项目踩过的同类坑）。"""
     _presets = _presets_mod()
-    return mode if mode in _presets.MODES else _presets.DEFAULT_MODE
+    return mode if _presets.valid_mode(mode) else _presets.DEFAULT_MODE
 
 
 def mode_root(mode: str = None) -> Path:

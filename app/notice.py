@@ -27,6 +27,7 @@ from __future__ import annotations
 import base64
 import json
 import logging
+import os
 import re
 import threading
 import time
@@ -53,6 +54,11 @@ MAX_IMG_BYTES = 1536 * 1024   # 单图上限 1.5MB（公告图，不是相册）
 MAX_TOTAL_IMG_BYTES = 8 * 1024 * 1024
 
 CHECK_INTERVAL = 3600         # 缓存新鲜度：1 小时内不重复联网（公告比补丁更在意时效）
+# R-04（S-7，2026-10-03）：`check(force=True)` 的**全局冷却**（秒，可配）。
+# 为什么单独一个常量而不是复用 CHECK_INTERVAL：手动"检查更新"是**用户主动**动作，
+# 给 1 小时冷却会显得按钮坏了；这里只要挡住"循环调用灌爆出网抓取"即可。
+FORCE_COOLDOWN = float(os.environ.get("FIREFLY_NOTICE_CHECK_COOLDOWN", "60") or 60)
+_FORCE_LOCK = threading.Lock()
 _TIMEOUT = 20
 
 _BLOCK_TYPES = ("p", "h", "li", "tip", "img")
@@ -341,12 +347,33 @@ def image_path(name: str):
 
 # ── 检查（拉 latest → 验签 → 校验 → 下载图 → 落缓存）──
 def check(force: bool = False) -> dict:
-    """联网刷新。返回 {ok, changed, serial, error}；任何异常都兜成字段。"""
+    """联网刷新。返回 {ok, changed, serial, error}；任何异常都兜成字段。
+
+    R-04（S-7，2026-10-03）：`force=True` 加**全局冷却 + 互斥**。
+    为什么：`action=check` 每次都会让服务端**出网抓取**（服务器版下更新源就是自身
+    公网网关 ⇒ 服务端打自己），而 force 会跳过 `CHECK_INTERVAL`；任一登录账号循环调用
+    即可无限触发。冷却/互斥只作用于 force，`auto_refresh` 的既有节流不受影响。
+    """
     d = _load()
     fresh = (time.time() - float(d.get("last_check") or 0)) < CHECK_INTERVAL
     if fresh and not force:
         return {"ok": True, "changed": False, "serial": int(d.get("serial") or 0),
                 "cached": True}
+
+    if force:
+        now = time.time()
+        with _FORCE_LOCK:
+            if _RT.get("refreshing"):
+                # 已有一次刷新在跑（含 payload 的后台刷新）⇒ 不再叠加出网请求
+                return {"ok": True, "changed": False, "skipped": True,
+                        "reason": "in_progress", "serial": int(d.get("serial") or 0)}
+            last_force = float(_RT.get("last_force") or 0)
+            waited = now - last_force
+            if last_force and waited < FORCE_COOLDOWN:
+                return {"ok": True, "changed": False, "skipped": True,
+                        "reason": "cooldown", "retry_after": int(FORCE_COOLDOWN - waited) + 1,
+                        "serial": int(d.get("serial") or 0)}
+            _RT["last_force"] = now
 
     urls = base_urls()
     if not urls:

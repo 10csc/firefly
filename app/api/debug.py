@@ -8,6 +8,10 @@
 
 from routes_common import _CONTENT_MAX, _body_mode, _is_server, _query_mode, _read_json
 
+import logging
+
+logger = logging.getLogger(__name__)
+
 
 def get_metrics(h):
     # 2026-09-10 修复：metrics 是进程级全局计数器（token/费用/各模块调用数），
@@ -53,14 +57,15 @@ def save_user_memory(h):
     if not isinstance(content, str):
         h._json({"ok": False, "error": "内容必须为文本"}); return
     if len(content) > _CONTENT_MAX:
-        h._json({"ok": False, "error": f"内容过长（上限 {_CONTENT_MAX} 字符）"}); return
+        h._json({"ok": False, "error": f"内容过长（当前 {len(content)} 字，上限 {_CONTENT_MAX} 字）；请精简后重试"}); return
     try:
         fp = _memory_file(mode)
         fp.parent.mkdir(parents=True, exist_ok=True)
         fp.write_text(content, encoding="utf-8")
         h._json({"ok": True})
     except Exception as e:
-        h._json({"ok": False, "error": f"保存失败: {e}"})
+        logger.warning("保存用户记忆失败: %s", e)
+        h._json({"ok": False, "error": "保存失败，请重试；仍失败请检查磁盘空间"})
 
 
 def get_journal(h):

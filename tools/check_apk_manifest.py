@@ -19,6 +19,11 @@
 """
 import struct
 import sys
+
+try:  # Windows GBK 控制台打印 “✔/✗” 会 UnicodeEncodeError（与 check_version 同款兜底）
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+except Exception:
+    pass
 import zipfile
 
 RES_STRING_POOL_TYPE = 0x0001

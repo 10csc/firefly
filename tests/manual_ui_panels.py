@@ -71,10 +71,22 @@ try:
         pg.on("pageerror", lambda e: errs.append(str(e)))
         pg.on("console", lambda m: errs.append("console.error: " + m.text)
               if m.type == "error" else None)
-        # 跳过首次引导遮罩（会拦截点击）
+        # 跳过首次引导遮罩（会拦截点击）：① 预置 done 标记；② **用 CSS 隐藏而不是删节点**
+        #   —— 删节点会让引导自己的后续代码去给已移除的元素挂 onclick，抛出假异常
+        #   （本脚本现在要真实点击 #pv-tree 里的文件行，所以这一层必须处理；同款写法见 manual_plaza_ui.py）。
+        #   ⚠ 必须在 `documentElement` 存在后再 observe —— init script 早于任何 DOM 节点。
         pg.add_init_script(
             "try{localStorage.setItem('firefly_guide_v1_done','1');"
-            "localStorage.setItem('firefly_deep_guide_v1_done','1');}catch(e){}")
+            "localStorage.setItem('firefly_deep_guide_v1_done','1');}catch(e){}\n"
+            "window.__guideNuked=0;\n"
+            "const __nukeGuide=()=>{if(window.__guideNuked)return;"
+            "const st=document.createElement('style');"
+            "st.textContent='#guide-mask,.guide-block{display:none!important;pointer-events:none!important}';"
+            "(document.head||document.documentElement).appendChild(st);window.__guideNuked=1;};\n"
+            "const __arm=()=>{if(!document.documentElement){setTimeout(__arm,0);return;}"
+            "new MutationObserver(__nukeGuide).observe(document.documentElement,"
+            "{childList:true,subtree:true});__nukeGuide();};\n"
+            "__arm();")
         # 桩登录态，让 showChat 能继续
         pg.route("**/auth/state", lambda route: route.fulfill(
             status=200, content_type="application/json",
@@ -110,10 +122,40 @@ try:
         step("关闭设置面板", lambda: pg.evaluate("window.closeSettings()"))
 
         # 3) 包详情页（packs 模块：人设编辑器 + 专属表情包 + 主动消息）
+        # ⚠ 2026-10-01（P4-10 修陈旧选择器）：旧 id `#pv-prompts` 在产品里**已不存在** —— 包详情页
+        #   早已改由 panels/pack_tree.js 渲染进 `#pv-tree`：域 = `details.pt-domain[data-key]`，
+        #   文件 = `.pt-file` 里可点击的 `.pt-row`，编辑器是**点开才懒建**的
+        #   `.pt-editor > textarea.pt-ta`（+ 保存/恢复默认/收起）。
+        #   原来那两步等/点 `#pv-prompts` 因此**永远超时**（假失败：既不能当验收依据，又会盖住真回归）。
+        #   现在等/点的是**同一件事的现等价物**：人设域在位 → 点开首份可编辑文件 → 编辑器真的可见。
+        #   断言没有放宽（仍然要求"编辑器出现"这一可观测结果）。
         step("打开 story 包详情页", lambda: pg.evaluate("window.openPackView('story')"))
-        step("等待人设编辑器", lambda: pg.wait_for_selector("#pv-prompts details", state="attached",
-                                                           timeout=8000))
-        step("展开第一段人设", lambda: pg.locator("#pv-prompts summary").first.click())
+
+        def _open_first_persona_editor():
+            """展开「人设与口吻」域 → 点开第一份**可编辑**文件 → 返回该文件行。
+
+            「本包未附带」的文件（`.pt-row-missing`）没有编辑器，跳过。"""
+            pg.wait_for_selector('#pv-tree details.pt-domain[data-key="persona"]',
+                                 state="attached", timeout=10000)
+            # `<details>` 默认折叠：不展开则行不可见、点不到（等价于旧脚本点 summary）
+            pg.evaluate("""() => {
+                const d = document.querySelector('#pv-tree details.pt-domain[data-key="persona"]');
+                if (d) d.open = true;
+            }""")
+            rows = pg.locator('#pv-tree details.pt-domain[data-key="persona"] .pt-file .pt-row')
+            for i in range(rows.count()):
+                if "pt-row-missing" in (rows.nth(i).get_attribute("class") or ""):
+                    continue
+                rows.nth(i).click()
+                pg.wait_for_selector('#pv-tree details.pt-domain[data-key="persona"] '
+                                     '.pt-editor textarea.pt-ta', state="visible", timeout=8000)
+                return rows.nth(i)
+            raise AssertionError("人设域里没有可编辑文件（全是「本包未附带」）")
+
+        step("等人设树渲染（人设域节点在位）",
+             lambda: pg.wait_for_selector("#pv-tree details.pt-domain", state="attached", timeout=8000))
+        step("展开第一段人设（点开首份可编辑文件，编辑器真的出现）",
+             lambda: _open_first_persona_editor())
         step("切到 haruno 详情页", lambda: pg.evaluate("window.openPackView('haruno')"))
         step("关闭详情页", lambda: pg.evaluate("window.closePackView()"))
 

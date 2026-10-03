@@ -125,7 +125,7 @@ def _render_sys_prompt(mode: str, module: str, attr: str) -> str:
 
 def build_tree(mode: str) -> dict:
     """规范树 + 实态注入。返回 {mode, presentation, domains: [...]}（GET /pack-structure 主体）。"""
-    p = cfg.PRESETS.get(mode) or {}
+    p = cfg.pack_meta(mode)
     presentation = p.get("presentation", "sticker")
     domains = []
     for d in PACK_STRUCTURE:

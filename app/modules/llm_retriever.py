@@ -46,17 +46,52 @@ class RetrieveOutput:
 
 
 # ── 知识库加载（模块级缓存，按模式隔离）────────────
-# 知识源按预设包声明：preset.json 的 knowledge_dirs（仓库相对路径清单，如 story 挂
-# knowledge/ + database/dialogues_compiled/）；未声明则挂包内 knowledge/（存在才挂）；
+# 知识源三层（顺序 = 优先级）：
+#   ① preset.json 的 knowledge_dirs（仓库相对路径清单，如 story 历史上挂
+#      knowledge/ + database/dialogues_compiled/）；
+#   ② **包内用户副本** `{数据根}/{包}/character/knowledge/`——软件内编辑的知识文件
+#      （routes_pack._kb_user_root）与**广场安装的角色卡**（app/plaza/install.py 只写
+#      character/ 子树）都落在这里；
+#   ③ **包自带** `app/assets/character/{包}/knowledge/`。
+# ②③ 同名文件**用户副本优先**（与 /pack-knowledge 的读取链同序），避免同一份知识注入两次。
 # 都没有（haruno 等）返回空——无知识库的包跳过检索，省一次 LLM 调用。
+#
+# 2026-10-01（共创平台 M2）补 ② 这一层：此前这里只认 knowledge_dirs 与 bundled 包目录，
+# 于是"卡自带的知识库"和"用户改过的知识库"**都进不了检索**——表现为 has_knowledge=False，
+# 检索阶段整段被跳过，且**零报错**（与 docs/错误总结.md #10「两个口径不一致」同族：
+# 编辑/安装写的是用户副本，检索读的是 bundled 目录）。
+_KNOWLEDGE_SHADOW_GROUP = "pkg"       # 同组内的根按"先出现者优先"去重
+
+
+def _knowledge_roots(mode: str = DEFAULT_MODE) -> tuple:
+    """知识源根清单：`((目录, 遮蔽组), …)`，顺序 = 优先级。"""
+    from modules.app_config import PRESETS, bundled_character_dir, mode_character_dir
+    roots: list = []
+    for d in ((PRESETS.get(mode) or {}).get("knowledge_dirs") or []):
+        # 声明的仓库目录各自独立成组：互不遮蔽，保持既有语义
+        roots.append((ROOT / d, f"declared::{d}"))
+    roots.append((mode_character_dir(mode) / "knowledge", _KNOWLEDGE_SHADOW_GROUP))
+    roots.append((bundled_character_dir(mode) / "knowledge", _KNOWLEDGE_SHADOW_GROUP))
+    return tuple(roots)
+
+
 def _source_dirs(mode: str = DEFAULT_MODE) -> tuple:
-    from modules.app_config import PRESETS, bundled_character_dir
-    p = PRESETS.get(mode) or {}
-    declared = p.get("knowledge_dirs")
-    if declared:
-        return tuple(ROOT / d for d in declared)
-    pkg_kb = bundled_character_dir(mode) / "knowledge"
-    return (pkg_kb,) if pkg_kb.exists() else ()
+    """知识源目录（全部根，未遮蔽去重）——供 listing 类调用方使用（如 /pack-files 的知识清单）。"""
+    return tuple(d for d, _g in _knowledge_roots(mode))
+
+
+def _knowledge_file_label(fp: Path, root: Path) -> str:
+    """知识文件在提示词里的来源标题（用户副本用 user_data 相对，包自带用仓库相对）。"""
+    from modules.app_config import USER_DIR
+    for base, prefix in ((Path(USER_DIR), ""), (ROOT, "")):
+        try:
+            return prefix + fp.relative_to(base).as_posix()
+        except ValueError:
+            continue
+    try:
+        return f"{root.name}/{fp.relative_to(root).as_posix()}"
+    except ValueError:
+        return fp.name
 
 
 def has_knowledge(mode: str = DEFAULT_MODE) -> bool:
@@ -95,9 +130,9 @@ def _load_knowledge(mode: str = DEFAULT_MODE) -> str:
     """拼接 {mode} 设定资料库文本。模块级缓存（内容只在文件变更后重建）。
 
     2026-09-10（R-06）：缓存 key 加上用户作用域（user_scope_key），并新增 clear_knowledge_cache()。
-    原实现只用 mode 作 key——当前 `_source_dirs` 只返回 bundled/仓库路径、不含用户目录，
-    所以**不构成跨用户泄漏**；但一旦将来 knowledge_dirs 支持用户目录（或服务器版放开自建包），
-    就会立刻变成跨账号串数据。同时补上失效入口：此前编辑包设定/导入数据都不会重建知识库缓存。"""
+    原实现只用 mode 作 key——当时 `_source_dirs` 只返回 bundled/仓库路径、不含用户目录，
+    所以**不构成跨用户泄漏**；自 2026-10-01 起知识源含用户副本（`{数据根}/{包}/character/`），
+    用户作用域因此成为**隔离的必要条件**（服务器版多账号共用进程）。失效入口见 clear_knowledge_cache。"""
     from modules.app_config import user_scope_key
     ck = f"{mode}::{user_scope_key()}"
     with _lock:
@@ -106,7 +141,8 @@ def _load_knowledge(mode: str = DEFAULT_MODE) -> str:
         parts = []
         total_chars = 0
         file_count = 0
-        for d in _source_dirs(mode):
+        seen: set = set()          # (遮蔽组, 相对路径)：同组先到者优先（用户副本覆盖包自带）
+        for d, group in _knowledge_roots(mode):
             if not d.exists():
                 continue
             for fp in sorted(d.rglob("*.md")):
@@ -115,12 +151,20 @@ def _load_knowledge(mode: str = DEFAULT_MODE) -> str:
                 if fp.stem.endswith("_draft"):
                     continue
                 try:
+                    rel = fp.relative_to(d).as_posix()
+                except ValueError:
+                    continue
+                key = (group, rel)
+                if key in seen:
+                    continue
+                seen.add(key)
+                try:
                     text = fp.read_text(encoding="utf-8")
                 except OSError:
                     continue
                 total_chars += len(text)
                 file_count += 1
-                parts.append(f"## {fp.relative_to(ROOT)}\n{text}")
+                parts.append(f"## {_knowledge_file_label(fp, d)}\n{text}")
         # 历史归档（P2，2026-09-18）：聊天产生的长期记忆，按月分片、只增不改。
         # 放在**知识库之后**：设定是"她本来就知道的事"，归档是"你们一起经历的事"，
         # 后者更近、更该在摘要里被优先引用。

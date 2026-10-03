@@ -41,7 +41,11 @@ async function loadPackView() {
     try {
         const resp = await fetch(`/pack-files?mode=${encodeURIComponent(mode)}`);
         data = await resp.json();
-    } catch (e) { showToast("加载失败（网络）"); return; }
+    } catch (e) {
+        console.warn("[packs] 加载角色包失败", e);
+        showToast("角色卡加载失败：连不上本机服务，请稍后重试");
+        return;
+    }
     if (gen !== _modeGen) return;   // 模式已切换：丢弃本次结果，防止 A 的内容渲染进 B 的页面
     if (!data || !data.files) return;
 
@@ -72,6 +76,23 @@ async function loadPackView() {
     // 封面/头像编辑按钮绑定
     document.getElementById("pv-cover-edit").onclick = () => _packAssetUpload("cover");
     document.getElementById("pv-avatar-edit").onclick = () => _packAssetUpload("avatar");
+    // ★「发布到广场」（2026-10-01 用户点名要）：把**这张**角色卡载入制卡流程。
+    //   按钮动态建、模式绑 `_packViewMode`（本页的 F-3 代际纪律：写回一律用它，
+    //   **不读**实时的当前模式——那个字面量在本文件里只允许出现一次，见 E/A6 守卫）。
+    try {
+        const ops = document.querySelector("#pack-view .pv-asset-ops");
+        if (ops && !document.getElementById("pv-publish-btn")) {
+            const pb = document.createElement("a");
+            pb.id = "pv-publish-btn";
+            pb.setAttribute("type", "button");
+            pb.title = "把这张角色卡做成广场卡（存草稿 → 提交审核 → 发布）";
+            pb.textContent = "发布到广场 →";
+            pb.onclick = () => {
+                if (window.plazaPublishLocalMode) window.plazaPublishLocalMode(_packViewMode);
+            };
+            ops.appendChild(pb);
+        }
+    } catch (e) { /* 按钮是锦上添花：失败不影响详情页 */ }
 
     // 主动消息区填值
     const pro = data.proactive || {};

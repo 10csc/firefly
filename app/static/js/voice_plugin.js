@@ -40,7 +40,10 @@ async function _vpAct(action, extra) {
             body: JSON.stringify(Object.assign({action: action}, extra || {})),
         });
         const d = await r.json();
-        if (d && d.ok === false) showToast("操作失败：" + (d.error || "未知原因"));
+        if (d && d.ok === false) {
+            console.warn("[voice] 操作失败", d.error);   // 原始错误落日志，不透传给用户
+            showToast("操作没成功：请重试；仍失败请在「反馈」里附诊断包");
+        }
         return d;
     } catch (e) {
         showToast("操作失败：无法连接后端");

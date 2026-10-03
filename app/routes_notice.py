@@ -10,9 +10,12 @@ GET /notice-image 取已校验的缓存图；POST /notice/check 手动刷新；P
 """
 from __future__ import annotations
 
+import logging
 from urllib.parse import parse_qs, urlparse
 
 from routes_common import _read_json
+
+logger = logging.getLogger(__name__)
 
 
 def notice_get(h):
@@ -31,7 +34,7 @@ def notice_image(h):
     name = (qs.get("name", [""])[0] or "").strip()[:200]
     fp = notice.image_path(name)
     if fp is None:
-        h._json({"ok": False, "error": "公告图不存在"}, 404)
+        h._json({"ok": False, "error": "这张公告图暂时取不到，请下拉刷新公告后再试"}, 404)
         return
     mime = "image/png"
     low = name.lower()
@@ -43,8 +46,9 @@ def notice_image(h):
         mime = "image/gif"
     try:
         data = fp.read_bytes()
-    except OSError:
-        h._json({"ok": False, "error": "公告图读取失败"}, 404)
+    except OSError as e:
+        logger.warning("公告图读取失败: %s", e)
+        h._json({"ok": False, "error": "公告图读取失败，请稍后重试"}, 404)
         return
     h.send_response(200)
     h.send_header("Content-Type", mime)
@@ -68,4 +72,4 @@ def notice_action(h):
     elif act == "read":
         h._json(notice.mark_read(body.get("ids"), bool(body.get("all"))))
     else:
-        h._json({"ok": False, "error": f"未知操作：{act!r}"})
+        h._json({"ok": False, "error": "操作无法识别，请刷新页面后重试"})

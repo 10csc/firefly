@@ -180,7 +180,7 @@ class MemoryManager:
 
     def rest(self, full_history: list, current_turn_count: int, today: str | None = None,
              keep_turns: int | None = None) -> RestResult:
-        """整理：把活跃窗口里**除最近 keep_turns 轮以外**的对话搬出窗口。
+        """整理：把**尚未整理**的对话压进记忆，其中窗口以外的原文同时搬进存档。
 
         full_history = **盘上全量**历史（`conversation_store.load_all`）。
         keep_turns：整理后仍留在活跃窗口的轮数（用户口径：压缩后分析器/回复器照样看近 30 轮
@@ -191,7 +191,13 @@ class MemoryManager:
         1. 搬走的那段**原文**追加进历史对话存档 `{mode}/data/archive/YYYY-MM.md`
            （只进检索器）；
         2. 同一段原文交给 LLM 压缩进 `memory.md` 头部（只进回复器）。
-        游标 `last_integrated_turn` 推进到 `current_turn_count - keep_turns`。
+
+        ★ 2026-09-24 语义修正：**记忆区间不受 keep_turns 约束**。
+        游标 `last_integrated_turn` 的语义是"已整理到第几轮"，推进到
+        `current_turn_count`（全部新轮次都进记忆）；`keep_turns` 只决定
+        **原文搬走多少**（存档区间上界 = 总轮数 − keep_turns）。
+        旧实现让两者共用同一个上界，导致活跃窗口不足 keep_turns 轮时整体跳过、
+        记忆永不更新且零报错（用户表现为"整理截止时间停在上次成功的日期"）。
 
         2026-09-18：本方法串行化（见 `_rest_locked`）。手动「让流萤休息」与后台
         *自动整理*（modules/auto_rest.py）会同时写 memory.md / .memory_index，
@@ -232,19 +238,43 @@ class MemoryManager:
             logger.error("游标自愈不可用（对话历史读取失败），跳过本轮整理，下轮重试")
             return RestResult(False, old_head, [], [], 0, "游标自愈不可用，跳过本轮整理")
 
-        # 要归档的区间 =（last_integrated, archive_end]，其中 archive_end = 总轮数 − 保留轮数。
-        # 活跃窗口不足 keep 轮时 archive_end <= last_integrated → 没有可搬走的，直接跳过。
+        # ────────────────────────────────────────────────────────────────
+        # ★ 2026-09-24 修复（用户报障"记忆整理截止时间停在 9/20"）
+        #
+        # 旧实现把**两个不同的问题**用同一个 `archive_end = 总轮数 − keep_turns` 回答：
+        #   (a) "哪些轮次还没整理进记忆？"  → 应该是 (last_integrated, total]
+        #   (b) "哪些轮的**原文**该搬进存档？" → 受"保留最近 keep_turns 轮"约束
+        # 于是活跃窗口不足 keep_turns 轮时 `archive_end <= last_integrated` 恒真 →
+        # **整体跳过**（连 LLM 摘要都不做），且返回 success=True + 一句"无需整理"，
+        # 前端显示"已休息"，全程零报错。用户从服务器模式切到本地模式后，
+        # 他的"活跃窗口"就是全部聊天（不足 30 轮），从此每次点休息都是这句话，
+        # 截止时间自然永远停在最后一次真正整理的日期（9/20）。
+        #
+        # 现在拆开：
+        #   · 记忆摘要区间 = (last_integrated, integrate_end]，integrate_end = total
+        #     —— **所有**尚未消化的轮次都要进记忆，不再被 keep_turns 挡住；
+        #   · 存档搬移区间 = (last_integrated, archive_end]，
+        #     archive_end = total − keep_turns —— 仅用于决定**原文**留几轮在窗口里；
+        #     窗口不足 keep_turns 时 archive_end = 0 → 不搬原文（无可搬），
+        #     但记忆照常整理。
+        # 游标语义保持"已整理到第几轮"（推进到 integrate_end = total），
+        # 与 count_user_turns / undo 回退 / 游标自愈的口径一致。
+        # ────────────────────────────────────────────────────────────────
+        total = int(current_turn_count)
         if keep_turns is None:
             try:
                 from modules.auto_rest import keep_turns as _keep
                 keep_turns = _keep()
             except Exception:
                 keep_turns = 30
-        archive_end = max(0, int(current_turn_count) - max(0, int(keep_turns)))
-        if archive_end <= last_integrated:
-            return RestResult(True, old_head, [], [], last_integrated,
-                              f"活跃窗口不足 {keep_turns} 轮，无需整理")
-        new_dialogue = self._slice_dialogue(full_history, last_integrated, archive_end)
+        integrate_end = total                                  # 记忆区间上界：全部新轮次
+        archive_end = max(0, total - max(0, int(keep_turns)))  # 存档区间上界：窗口外部分
+
+        if integrate_end <= last_integrated:
+            return RestResult(True, old_head, [], [], last_integrated, "无新对话，跳过")
+
+        # 喂给 LLM 压缩的是"尚未整理"的全部轮次
+        new_dialogue = self._slice_dialogue(full_history, last_integrated, integrate_end)
         if not new_dialogue.strip():
             return RestResult(True, old_head, [], [], last_integrated, "无新对话，跳过")
 
@@ -255,15 +285,29 @@ class MemoryManager:
             return res
 
         # 3. 游标推进 + 原文进历史存档（只进检索器）
-        self._write_index(archive_end)
-        try:
-            from modules.memory_archive import append_archive
-            append_archive(self._mode, new_dialogue,
-                           turn_from=last_integrated + 1, turn_to=archive_end, today=today)
-        except Exception as e:
-            # 存档失败不回滚记忆：记忆已经写盘了，存档下次整理会连同新内容一起补
-            logger.warning("rest：历史存档写入失败（记忆本身已保存）: %s", e)
-        return RestResult(True, res.new_head, res.added_entries, res.resolved_entries, archive_end)
+        self._write_index(integrate_end)
+        # 存档要搬的是**活跃窗口以外**的原文：(last_integrated, archive_end]。
+        # 与记忆区间的右端不同——这正是旧实现混淆的地方。
+        # 窗口不足 keep_turns 时 archive_end <= last_integrated → 没有可搬走的原文，
+        # 只跳过存档（记忆已在上一步写好了）。
+        if archive_end > last_integrated:
+            archived_text = self._slice_dialogue(full_history, last_integrated, archive_end)
+        else:
+            archived_text = ""
+        if archived_text.strip():
+            try:
+                from modules.memory_archive import append_archive
+                append_archive(self._mode, archived_text,
+                               turn_from=last_integrated + 1, turn_to=archive_end, today=today)
+            except Exception as e:
+                # 存档失败不回滚记忆：记忆已经写盘了，存档下次整理会连同新内容一起补
+                logger.warning("rest：历史存档写入失败（记忆本身已保存）: %s", e)
+        else:
+            logger.info("rest：活跃窗口 %d 轮不足保留阈值 %s，本轮只更新记忆不搬原文"
+                        "（记忆已整理到第 %d 轮）", total, keep_turns, integrate_end)
+        # integrated_turn 报**记忆游标**（已整理到第几轮），不是存档界。二者现在不同，
+        # 报存档界会在日志里把"整理到 70"说成"整理到 100"而看不出真实进度。
+        return RestResult(True, res.new_head, res.added_entries, res.resolved_entries, integrate_end)
 
     def _integrate(self, new_dialogue: str, old_head: str, old_tail: str,
                    today: str) -> RestResult:

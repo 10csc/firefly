@@ -51,6 +51,12 @@ from routes_snapshot import (
 from routes_update import check_update, update_download
 from voice.routes import (voice_file, voice_plugin, voice_plugin_action,
                           voice_status, voice_tts)
+# 共创平台（角色卡广场）：handler 必须顶部静态导入（PyInstaller 约束，见本文件头）
+from plaza.api import (plaza_admin_list, plaza_admin_status, plaza_asset, plaza_derive,
+                       plaza_detail, plaza_draft_delete, plaza_draft_get, plaza_draft_list,
+                       plaza_draft_save, plaza_download, plaza_install, plaza_installed,
+                       plaza_list, plaza_publish, plaza_report, plaza_review,
+                       plaza_uninstall, plaza_unpublish)
 
 from api.chat import (
     chat, chat_flush, chat_hint, clear_history,
@@ -132,6 +138,20 @@ POST_ROUTES = {
     # 语音插件（独立子系统 app/voice/，只在这里接线；见 docs/工具/tts.md）
     "/voice/tts": voice_tts,
     "/voice/plugin": voice_plugin_action,
+    # 共创平台：安装/卸载到**本端**数据根（本地模式不代理——装在哪份数据根就由哪份后端执行）
+    "/plaza/api/install": plaza_install,
+    "/plaza/api/uninstall": plaza_uninstall,
+    # 共创平台：制卡审核（用用户自己的 Key，审完即弃；见 docs/设计/角色卡共创平台/02 §六）
+    "/plaza/api/review": plaza_review,
+    "/plaza/api/derive": plaza_derive,     # 以已发布卡为模板：服务端复制 + 只传 patch（省流量）
+    # 共创平台：草稿与发布（改的是**广场数据**，本地模式一律代理到认证服务器）
+    "/plaza/api/draft": plaza_draft_save,
+    "/plaza/api/draft/delete": plaza_draft_delete,
+    "/plaza/api/publish": plaza_publish,
+    "/plaza/api/unpublish": plaza_unpublish,
+    # 共创平台：举报与治理（举报走广场侧；管理端点只认 admin 角色）
+    "/plaza/api/report": plaza_report,
+    "/plaza/api/admin/status": plaza_admin_status,
 }
 
 
@@ -185,4 +205,14 @@ GET_ROUTES = {
     "/voice/status": voice_status,
     "/voice-file": voice_file,
     "/voice/plugin": voice_plugin,
+    # 共创平台 · 角色卡广场（服务器模式本地实现；本地模式代理到认证服务器。
+    # 服务器模式下这些路径不在 server/app.py 的公开白名单 → 自动要求登录）
+    "/plaza/api/list": plaza_list,
+    "/plaza/api/card": plaza_detail,
+    "/plaza/api/asset": plaza_asset,
+    "/plaza/api/download": plaza_download,
+    "/plaza/api/installed": plaza_installed,
+    "/plaza/api/drafts": plaza_draft_list,
+    "/plaza/api/draft": plaza_draft_get,
+    "/plaza/api/admin/list": plaza_admin_list,
 }

@@ -34,7 +34,7 @@ doc = "# 标题\n甲内容。\n乙内容。\n"
 ok, errs = validate_proposal(doc, [{"op": "replace", "old": "甲内容。", "new": "甲新内容。"}], "core.md")
 check("B1 合法 replace 通过", ok)
 ok, errs = validate_proposal(doc, [{"op": "replace", "old": "不存在", "new": "x"}], "core.md")
-check("B2 锚点不存在被拒", not ok and any("逐字唯一" in e for e in errs))
+check("B2 锚点不存在被拒", not ok and any("恰好出现 1 次" in e for e in errs))
 doc2 = "# 标题\n重复。\n重复。\n"
 ok, errs = validate_proposal(doc2, [{"op": "replace", "old": "重复。", "new": "x"}], "core.md")
 check("B3 锚点不唯一被拒", not ok)

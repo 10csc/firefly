@@ -55,20 +55,29 @@ def check(desc, cond, extra=""):
         print(f"  X {desc}" + (f"   {extra}" if extra else ""))
 
 print("=== A. 不许有自造的第二套导航 ===")
-for gone in ("pc-shell", "pc-rail", "pc-list", "pc-chat-side", "pc-main-head", "pcr-btn", "pcl-item"):
+# ⚠ 2026-10-02（用户新方向）：`#pc-shell` 被**重新引入**，但内容与第一版完全不同 —— 它只放
+#   用户点名的**卡外**入口（首页/卡库/广场/语音/公告/设置）+ 联系人列（角色卡），
+#   第一版那套"把聊天页 ☰ 菜单内容抄成全局入口"的自造结构（pc-rail/pc-list/pc-chat-side/
+#   pc-main-head/pcr-btn/pcl-item）**仍然禁止**。零重复入口的新闸门见 tests/test_pc_ia.py。
+for gone in ("pc-rail", "pc-list", "pc-chat-side", "pc-main-head", "pcr-btn", "pcl-item"):
     check(f"A  {gone} 已从 index.html/pc.css 移除",
           f'id="{gone}"' not in HTML and f"#{gone}" not in PCSS and f".{gone}" not in PCSS)
+check("A  #pc-shell 是新 IA 的三栏外壳（窄屏 display:none；细节由 tests/test_pc_ia.py 守）",
+      'id="pc-shell"' in HTML and re.search(r"#pc-shell\s*\{[^}]*display:\s*none", PCSS) is not None)
 check("A  手机端点名的「两组 + 精灵图标」口径仍在手机菜单里（没被我改坏）",
       "与角色相关" in HTML and "与系统相关" in HTML
       and 'data-tab="fav"' in HTML and 'data-tab="pipeline"' in HTML)
 check("A  服务端下发/公告等既有 id 未受影响",
       all(f'id="{i}"' in HTML for i in ("menu-drawer", "menu-btn", "messages", "input-bar")))
 
-print("\n=== B. ☰ 菜单入口在 PC 上必须可见 ===")
-check("B  pc.css 里没有 `#menu-btn { display: none }`（第一版把它藏了）",
-      not re.search(r"#menu-btn\s*\{[^}]*display:\s*none", PCSS))
-check("B  pc.css 显式声明 PC 上 ☰ 可见",
-      re.search(r"#menu-btn\s*\{\s*display:\s*flex", PCSS) is not None)
+print("\n=== B. 菜单入口：PC 用聊天页右缘把手（用户 2026-10-02）；手机仍是 ☰ ===")
+check("B  手机上 ☰ 仍在 DOM（窄屏主路径不变）", 'id="menu-btn"' in HTML)
+check("B  PC 上 ☰ 隐藏、由右缘把手替代（把手在 #pc-shell 内 ⇒ 窄屏自动不显形）",
+      re.search(r"#menu-btn\s*\{\s*display:\s*none\s*!important", PCSS) is not None
+      and 'id="pc-menu-handle"' in HTML
+      and re.search(r"#pc-menu-handle\s*\{", PCSS) is not None)
+check("B  把手只调既有 openMenu/closeMenu（不在 PC 层重写菜单逻辑）",
+      "window.openMenu" in PJS and "window.closeMenu" in PJS)
 
 print("\n=== C. 菜单是右侧停靠面板（不是全屏覆盖）===")
 _drawer = re.search(r"#menu-drawer\s*\{(.*?)\}", PCSS, re.S)

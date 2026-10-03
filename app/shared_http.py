@@ -47,6 +47,23 @@ class ResponseMixin:
         self.send_header("Content-Length", len(body))
         self._cors_headers()
         self.end_headers()
+
+        self.wfile.write(body)
+
+    def _json_no_store(self, data: dict, status: int = 200):
+        """_json + `Cache-Control: no-store`。
+
+        版本清单/检查更新这类响应**必须**禁缓存：WebView 与中间层缓存住旧清单，
+        就会出现"服务器已经发了新版，客户端还在显示已是最新"——与前端文件
+        must-revalidate 是同一类幽灵 bug（2026-09-24 检查更新改造）。
+        """
+        body = json.dumps(data, ensure_ascii=False).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", len(body))
+        self.send_header("Cache-Control", "no-store")
+        self._cors_headers()
+        self.end_headers()
         self.wfile.write(body)
 
     def _cors_headers(self):

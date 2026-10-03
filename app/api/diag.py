@@ -84,7 +84,7 @@ def _pipeline_shape() -> list:
 def _conversation_stats() -> dict:
     """每个包：轮数 / 手账与记忆"有没有 / 多少字节"。**不含正文**。"""
     out = {}
-    for m in cfg.MODES:
+    for m in cfg.all_modes():
         root = cfg.mode_root(m)
         item = {}
         for name, rel in (("conversation", "data/conversation.jsonl"),
@@ -115,7 +115,7 @@ def _summary() -> dict:
     d = {}
     d["app_version"] = cfg.APP_VERSION
     d["mode_default"] = cfg.DEFAULT_MODE
-    d["modes"] = list(cfg.MODES)
+    d["modes"] = list(cfg.all_modes())
     d["platform"] = {"system": platform.system(), "release": platform.release(),
                      "machine": platform.machine(), "python": sys.version.split()[0],
                      "frozen": bool(getattr(sys, "frozen", False)),
@@ -241,7 +241,7 @@ def export_diagnostics(h):
     except Exception as e:
         import logging
         logging.getLogger(__name__).exception("诊断包生成失败")
-        h._json({"ok": False, "error": f"诊断包生成失败：{type(e).__name__}: {e}"}, 500)
+        h._json({"ok": False, "error": "诊断包生成失败，请重试；仍失败请截图当前提示"}, 500)
         return
     fname = f"firefly-diagnostics-{time.strftime('%Y%m%d-%H%M%S')}.zip"
     h.send_response(200)

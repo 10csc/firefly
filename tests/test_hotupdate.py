@@ -138,13 +138,47 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.end_headers()
 
 
-srv = socketserver.TCPServer(("127.0.0.1", 0), Handler)
+class _FakeSource(socketserver.ThreadingTCPServer):
+    """**多线程**假更新源：单线程 `TCPServer` 在负载下会让取数抖动，
+    而假源不该成为被测路径上的不确定因素（见 `check_update()` 的说明）。"""
+    allow_reuse_address = True
+    daemon_threads = True
+
+
+srv = _FakeSource(("127.0.0.1", 0), Handler)
 PORT = srv.server_address[1]
 threading.Thread(target=srv.serve_forever, daemon=True).start()
 
 # 假验签：只认 sig == "GOOD"
 HV.set_verifier(lambda data, sig_b64: base64.b64decode(sig_b64) == b"GOOD")
 HU.set_url_roots([f"http://127.0.0.1:{PORT}"])
+
+
+def check_update(retries: int = 2):
+    """`HU.check()` + **只对连接层抖动重试**（P4-5 同族缺陷，2026-10-01）。
+
+    2026-10-01 全量里本文件的 `D2 serial 不大于已应用 → 不重复提示` 偶发红，机制与
+    `test_hotupdate_py.py` 的 D1/D2 完全同族：**D2 之前那次 `HU.check()` 从不被断言**，
+    它偶发失败 ⇒ `apply_available()` 走"没有已就绪的补丁"空转 ⇒ `applied_serial` 仍是 0
+    ⇒ 随后 `serve_serial=1` 的复查当然报"不是最新的" ⇒ **失败被归因到 D2**。
+    确定性失败（验签/底座/吊销/min_safe）重试无意义且那些组本就期望失败，故只对抖动重试，
+    并且失败时打印错误文本，避免再出现"报错指向症状"。
+    """
+    last = {}
+    for i in range(max(1, retries)):
+        last = HU.check()
+        if last.get("ok"):
+            return last
+        err = str(last.get("error") or "")
+        if i + 1 < max(1, retries) and any(k in err.lower() for k in
+                                          ("timed out", "timeout", "超时", "connection", "连接",
+                                           "refused", "reset", "socket", "network", "urlopen",
+                                           "eof", "temporarily")):
+            print(f"     [check 第 {i + 1} 次未通过，重试] {err}", flush=True)
+            time.sleep(0.3)
+            continue
+        break
+    return last
 
 
 def reset_env():
@@ -164,7 +198,7 @@ def reset_env():
 
 print("=== A. 正常闭环：检查 → 应用 → 覆盖层 ===")
 reset_env()
-r = HU.check()
+r = check_update()
 check("A1 check 成功且拿到 serial 1", r.get("ok") and r.get("serial") == 1, str(r.get("error", "")))
 check("A2 状态里 patch_ready", HU.status()["patch_ready"])
 check("A3 验签可用标记为真（已注入）", HU.status()["verify_ok"])
@@ -183,14 +217,14 @@ check("A10 running 三元组正确",
 r = HU.boot_ok()
 check("A11 boot_ok 清掉 pending", HU.status()["pending_serial"] == 0)
 check("A12 boot_ok 清掉 reload_pending", not HU.status()["reload_pending"])
-r = HU.check()
+r = check_update()
 check("A13 已是最新时不重复应用", r.get("ok") and r.get("up_to_date") is True)
 check("A14 重复 apply 被拒", HU.apply_available().get("ok") is False)
 
 print("=== B. 安全：验签失败必须拒绝 ===")
 reset_env()
 STATE["bad_sig"] = True
-r = HU.check()
+r = check_update()
 check("B1 验签失败 → check 失败", r.get("ok") is False, str(r.get("error")))
 check("B2 失败原因指向验签", "验签" in (r.get("error") or ""), str(r.get("error")))
 check("B3 不设 available（应用不了）", HU.status()["patch_ready"] is False)
@@ -203,7 +237,7 @@ for name, key, flag in (("zip 本体被篡改", "bad_zip_sha", "bad_zip_sha"),
                         ("路径越界 ../..", "escape_path", "escape_path")):
     reset_env()
     STATE[flag] = True
-    HU.check()
+    check_update()
     r = HU.apply_available()
     check(f"C {name} → apply 失败", r.get("ok") is False, str(r.get("error"))[:70])
     check(f"C {name} → 覆盖层未落任何文件", HU.status()["overlay_files"] == 0)
@@ -212,25 +246,25 @@ for name, key, flag in (("zip 本体被篡改", "bad_zip_sha", "bad_zip_sha"),
 print("=== D. 安全：base 不符 / 防回滚 ===")
 reset_env()
 STATE["base"] = "9.9.9"
-r = HU.check()
+r = check_update()
 check("D1 latest 的 base 不符 → 拒绝", r.get("ok") is False, str(r.get("error")))
 reset_env()
 STATE["base"] = None
-HU.check()
+check_update()
 HU.apply_available()
 STATE["serve_serial"] = 1
-r = HU.check()
+r = check_update()
 check("D2 serial 不大于已应用 → 不重复提示", r.get("up_to_date") is True)
 
 print("=== E. kill switch：新清单可吊销旧补丁 ===")
 reset_env()
-HU.check()
+check_update()
 HU.apply_available()
 HU.boot_ok()
 check("E1 回滚前覆盖层有 3 个文件", HU.status()["overlay_files"] == 3)
 STATE["serve_serial"] = 2
 STATE["revoked"] = [1]
-r = HU.check()
+r = check_update()
 check("E2 check 成功（拿到 serial 2）", r.get("ok"), str(r.get("error", "")))
 check("E3 ★ 已应用的 serial 1 被吊销 → 自动回滚",
       HU.status()["applied_serial"] == 0 and HU.status()["overlay_files"] == 0)
@@ -241,7 +275,7 @@ STATE["revoked"] = []
 print("=== F. 安全模式：pending 未确认 + 连续失败 → 自动回退 ===")
 reset_env()
 STATE["serve_serial"] = 1
-HU.check()
+check_update()
 HU.apply_available()
 # 模拟"补丁把前端搞坏、boot_ok 永远不来"：直接跑两次启动钩子
 n1 = HU.on_startup()["note"]
@@ -256,7 +290,7 @@ HU._thread = None
 
 print("=== G. 整包升级：base 变了必须清空覆盖层 ===")
 reset_env()
-HU.check()
+check_update()
 HU.apply_available()
 HU.boot_ok()
 check("G1 升级前覆盖层在", HU.status()["overlay_files"] == 3)
@@ -280,18 +314,18 @@ print("=== H. 开关：关闭时不应用，但 kill switch 仍生效（安全�
 reset_env()
 STATE["serve_serial"] = 1
 HU.set_enabled(False)
-r = HU.check()
+r = check_update()
 check("H1 关闭时仍会联网检查（拉到了 serial）", r.get("ok") and r.get("serial") == 1)
 check("H2 关闭时不应用", HU.apply_available().get("ok") is False
       and HU.status()["overlay_files"] == 0)
 HU.set_enabled(True)
-HU.check()
+check_update()
 HU.apply_available()
 HU.boot_ok()
 HU.set_enabled(False)
 STATE["serve_serial"] = 2
 STATE["revoked"] = [1]
-HU.check()
+check_update()
 check("H3 ★ 关闭状态下吊销依然生效", HU.status()["overlay_files"] == 0)
 STATE["revoked"] = []
 HU.set_enabled(True)

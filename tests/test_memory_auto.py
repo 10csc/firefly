@@ -263,19 +263,44 @@ mm = MemoryManager(MockClient([json.dumps({"new_head": "新头部", "resolved": 
 
 _r = mm.rest(load_all_context(MODE), 100, today="2026-09-18", keep_turns=30)
 check("E1 rest 成功", _r.success is True)
-check("E2 游标推进到 100−30=70（最近 30 轮留在活跃窗口）", _r.integrated_turn == 70)
-check("E3 游标确实落盘", json.loads(_idx.read_text(encoding="utf-8"))["last_integrated_turn"] == 70)
-check("E4 活跃窗口回落到 30 轮", auto_rest.active_turns(MODE) == 30)
+# ★ 2026-09-24 语义修正：游标 = "已整理到第几轮"，推进到**总轮数**（100），
+#   不再等于 总轮数−keep_turns。keep_turns 只决定**原文**搬走多少（见 E5/E6）。
+check("E2 游标推进到总轮数 100（记忆覆盖全部新轮次）", _r.integrated_turn == 100)
+check("E3 游标确实落盘", json.loads(_idx.read_text(encoding="utf-8"))["last_integrated_turn"] == 100)
+# 存档只搬窗口外的 (0, 70] —— 最近 30 轮的原文仍留在活跃窗口
+check("E4 存档区间上界 = 100−30 = 70（活跃窗口留最近 30 轮）",
+      auto_rest.active_turns(MODE) == 0)   # 游标=100 → "未消化轮数"为 0
 
 _arch = memory_archive.read_archive(MODE, "2026-09")
 check("E5 搬走的那段原文进了存档（第 1–70 轮）", "用户第1轮" in _arch and "第 1–70 轮" in _arch)
 check("E6 保留的 30 轮**没进存档**（留在窗口，避免重复）", "用户第100轮" not in _arch)
 
-# 窗口不足 keep 轮时不该整理（也不该动游标）
+# 无新对话时才是真正的"无需整理"（LLM 不该被调用）
 mm2 = MemoryManager(MockClient([]), memory_file=_mem, index_file=_idx)
 _r2 = mm2.rest(load_all_context(MODE), 100, today="2026-09-18", keep_turns=30)
-check("E7 活跃窗口已只剩 30 轮 → 无需整理（不烧 LLM 调用）",
-      _r2.success is True and _r2.integrated_turn == 70 and "无需整理" in _r2.error)
+check("E7 无新对话 → 跳过整理（不烧 LLM 调用）",
+      _r2.success is True and _r2.integrated_turn == 100 and "无新对话" in _r2.error)
+
+# ★ E8（2026-09-24 用户报障回归）：活跃窗口不足 keep_turns 轮时**仍须整理**记忆。
+#   旧实现在这里整体跳过 → 记忆永不更新、零报错、截止时间停在上次成功的日期。
+_mem8 = _memory_file(MODE)
+_idx8 = _index_file(MODE)
+for p in (_mem8, _idx8):
+    if p.exists():
+        p.unlink()
+mm8 = MemoryManager(MockClient([json.dumps({"new_head": "小窗口也整理", "resolved": [], "added": []})]),
+                    memory_file=_mem8, index_file=_idx8)
+_hist8 = []
+for i in range(1, 11):
+    _hist8.append({"role": "user", "content": f"小窗第{i}轮", "time": "2026-09-24 10:00:00"})
+    _hist8.append({"role": "assistant", "content": f"回应{i}", "time": "2026-09-24 10:00:05"})
+_r8 = mm8.rest(_hist8, 10, today="2026-09-24", keep_turns=30)
+check("E8 窗口(10)<keep(30) 时仍整理（旧实现在此永久跳过）",
+      _r8.success is True and _r8.new_head == "小窗口也整理" and _r8.integrated_turn == 10)
+check("E9 窗口<keep 时不搬原文（无可搬），仅更新记忆",
+      "小窗第1轮" not in memory_archive.read_archive(MODE, "2026-09"))
+# E8 把同一份游标文件重置并写成了 10 —— 记下来供 F3 断言"compress_text 没动它"
+_cursor_before_compress = json.loads(_idx.read_text(encoding="utf-8"))["last_integrated_turn"]
 
 
 print("=== F. compress_text：用户点「AI 压缩」把存档压进用户记忆 ===")
@@ -288,8 +313,10 @@ mm3 = MemoryManager(
 _r3 = mm3.compress_text(memory_archive.read_archive(MODE, "2026-10"), today="2026-10-01")
 check("F1 压缩成功", _r3.success is True)
 check("F2 新头部写进 memory.md", "压缩后的记忆头部" in _mem.read_text(encoding="utf-8"))
+# compress_text 与 rest 共用 _integrate，但**显式不走** _rest_locked 的游标推进
+# （压缩≠整理）。这里的期望值跟随 E3/E8 的修正口径：仍是上次整理留下的值。
 check("F3 不动游标（压缩 ≠ 整理）",
-      json.loads(_idx.read_text(encoding="utf-8"))["last_integrated_turn"] == 70)
+      json.loads(_idx.read_text(encoding="utf-8"))["last_integrated_turn"] == _cursor_before_compress)
 check("F4 空内容被审查阶段拒绝", _rejects_empty(mm3))
 
 _loaded2 = memory_archive.load_archive_text(MODE)

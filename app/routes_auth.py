@@ -3,11 +3,14 @@
 登录前置化；账号体系仍在服务器，本地后端转发 /auth/* 并持有 token。"""
 
 import json
+import logging
 import urllib.request
 
 from modules import app_config as cfg
 
 from routes_common import _is_server
+
+logger = logging.getLogger(__name__)
 
 
 # ══ A7：本地版认证代理（登录前置化；账号体系仍在服务器）══
@@ -48,9 +51,11 @@ def _auth_forward(e: str, body: dict, token: str):
         try:
             return ex.code, json.loads(ex.read().decode("utf-8"))
         except Exception:
-            return ex.code, {"error": f"认证服务异常（{ex.code}）"}
+            logger.warning("认证服务返回非 JSON（HTTP %s）", ex.code)
+            return ex.code, {"error": "认证服务暂时异常，请稍后重试"}
     except Exception as ex:
-        return None, f"无法连接认证服务器（{_auth_server_base()}）: {ex}"
+        logger.warning("无法连接认证服务器（%s）：%s", _auth_server_base(), ex)
+        return None, "无法连接登录服务，请检查网络后重试"
 
 
 def auth_proxy(h, e: str):
@@ -73,9 +78,10 @@ def auth_proxy(h, e: str):
     if e == "login" and isinstance(data, dict) and data.get("ok") and data.get("token"):
         from modules.auth_store import save_login
         email = body.get("email", "") or ""
+        role = str(data.get("role") or "user")
         save_login(str(data.get("token", "")), email,
-                   str(data.get("expires_at", "") or ""))
-        data = {"ok": True, "email": email, "role": data.get("role", "user"),
+                   str(data.get("expires_at", "") or ""), role=role)   # role 一起存 ⇒ /auth/state 离线也能回
+        data = {"ok": True, "email": email, "role": role,
                 "server": _auth_server_base()}
     # 登出：本地清除凭证
     elif e == "logout" and isinstance(data, dict) and data.get("ok"):
@@ -85,7 +91,13 @@ def auth_proxy(h, e: str):
 
 
 def auth_state(h):
-    """GET /auth/state（本地版）：登录态；联网时隐式 verify（服务器滚动续期）。"""
+    """GET /auth/state（本地版）：登录态；联网时隐式 verify（服务器滚动续期）。
+
+    `role`（2026-10-01 收口）：登录时服务器回带的角色**随状态一起回给前端**（`admin`/`user`），
+    否则前端只能隐藏"官方卡"勾选框（clientpack 实测）。来源优先级：
+    ① 本次 verify 响应里的 role（服务器现算的，最新）→ ② 本地 auth.json 里登录时存下的 role。
+    未登录时口径不变（只是多一个空 `role` 字段，前端不必分支）；**不改任何判定**。
+    """
     if _is_server():
         h._json({"error": "服务器版请用 /auth/me"}, 403)
         return
@@ -96,7 +108,9 @@ def auth_state(h):
         if status == 200 and isinstance(data, dict):
             if data.get("expires_at"):
                 refresh_expires(str(data["expires_at"]))
-            st = get_state()
+                st["expires_at"] = str(data["expires_at"])
+            if data.get("role"):
+                st["role"] = str(data["role"])        # 服务器现算的角色优先（离线时用本地那份）
             st["verified"] = True
         elif status == 401:
             clear_login()      # 服务器判定失效：清凭证（前端引导重新登录）

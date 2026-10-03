@@ -128,12 +128,60 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.end_headers()
 
 
-srv = socketserver.TCPServer(("127.0.0.1", 0), Handler)
+class _FakeSource(socketserver.ThreadingTCPServer):
+    """**多线程**假更新源。
+
+    2026-10-01：原来是单线程 `TCPServer`（一次只服务一个请求），全量套件有负载时取数会抖动，
+    表现为"某个 `HU.check()` 静默失败 ⇒ 后面三步的断言莫名其妙变红"（见本目录
+    `test_hotupdate.py` 的 D2 与 P4-5）。假源本身不该成为被测路径上的不确定因素。
+    """
+    allow_reuse_address = True
+    daemon_threads = True
+
+
+srv = _FakeSource(("127.0.0.1", 0), Handler)
 PORT = srv.server_address[1]
 threading.Thread(target=srv.serve_forever, daemon=True).start()
 
 HV.set_verifier(lambda data, sig_b64: base64.b64decode(sig_b64) == b"GOOD")
 HU.set_url_roots([f"http://127.0.0.1:{PORT}"])
+
+
+def check_update(retries: int = 2):
+    """`HU.check()` + 失败时**打印错误并重试一次**（P4-5 结案用）。
+
+    2026-10-01 定位到的真因：全量套件里偶发的 `D1 layer=py` / `D2 restart_pending 为真` 两红，
+    不是产品缺陷，而是 `HU.check()` 偶尔失败 ⇒ `_RT["available"]` 留空 ⇒
+    `apply_available()` 走"没有已就绪的补丁"早退 ⇒ **D1/D2 红、而 D3/D4 反而"假过"**。
+    本测试的假更新源是**单线程**本地 HTTP 服务（`socketserver.TCPServer`），高负载下取数可能抖动。
+
+    为什么重试不会掩盖问题：**逻辑类失败是确定性的**（验签不过、被吊销、min_safe 门槛、底座不符），
+    重试仍然失败；重试只吸收"连接层抖动"。并且失败时**打印错误文本**，
+    避免下次再出现"只看到一个难懂的 `layer=None`"。原先 12 处调用**从不看返回值**，失败被推后三步。
+    """
+    last = {}
+    for i in range(max(1, retries)):
+        last = HU.check()
+        if last.get("ok"):
+            return last
+        err = str(last.get("error") or "")
+        # **只对连接层抖动重试**：确定性失败（底座不符/验签不过/被吊销/min_safe）重试没意义，
+        # 而且那些组本来就**期望失败**——对它们重试只会白等并刷屏（组 I 就是这种）。
+        if i + 1 < max(1, retries) and _looks_transient(err):
+            print(f"     [check 第 {i + 1} 次未通过，重试] {err}", flush=True)
+            time.sleep(0.3)
+            continue
+        break
+    return last
+
+
+_TRANSIENT_HINTS = ("timed out", "timeout", "超时", "connection", "连接", "refused",
+                    "reset", "socket", "network", "urlopen", "eof", "temporarily")
+
+
+def _looks_transient(err: str) -> bool:
+    e = (err or "").lower()
+    return any(k in e for k in _TRANSIENT_HINTS)
 
 
 def reset_env():
@@ -160,7 +208,7 @@ def _fresh_modules():
 
 print("=== A. 两层同包：web + py 一起应用 ===")
 reset_env()
-r = HU.check()
+r = check_update()
 check("A1 check 拿到 serial 1", r.get("ok") and r.get("serial") == 1, str(r.get("error", "")))
 check("A2 available 报出 layer=web+py", HU.status()["available"]["layer"] == "web+py",
       str(HU.status()["available"]))
@@ -200,7 +248,7 @@ check("B5 但前端那条 reload 标志确实清了（它本来就该清）",
 print("=== C. ★ 只有 web 层时不报 restart（别让壳白重启用户）===")
 reset_env()
 STATE["files"] = dict(WEB)
-HU.check()
+check_update()
 r = HU.apply_available()
 st = HU.status()
 check("C1 layer=web", r.get("layer") == "web", str(r.get("layer")))
@@ -212,7 +260,7 @@ HU.boot_ok()
 print("=== D. ★ 只有 py 层时：可 reload 标志为假（reload 换不掉 Python 代码）===")
 reset_env()
 STATE["files"] = dict(PY)
-HU.check()
+check_update()
 r = HU.apply_available()
 st = HU.status()
 check("D1 layer=py", r.get("layer") == "py", str(r.get("layer")))
@@ -224,7 +272,7 @@ HU.boot_ok()
 print("=== E. ★ 覆盖层真的会盖住底座代码（find_spec 落点）===")
 reset_env()
 STATE["files"] = {"py/hu_probe_mod.py": PY["py/hu_probe_mod.py"]}
-HU.check()
+check_update()
 HU.apply_available()
 HU.boot_ok()
 _fresh_modules()
@@ -250,7 +298,7 @@ print("=== F. ★ 已 import 的模块：重启换不掉 ⇒ 不报 restart，�
 # 模拟"补丁改的正是启动链路上的老模块"。
 reset_env()
 STATE["files"] = {"py/modules/app_config.py": b"# patched\n"}
-HU.check()
+check_update()
 r = HU.apply_available()
 st = HU.status()
 check("F1 应用仍然成功（补丁本身合法）", r.get("ok"), str(r.get("error", "")))
@@ -265,7 +313,7 @@ reset_env()
 # web 层合法、py 层声明一个包里没有的文件（sha 对不上/缺文件 ⇒ 解压阶段就该拒绝）
 _ok_web = {f"web/{k}": v for k, v in WEB.items()}
 STATE["files"] = {**_ok_web, "py/hu_probe_mod.py": PY["py/hu_probe_mod.py"]}
-HU.check()
+check_update()
 _orig_extract = HN.extract_verified
 _calls = {"n": 0}
 
@@ -293,7 +341,7 @@ check("G5 applied_serial 仍为 0", HU.status()["applied_serial"] == 0)
 print("=== H. 回滚清两层 + 手动回滚标志 ===")
 reset_env()
 STATE["files"] = {**WEB, **PY}
-HU.check()
+check_update()
 HU.apply_available()
 HU.boot_ok()
 check("H1 回滚前两层共 5 个文件", HU.status()["overlay_files"] == 5)
@@ -305,7 +353,7 @@ check("H5 restart_pending 为假（回滚不重启）", HU.status()["restart_pen
 
 print("=== I. 整包升级：base 变了清掉两层 ===")
 reset_env()
-HU.check()
+check_update()
 HU.apply_available()
 HU.boot_ok()
 _old = cfg.APP_VERSION
@@ -436,7 +484,7 @@ print("=== M. ★ boot-ok 不许伪造 py 层的启动确认（真机实测抓�
 # 真机日志里进程 PID 没变，却打印"新进程已完成启动确认"。
 reset_env()
 STATE["files"] = {"py/hu_probe_mod.py": PY["py/hu_probe_mod.py"]}
-HU.check()
+check_update()
 HU.apply_available()
 st = HU.status()
 check("M1 纯 py 层补丁应用后 pending 置位", st["pending_serial"] == 1)
@@ -456,7 +504,7 @@ check("M6 并清掉 restart_pending", st["restart_pending"] is False)
 # web 层补丁不受影响：它的生效方式本来就是 reload，同进程确认是正确语义
 reset_env()
 STATE["files"] = dict(WEB)
-HU.check()
+check_update()
 HU.apply_available()
 HU.boot_ok()
 check("M7 web 层补丁仍由同进程 boot-ok 确认（不该被这条修复误伤）",
@@ -473,7 +521,7 @@ check("L2 无补丁时**只显示底座版本**（不显示 _hot0）",
       rid["display_version"] == cfg.APP_VERSION and "_hot" not in rid["display_version"],
       rid["display_version"])
 STATE["files"] = {**WEB, **PY}
-HU.check()
+check_update()
 HU.apply_available()
 HU.boot_ok()
 rid = HU.running_id()
@@ -530,7 +578,7 @@ check("N3 clear_note 也清掉报错提示", st["last_error"] == "")
 # 关键：清的是**提示**不是**状态** —— 已应用的补丁与覆盖层必须原样保留
 reset_env()
 STATE["files"] = dict(WEB)
-HU.check()
+check_update()
 HU.apply_available()
 d = HU.load_state()
 d["applied_serial"] = 1

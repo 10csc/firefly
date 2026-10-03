@@ -28,7 +28,7 @@ def pack_assist(h):
         h._json({"ok": True, **out})
     except Exception as e:
         logger.warning("pack-assist 失败: %s", e)
-        h._json({"ok": False, "error": f"AI 调用失败: {e}"})
+        h._json({"ok": False, "error": "AI 辅助这次没成功，请稍后重试；仍失败请到「反馈」附诊断包"})
 
 
 def pack_assist_apply(h):

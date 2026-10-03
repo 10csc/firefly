@@ -27,7 +27,7 @@ const GUIDE_STEPS = [
       setup: () => { closeSettings(); showHome(); },
       done: () => document.getElementById("cards-view").classList.contains("show") },
     { el: "#home-notice", title: "公告与更新说明",
-      text: "请点首页上方的「公告 · 使用指南」。\n\n更新说明与临时提醒会由服务端下发到这里（有新内容时标题旁会亮一个小圆点）；万一拉不到，这里仍显示 App 内置的使用指南，功能不受影响。",
+      text: "请点首页上方的「公告 · 使用指南」。\n\n更新说明与临时提醒会自动更新到这里（有新内容时标题旁会亮一个小圆点）；万一拉不到，这里仍显示 App 内置的使用指南，功能不受影响。",
       setup: () => { showHome(); },
       done: () => document.getElementById("notice-panel").classList.contains("show") },
     { el: "#home-feedback-btn", title: "其他问题",

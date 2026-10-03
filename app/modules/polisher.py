@@ -247,10 +247,12 @@ class Polisher:
                 extra_body=extra,
             )
             record_usage("polisher", resp)
-            raw = resp.choices[0].message.content.strip()
+            raw = (resp.choices[0].message.content or "").strip()
             rc = (getattr(resp.choices[0].message, "reasoning_content", "") or "").strip()
-            # DeepSeek 思考模式：极端情况下全部 token 进 reasoning，content 为空。
-            # 此时从 reasoning 提取 [MSG] 行作为兜底（思考末尾常已写出消息）。
+            # 思考内容来源有三处，按可靠性依次兜底：
+            #   1. `reasoning_content` 独立字段（DeepSeek 约定）；
+            #   2. content 里内联的 <think> 块（MiniMax-M3 实测；_parse_response 自己会剥）；
+            #   3. 只有思考、content 为空 → 从 reasoning_content 里捞 [MSG] 行。
             if not raw and rc:
                 msgs_from_rc = _extract_msg_lines(rc)
                 if msgs_from_rc:
@@ -296,26 +298,122 @@ _MAX_REPLY_MESSAGES = 6   # 回复条数硬上限：防回复器循环输出刷�
 
 
 def _extract_msg_lines(text: str) -> str:
-    """从思考内容中提取 [MSG] 行（content 为空时的兜底）。"""
+    """从一段文本里提取 [MSG] 行（思考内容 / 兜底路径共用）。"""
     lines = [l.strip() for l in text.split("\n") if l.strip().startswith("[MSG]")]
     return "\n".join(lines) if lines else ""
 
 
+def _split_think(text: str) -> tuple[str, str]:
+    """把 content 拆成 (正文, 思考段)。
+
+    ★ 2026-09-24 修复（用户报障"偶尔出现的消息重复"）：
+    部分模型（实测 MiniMax-M3）**不遵守 OpenAI 的 reasoning_content 通道约定**，
+    而是把整段思考**内联写进 content**，形如：
+
+        <think>
+        用户说了一句 xx，我应该……
+        [MSG] 草稿一
+        [MSG] 草稿二
+        嗯，改成这样说更好：
+        </think>
+        [MSG] 正文一
+        [MSG] 正文二
+
+    旧实现只看"行首是不是 [MSG]"，于是 think 内的**废弃草稿**与 think 外的**正文**
+    一起进候选列表 —— 表现为：① 消息逐字重复；② 撞上 _MAX_REPLY_MESSAGES 上限后
+    正文压根没机会进列表（"截断了但截错了部分"）。
+    本函数把两段分开，调用方**正文优先、思考段仅兜底**。
+
+    兼容两种写法：`<think>`（本项目其它模块口径）与 `<thinking>`。
+    没有思考段时正文 = 原文（保守：不做有损切分）。
+
+    Returns:
+        (body, think)：无思考段时 (text, "")。
+    """
+    import re
+    src = str(text or "")
+    # 1) 成对标签：取**最后一段**闭合块之后的部分作为正文。
+    #    取最后一段而非第一段：模型偶尔在 think 里再提一次标签，第一段的 </think>
+    #    之后可能还夹着思考尾注，用最后一段能把它一并划进思考侧。
+    m = None
+    for pat in (r"<think\b[^>]*>(.*?)</think\s*>",
+                r"<thinking\b[^>]*>(.*?)</thinking\s*>"):
+        found = list(re.finditer(pat, src, flags=re.I | re.S))
+        if found:
+            m = found[-1]
+            break
+    if m is not None:
+        body = src[m.end():]
+        think = src[m.start():m.end()]
+        return body.strip(), think.strip()
+    # 2) 只有开标签、没有闭标签（流式被截断）：开标签之后全算思考，正文视为空。
+    m2 = re.search(r"<(think|thinking)\b[^>]*>", src, flags=re.I)
+    if m2:
+        return "", src[m2.start():].strip()
+    return src.strip(), ""
+
+
+def _dedup(messages: list) -> tuple[list, int]:
+    """按内容去重，返回 (去重后列表, 被丢弃条数)。
+
+    ★ 2026-09-24 修复：旧实现只跟 `messages[-1]`（相邻）比对，注释写"循环输出的
+    特征之一"。但线上抓到的实际形态是**两组交替到达**（think 草稿 A1A2A3 与正文
+    B1B2B3 交错成 A1A2A3B1B2B3），相邻比对因此**恒不生效**——这就是用户看到的
+    "逐字重复"。改为与列表内**任意**一条比对（内容相同即视为同一句）。
+    """
+    seen = set()
+    out = []
+    dropped = 0
+    for m in messages:
+        c = m.get("content", "")
+        if c in seen:
+            dropped += 1
+            continue
+        seen.add(c)
+        out.append(m)
+    return out, dropped
+
+
 def _parse_response(raw: str) -> list:
-    """解析 [MSG] 格式为消息列表。表情包决策已移交组织器，[STICKER] 行忽略。"""
-    messages = []
-    for line in raw.strip().split("\n"):
-        line = line.strip()
-        if line.startswith("[MSG]"):
-            text = line[5:].strip()
-            if not text:
-                continue
-            if messages and text == messages[-1]["content"]:
-                continue  # 相邻完全重复跳过（循环输出的特征之一）
-            messages.append({"type": "text", "content": text})
-            if len(messages) >= _MAX_REPLY_MESSAGES:
-                logger.warning("回复器输出超过 %d 条，已截断（疑似循环重复）", _MAX_REPLY_MESSAGES)
-                break
+    """解析 [MSG] 格式为消息列表。表情包决策已移交组织器，[STICKER] 行忽略。
+
+    解析优先级（2026-09-24 修复"消息重复"）：
+      1. `</think>` **之后**的正文 —— 这才是模型的定稿；
+      2. 正文为空时，退回 think 段内的 [MSG] 行（旧兜底行为，避免整轮降级）；
+      3. 都为空 → 降级话术。
+    每层内部都做**全列表去重**；仍超上限才截断，且截断时优先保留靠前的定稿。
+    """
+    body, think = _split_think(raw)
+
+    def _msg_lines(seg: str) -> list:
+        out = []
+        for line in seg.strip().split("\n"):
+            line = line.strip()
+            if line.startswith("[MSG]"):
+                text = line[5:].strip()
+                if text:
+                    out.append({"type": "text", "content": text})
+        return out
+
+    messages = _msg_lines(body)
+    if not messages and think:
+        # 正文一条都没有：模型只写了思考（或闭合标签缺失）→ 退回 think 内的草稿。
+        # ★ 只在**正文为空**时用，绝不与正文合并：think 内是模型的迭代草稿
+        #   （实测一轮里能写 22 条、迭代 4 版），混进候选就是"消息重复"的来源。
+        messages = _msg_lines(think)
+    if not messages:
+        # 整段都不是 [MSG] 行：旧实现会直接把整段当一条消息发出（含思考原文），
+        # 这会把模型的内心独白当短信发出去。现在改为在原文里找 [MSG]；
+        # 仍找不到才降级——宁可说"信号不好"也不要发思考过程。
+        messages = _msg_lines(raw)
+    messages, dropped = _dedup(messages)
+    if dropped:
+        logger.info("回复器去重：丢弃 %d 条重复内容（think 草稿与正文交错）", dropped)
+
+    if len(messages) > _MAX_REPLY_MESSAGES:
+        logger.warning("回复器输出 %d 条超过上限 %d，已截断（保留前 %d 条）",
+                       len(messages), _MAX_REPLY_MESSAGES, _MAX_REPLY_MESSAGES)
+        messages = messages[:_MAX_REPLY_MESSAGES]
 
     if not messages:
         logger.warning("回复器解析失败 raw='%s'", raw[:200] if raw else "(empty)")

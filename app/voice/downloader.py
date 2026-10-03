@@ -170,8 +170,9 @@ def _download_one(url: str, dst: Path, base_done: int, total_hint: int,
         got = h.hexdigest()
         if got != sha_expect:
             part.unlink(missing_ok=True)
-            raise RuntimeError(f"{dst.name} 校验失败（sha256 不符："
-                               f"本地 {got[:12]}… vs 仓库 {sha_expect[:12]}…），已丢弃，请重试")
+            logger.warning("模型文件 %s 校验失败（sha256 不符：本地 %s… vs 仓库 %s…），已丢弃",
+                           dst.name, got[:12], sha_expect[:12])
+            raise RuntimeError("模型文件下载校验失败，已自动丢弃，请重试")
         plugin._DL.update({"verified": int(plugin._DL.get("verified") or 0) + 1})
     os.replace(part, dst)
 
@@ -214,7 +215,12 @@ def _run(template: str, files: list[str]) -> None:
         plugin._DL.update({"running": False, "percent": 100, "file": "",
                            "error": "", "finished_at": time.time()})
     except Exception as e:
-        plugin._DL.update({"running": False, "error": f"{type(e).__name__}: {e}",
+        # 可控错误（已取消 / 校验失败）保留其面向用户的说明；其余（网络等）给通用文案，
+        # 原始异常只进日志，不进用户可见文本
+        logger.warning("语音模型下载失败: %s: %s", type(e).__name__, e)
+        _err = (str(e) if isinstance(e, RuntimeError)
+                else "模型下载失败，请检查网络后重试（支持断点续传，不会重复下载）")
+        plugin._DL.update({"running": False, "error": _err,
                            "finished_at": time.time()})
 
 
@@ -225,9 +231,9 @@ def start(url: str | None = None, files: list[str] | None = None) -> dict:
     if not template:
         return {"ok": False, "error": "未配置模型仓库地址（见插件页「模型仓库地址」）"}
     if plugin._DL.get("running"):
-        return {"ok": False, "error": "已有下载在进行"}
+        return {"ok": False, "error": "已有一个下载在进行，请等它完成或先取消"}
     if _thread is not None and _thread.is_alive():
-        return {"ok": False, "error": "已有下载在进行"}
+        return {"ok": False, "error": "已有一个下载在进行，请等它完成或先取消"}
 
     flist = list(files or plugin.DEFAULT_REPO_FILES)
     _stop.clear()

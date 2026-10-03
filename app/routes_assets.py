@@ -32,7 +32,7 @@ def upload_image(h):
     from routes import parse_multipart
     fields, files = parse_multipart(h, max_bytes=11 * 1024 * 1024)
     mode = fields.get("mode", DEFAULT_MODE)
-    if mode not in cfg.MODES:
+    if not cfg.valid_mode(mode):
         h._json({"ok": False, "error": "非法模式"}); return
     file_info = files.get("file")
     if not file_info:
@@ -42,9 +42,13 @@ def upload_image(h):
     if ext not in (".png", ".jpg", ".jpeg", ".webp", ".gif"):
         h._json({"ok": False, "error": "仅支持 png/jpg/jpeg/webp/gif 图片格式"}); return
     if not isinstance(data, bytes) or len(data) > 10 * 1024 * 1024:
-        h._json({"ok": False, "error": "图片过大（上限 10MB）"}); return
+        _mb = len(data) / 1024 / 1024 if isinstance(data, bytes) else 0.0
+        h._json({"ok": False, "error": f"图片过大（当前 {_mb:.1f}MB，上限 10MB）；请压缩后再传"}); return
     if _image_used_bytes() + len(data) > _image_quota_bytes():
-        h._json({"ok": False, "error": "图片空间已满，请在数据面板清理"}); return
+        _used_mb = _image_used_bytes() / 1024 / 1024
+        _quota_mb = _image_quota_bytes() / 1024 / 1024
+        h._json({"ok": False, "error": f"图片空间已满（已用 {_used_mb:.1f}MB，上限 {_quota_mb:.0f}MB）；"
+                                       "请在数据面板清理后重试"}); return
     img_id = "img_" + _uuid.uuid4().hex[:12]
     fp = _image_dir(mode) / (img_id + ext)
     from modules.storage import atomic_write_bytes
@@ -84,7 +88,8 @@ def add_sticker_route(h):
                 h._json({"ok": False, "error": "仅支持 png/jpg/jpeg/webp/gif 图片格式"}); return
             data = file_info["data"]
             if not isinstance(data, bytes) or len(data) > 10 * 1024 * 1024:
-                h._json({"ok": False, "error": "图片过大（上限 10MB）"}); return
+                _mb = len(data) / 1024 / 1024 if isinstance(data, bytes) else 0.0
+                h._json({"ok": False, "error": f"图片过大（当前 {_mb:.1f}MB，上限 10MB）；请压缩后再传"}); return
             # 服务器对图片字节只传输不保存：仅登记元数据（内容哈希供客户端索引
             # IndexedDB；label 即图片文字描述，已入 LLM 上下文）
             digest = hashlib.sha256(data).hexdigest()
@@ -115,7 +120,8 @@ def add_sticker_route(h):
     except StickerAddError as e:
         h._json({"ok": False, "error": str(e)})
     except Exception as e:
-        h._json({"ok": False, "error": f"上传失败: {e}"})
+        logger.warning("表情包上传失败: %s", e)
+        h._json({"ok": False, "error": "表情包上传失败，请重试；仍失败请到「反馈」附诊断包"})
 
 
 def sticker_update(h):
@@ -135,7 +141,8 @@ def sticker_update(h):
     except StickerUpdateError as e:
         h._json({"ok": False, "error": str(e)})
     except Exception as e:
-        h._json({"ok": False, "error": f"修改失败: {e}"})
+        logger.warning("表情包修改失败: %s", e)
+        h._json({"ok": False, "error": "修改失败，请重试；仍失败请到「反馈」附诊断包"})
 
 
 def sticker_delete(h):
@@ -148,7 +155,8 @@ def sticker_delete(h):
     except StickerDeleteError as e:
         h._json({"ok": False, "error": str(e)})
     except Exception as e:
-        h._json({"ok": False, "error": f"删除失败: {e}"})
+        logger.warning("表情包删除失败: %s", e)
+        h._json({"ok": False, "error": "删除失败，请重试；仍失败请到「反馈」附诊断包"})
 
 
 # ═══ 收藏夹（长按消息 → 收藏）═══
@@ -194,7 +202,7 @@ def get_image(h):
         h._json({"error": "非法图片 id"}, 400)
         return
     mode = (qs.get("mode", [DEFAULT_MODE])[0] or DEFAULT_MODE)
-    mode = mode if mode in cfg.MODES else DEFAULT_MODE
+    mode = mode if cfg.valid_mode(mode) else DEFAULT_MODE
     from modules.vision import EXT_MIME
     d = _image_dir(mode)
     for fp in sorted(d.glob(img_id + ".*")):
@@ -310,7 +318,7 @@ def assets_raw(h):
     qs = parse_qs(urlparse(h.path).query)
     name = qs.get("name", [""])[0]
     mode = (qs.get("mode", [DEFAULT_MODE])[0] or DEFAULT_MODE)
-    mode = mode if mode in cfg.MODES else DEFAULT_MODE
+    mode = mode if cfg.valid_mode(mode) else DEFAULT_MODE
     if name == "knowledge":
         h._json({"name": name, "content": _load_knowledge(mode)})
         return

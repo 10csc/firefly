@@ -105,7 +105,7 @@ def _body_mode_ex(body: dict) -> tuple[str, bool]:
     （R-07，2026-09-10：静默回退会让用户以为"角色坏了"，且同步链路会把 story 数据
     灌进自建包目录）。"""
     m = body.get("mode", DEFAULT_MODE)
-    if m in cfg.MODES:
+    if cfg.valid_mode(m):
         return m, False
     logger.warning("未知 mode=%r（本端未注册），回退 %s", m, DEFAULT_MODE)
     return DEFAULT_MODE, bool(m and m != DEFAULT_MODE)
@@ -120,7 +120,7 @@ def _query_mode_ex(h) -> tuple[str, bool]:
     """从 query string 取模式（GET 接口用），返回 (mode, fell_back)。"""
     qs = parse_qs(urlparse(h.path).query)
     m = qs.get("mode", [DEFAULT_MODE])[0]
-    if m in cfg.MODES:
+    if cfg.valid_mode(m):
         return m, False
     logger.warning("未知 mode=%r（本端未注册），回退 %s", m, DEFAULT_MODE)
     return DEFAULT_MODE, bool(m and m != DEFAULT_MODE)
@@ -204,7 +204,7 @@ def _image_quota_bytes() -> int:
 def _image_used_bytes() -> int:
     """当前用户所有模式 images/ 已用总字节（配额统计用；服务器版经 _user_ctx 自动隔离）。"""
     total = 0
-    for m in cfg.MODES:
+    for m in cfg.all_modes():
         d = cfg.mode_root(m) / "images"
         try:
             if not d.is_dir():

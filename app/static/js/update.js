@@ -15,7 +15,7 @@ import { IS_SERVER } from "./api.js";
 // 现在：服务器统一管理版本号与下载直链，客户端只认一个端点；
 //      兜底阶段也改为**按版本号取最高**，而非先到先得。
 // ═══════════════════════════════════════════
-const CURRENT_VERSION = "0.9.0";   // 与 android versionName / 安装器 AppVersion 保持一致
+const CURRENT_VERSION = "0.9.1";   // 与 android versionName / 安装器 AppVersion 保持一致
 // PC 三栏外壳（pc_shell.js，独立 classic script）底部状态栏要显示版本号，
 // 它看不到 bundle 作用域，所以暴露一个只读副本（不要在这里写版本，单一来源仍是本文件）。
 window.__appVersion = CURRENT_VERSION;
@@ -97,7 +97,7 @@ async function checkUpdate() {
                 msg.textContent = `已是最新版本 ${cur} ✓`;
             }
         } catch (e) {
-            msg.textContent = "检查失败（服务器更新清单不可达）";
+            msg.textContent = "检查更新失败：暂时连不上更新服务，请稍后重试";
         }
         return;
     }
@@ -138,7 +138,7 @@ async function checkUpdate() {
         } catch (e) { /* 单源失败继续看下一个 */ }
     }
     if (!best) {
-        msg.textContent = "检查失败（网络或仓库不可达）";
+        msg.textContent = "检查更新失败：暂时连不上更新服务，请稍后重试";
         return;
     }
     const { latest, data, src } = best;
@@ -202,6 +202,7 @@ async function autoUpdate(isAndroid) {
             msg.innerHTML = `下载完成 → <a href="file://${data.path}" target="_blank" rel="noopener" style="color:var(--fg-bright)">点击运行安装</a>`;
         }
     } catch (e) {
-        msg.textContent = "自动更新失败：" + e;
+        console.warn("[update] 自动更新失败", e);   // 原始异常落日志，不拼进用户可见串
+        msg.textContent = "自动更新没成功；请稍后重试，或前往下载页手动安装最新版";
     }
 }

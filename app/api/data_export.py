@@ -91,7 +91,7 @@ def export_data(h):
     Content-Disposition: attachment 触发浏览器/WebView 下载。只读打包，不修改数据。"""
     q = parse_qs(urlparse(h.path).query)
     mode = (q.get("mode") or [DEFAULT_MODE])[0]
-    if mode not in cfg.MODES:
+    if not cfg.valid_mode(mode):
         mode = DEFAULT_MODE
     name = (q.get("name") or [""])[0]
     if name:
@@ -145,7 +145,7 @@ def import_data(h):
         h._json(resp)
         return
     mode = fields.get("mode", DEFAULT_MODE)
-    if mode not in cfg.MODES:
+    if not cfg.valid_mode(mode):
         h._json({"ok": False, "error": "非法模式"}); return
     ok, err, n = _import_zip_to_mode(data, mode)
     if not ok:
@@ -171,7 +171,7 @@ def _backup_name_ok(name) -> str:
 def _backup_mode_of(name: str) -> str:
     """从备份名解析模式（{mode}-{时间戳}.zip）；不含合法模式返回 ""。"""
     m = name.split("-", 1)[0]
-    return m if m in cfg.MODES else ""
+    return m if cfg.valid_mode(m) else ""
 
 
 def backup_create(h):
@@ -183,7 +183,7 @@ def backup_create(h):
         data = _build_backup_zip(cfg.mode_root(mode), mode)
     except Exception as e:
         logger.warning("备份打包失败: %s", e)
-        h._json({"ok": False, "error": f"备份打包失败: {e}"}); return
+        h._json({"ok": False, "error": "备份打包失败，请重试；仍失败请检查磁盘空间"}); return
     bdir = _backup_dir(mode)
     fp = None
     try:
@@ -207,7 +207,7 @@ def backup_create(h):
                 pass
     except OSError as e:
         logger.warning("备份写入失败: %s", e)
-        h._json({"ok": False, "error": f"备份写入失败: {e}"}); return
+        h._json({"ok": False, "error": "备份写入失败，请重试；仍失败请检查磁盘空间"}); return
     # 输出验证：落盘内容与打包字节一致才算成功
     try:
         if not fp.is_file() or fp.stat().st_size != len(data):

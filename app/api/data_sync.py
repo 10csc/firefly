@@ -48,7 +48,7 @@ def _sync_mode_root(mode: str):
     m = str(mode or "")
     if m not in cfg.backup_pack_ids():
         m = DEFAULT_MODE
-    if m in cfg.MODES:
+    if cfg.valid_mode(m):
         return cfg.mode_root(m), m
     return Path(cfg._user_ctx_dir() or cfg.USER_DIR) / m, m
 
@@ -70,7 +70,7 @@ def sync_import(h):
     root, m = _sync_mode_root(DEFAULT_MODE)
     fields, files = parse_multipart(h, max_bytes=_IMPORT_MAX_BYTES)
     mode = fields.get("mode", DEFAULT_MODE)
-    if mode not in cfg.MODES:
+    if not cfg.valid_mode(mode):
         h._json({"ok": False, "error": "非法模式"}); return
     root, m = _sync_mode_root(mode)
     try:

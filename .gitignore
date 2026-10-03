@@ -40,6 +40,11 @@ android/.gradle/
 android/sdk/
 android/firefly.apk
 android/app/src/main/python/backend/
+# 安卓 assets 同样是 Gradle `syncFrontendAssets`（**Sync 类型**）生成的镜像，与上面 backend/ 同性质；
+# 2026-10-03 R-11 解除跟踪。解除前已核查：66 个 tracked 文件**全部**能由 Sync 从
+# app/static、app/assets 子集、server/frontend 三个文件、app/assets/voice 这四个源重新生成，
+# 无一手工文件（工具 `_harden/r11_assets_ownership_check.py`）。
+android/app/src/main/assets/
 
 # ── 日志与临时 ──
 *.log
@@ -91,3 +96,37 @@ tests/*.db
 # /.workbuddy/ = 外部工具工作目录，非本项目产物。
 /hotupdate/
 /.workbuddy/
+
+# ── 报障排查用的解包数据（2026-09-24）──
+# 用户提交的诊断包/备份包解出来的东西，**含用户隐私对话与 API Key**，绝不能入库。
+_diag_s/
+_diag_x/
+# 公告面板的前端预览壳（由 .tmp_test/_notice_sync.py 从 notice.js 生成，可再生）
+_preview/
+# 一次性排查脚本
+_rt_parse.py
+
+# ── PC 语音引擎子进程的运行期日志（2026-10-02）──
+# `app/voice/pc_host.py:70` 的 log_path 默认 = `app/voice/_worker.log`，**写在源码树里**：
+#   ① 每次跑语音/测试都会重建它 ⇒ 不 ignore 就是常驻的未跟踪噪音；
+#   ② 它会让 `tools/check_backend_sync.py --check` 多一条"仓库有、安卓镜像没有"的漂移
+#      （实测漂移清单里就有 app/voice/_worker.log）。
+# ★ 只挡这一个运行期产物，不影响 app/voice/ 下的**代码**（代码必须入库）。
+/app/voice/_worker.log
+
+# ── R-11 提交范围裁定补（2026-10-03）──
+# 核查 `git status --porcelain --untracked-files=all` 时发现：以下 5 项**未被任何既有规则挡住**，
+# 合计约 247MB，执行 `git add -A` 会整包进库。都不是代码/文档 ⇒ 禁止入库。
+# ⚠️ 写法注意：.gitignore **不支持行尾注释**（`#` 只在行首才是注释），
+#    写成 `promo/  # 说明` 会变成匹配「promo/  # 说明」这个字面路径而**静默失效**。
+# 113MB 听感 A/B 的 wav（R-20 材料；要长期留就挪进「封装（没指定就不读）/」）
+voice_samples/
+# 130MB 推广截图 png
+promo/
+# 4.6MB 临时截图；⚠️ 既有规则是 `.tmp_test/`（**带点**），这个不带点 ⇒ 漏网
+_tmp_test/
+# 根目录误建的前端导出副本（**是目录**，名字就叫 index.html）
+/index.html/
+# 推广脚本运行期目录；⚠️ 其下 user_data/config.json **明文含真实 API Key**，
+# 虽已被 `user_data/` 规则挡住（实测未进 git、历史中也不存在），整个目录再挡一道防手滑
+_promo_run/

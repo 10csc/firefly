@@ -349,6 +349,32 @@ def get_config(h):
     })
 
 
+# ── 包形象资产：槽位回落链（2026-10-01，共创平台 V1）──────────────
+# 契约 06 §3.1/§3.3：新格式卡的最小集是 **thumb**（列表唯一用图），avatar 可以省略
+# （"用 thumb 即可"）、cover 属于旧槽位也在列表之外被 display 取代。此前只按同名槽位
+# glob ⇒ 一张只有 thumb+display 的**合法卡**在 `/modes` 里 avatar/cover 都是空串，
+# App 的模式卡片与详情页就是白图（客户端消费侧审计发现）。这里给"取头像/封面"定义
+# 明确的回落链；取不到才返回空串（前端按空串走既有占位逻辑）。
+# user_avatar 不回落：那是**用户自己的形象**，拿角色图顶上会把用户画成角色。
+_PACK_ASSET_FALLBACK = {
+    "avatar": ("avatar", "thumb"),
+    "cover": ("cover", "display", "thumb"),
+    "user_avatar": ("user_avatar",),
+}
+
+
+def pack_asset_slot_url(mode: str, slot: str) -> str:
+    """按槽位取包形象资产 URL（用户副本优先 → bundled 包目录），带回落链；没有返回 ""。"""
+    for name in _PACK_ASSET_FALLBACK.get(slot, (slot,)):
+        for base in (cfg.mode_character_dir(mode) / "assets",
+                     cfg.bundled_character_dir(mode) / "assets"):
+            if base.is_dir():
+                for fp in sorted(base.glob(f"{name}.*")):
+                    if fp.suffix.lower() in (".png", ".jpg", ".jpeg", ".webp"):
+                        return f"/assets/character/{mode}/assets/{fp.name}"
+    return ""
+
+
 def get_modes(h):
     """GET /modes：预设包清单（前端模式卡片/名称/封面/头像的数据源，角色预设化）。
     每包返回 id/name/presentation/avatar/cover/has_opening；资产 URL 存在才给（空串=无）。
@@ -358,19 +384,11 @@ def get_modes(h):
     from modules.llm_base import resolve_character_file
 
     def _pack_asset_url(mode: str, fname: str) -> str:
-        # 按槽位名 glob（任意图片扩展名）：用户副本优先，退回 bundled 包目录
-        slot = fname.split(".")[0]
-        for base in (cfg.mode_character_dir(mode) / "assets",
-                     cfg.bundled_character_dir(mode) / "assets"):
-            if base.is_dir():
-                for fp in sorted(base.glob(f"{slot}.*")):
-                    if fp.suffix.lower() in (".png", ".jpg", ".jpeg", ".webp"):
-                        return f"/assets/character/{mode}/assets/{fp.name}"
-        return ""
+        return pack_asset_slot_url(mode, fname.split(".")[0])
 
     items = []
-    for mode in cfg.MODES:
-        p = cfg.PRESETS.get(mode) or {}
+    for mode in cfg.all_modes():
+        p = cfg.pack_meta(mode)
         items.append({
             "id": mode,
             "name": p.get("name") or mode,

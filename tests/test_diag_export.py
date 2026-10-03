@@ -161,8 +161,21 @@ check("E  本地版返 200", h3.status == 200)
 # 逐成员比内容，不比整包字节：zip 会写文件 mtime，两次生成必然差 1~2 字节（第一版就栽在这）
 z3 = zipfile.ZipFile(io.BytesIO(_H2.wfile.buf))
 check("E  写出的成员集合一致", set(z3.namelist()) == names, str(sorted(z3.namelist())))
-check("E  每个成员内容一致（同一份数据）",
-      all(z3.read(n) == z.read(n) for n in names))
+
+
+def _norm(blob: bytes) -> bytes:
+    """把**天然会随时间变**的字段抹成占位再比。
+
+    2026-10-01：本条原本直接比字节，于是两次导出只要跨过 1 秒就红
+    （`app/api/diag.py:124` 会写 `generated_at` = 导出时刻）。全量套件有负载时
+    必然偶发（实测全量 3 次红 1 次、单跑 3 次全绿），属于**断言过严**而非产品缺陷。
+    占位比较保留原意（同一份数据 ⇒ 内容一致），同时去掉时间依赖。"""
+    import re as _re
+    return _re.sub(rb'"generated_at"\s*:\s*"[^"]*"', b'"generated_at":"<ts>"', blob)
+
+
+check("E  每个成员内容一致（同一份数据；generated_at 天然会变，按占位比较）",
+      all(_norm(z3.read(n)) == _norm(z.read(n)) for n in names))
 
 print(f"\n统计: PASS={PASS} FAIL={FAIL}")
 sys.exit(1 if FAIL else 0)

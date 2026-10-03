@@ -76,8 +76,28 @@ def find_models_dir() -> Path | None:
 
 
 def mood_lib_dir() -> Path:
-    """语气库目录（Kotlin 侧首次会从 assets 落地到这里）。"""
+    """语气库目录（Kotlin 侧首次会从 assets 落地到这里）。
+
+    ★ PC 端**不使用**它 —— PC 上没有"从 assets 落地"这一步（`_android_data_dir()`
+      为 None，`copyAssetsDir` 那套是 Kotlin 专有），任何东西都不会往里写。
+      PC 引擎直接读打包资产，见 `assets_dir()`。
+    """
     return plugin_root() / "mood_lib"
+
+
+def assets_dir() -> Path:
+    """语音**打包资产**目录（只读）。
+
+    开发：`app/assets/voice/` · frozen：`_internal/assets/voice/` · 安卓：`backend/app/assets/voice/`。
+    与 `core.paths.BASE_DIR` 单一公式一致（`firefly.spec` 的 `datas` 已把整个 `app/assets` 打进 PC 包）。
+
+    内容：4 张映射表（pinyin.json / char2id.json / symbols.json / opencpop-strict.txt）
+    + 2 本预计算语气库（mood_lib/{happy,sad}/*.raw + meta.json）。
+
+    ★ PC 引擎的**文本前端与语气库都读这里** —— 不再引入第二套落地（02 §G3 的那处"必须先决定"
+      就按任务单定了：直接读资产；手机那套 `mood_lib_dir()` 落地是 Kotlin 专有路径，PC 不走）。
+    """
+    return paths.BASE_DIR / "assets" / "voice"
 
 
 def voice_dir(mode: str) -> Path:

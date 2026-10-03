@@ -1,0 +1,460 @@
+{
+ "generated_at": "2026-10-02 01:04:27",
+ "pass": 64,
+ "fail": 0,
+ "pending": 0,
+ "strict": false,
+ "results": [
+  {
+   "layer": "L1",
+   "id": "P01",
+   "name": "拒绝越界路径 ../evil.md",
+   "status": "PASS",
+   "note": "code=CARD_UNKNOWN_FILE msg='文本只能放在 character/ 根或 character/knowledge'"
+  },
+  {
+   "layer": "L1",
+   "id": "P02",
+   "name": "拒绝越界路径 knowledge/../../evil.md",
+   "status": "PASS",
+   "note": "code=CARD_BAD_PATH msg=\"知识库路径第 1 段是 '..'（路径穿越不允许）：knowledge/../.\""
+  },
+  {
+   "layer": "L1",
+   "id": "P03",
+   "name": "拒绝越界路径 character/../../x.md",
+   "status": "PASS",
+   "note": "code=CARD_UNKNOWN_FILE msg='文本只能放在 character/ 根或 character/knowledge'"
+  },
+  {
+   "layer": "L1",
+   "id": "P04",
+   "name": "拒绝越界路径 /etc/passwd",
+   "status": "PASS",
+   "note": "code=CARD_UNKNOWN_FILE msg='文本只能放在 character/ 根或 character/knowledge'"
+  },
+  {
+   "layer": "L1",
+   "id": "P05",
+   "name": "拒绝越界路径 \\windows\\system32\\x.md",
+   "status": "PASS",
+   "note": "code=CARD_BAD_PATH msg=\"文本文件名含非法字符 '\\\\\\\\'（路径分隔只能用 `/`，反斜杠不允许）：\\\\win\""
+  },
+  {
+   "layer": "L1",
+   "id": "P06",
+   "name": "拒绝越界路径 C:/windows/x.md",
+   "status": "PASS",
+   "note": "code=CARD_UNKNOWN_FILE msg='文本只能放在 character/ 根或 character/knowledge'"
+  },
+  {
+   "layer": "L1",
+   "id": "P07",
+   "name": "拒绝越界路径 core.md.exe",
+   "status": "PASS",
+   "note": "code=CARD_UNKNOWN_FILE msg='文本扩展名只允许 .md/.txt/.json（大小写不敏感）：core.md.'"
+  },
+  {
+   "layer": "L1",
+   "id": "P08",
+   "name": "拒绝越界路径 evil.py",
+   "status": "PASS",
+   "note": "code=CARD_UNKNOWN_FILE msg='文本扩展名只允许 .md/.txt/.json（大小写不敏感）：evil.py'"
+  },
+  {
+   "layer": "L1",
+   "id": "P09",
+   "name": "拒绝越界路径 assets/../../x.md",
+   "status": "PASS",
+   "note": "code=CARD_UNKNOWN_FILE msg='图片只能直接放在 character/assets/ 下：assets/../.'"
+  },
+  {
+   "layer": "L1",
+   "id": "P10",
+   "name": "拒绝越界路径 sub/other.md",
+   "status": "PASS",
+   "note": "code=CARD_UNKNOWN_FILE msg='文本只能放在 character/ 根或 character/knowledge'"
+  },
+  {
+   "layer": "L1",
+   "id": "P11",
+   "name": "拒绝越界路径 knowledge/a/b/c.md",
+   "status": "PASS",
+   "note": "code=CARD_BAD_PATH msg='知识库最多一层分组：knowledge/a/b/c.md（只允许 knowled'"
+  },
+  {
+   "layer": "L1",
+   "id": "P12",
+   "name": "拒绝越界路径 knowledge/../x.md",
+   "status": "PASS",
+   "note": "code=CARD_BAD_PATH msg=\"知识库路径第 1 段是 '..'（路径穿越不允许）：knowledge/../x\""
+  },
+  {
+   "layer": "L1",
+   "id": "P13",
+   "name": "拒绝越界路径 knowledge/world/../../x.md",
+   "status": "PASS",
+   "note": "code=CARD_BAD_PATH msg=\"知识库路径第 2 段是 '..'（路径穿越不允许）：knowledge/worl\""
+  },
+  {
+   "layer": "L1",
+   "id": "P14",
+   "name": "拒绝越界路径 knowledge/world/x.png",
+   "status": "PASS",
+   "note": "code=CARD_UNKNOWN_FILE msg='文本扩展名只允许 .md/.txt/.json（大小写不敏感）：x.png'"
+  },
+  {
+   "layer": "L1",
+   "id": "P15",
+   "name": "拒绝越界路径 knowledge/world/x.py",
+   "status": "PASS",
+   "note": "code=CARD_UNKNOWN_FILE msg='文本扩展名只允许 .md/.txt/.json（大小写不敏感）：x.py'"
+  },
+  {
+   "layer": "L1",
+   "id": "P16",
+   "name": "拒绝越界路径 .hidden.md",
+   "status": "PASS",
+   "note": "code=CARD_BAD_PATH msg='文本文件名不能以 `.` 开头（隐藏文件/目录）：.hidden.md'"
+  },
+  {
+   "layer": "L1",
+   "id": "P17",
+   "name": "拒绝越界路径 data/x.md",
+   "status": "PASS",
+   "note": "code=CARD_UNKNOWN_FILE msg='文本只能放在 character/ 根或 character/knowledge'"
+  },
+  {
+   "layer": "L1",
+   "id": "K01",
+   "name": "通过分组知识库 knowledge/世界观.md",
+   "status": "PASS",
+   "note": "kind=text "
+  },
+  {
+   "layer": "L1",
+   "id": "K02",
+   "name": "通过分组知识库 knowledge/world/设定.md",
+   "status": "PASS",
+   "note": "kind=text "
+  },
+  {
+   "layer": "L1",
+   "id": "K03",
+   "name": "通过分组知识库 knowledge/factions/星核猎手.md",
+   "status": "PASS",
+   "note": "kind=text "
+  },
+  {
+   "layer": "L1",
+   "id": "K04",
+   "name": "通过分组知识库 knowledge/我的自定域/笔记.txt",
+   "status": "PASS",
+   "note": "kind=text "
+  },
+  {
+   "layer": "L1",
+   "id": "K05",
+   "name": "通过分组知识库 knowledge/自定/术语.json",
+   "status": "PASS",
+   "note": "kind=text "
+  },
+  {
+   "layer": "L1",
+   "id": "K06",
+   "name": "⛔ 软链穿越：zip 层无软链语义（已由 E2E 在**真实 zip + 真实落盘**上判掉）",
+   "status": "PASS",
+   "note": "zip 条目只有'名字+内容'，外部模式位不携带可执行语义 ⇒ 本层本就无从穿越；真实判据在 tests/test_plaza_e2e_acceptance.py 的 K06a/b/c：软链条目按普通内容处理（未跟随）、安装目录零符号链接。"
+  },
+  {
+   "layer": "L1",
+   "id": "I01",
+   "name": "声明的 MIME 不可信：JPEG 魔数写进 png 槽位 ⇒ 按魔数存成 .jpg",
+   "status": "PASS",
+   "note": "得到 assets/thumb.jpg"
+  },
+  {
+   "layer": "L1",
+   "id": "I02",
+   "name": "魔数不符（纯文本冒充图片）",
+   "status": "PASS",
+   "note": "code=CARD_BAD_IMAGE msg='thumb 不是受支持的图片格式（只允许 png/jpg/webp）'"
+  },
+  {
+   "layer": "L1",
+   "id": "I03",
+   "name": "data URL 的 MIME 声明不参与判定（按魔数定 .jpg）",
+   "status": "PASS",
+   "note": "得到 assets/thumb.jpg"
+  },
+  {
+   "layer": "L1",
+   "id": "I04pre",
+   "name": "撒谎样本体积可控（jpg 9.9KB / png 5.9KB，base64 后 13.2KB/7.9KB）",
+   "status": "PASS",
+   "note": ""
+  },
+  {
+   "layer": "L1",
+   "id": "I04",
+   "name": "§3.4 结案：JPEG（SOF 320×213、scan 塞 800×800）**应被接受**",
+   "status": "PASS",
+   "note": "zip=1009B Chrome/Pillow 都读作 320×213；像素级重解码不在要求内"
+  },
+  {
+   "layer": "L1",
+   "id": "I04c",
+   "name": "§3.4 结案：PNG（IHDR 320×10、IDAT 塞 4000×10）**应被接受**",
+   "status": "PASS",
+   "note": "zip=6.2KB Chrome 读作 320×10（Pillow 直接拒收该合成流）"
+  },
+  {
+   "layer": "L1",
+   "id": "I04b",
+   "name": "★反证：真实 320px 但 SOF 谎报 4000px **必须被拒**（判据在头部）",
+   "status": "PASS",
+   "note": "code=CARD_TOO_BIG msg='assets/thumb.jpg 超过 12KB 上限' §3.4：判据必须是解析出的头部尺寸，不是任何声明字段"
+  },
+  {
+   "layer": "L1",
+   "id": "W01",
+   "name": "WebP：VP8X 画布=内层帧=128（一致）**通过**",
+   "status": "PASS",
+   "note": "zip=4.9KB "
+  },
+  {
+   "layer": "L1",
+   "id": "W02",
+   "name": "★WebP：VP8X 画布谎报 64、内层帧真 128 ⇒ 按**更严**判必须拒",
+   "status": "PASS",
+   "note": "code=CARD_BAD_IMAGE msg='assets/thumb.webp 的 WebP 画布小于内层帧（画布与帧矛盾，真解码器' 只读 VP8X 的实现会放行 → 这条就是钉它的"
+  },
+  {
+   "layer": "L1",
+   "id": "W03",
+   "name": "WebP：VP8X 画布谎报 512（>320 长边）必须拒",
+   "status": "PASS",
+   "note": "code=CARD_BAD_IMAGE msg='assets/thumb.webp 尺寸 512x512 超过上限（长边 ≤320px）'"
+  },
+  {
+   "layer": "L1",
+   "id": "I05",
+   "name": "解压炸弹（IHDR 声明 8000×8000）",
+   "status": "PASS",
+   "note": "code=CARD_BAD_IMAGE msg='assets/thumb.png 像素数过大（8000x8000）'"
+  },
+  {
+   "layer": "L1",
+   "id": "I06pre",
+   "name": "超限样本确实 >12KB（173.5KB）",
+   "status": "PASS",
+   "note": ""
+  },
+  {
+   "layer": "L1",
+   "id": "I06",
+   "name": "thumb 超 12KB 上限",
+   "status": "PASS",
+   "note": "code=CARD_TOO_BIG msg='assets/thumb.png 超过 12KB 上限'"
+  },
+  {
+   "layer": "L1",
+   "id": "I07",
+   "name": "thumb 长边 640px > 320px",
+   "status": "PASS",
+   "note": "code=CARD_TOO_BIG msg='assets/thumb.png 超过 12KB 上限'"
+  },
+  {
+   "layer": "L1",
+   "id": "I08",
+   "name": "缺 thumb（新格式 payload）",
+   "status": "PASS",
+   "note": "code=CARD_MISSING_THUMB msg='缺少列表缩略图 thumb（列表只发 thumb：请用 ≤320px、≤12KB 的 w'"
+  },
+  {
+   "layer": "L1",
+   "id": "S01",
+   "name": "8 张表情包**通过**",
+   "status": "PASS",
+   "note": "zip=24.1KB "
+  },
+  {
+   "layer": "L1",
+   "id": "S02",
+   "name": "第 9 张表情包**被拒**",
+   "status": "PASS",
+   "note": "code=CARD_TOO_BIG msg='表情包最多 8 张（收到第 9 张）'"
+  },
+  {
+   "layer": "L1",
+   "id": "S03",
+   "name": "label 恰好 12 字**通过**",
+   "status": "PASS",
+   "note": "zip=9.5KB "
+  },
+  {
+   "layer": "L1",
+   "id": "S04",
+   "name": "label 13 字**被拒**",
+   "status": "PASS",
+   "note": "code=CARD_BAD_MANIFEST msg='表情包标签超过 12 字：一二三四五六七八九十十一二'"
+  },
+  {
+   "layer": "L1",
+   "id": "S05",
+   "name": "缺 label 合法（App 侧占位）",
+   "status": "PASS",
+   "note": "zip=9.2KB "
+  },
+  {
+   "layer": "L1",
+   "id": "S06",
+   "name": "label 非字符串：payload 层静默 str() 强转 → 记观测，类型强制由 J 组验",
+   "status": "PASS",
+   "note": "落盘 stickers.json={'sticker-1.png': '12345'}"
+  },
+  {
+   "layer": "L1",
+   "id": "F01",
+   "name": "恰好 24 个文件**通过**（22 自由文本 + thumb + preset）",
+   "status": "PASS",
+   "note": "zip=9.7KB "
+  },
+  {
+   "layer": "L1",
+   "id": "F01b",
+   "name": "**33 个文件通过**（用户现场：31 自由文本 + thumb + preset）",
+   "status": "PASS",
+   "note": "zip=10.7KB "
+  },
+  {
+   "layer": "L1",
+   "id": "F01c",
+   "name": "恰好 500 个文件**通过**（上限边界）",
+   "status": "PASS",
+   "note": "zip=66.2KB "
+  },
+  {
+   "layer": "L1",
+   "id": "F02",
+   "name": "第 501 个文件**被拒**（新上限 500）",
+   "status": "PASS",
+   "note": "code=CARD_TOO_BIG msg='卡内文件过多：当前 501 个，上限 500 个（文本总量另有 8MB 上限）'"
+  },
+  {
+   "layer": "L1",
+   "id": "F03",
+   "name": "知识库 7 份**通过**（份数上限已取消，2026-10-01 松绑）",
+   "status": "PASS",
+   "note": "zip=8.0KB "
+  },
+  {
+   "layer": "L1",
+   "id": "F04",
+   "name": "单文本恰好 64KB 通过",
+   "status": "PASS",
+   "note": ""
+  },
+  {
+   "layer": "L1",
+   "id": "F05",
+   "name": "单文本 64KB+1 **通过**（逐文件上限已取消，2026-10-01 松绑）",
+   "status": "PASS",
+   "note": "zip=7.3KB "
+  },
+  {
+   "layer": "L1",
+   "id": "F06pre",
+   "name": "30 个 64KB 文本 ≈1.8MB（<8MB）⇒ 现在**通过**",
+   "status": "PASS",
+   "note": ""
+  },
+  {
+   "layer": "L1",
+   "id": "F06",
+   "name": "30 个文本（≈1.8MB）**通过**（文件数与单文件都不再拦）",
+   "status": "PASS",
+   "note": "zip=12.6KB "
+  },
+  {
+   "layer": "L1",
+   "id": "F06b",
+   "name": "文字总量 >8MB **被拒**（真正的闸门）",
+   "status": "PASS",
+   "note": "code=CARD_TOO_BIG msg='卡片文字总量超过上限：当前约 9216KB，上限 8192KB（知识库**份数与单文件大'"
+  },
+  {
+   "layer": "L1",
+   "id": "F07",
+   "name": "display 长边 3000px > 1024px",
+   "status": "PASS",
+   "note": "code=CARD_BAD_IMAGE msg='assets/display.png 尺寸 3000x100 超过上限（长边 ≤1024'"
+  },
+  {
+   "layer": "L1",
+   "id": "C01",
+   "name": "旧字段 core/identity/sms_samples → files[]",
+   "status": "PASS",
+   "note": "zip=1.2KB "
+  },
+  {
+   "layer": "L1",
+   "id": "C02",
+   "name": "旧字段被等价映射成 core.md/identity.md/sms_samples.md（+ 后端 preset.json）",
+   "status": "PASS",
+   "note": "实际 ['core.md', 'identity.md', 'preset.json', 'sms_samples.md']"
+  },
+  {
+   "layer": "L1",
+   "id": "C03",
+   "name": "旧格式卡**不强制** thumb（老客户端不能坏）",
+   "status": "PASS",
+   "note": ""
+  },
+  {
+   "layer": "L1",
+   "id": "C04",
+   "name": "新格式（出现 files[]）**必须**带 thumb",
+   "status": "PASS",
+   "note": "code=CARD_MISSING_THUMB"
+  },
+  {
+   "layer": "L1",
+   "id": "J01",
+   "name": "stickers.json 指向**不存在**的 sticker 文件｜build 阶段即拒",
+   "status": "PASS",
+   "note": "CARD_UNKNOWN_FILE 'stickers.json 指向不存在的表情包：sticker-9.png（本卡表情包：sticke'"
+  },
+  {
+   "layer": "L1",
+   "id": "J02",
+   "name": "stickers.json 的 key 带路径穿越｜build 阶段即拒",
+   "status": "PASS",
+   "note": "CARD_UNKNOWN_FILE 'stickers.json 指向不存在的表情包：../../evil.png（本卡表情包：stick'"
+  },
+  {
+   "layer": "L1",
+   "id": "J03",
+   "name": "stickers.json 不是合法 JSON｜build 阶段即拒",
+   "status": "PASS",
+   "note": "CARD_BAD_MANIFEST 'stickers.json 不是合法 UTF-8 JSON：Expecting property n'"
+  },
+  {
+   "layer": "L1",
+   "id": "J04",
+   "name": "stickers.json 的标签非字符串（类型强制）｜build 阶段即拒",
+   "status": "PASS",
+   "note": "CARD_BAD_MANIFEST 'stickers.json 的标签必须是字符串：sticker-1.png'"
+  },
+  {
+   "layer": "L1",
+   "id": "J05",
+   "name": "stickers.json 的标签恰好 12 字**通过**",
+   "status": "PASS",
+   "note": "（parse）放行"
+  }
+ ],
+ "sandbox": "C:\\Users\\FANGL\\AppData\\Local\\Temp\\ff_accept_v2_lw2gqb5f",
+ "baseline_reference": "F:\\CodeFile\\firefly\\_harden\\baseline_plaza_traffic.json",
+ "layer": "L1"
+}

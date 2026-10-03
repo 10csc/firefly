@@ -53,14 +53,20 @@ def _write_auth(data: dict) -> bool:
         return False
 
 
-def save_login(token: str, email: str, expires_at: str = "") -> bool:
-    """登录成功落盘（本地后端持有 token；expires_at 为空 = 服务器未返回，按 SESSION_DAYS 兜底）。"""
+def save_login(token: str, email: str, expires_at: str = "", role: str = "") -> bool:
+    """登录成功落盘（本地后端持有 token；expires_at 为空 = 服务器未返回，按 SESSION_DAYS 兜底）。
+
+    `role`（2026-10-01 收口）：登录响应里服务器已经给了 role，**顺手存下来** ——
+    这样 `/auth/state` 在**离线宽限期**内也能告诉前端"你是不是管理员"
+    （否则官方卡勾选框在离线时又变回装饰）。老 auth.json 没有这个字段 ⇒ 读出来是空串，行为不变。
+    """
     if not isinstance(token, str) or not token.strip():
         return False
     with _lock:
         return _write_auth({
             "token": token.strip(),
             "email": (email or "").strip(),
+            "role": (role or "").strip(),
             "expires_at": expires_at or time.strftime(
                 "%Y-%m-%d %H:%M:%S", time.localtime(time.time() + _MISSING_EXPIRES_SLACK)),
             "saved_at": time.strftime("%Y-%m-%d %H:%M:%S"),
@@ -77,12 +83,15 @@ def clear_login() -> None:
 
 def get_state() -> dict:
     """当前登录态（前端 /auth/state 用）。
-    {logged_in, email, expires_at, offline_ok}
-    offline_ok：离线宽限期内（本地记录的 expires_at 未到）允许继续使用本地功能。"""
+    {logged_in, email, role, expires_at, offline_ok}
+    offline_ok：离线宽限期内（本地记录的 expires_at 未到）允许继续使用本地功能。
+    `role`：登录时服务器回带的角色（`admin` / `user`）；老 auth.json 无此字段 ⇒ 空串。
+    未登录时口径不变，只是多一个空 `role` 字段（前端不必分支）。"""
     d = _read_auth()
     token = str(d.get("token", "") or "")
+    role = str(d.get("role", "") or "")
     if not token:
-        return {"logged_in": False, "email": "", "expires_at": "", "offline_ok": False}
+        return {"logged_in": False, "email": "", "role": "", "expires_at": "", "offline_ok": False}
     expires = str(d.get("expires_at", "") or "")
     try:
         from datetime import datetime
@@ -92,7 +101,7 @@ def get_state() -> dict:
     except Exception:
         # 解析失败保守判定：已过期（要求重新 verify）
         offline_ok = False
-    return {"logged_in": True, "email": d.get("email", ""),
+    return {"logged_in": True, "email": d.get("email", ""), "role": role,
             "expires_at": expires, "offline_ok": offline_ok}
 
 

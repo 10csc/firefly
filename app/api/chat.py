@@ -37,7 +37,7 @@ def save_journal(h):
     if not isinstance(content, str):
         h._json({"ok": False, "error": "内容必须为文本"}); return
     if len(content) > _CONTENT_MAX:
-        h._json({"ok": False, "error": f"内容过长（上限 {_CONTENT_MAX} 字符）"}); return
+        h._json({"ok": False, "error": f"内容过长（当前 {len(content)} 字，上限 {_CONTENT_MAX} 字）；请精简后重试"}); return
     # 路径与 load_journal 同源（llm_base 内按模式公式），避免两处各写一遍公式再次分裂
     from modules.llm_base import reload_journal
     from modules.app_config import mode_journal_dir
@@ -390,7 +390,7 @@ def get_chat_stage(h):
     q = parse_qs(urlparse(h.path).query)
     sid = (q.get("sid") or [""])[0] or "default"
     mode = (q.get("mode") or [DEFAULT_MODE])[0]
-    if mode not in cfg.MODES:
+    if not cfg.valid_mode(mode):
         mode = DEFAULT_MODE
     key = _session_key(sid, mode)
     with _SESSIONS_LOCK:

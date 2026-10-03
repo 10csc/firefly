@@ -44,7 +44,11 @@ val syncFrontendAssets = tasks.register<Sync>("syncFrontendAssets") {
         )
     }
     from("../../server/frontend") {
-        include("config.js", "login.html")
+        // ⚠ 新增「server/frontend → 安卓 assets」的文件**必须**登记在这里：
+        //   本任务是 Sync 类型，会删除目标目录里不属于它的文件（错误总结 #9）。
+        //   2026-10-01 复发：bg-sunset.css 只加进了 sync_frontends.py，clean 构建时被静默删除。
+        //   防线：tools/sync_frontends.py --check 会解析本清单并断言「手工清单 ⊆ 本清单」。
+        include("config.js", "login.html", "bg-sunset.css")
     }
     // 语音插件资产（文本前端映射表 + 语气库 mood_lib）→ **落到 APK assets 根**，
     // Kotlin 侧用 AssetManager 读（VoiceBridge：symbols/pinyin/char2id/opencpop + mood_lib）。
@@ -89,8 +93,8 @@ android {
         applicationId = "com.firefly.android"
         minSdk = 26
         targetSdk = 35
-        versionCode = 900
-        versionName = "0.9.0"
+        versionCode = 901
+        versionName = "0.9.1"
         ndk {
             // 只发 arm64-v8a（真机全是 64 位 arm64；Python 3.12 也不支持 32 位）。
             // ★ 为什么必须砍掉 x86_64（2026-09-19）：Gitee 单个附件上限 **100MB**

@@ -98,18 +98,36 @@ EVENT_COOLDOWN = 1800      # 同签名事件冷却（秒）：30 分钟内同签
 
 
 def event_signature(flag: dict) -> tuple:
-    """事件内容签名。**与 time 无关**——time 每次都变，用它去重等于没有去重。"""
+    """事件内容签名。**与 time 无关**——time 每次都变，用它去重等于没有去重。
+
+    2026-10-01（P4-8）：补 `kind` / `big_ip` / `tls_not_after`。
+    原先只含封禁与计数，于是「**两个不同 IP** 的大流量」签名完全相同 ⇒
+    30 分钟冷却内被并成一次弹窗；证书临期同理（不同到期日应各算一次事件）。
+    ⚠ 去重键必须是**事件本身的特征**（IP / 到期日），时间戳只能做冷却窗口——
+    这正是 `docs/错误总结.md` #11 的教训。
+    """
     return (
+        str(flag.get("kind") or "").strip(),
         str(flag.get("banned") or "").strip(),
         int(flag.get("fail2ban_bans") or 0),
         int(flag.get("rate_limited") or 0),
         int(flag.get("ssh_fails") or 0),
         int(flag.get("gateway_429") or 0),
+        str(flag.get("big_ip") or "").strip(),
+        str(flag.get("tls_not_after") or "").strip(),
+        str(flag.get("conn_ip") or "").strip(),
     )
 
 
 def is_noise(flag: dict) -> bool:
-    """单次 SSH 封禁 = 公网端口的日常扫描，fail2ban 已自动封禁 → 不值得打扰用户。"""
+    """单次 SSH 封禁 = 公网端口的日常扫描，fail2ban 已自动封禁 → 不值得打扰用户。
+
+    2026-10-01（P4-8）：**大流量与证书临期不是噪声**。它们由 `attack_watch.sh`
+    新增巡检写入，且这两个事件的封禁/429 计数天然为 0 —— 若落进噪声档就**永远不会弹窗**，
+    新加的巡检形同虚设。
+    """
+    if str(flag.get("kind") or "").strip() in ("big_ip", "tls_expiry", "conn_surge"):
+        return False
     return (int(flag.get("fail2ban_bans") or 0) <= 1
             and int(flag.get("rate_limited") or 0) < 5
             and int(flag.get("ssh_fails") or 0) < 5
@@ -123,6 +141,35 @@ def fallback_verdict(flag: dict) -> dict:
     却写着"需要你行动：是"——最烦人的一次恰好最没信息量。
     兜底原则：**宁可说一句确定的本地结论，也不弹空窗**；噪声档一律 need_user=False。
     """
+    kind = str(flag.get("kind") or "").strip()
+    # 2026-10-01（P4-8）：新增的两类巡检事件必须有本地兜底，否则模型不可用时弹空窗。
+    if kind == "tls_expiry":
+        days = int(flag.get("tls_days_left") or 0)
+        return {"severity": "high" if days < 3 else "medium",
+                "attack_type": "HTTPS 证书即将过期（**不是攻击**，是可用性风险）",
+                "analysis": (f"证书 not_after={flag.get('tls_not_after') or '（未记录）'}，"
+                             f"剩余 {days} 天。续期失败 = 全站不可用。"),
+                "actions": ["检查 acme.sh --cron 与续期 timer 是否在跑",
+                            "手动续期后 systemctl restart firefly-downloads"],
+                "need_user": True}
+    if kind == "big_ip":
+        return {"severity": "medium",
+                "attack_type": "单 IP 大流量（可能是刷带宽，也可能只是一次大文件下载）",
+                "analysis": (f"IP {flag.get('big_ip') or '（未记录）'} 在窗口内传输约 "
+                             f"{flag.get('big_bytes') or 0} 字节，超过阈值。"),
+                "actions": ["先确认不是自己在下载安装包",
+                            "确属异常再临时封禁该 IP（fail2ban / ufw）"],
+                "need_user": True}
+    if kind == "conn_surge":
+        return {"severity": "high",
+                "attack_type": "单 IP 并发连接数异常（疑似 slowloris / 半开连接耗尽连接池，**不是**正常的浏览行为）",
+                "analysis": (f"IP {flag.get('conn_ip') or '（未记录）'} 到网关的 established 连接数达 "
+                             f"{flag.get('conn_count') or 0}，超过阈值。大量半开连接会占满线程池，"
+                             "导致下载/公告/热更以及经反代的全部业务 API 一并不可用。"),
+                "actions": ["确认网关已带每 IP 连接上限与请求头超时（本仓库 0.9.1 加固）",
+                            "必要时用 ufw connlimit / nginx limit_conn 在系统层再兜一层",
+                            "持续异常再临时封禁该 IP（fail2ban / ufw）"],
+                "need_user": True}
     ips = str(flag.get("banned") or "").strip() or "（未记录）"
     if int(flag.get("fail2ban_bans") or 0):
         return {"severity": "low",

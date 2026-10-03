@@ -55,10 +55,38 @@ _CONCAT_RE = re.compile(r"""API_BASE\s*\+\s*["'`](/[^"'`?]*)""")
 _SRC_RE = re.compile(r"""(?:src|href)=["'](/[^"'?#]+)""")
 
 # 前端里合法的"非 API"站内路径（页面/资源/锚点）——显式列出，避免误报
+# ⚠ 2026-10-01 用户纠正架构：**服务器只做后台，不提供 App 前端**。
+#   因此 App 页路径（/index.html、/index、/app、/app.html、App 的 /style.css、/pc.css）
+#   **不再放进这份白名单** —— 放进来的话，将来有人把"打开服务器版 App 页"的引用写回前端，
+#   本门禁会**静默放行**（历史上 `app/static/js/api.js` 的 openServerWeb 就是这样溜过去的）。
 _NON_API_OK = {
-    "/", "/index.html", "/login.html", "/admin.html", "/app", "/app.html", "/index",
-    "/favicon.ico", "/manifest.json", "/style.css", "/pc.css", "/config.js",
+    "/", "/login.html", "/admin.html", "/platform.html", "/platform.css",
+    "/platform.bundle.js", "/platform.js", "/bg-sunset.css",
+    "/favicon.ico", "/manifest.json", "/config.js",
 }
+
+# 服务器**不再提供**的 App 侧路径：前端（本地版也一样）不得带前导 `/` 引用它们
+_APP_PAGE_FORBIDDEN = ("/index.html", "/app.html", "/index", "/app", "/style.css", "/pc.css", "/js/bundle.js")
+
+
+def check_no_app_page_refs() -> list:
+    """扫 app/static/** 找"引用服务器 App 页"的写法（引号/括号包裹 + 带前导 /）。
+
+    为什么要这条：`fetch("/x")` / `src="/x"` 这类正则只覆盖 API 与资源，抓不到
+    `window.open(base + "/index.html")` 这种拼接式引用；而那正是 2026-10-01 排查到的真实依赖。
+    """
+    bad = []
+    for fp in sorted(STATIC.rglob("*")):
+        if not fp.is_file() or fp.suffix not in (".js", ".html", ".css", ".json"):
+            continue
+        try:
+            text = fp.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        for pat in _APP_PAGE_FORBIDDEN:
+            if re.search(r"""["'`(]""" + re.escape(pat) + r"""["'`)]""", text):
+                bad.append((fp.relative_to(ROOT).as_posix(), pat))
+    return bad
 
 
 def collect_client_paths() -> dict:
@@ -141,6 +169,8 @@ def collect_server_paths() -> tuple[set, list]:
 # 键 = 客户端路径，值 = 为什么"服务器没有"是允许的
 ALLOW = {
     "/": "根路径由服务器自己处理（返回前端首页）",
+    "/shutdown": "**本地版专用**：只在 app/server.py 注册（shared_http 里有来源校验，仅本机可触发）；"
+                 "服务器版不得暴露它 —— 所以契约门禁不该要求服务器注册这个端点。",
 }
 
 
@@ -168,8 +198,17 @@ def main() -> int:
             mark = "缺" if p in missing else "ok"
             print(f"  [{mark}] {p}   ← {', '.join(sorted(set(client[p]))[:3])}")
 
+    apppage = check_no_app_page_refs()
+    if apppage:
+        print(f"\nX 前端引用了服务器**不再提供**的 App 页/App 资源（{len(apppage)} 处）：")
+        for path, pat in apppage[:10]:
+            print(f"    {path}  →  {pat}")
+        print("\n处置：服务器只做后台（2026-10-01 用户纠正）—— 前端不得引用服务器上的 App 页/App 样式；"
+              "本地版要用的同一文件请用**相对路径**（不带前导 /）。")
+        return 1
+
     if not missing:
-        print("\n结果: PASS 客户端调用面 ⊆ 服务器注册表")
+        print("\n结果: PASS 客户端调用面 ⊆ 服务器注册表，且前端未引用服务器 App 前端")
         return 0
 
     print(f"\nX 客户端会调、但服务器**没有注册**的 {len(missing)} 个端点：")

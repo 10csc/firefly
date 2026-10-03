@@ -262,8 +262,16 @@ check(f"I2 教程步骤编号连续（无跳号；当前 {len(seq)} 步 ①..{se
 check("I3 settings.js 不再写幽灵字段 hidden_reply_enabled",
       "payload.hidden_reply_enabled" not in (ROOT / "app" / "static" / "js" / "settings.js").read_text(encoding="utf-8"))
 html = (ROOT / "app" / "static" / "index.html").read_text(encoding="utf-8")
-check("I4 卡片样式已提为全局（#server-web-entry 不再裸渲染）",
-      "\n.am-card{" in html and "#server-web-entry{margin:14px 10px 0}" in html)
+# 2026-10-01（task-24）：架构纠正「服务器只做后台、不提供 App 前端」⇒ 首页那张
+# 「服务器云端版（网页）」入口卡片整块删除。原 I4 断言的是"该卡片的样式已提为全局"，
+# 卡片既已不存在，改为断言"全局卡片样式仍在 + 该入口确实清干净"。
+check("I4 卡片样式已提为全局，且已废弃的「服务器云端版」入口整块删除",
+      "\n.am-card{" in html and "server-web-entry" not in html and "openServerWeb" not in html)
+_api_js = (ROOT / "app" / "static" / "js" / "api.js").read_text(encoding="utf-8")
+_cfg_js = (ROOT / "app" / "static" / "config.js").read_text(encoding="utf-8")
+check("I4b 服务器 App 入口无残留：函数/按钮/地址常量三处都不再有可执行引用",
+      "openServerWeb" not in _api_js and "openServerWeb" not in html
+      and "window.FIREFLY_SERVER_WEB =" not in _cfg_js)
 check("I5 角色详情页同步后台主动门控",
       "S._hiddenEnabled = payload.hidden_enabled" in
       (ROOT / "app" / "static" / "js" / "panels" / "packs.js").read_text(encoding="utf-8"))

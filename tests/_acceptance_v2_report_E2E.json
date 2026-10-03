@@ -1,0 +1,229 @@
+{
+ "generated_at": "2026-10-02 01:04:44",
+ "pass": 31,
+ "fail": 0,
+ "pending": 0,
+ "strict": false,
+ "results": [
+  {
+   "layer": "E2E",
+   "id": "E2E-0",
+   "name": "拿到空闲端口（bind(0)）5329",
+   "status": "PASS",
+   "note": "port=5329"
+  },
+  {
+   "layer": "E2E",
+   "id": "E2E-1",
+   "name": "真实服务器起来（/health 200）",
+   "status": "PASS",
+   "note": "port=5329"
+  },
+  {
+   "layer": "E2E",
+   "id": "E1",
+   "name": "未登录读列表 → 401（实际 401）",
+   "status": "PASS",
+   "note": "401"
+  },
+  {
+   "layer": "E2E",
+   "id": "E2",
+   "name": "带 token 读列表 → 200",
+   "status": "PASS",
+   "note": "200"
+  },
+  {
+   "layer": "E2E",
+   "id": "E3",
+   "name": "存草稿成功（新格式：files[] + images{}）",
+   "status": "PASS",
+   "note": "status=200 '{\"ok\": true, \"draft\": {\"id\": \"acc_e2e_card\", \"status\": \"draft\", \"updated_at\": 1790874284}}'"
+  },
+  {
+   "layer": "E2E",
+   "id": "E4",
+   "name": "审核结论按真实形状写入沙箱草稿",
+   "status": "PASS",
+   "note": "patched=1"
+  },
+  {
+   "layer": "E2E",
+   "id": "E5",
+   "name": "发布成功",
+   "status": "PASS",
+   "note": "status=200 '{\"ok\": true, \"card\": {\"id\": \"acc_e2e_card\", \"name\": \"对抗验收卡\", \"char_name\": \"小萤\", \"user_name\": \"你\", \"prese'"
+  },
+  {
+   "layer": "E2E",
+   "id": "E6",
+   "name": "列表里能看到刚发布的卡",
+   "status": "PASS",
+   "note": "ids=['acc_e2e_card']"
+  },
+  {
+   "layer": "E2E",
+   "id": "E7",
+   "name": "列表条目只给 thumb 地址（无 cover/display）",
+   "status": "PASS",
+   "note": "thumb='thumb.png' cover=None display=None"
+  },
+  {
+   "layer": "E2E",
+   "id": "E8",
+   "name": "列表响应不含 display/sticker 地址",
+   "status": "PASS",
+   "note": ""
+  },
+  {
+   "layer": "E2E",
+   "id": "E9",
+   "name": "缩略图可取其 ≤12KB（6.2KB）",
+   "status": "PASS",
+   "note": "status=200 bytes=6341"
+  },
+  {
+   "layer": "E2E",
+   "id": "E10",
+   "name": "安装成功",
+   "status": "PASS",
+   "note": "status=200 '{\"ok\": true, \"card\": {\"id\": \"acc_e2e_card\", \"name\": \"对抗验收卡\", \"char_name\": \"小萤\", \"size_bytes\": 48977, \"backup\": \"\", \"upgraded\": false, \"knowledge_f'"
+  },
+  {
+   "layer": "E2E",
+   "id": "E11",
+   "name": "包落在 user_data/1/acc_e2e_card/character/",
+   "status": "PASS",
+   "note": "C:\\Users\\FANGL\\AppData\\Local\\Temp\\ff_accept_v2_8vpj516r\\user_data\\1\\acc_e2e_card"
+  },
+  {
+   "layer": "E2E",
+   "id": "E12",
+   "name": "卡内**扁平**知识库随包落地",
+   "status": "PASS",
+   "note": "C:\\Users\\FANGL\\AppData\\Local\\Temp\\ff_accept_v2_8vpj516r\\user_data\\1\\acc_e2e_card\\character\\knowledge\\世界观.md"
+  },
+  {
+   "layer": "E2E",
+   "id": "E13",
+   "name": "卡内**一层分组**知识库随包落地",
+   "status": "PASS",
+   "note": "C:\\Users\\FANGL\\AppData\\Local\\Temp\\ff_accept_v2_8vpj516r\\user_data\\1\\acc_e2e_card\\character\\knowledge\\world\\星核猎手.md"
+  },
+  {
+   "layer": "E2E",
+   "id": "E14",
+   "name": "卡内 3 张表情包随包落地（['sticker-1.png', 'sticker-2.png', 'sticker-3.png']）",
+   "status": "PASS",
+   "note": "['sticker-1.png', 'sticker-2.png', 'sticker-3.png']"
+  },
+  {
+   "layer": "E2E",
+   "id": "E15a",
+   "name": "消费侧进程里该包在**用户视角包表**里（user_packs/all_packs）",
+   "status": "PASS",
+   "note": "in_user_packs=True in_all_packs=True valid_mode=True；注：全局 PRESETS 只含内置包 ['haruno', 'story']，广场卡走 user_packs 合并（core/presets.py:177）"
+  },
+  {
+   "layer": "E2E",
+   "id": "E15",
+   "name": "★检索器认到该包**有知识库**（has_knowledge=True）",
+   "status": "PASS",
+   "note": "has_knowledge=True roots=[\"(WindowsPath('C:/Users/FANGL/AppData/Local/Temp/ff_consumer_rr7393x8/user_data/acc_e2e_card/character/knowledge'), 'pkg')\", \"(WindowsPath('F:/CodeFile/firefly/app/assets/character/acc_e2e_card/knowledge'), 'pkg')\"]"
+  },
+  {
+   "layer": "E2E",
+   "id": "E16",
+   "name": "★检索内容里**真的**含卡内知识库正文（扁平）",
+   "status": "PASS",
+   "note": "len=143 卡内知识库文件=['knowledge/world/星核猎手.md', 'knowledge/世界观.md'] 正文='## acc_e2e_card/character/knowledge/world/星核猎手.md\\n# 星核猎手\\n分组知识库标记：五域之世界观。\\n\\n## acc_e2e_card/character/knowledge/世界观.md\\n# 世界观\\n知识库正文标记：星核猎手以狩猎星核为业。'"
+  },
+  {
+   "layer": "E2E",
+   "id": "E17",
+   "name": "★检索内容里含卡内**一层分组**知识库正文",
+   "status": "PASS",
+   "note": "len=143"
+  },
+  {
+   "layer": "E2E",
+   "id": "E17b",
+   "name": "core.md 正文**不在**检索内容里（知识源只吃 knowledge/**）",
+   "status": "PASS",
+   "note": "len=143"
+  },
+  {
+   "layer": "E2E",
+   "id": "E18",
+   "name": "★表情包选择器里有这张卡的 3 张（实际 3）",
+   "status": "PASS",
+   "note": "[{'id': 'plaza_acc_e2e_card_1', 'label': '开心', 'enabled': True}, {'id': 'plaza_acc_e2e_card_2', 'label': '困惑', 'enabled': True}, {'id': 'plaza_acc_e2e_card_3', 'label': '认真', 'enabled': True}]"
+  },
+  {
+   "layer": "E2E",
+   "id": "E19",
+   "name": "★label 来自卡内 stickers.json（实际 ['困惑', '开心', '认真']）",
+   "status": "PASS",
+   "note": "期望 ['困惑', '开心', '认真']"
+  },
+  {
+   "layer": "E2E",
+   "id": "E20",
+   "name": "★这 3 张在启用集合里（3/3）",
+   "status": "PASS",
+   "note": "[{'id': 'plaza_acc_e2e_card_1', 'label': '开心', 'enabled': True}, {'id': 'plaza_acc_e2e_card_2', 'label': '困惑', 'enabled': True}, {'id': 'plaza_acc_e2e_card_3', 'label': '认真', 'enabled': True}]"
+  },
+  {
+   "layer": "E2E",
+   "id": "K06c",
+   "name": "安装目录里**零符号链接**（实际 0）",
+   "status": "PASS",
+   "note": "[]"
+  },
+  {
+   "layer": "E2E",
+   "id": "E21",
+   "name": "卸载成功",
+   "status": "PASS",
+   "note": "status=200"
+  },
+  {
+   "layer": "E2E",
+   "id": "E22",
+   "name": "账号目录里的包已删",
+   "status": "PASS",
+   "note": "C:\\Users\\FANGL\\AppData\\Local\\Temp\\ff_accept_v2_8vpj516r\\user_data\\1\\acc_e2e_card"
+  },
+  {
+   "layer": "E2E",
+   "id": "E23",
+   "name": "卸载后 /plaza/api/installed 里也不再有它（无残留）",
+   "status": "PASS",
+   "note": "status=200 items=[]"
+  },
+  {
+   "layer": "E2E",
+   "id": "E24",
+   "name": "服务器日志零 401/500/Traceback（实际 0 条）",
+   "status": "PASS",
+   "note": ""
+  },
+  {
+   "layer": "E2E",
+   "id": "K06a",
+   "name": "已构造含软链条目的真实 zip",
+   "status": "PASS",
+   "note": "7383B"
+  },
+  {
+   "layer": "E2E",
+   "id": "K06b",
+   "name": "软链条目按**普通文件内容**处理（zip 无软链语义，未被跟随）",
+   "status": "PASS",
+   "note": "收到 b'/etc/passwd'（若为 None 说明被丢弃；两种都不是'跟随链接'）"
+  }
+ ],
+ "sandbox": "C:\\Users\\FANGL\\AppData\\Local\\Temp\\ff_accept_v2_8vpj516r",
+ "baseline_reference": "F:\\CodeFile\\firefly\\_harden\\baseline_plaza_traffic.json",
+ "layer": "E2E"
+}

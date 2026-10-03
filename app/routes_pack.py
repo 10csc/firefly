@@ -93,7 +93,8 @@ def delete_character_file(h):
     try:
         fp.unlink(missing_ok=True)
     except OSError as e:
-        h._json({"ok": False, "error": f"删除失败: {e}"}); return
+        logger.warning("包内文件删除失败: %s", e)
+        h._json({"ok": False, "error": "删除失败，请重试；仍失败请检查磁盘空间"}); return
     from modules.llm_base import clear_cache
     clear_cache()
     # 3.3：副本没了 → 读取回落到包自带内容，"已修改"随之消失（记 inherited 而不是 baseline：
@@ -136,16 +137,13 @@ def get_pack_files(h):
                 reg.mark_slot(mode, fname, state, persist=False)
         files.append({"name": fname, "content": content,
                       "customized": state == "customized", "slot_state": state})
-    p = cfg.PRESETS.get(mode) or {}
+    p = cfg.pack_meta(mode)
 
     def _slot_url(slot: str) -> str:
-        for base in (cfg.mode_character_dir(mode) / "assets",
-                     cfg.bundled_character_dir(mode) / "assets"):
-            if base.is_dir():
-                for fp in sorted(base.glob(f"{slot}.*")):
-                    if fp.suffix.lower() in (".png", ".jpg", ".jpeg", ".webp"):
-                        return f"/assets/character/{mode}/assets/{fp.name}"
-        return ""
+        # 与 /modes 共用同一条槽位回落链（avatar←thumb、cover←display）：只有 thumb/display 的
+        # 合法新格式卡在详情页也要有图（2026-10-01 客户端消费侧审计）。延迟导入防循环。
+        from routes_config import pack_asset_slot_url
+        return pack_asset_slot_url(mode, slot)
 
     # 知识库清单（内置包只读浏览；自建包可编辑由 character-file 系列另行开放）
     knowledge = []
@@ -166,7 +164,7 @@ def get_pack_files(h):
     h._json({
         "mode": mode, "name": p.get("name") or mode, "presentation": p.get("presentation", ""),
         "custom": bool(p.get("custom")),
-        "state": _meta.get("state") or ("active" if (p.get("custom") or mode in cfg.MODES) else ""),
+        "state": _meta.get("state") or ("active" if (p.get("custom") or cfg.valid_mode(mode)) else ""),
         "files": files,
         "assets": {"avatar": _slot_url("avatar"), "cover": _slot_url("cover")},
         "knowledge": knowledge,
@@ -232,7 +230,7 @@ def upload_pack_asset(h):
     from routes import parse_multipart
     fields, files = parse_multipart(h, max_bytes=11 * 1024 * 1024)
     mode = fields.get("mode", DEFAULT_MODE)
-    if mode not in cfg.MODES:
+    if not cfg.valid_mode(mode):
         h._json({"ok": False, "error": "非法模式"}); return
     slot = (fields.get("slot") or "").strip()
     if slot not in _PACK_ASSET_SLOTS:
@@ -245,7 +243,8 @@ def upload_pack_asset(h):
     if ext not in (".png", ".jpg", ".jpeg", ".webp"):
         h._json({"ok": False, "error": "仅支持 png/jpg/jpeg/webp 图片格式"}); return
     if not isinstance(data, bytes) or len(data) > 5 * 1024 * 1024:
-        h._json({"ok": False, "error": "图片过大（上限 5MB）"}); return
+        _mb = len(data) / 1024 / 1024 if isinstance(data, bytes) else 0.0
+        h._json({"ok": False, "error": f"图片过大（当前 {_mb:.1f}MB，上限 5MB）；请压缩后再传"}); return
     # 按原扩展名落盘（避免扩展名与内容不符导致 MIME 错误）；
     # 同名槽位只留一份（清掉旧的其他扩展名副本）
     d = cfg.mode_character_dir(mode) / "assets"
@@ -314,7 +313,8 @@ __all__ = [
 # 读取链与既有槽位同哲学：用户副本（{pack}/character/knowledge/…）优先 → bundled 包内回落。
 # 写入一律原子写 + 白名单路径 + 写后清知识缓存（R-06 的失效入口在此落地）。
 
-_KB_ALLOWED_TOP = ("world", "factions", "story", "character", "dialogues")   # 五域（02 规范结构）
+# 五域（world/factions/story/character/dialogues）是 App 编辑器的**推荐分组**，不再是白名单
+# ——契约 06 §3.1 起也收扁平 `knowledge/<名>.md`（广场制卡产出的形态）。
 _KB_CONTENT_MAX = 500_000        # 单文件写入上限（防巨型文本打爆磁盘）
 
 
@@ -329,14 +329,21 @@ def _kb_bundled_root(mode: str) -> Path:
 
 
 def _safe_kb_rel(rel: str) -> str | None:
-    """知识库相对路径白名单审查：五域子目录下的 .md；拒绝 ../绝对/盘符/控制字符。
+    """知识库相对路径白名单审查：`knowledge/` 下 **扁平 .md** 或 **一层分组 .md**；
+    拒绝 `../绝对/盘符/控制字符/更深层级`。
     文件名允许中文/空格/括号/句点（"2.0任务对话.md"、"3.8任务对话（超长）.md" 都是合法的）。
-    返回归一化相对路径（posix）或 None。"""
+    返回归一化相对路径（posix）或 None。
+
+    2026-10-01（共创平台 V1）：**放开扁平名**。冻结契约 06 §3.1 两种都收
+    （`knowledge/<name>.md` 与 `knowledge/<域>/<name>.md`）：广场卡里是扁平名，
+    而 App 编辑器写的是五域分组名 ⇒ 只认分组会让"卡里的知识库"在包编辑界面
+    **只显示数量、点开是空的、也改不了**（客户端消费侧审计发现）。
+    分组名不再限定五域（契约允许用户自定名），前端对未知分组名原样展示。"""
     if not isinstance(rel, str) or not rel.strip():
         return None
     r = rel.strip().replace("\\", "/").lstrip("/")
-    parts = r.split("/")
-    if len(parts) < 2 or parts[0] not in _KB_ALLOWED_TOP:
+    parts = [p for p in r.split("/")]
+    if not 1 <= len(parts) <= 2:
         return None
     if any(p in ("", ".", "..") for p in parts):
         return None
@@ -367,7 +374,7 @@ def pack_knowledge_list(h):
         for fp in sorted(root.rglob("*.md")):
             rel = fp.relative_to(root).as_posix()
             if _safe_kb_rel(rel) is None:
-                continue   # 检索器同口径：五域之外/非法名不进列表（与 _load_knowledge 的排除分离：它不管顶层）
+                continue   # 检索器同口径：非法路径不进列表（扁平名与一层分组现在都合法）
             try:
                 st = fp.stat()
             except OSError:
@@ -403,7 +410,7 @@ def pack_knowledge_update(h):
     rel = _safe_kb_rel(str(body.get("path") or ""))
     content = body.get("content")
     if rel is None:
-        h._json({"ok": False, "error": "非法知识库路径（只允许五域子目录下的 .md）"}); return
+        h._json({"ok": False, "error": "非法知识库路径（knowledge/ 下 .md，或一层分组 <域>/<名>.md）"}); return
     if not isinstance(content, str) or not content.strip():
         h._json({"ok": False, "error": "内容不能为空"}); return
     if len(content) > _KB_CONTENT_MAX:
@@ -432,20 +439,23 @@ def pack_knowledge_delete(h):
     try:
         fp.unlink()
     except OSError as e:
-        h._json({"ok": False, "error": f"删除失败: {e}"}); return
+        logger.warning("包内文件删除失败: %s", e)
+        h._json({"ok": False, "error": "删除失败，请重试；仍失败请检查磁盘空间"}); return
     from modules.llm_retriever import clear_knowledge_cache
     clear_knowledge_cache(mode)
     h._json({"ok": True, "path": rel})
 
 
 def pack_knowledge_create(h):
-    """POST /pack-knowledge/create {mode, path, title}：在五域子目录下新建知识文件（骨架落用户副本）。"""
+    """POST /pack-knowledge/create {mode, path, title}：新建知识文件（骨架落用户副本）。
+
+    路径两种形态都收（契约 06 §3.1）：`knowledge/<名>.md` 与 `knowledge/<域>/<名>.md`。"""
     body = _read_json(h)
     mode = _body_mode(body)
     rel = _safe_kb_rel(str(body.get("path") or ""))
     title = str(body.get("title") or "").strip()[:60]
     if rel is None:
-        h._json({"ok": False, "error": "非法知识库路径（如 world/新地区.md）"}); return
+        h._json({"ok": False, "error": "非法知识库路径（如 新地区.md 或 world/新地区.md）"}); return
     if not title:
         h._json({"ok": False, "error": "请填写文件标题"}); return
     fp = _kb_user_root(mode) / rel
@@ -550,7 +560,8 @@ def pack_file_update(h):
         try:
             json.loads(content)
         except ValueError as e:
-            h._json({"ok": False, "error": f"JSON 格式错误: {e}"}); return
+            logger.warning("包文件 JSON 解析失败: %s", e)
+            h._json({"ok": False, "error": "内容格式有误（不是合法的 JSON），请检查后重试"}); return
     from api.pack_paths import write_pack_text
     err = write_pack_text(mode, path, content, backup_tag="edit")
     if err:
@@ -577,7 +588,8 @@ def pack_file_delete(h):
     try:
         fp.unlink()
     except OSError as e:
-        h._json({"ok": False, "error": f"删除失败: {e}"}); return
+        logger.warning("包内文件删除失败: %s", e)
+        h._json({"ok": False, "error": "删除失败，请重试；仍失败请检查磁盘空间"}); return
     from modules.llm_base import clear_cache
     clear_cache()
     logger.info("包文件恢复默认: %s/%s", mode, path)

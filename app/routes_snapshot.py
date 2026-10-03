@@ -106,7 +106,7 @@ def _snapshot_manifest(digests: dict, sticker_digest: list) -> dict:
             meta = cfg.pack_registry().get(pid) or {}
         except Exception:
             meta = {}
-        preset = (cfg.PRESETS.get(pid) or {}) if hasattr(cfg, "PRESETS") else {}
+        preset = cfg.pack_meta(pid)
         packs.append({
             "id": pid,
             "name": meta.get("name") or preset.get("name") or pid,
@@ -184,7 +184,7 @@ def snapshot_create(h):
             data = build_full_snapshot_zip()
         except Exception as e:
             logger.warning("快照打包失败: %s", e)
-            h._json({"ok": False, "error": f"快照打包失败: {e}"}); return
+            h._json({"ok": False, "error": "快照打包失败，请重试；仍失败请检查磁盘空间"}); return
     d = _snapshots_dir()
     d.mkdir(parents=True, exist_ok=True)
     stem = f"snapshot-{time.strftime('%Y%m%d-%H%M%S')}"

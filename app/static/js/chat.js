@@ -153,7 +153,8 @@ async function _voiceConvert(mode, snap) {
         }
     } catch (e) {
         if (bar) bar.remove();
-        showToast("生成失败：无法连接后端");
+        console.warn("[chat] 语音生成失败：连不上本机后端", e);   // 原始异常落日志（顾客可见串里不放）
+        showToast("语音没生成成功：连不上本机后端，请确认程序在运行后重试");
     } finally {
         _voiceBusy = false;
     }
@@ -187,7 +188,10 @@ function _showMsgMenu(row, x, y) {
             });
             const d = await resp.json();
             showToast(d.ok ? "已收藏（菜单 → 收藏可查看）" : "收藏失败：" + (d.error || ""));
-        } catch (e) { showToast("收藏失败，请重试"); }
+        } catch (e) {
+            console.warn("[chat] 收藏失败", e);
+            showToast("收藏没成功，请重试；仍失败请到「反馈」附诊断包");
+        }
     }));
     // 转语音：只对流萤的 text/narration 且有 seq 的消息显示。
     // 已有语音时**再点一次即重新生成** —— 不再单列「重新生成」：
@@ -286,18 +290,20 @@ export let _inflight = 0;        // 在飞请求数（WakeLock 引用计数：�
 let _stageTimer = null;   // 阶段进度轮询句柄（等待回复期间轮询 /chat-stage）
 
 // LLM 错误分类 → 人话提示（后端 /chat 返回 error_code 时展示）
+// 每类都按「现象 → 原因 → 我该做什么」写；归因一律照 api_client.py 的错误码来，
+// 上游/系统的锅不写成用户的操作问题（见 docs/设计/0.9.1用户可见文本清单.md §一 映射表）。
 const ERROR_TIPS = {
-    key_invalid: "API Key 无效或已过期，请到设置中检查",
-    no_balance: "API 余额不足，请到 DeepSeek 平台充值后再试",
-    rate_limit: "请求太频繁，稍等一会儿再试试",
-    network: "网络不通，请检查网络后重试",
-    server_error: "服务端暂时出错，请稍后再试",
-    bad_response: "服务返回异常，请稍后再试",
-    relay_timeout: "代发超时，请检查网络后重试",
-    timeout: "回复超时了，稍后再试一次吧",
-    cooldown: "上游服务波动中，休息一下再试试",
+    key_invalid: "你的 API Key 无效或已过期：请到设置里重新粘贴 Key（本机对话与角色卡不受影响）",
+    no_balance: "你的上游账号余额不足：请到所选供应商的控制台充值后重试（与本机数据、角色卡无关）",
+    rate_limit: "这是上游接口的临时限制，不是你的卡或操作的问题：约 1 分钟后会自动重试",
+    network: "本机网络或接口地址连不上：请检查网络后重试（不是账号问题，数据不受影响）",
+    server_error: "上游服务临时不可用，不是你那边的问题：稍后重试即可，不必改 Key",
+    bad_response: "上游返回的内容无法识别，不是你那边的问题：稍后重试即可",
+    relay_timeout: "这次请求超时了，不是你那边的问题：请确认应用在前台、网络正常后重试",
+    timeout: "这次生成超过了本轮时间上限，不是你那边的问题：稍等再发一次即可",
+    cooldown: "上游服务波动中，不是你那边的问题：稍等约 1 分钟再试",
     quota_exhausted: "今日服务器托管额度已用完，可在设置中切换为自带 Key 模式",
-    unknown: "出了点问题，请稍后再试",
+    unknown: "发生了未归类的问题：请重试一次；仍失败请在「反馈」里附诊断包",
 };
 
 

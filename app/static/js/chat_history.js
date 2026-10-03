@@ -25,11 +25,11 @@ function _cn() {
 // 数据源 GET /memory-status（只读计数 + 游标文件，很轻）。
 // ═══════════════════════════════════════════
 const memHint = document.getElementById("chat-mem");
-const appViewEl = document.getElementById("app");
-
-function _chatVisible() {
-    return !!appViewEl && appViewEl.style.display !== "none";
-}
+// `_chatVisible()` **只有一份定义**，在 js/proactive.js：bundle 是单作用域拼接，ORDER 里 proactive
+// 排在 chat_history 之后 ⇒ 那一份一直就是**实际生效**的一份，这里原来的重复定义是死代码。
+// 2026-10-01（P4-9）把本地重复定义删掉：两份并存时，改了其中一份会被另一份**静默覆盖**。
+// 两份的语义差异（元素缺失时返回 `undefined` 还是 `false`）在调用点都是布尔上下文，无行为变化。
+// ⚠ 勿再在本地重定义。
 
 async function memoryBarRefresh() {
     if (!memHint) return;

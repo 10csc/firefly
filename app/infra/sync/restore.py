@@ -296,20 +296,21 @@ def _pack_restorable(top: str) -> bool:
 
     条件：目录名符合包 id 规则（^[a-z0-9_-]{1,32}$）**且**不是当前可用/内置的包。
     两处排除的理由不同：
-    - `pid in cfg.MODES`：当前可用的包走 by_mode 分支（模式数据根），语义与旧版逐字一致；
-    - `pid in cfg.PRESETS` 且非自建：内置包（story/haruno）由发行版提供，不允许被快照覆盖
+    - 当前可用的包（`cfg.valid_mode`：内置包 or 本用户经广场安装的角色卡）走 by_mode
+      分支（模式数据根），语义与旧版逐字一致；
+    - 内置包（story/haruno）由发行版提供，不允许被快照覆盖
       （否则一份构造的 zip 就能改写内置角色的设定）。
 
-    3.8：清单已知的**归档**包（在 packs.json、不在 MODES/PRESETS）归本分支 —— 归档包的数据
+    3.8：清单已知的**归档**包（在 packs.json、不在当前可用列表）归本分支 —— 归档包的数据
     仍要能恢复；真正的合法性强校验在阶段 1（暂存后必须存在 character/preset.json 且能被
     `_parse_preset` 通过、并在清单里登记成功），所以这里放行不等于无条件换入。"""
     from modules.app_config import _PRESET_ID_RE
     pid = str(top or "").strip()
     if not pid or not _PRESET_ID_RE.fullmatch(pid):
         return False
-    if pid in cfg.MODES:
+    if cfg.valid_mode(pid):
         return False
-    return pid not in cfg.PRESETS
+    return pid not in cfg.all_packs()
 
 
 def _restore_full_snapshot(data: bytes, backup: bool = True,
@@ -367,7 +368,7 @@ def _restore_full_snapshot(data: bytes, backup: bool = True,
             # 自建包被整包丢弃 —— 换机/重装场景下静默丢角色卡与对话。
             pack_entries.setdefault(top, []).append((rel, info))
             continue
-        if top in cfg.MODES:
+        if cfg.valid_mode(top):
             by_mode.setdefault(top, []).append((rel, info))
         elif _pack_restorable(top):
             pack_entries.setdefault(top, []).append((rel, info))

@@ -164,11 +164,13 @@ check("G5 成功文案明确「系统弹窗里点安装」",
 check("G6 PC 静默安装那条路没被改坏",
       'data.installing' in UPDATE_JS and "/VERYSILENT" in ROUTES)
 
-print("=== H. 产物级：前端 bundle 与三端同步副本 ===")
+print("=== H. 产物级：前端 bundle 与**安卓侧**同步副本 ===")
 BUNDLE = (ROOT / "app" / "static" / "js" / "bundle.js").read_text(encoding="utf-8")
 check("H1 bundle 里已含新逻辑（否则手机跑的是旧前端）", "installApk(" in BUNDLE)
-for rel in ("server/frontend/js/update.js", "server/frontend/js/bundle.js",
-            "android/app/src/main/assets/js/update.js",
+# 2026-10-01（task-22 架构纠正）：服务器**不再对外提供 App 前端** ——
+# `server/frontend/js/*` 是旧镜像，`tools/sync_frontends.py` 已不再从 app/static 镜像它们，
+# 部署阶段移除。所以产物级同步判据只看**安卓侧**（App 本地模式真正读的那两份）。
+for rel in ("android/app/src/main/assets/js/update.js",
             "android/app/src/main/assets/js/bundle.js"):
     fp = ROOT / rel
     ok = fp.is_file() and "installApk(" in fp.read_text(encoding="utf-8")
@@ -204,8 +206,9 @@ check("J7 README 里说明了 running 的用途（用户敢发、我收得明白
       "运行版本三元组" in DIAG)
 check("J8 bundle 里已含复制逻辑（否则手机端是旧前端）",
       "copyRunningId" in BUNDLE)
-for rel in ("server/frontend/index.html", "android/app/src/main/assets/index.html",
-            "server/frontend/js/settings.js", "android/app/src/main/assets/js/settings.js"):
+# 同 H2：只查安卓侧（server/frontend 的 App 副本是待移除的旧镜像，见 H 段说明）
+for rel in ("android/app/src/main/assets/index.html",
+            "android/app/src/main/assets/js/settings.js"):
     fp = ROOT / rel
     ok = fp.is_file() and ("running-id" in fp.read_text(encoding="utf-8")
                            or "copy-running-id" in fp.read_text(encoding="utf-8"))

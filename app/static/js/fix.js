@@ -252,25 +252,26 @@ async function sendFixMessage(text) {
             showToast("请先到 ⚙ 设置里填写 API Key");
             openSettings();
         } else {
-            // A3：LLM 错误分类 → 人话提示（与聊天页 ERROR_TIPS 同口径）
+            // A3：LLM 错误分类 → 人话提示（与聊天页 ERROR_TIPS 同口径：同一错误码全仓同一句话）
             const FIX_ERROR_TIPS = {
-                key_invalid: "API Key 无效或已过期，请到设置中检查",
-                no_balance: "API 余额不足，请充值后再试",
-                rate_limit: "请求太频繁，稍等一会儿再试试",
-                network: "网络不通，请检查网络后重试",
-                server_error: "服务端暂时出错，请稍后再试",
-                relay_timeout: "代发超时，请检查网络后重试",
-                timeout: "回复超时了，稍后再试一次吧",
-                cooldown: "上游服务波动中，休息一下再试试",
-                quota_exhausted: "今日服务器托管额度已用完，可切换为自带 Key 模式",
-                unknown: "出了点问题，请稍后再试",
+                key_invalid: "你的 API Key 无效或已过期：请到设置里重新粘贴 Key（本机对话与角色卡不受影响）",
+                no_balance: "你的上游账号余额不足：请到所选供应商的控制台充值后重试（与本机数据、角色卡无关）",
+                rate_limit: "这是上游接口的临时限制，不是你的卡或操作的问题：约 1 分钟后会自动重试",
+                network: "本机网络或接口地址连不上：请检查网络后重试（不是账号问题，数据不受影响）",
+                server_error: "上游服务临时不可用，不是你那边的问题：稍后重试即可，不必改 Key",
+                relay_timeout: "这次请求超时了，不是你那边的问题：请确认应用在前台、网络正常后重试",
+                timeout: "这次生成超过了本轮时间上限，不是你那边的问题：稍等再发一次即可",
+                cooldown: "上游服务波动中，不是你那边的问题：稍等约 1 分钟再试",
+                quota_exhausted: "今日服务器托管额度已用完，可在设置中切换为自带 Key 模式",
+                unknown: "发生了未归类的问题：请重试一次；仍失败请在「反馈」里附诊断包",
             };
             showToast(data.error_code
                 ? (FIX_ERROR_TIPS[data.error_code] || FIX_ERROR_TIPS.unknown)
                 : (data.error || "分析失败，请稍后再试"));
         }
     } catch (e) {
-        showToast("网络错误，请稍后再试");
+        console.warn("[fix] 网络请求失败", e);
+        showToast("本机网络或接口地址连不上：请检查网络后重试（不是账号问题，数据不受影响）");
     } finally {
         _fixBusy = false;
         if (sendBtn) sendBtn.disabled = false;
@@ -301,7 +302,8 @@ async function startFix() {
             showToast(data.error || "生成失败，请稍后再试");
         }
     } catch (e) {
-        showToast("网络错误，请稍后再试");
+        console.warn("[fix] 网络请求失败", e);
+        showToast("本机网络或接口地址连不上：请检查网络后重试（不是账号问题，数据不受影响）");
     } finally {
         _fixBusy = false;
         if (btn) { btn.disabled = false; btn.textContent = "开始修改"; }
@@ -327,7 +329,8 @@ async function applyFix() {
             showToast(data.error || "应用失败");
         }
     } catch (e) {
-        showToast("网络错误，请稍后再试");
+        console.warn("[fix] 网络请求失败", e);
+        showToast("本机网络或接口地址连不上：请检查网络后重试（不是账号问题，数据不受影响）");
     } finally {
         _fixBusy = false;
     }
@@ -347,7 +350,8 @@ async function dismissFix() {
         showToast(data.ok ? "已放弃本次修改方案" : (data.error || "操作失败"));
         await loadFixStatus(true);
     } catch (e) {
-        showToast("网络错误，请稍后再试");
+        console.warn("[fix] 网络请求失败", e);
+        showToast("本机网络或接口地址连不上：请检查网络后重试（不是账号问题，数据不受影响）");
     } finally {
         _fixBusy = false;
     }
@@ -369,7 +373,8 @@ async function rollbackFix() {
         else showToast(data.error || "撤销失败");
         await loadFixStatus(true);
     } catch (e) {
-        showToast("网络错误，请稍后再试");
+        console.warn("[fix] 网络请求失败", e);
+        showToast("本机网络或接口地址连不上：请检查网络后重试（不是账号问题，数据不受影响）");
     } finally {
         _fixBusy = false;
     }
@@ -389,7 +394,8 @@ async function resetFix() {
         showToast(data.ok ? "已清空当前问题" : (data.error || "操作失败"));
         await loadFixStatus(true);
     } catch (e) {
-        showToast("网络错误，请稍后再试");
+        console.warn("[fix] 网络请求失败", e);
+        showToast("本机网络或接口地址连不上：请检查网络后重试（不是账号问题，数据不受影响）");
     } finally {
         _fixBusy = false;
     }

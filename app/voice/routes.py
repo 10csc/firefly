@@ -10,11 +10,14 @@
 """
 from __future__ import annotations
 
+import logging
 import re
 from urllib.parse import parse_qs, urlparse
 
 import voice
 from voice import store
+
+logger = logging.getLogger(__name__)
 
 # 语音文件名白名单：只允许 v<数字>.wav（防目录穿越 —— 名字由我们生成，不需要更宽的语法）
 _NAME_RE = re.compile(r"^v(\d+)\.wav$")
@@ -25,7 +28,8 @@ def voice_status(h):
     try:
         h._json(voice.status())
     except Exception as e:
-        h._json({"engine_ok": False, "reason": f"读取语音插件状态失败: {type(e).__name__}: {e}",
+        logger.warning("读取语音插件状态失败: %s: %s", type(e).__name__, e)
+        h._json({"engine_ok": False, "reason": "语音插件状态读取失败，请重开面板或重启程序后重试",
                  "moods": {}, "models_found": False}, 200)
 
 
@@ -41,7 +45,8 @@ def voice_tts(h):
     try:
         res = voice.synthesize(seq, mode, mood, force=force)
     except Exception as e:                       # 兜底：绝不把异常抛给 HTTP 层
-        res = {"ok": False, "error": f"合成失败: {type(e).__name__}: {e}"}
+        logger.warning("语音合成失败: %s: %s", type(e).__name__, e)
+        res = {"ok": False, "error": "语音合成失败，请重试；仍失败请到「反馈」附诊断包"}
     h._json(res, 200)
 
 
@@ -89,8 +94,9 @@ def voice_plugin(h):
         from voice import plugin as vp
         h._json(vp.state())
     except Exception as e:
+        logger.warning("语音插件状态读取失败: %s: %s", type(e).__name__, e)
         h._json({"id": "unavailable", "label": "状态读取失败",
-                 "reason": f"{type(e).__name__}: {e}"}, 200)
+                 "reason": "请重开面板或重启程序后重试"}, 200)
 
 
 def voice_plugin_action(h):
@@ -100,7 +106,7 @@ def voice_plugin_action(h):
     body = _read_json(h) or {}
     action = (body.get("action") or "").strip()
     if action not in _ACTIONS:
-        h._json({"ok": False, "error": f"未知操作: {action!r}",
+        h._json({"ok": False, "error": "操作无法识别，请刷新页面后重试",
                  "allowed": sorted(_ACTIONS)}, 400)
         return
     try:
@@ -131,4 +137,5 @@ def voice_plugin_action(h):
     except ValueError as e:                       # 参数非法（如未知语气）
         h._json({"ok": False, "error": str(e), "state": vp.state()}, 200)
     except Exception as e:                        # 兜底：不让插件把接口打成 500
-        h._json({"ok": False, "error": f"{type(e).__name__}: {e}"}, 200)
+        logger.warning("语音插件操作失败: %s: %s", type(e).__name__, e)
+        h._json({"ok": False, "error": "操作失败，请重试；仍失败请重启程序"}, 200)

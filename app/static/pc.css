@@ -35,7 +35,7 @@
     body { position: relative; overflow: hidden; }
 
     #home-view, #app, #fix-view, #settings-panel, #notice-panel, #feedback-panel,
-    #cards-view, #pack-view, #voice-view, #assist-view, #menu-overlay {
+    #cards-view, #pack-view, #plaza-view, #voice-view, #assist-view, #menu-overlay {
         position: absolute !important;
         left: 0 !important; right: 0 !important;
         top: 0 !important; bottom: var(--pc-foot-h) !important;
@@ -87,7 +87,7 @@
     .hm-card .hm-edit { opacity: 1; }        /* 桌面有指针：编辑角标常显 */
     /* 首页顶栏与账号/服务器卡片：桌面限宽居中，别横跨整屏 */
     .home-topbar { padding-left: clamp(20px, 3vw, 40px); padding-right: clamp(20px, 3vw, 40px); }
-    #auth-module, #server-web-entry, #auth-forms {
+    #auth-module, #auth-forms {
         max-width: 560px; margin-left: auto; margin-right: auto;
     }
 
@@ -153,6 +153,29 @@
     /* 角色卡管理：列表与新建立表单 */
     .cv-list, .cv-new, #pack-create-panel { max-width: 900px; width: 100%; margin-left: auto; margin-right: auto; }
     #cards-view .cv-head { max-width: 900px; width: 100%; margin: 0 auto; }
+
+    /* ── 角色卡广场：手机同款组件，桌面排三列 ──────────────
+       #plaza-view 是 column flex + align-items:center：子项必须显式 width:100%，
+       否则会被压成 fit-content（与设置面板同一个坑，见上方注释）。 */
+    #plaza-list { width: 100%; max-width: 1180px; margin: 0 auto; }
+    #plaza-list > * { width: 100%; }
+    #plaza-list .cv-head { padding-top: 16px; }
+    .pz-grid { grid-template-columns: repeat(3, 1fr); gap: 16px; padding: 16px 0 6px; }
+    .pz-card:hover { transform: translateY(-3px); }
+    .pz-search-row { max-width: 620px; }
+    .pz-more { margin-bottom: 34px; }
+    #plaza-detail.show { width: 100%; max-width: 980px; margin: 0 auto; }
+    /* ── 制卡层：桌面左右两栏（表单 + 草稿箱），手机仍是一列 ─────────
+       与 #plaza-list 同一个坑：父容器是 column flex + align-items:center，
+       制卡层必须显式铺满，否则被压成 fit-content。
+       `.pfc-cols` 是 absolute inset:0，宽度已经确定；`.pf-review` 是 absolute 浮层，
+       **不能**被 `> *` 收口规则改宽度，所以这里只收口两个直接子列。 */
+    #plaza-forge { width: 100%; }
+    #plaza-forge .pfc-cols { flex-direction: row; gap: 22px; max-width: 1240px; margin: 0 auto; }
+    #plaza-forge .pfc-pane { flex: 1 1 auto; min-width: 0; }
+    #plaza-forge .pfc-box { flex: 0 0 340px; max-height: none; }
+    #plaza-forge .pf-review { position: absolute; }
+    .pf-modal-box { margin-top: 14vh; }
     /* 设定纠错助手：头部 + 模式行 + 历史摘要 + 对话 + 提案 各自限宽 */
     #fix-view .fix-view-header, #fix-modes, #fix-chathist, #fix-chat, #fix-proposal,
     #fix-start-btn {
@@ -174,7 +197,7 @@
        `#fix-history-box` / `.fix-input-row` 这些名字第一版根本没写进规则里（全靠猜），
        所以它们横跨 1580px；现在按实测拿到的真名收口。 */
     #settings-panel, #notice-panel, #feedback-panel, #cards-view, #voice-view,
-    #pack-view, #fix-view {
+    #pack-view, #plaza-view, #fix-view {
         align-items: center;
     }
     #fix-view > *, #cards-view > *, #voice-view > * {
@@ -192,5 +215,184 @@
 
 /* 窄桌面（1100~1280）：菜单面板收窄，别把对话挤没 */
 @media (min-width: 1100px) and (max-width: 1279px) {
-    :root { --pc-menu-w: 330px; }
+    :root { --pc-menu-w: 330px; --pc-drawer-w: 400px; }
 }
+
+/* ═══════════════════════════════════════════════════════════════════
+   PC 三栏外壳 · 骨架（2026-10-02，IA 见 docs/设计/PC端重构-IA方案.md）
+
+   左=侧边栏（**只放卡外功能**：首页/卡库/广场/语音/公告/设置/账号）
+   中=联系人列（**角色卡 = 联系人**，点一下即切卡）
+   右=聊天页（既有视图层让位到这一栏）——卡内一切仍在聊天页内。
+
+   ⚠ 手机端零影响：本段全部在 @media (min-width:1100px) 内；块外的
+   `#pc-shell{display:none}` 保证 <1100px 时它连盒模型都不产生。
+   ⚠ 只**追加**结构：既有 view 的 id/class/JS 入口未改，这里只是让它们右移。
+   ═══════════════════════════════════════════════════════════════════ */
+:root {
+    --pc-nav-w: 72px;      /* 侧边栏宽度 */
+    --pc-list-w: 288px;    /* 联系人列宽度 */
+    --pc-gutter: calc(var(--pc-nav-w) + var(--pc-list-w));
+    --pc-drawer-w: 520px;  /* 卡详情抽屉宽度（T5：聊天页内右侧抽屉） */
+}
+
+/* 窄屏：外壳不存在（display:none ⇒ 不产生任何布局盒子） */
+#pc-shell { display: none; }
+
+/* 窄屏：PC 专属入口（如菜单页里的「卡详情」）不显形，手机端保持原样。
+   选择器带上 `.menu-actions` 是为了压过 style.css 的 `.menu-actions button{display:flex}`。 */
+.menu-actions button.pc-only { display: none; }
+
+@media (min-width: 1100px) {
+
+    #pc-shell {
+        display: flex;
+        position: fixed;
+        left: 0; top: 0; bottom: var(--pc-foot-h);
+        width: var(--pc-gutter);
+        z-index: 40;
+        background: var(--panel-solid);
+    }
+
+    /* ── 侧边栏：只放卡外功能；底部固定"首页/设置/账号"（用户原话）── */
+    #pc-nav {
+        width: var(--pc-nav-w);
+        flex: 0 0 var(--pc-nav-w);
+        display: flex; flex-direction: column; align-items: stretch; gap: 4px;
+        padding: 10px 8px;
+        border-right: 1px solid var(--ctrl-bg);
+    }
+    .pc-nav-btn {
+        display: flex; flex-direction: column; align-items: center; gap: 3px;
+        padding: 8px 2px; border-radius: 10px; cursor: pointer;
+        border: 1px solid transparent; background: transparent;
+        color: var(--fg-bright); font-family: inherit; font-size: 0.68em;
+        transition: color .15s, background .15s, border-color .15s;
+    }
+    .pc-nav-btn .ico { width: 20px; height: 20px; }
+    .pc-nav-btn:hover { color: var(--fg-accent); background: var(--gold-glow); border-color: var(--gold-line); }
+    .pc-nav-btn.active { color: var(--fg-accent); background: var(--gold-glow); border-color: var(--gold-line); }
+    .pc-nav-gap { flex: 1 1 auto; }   /* 把"公告/设置/账号"压到底部 */
+
+    /* ── 联系人列：角色卡 = 联系人 ── */
+    #pc-contacts {
+        flex: 0 0 var(--pc-list-w); width: var(--pc-list-w);
+        display: flex; flex-direction: column;
+        border-right: 1px solid var(--ctrl-bg);
+    }
+    .pc-col-head {
+        padding: 12px 14px 8px; font-size: 0.86em; font-weight: 600; color: var(--fg-main);
+        border-bottom: 1px solid var(--ctrl-bg);
+    }
+    #pc-contact-list { flex: 1 1 auto; overflow-y: auto; padding: 8px; }
+    .pc-contact {
+        display: flex; align-items: center; gap: 10px; width: 100%;
+        padding: 8px 10px; margin-bottom: 6px; border-radius: 12px; cursor: pointer;
+        border: 1px solid var(--border-mid); background: var(--ctrl-bg-3);
+        font-family: inherit; text-align: left; color: var(--fg-main);
+    }
+    .pc-contact:hover { border-color: var(--gold-line); background: var(--gold-glow); }
+    .pc-contact.active { border-color: var(--gold-line); background: var(--gold-glow); }
+    .pc-contact img, .pc-contact .pc-avatar-ph {
+        width: 34px; height: 34px; flex: 0 0 34px; border-radius: 10px; object-fit: cover;
+        display: flex; align-items: center; justify-content: center;
+        background: var(--ctrl-bg); color: var(--fg-accent); font-size: 0.9em;
+    }
+    .pc-contact-main { min-width: 0; }
+    .pc-contact-name {
+        font-size: 0.86em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .pc-contact-sub { font-size: 0.68em; color: var(--fg-muted);
+        white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    /* 模式标记：复用 m.presentation（短信+表情包 / 短信+旁白 / 纯短信），与卡库列表同一套词 */
+    .pc-contact-mode {
+        display: inline-block; margin-top: 3px; padding: 1px 6px; border-radius: 6px;
+        font-size: 0.6em; color: var(--fg-accent); background: var(--gold-glow);
+        border: 1px solid var(--gold-line); white-space: nowrap;
+        max-width: 100%; overflow: hidden; text-overflow: ellipsis;
+    }
+    #pc-contact-new {
+        margin: 8px; padding: 9px 0; border-radius: 10px; cursor: pointer;
+        border: 1px solid var(--gold-line); background: var(--ctrl-bg-3);
+        color: var(--fg-main); font-family: inherit; font-size: 0.8em;
+    }
+    #pc-contact-new:hover { color: var(--fg-accent); background: var(--gold-glow); }
+
+    /* ── 第三栏：既有视图层右移让位（同一批选择器，声明在后 ⇒ 覆盖上面的 left:0）── */
+    #home-view, #app, #fix-view, #settings-panel, #notice-panel, #feedback-panel,
+    #cards-view, #pack-view, #plaza-view, #voice-view, #assist-view, #menu-overlay {
+        left: var(--pc-gutter) !important;
+    }
+
+    /* ═══ 聊天页右缘的菜单把手（用户 2026-10-02）════════════════════════════
+       方向：**收起/展开在聊天页右侧，点击后向左展出**。
+       实现：菜单本体沿用既有 `#menu-drawer`（PC 上已停靠在右、宽 --pc-menu-w ⇒ 天然"向左展出"），
+       本块只加一个贴右缘的把手，并在**展开时让聊天区让位**（而不是浮层遮住输入区）：
+       选"让位"而不是"浮层+遮罩"的理由 —— 输入栏与最后几条消息是打字时唯一要看的东西，
+       遮住它等于每次开菜单都要先关菜单；让位则菜单与对话并排，符合桌面"列表列+内容列"的心智。
+       ⚠ 手机端：把手在 #pc-shell 内（display:none），手机上仍是原来的 ☰ 抽屉，一行都不变。 */
+    #menu-btn { display: none !important; }        /* PC 用右缘把手替代聊天页头部的 ☰（手机保留） */
+
+    /* 零重复入口：菜单页里的「返回首页」在 PC 上隐藏 —— 侧边栏已有「首页」。
+       手机上它仍是回首页的主路径（那里的 `data-pc-hide` 不生效）。 */
+    [data-pc-hide="dup-home"] { display: none !important; }
+
+    #pc-menu-handle {
+        position: fixed; right: 0; top: 50%; transform: translateY(-50%);
+        z-index: 45; display: flex; flex-direction: column; align-items: center; gap: 6px;
+        width: 26px; padding: 12px 0; cursor: pointer;
+        border: 1px solid var(--gold-line); border-right: none;
+        border-radius: 10px 0 0 10px;
+        background: var(--ctrl-bg-3); color: var(--fg-bright);
+        font-family: inherit; font-size: 0.68em; letter-spacing: 0.1em;
+        transition: color .15s, background .15s, right .2s;
+    }
+    #pc-menu-handle:hover { color: var(--fg-accent); background: var(--gold-glow); }
+    #pc-menu-handle .pc-handle-bar {
+        width: 2px; height: 16px; border-radius: 1px; background: currentColor; opacity: .75;
+    }
+    #pc-menu-handle .pc-handle-txt { writing-mode: vertical-rl; }
+    /* 展开时把手跟着菜单左移，始终贴在菜单左缘（= 聊天页右缘） */
+    html.pc-menu-open #pc-menu-handle { right: var(--pc-menu-w); }
+
+    /* 展开时**聊天区让位**：视图层右边留出菜单宽度（与 #menu-drawer 的停靠宽度同一变量） */
+    html.pc-menu-open #app,
+    html.pc-menu-open #home-view,
+    html.pc-menu-open #cards-view,
+    html.pc-menu-open #pack-view,
+    html.pc-menu-open #plaza-view,
+    html.pc-menu-open #voice-view,
+    html.pc-menu-open #fix-view,
+    html.pc-menu-open #assist-view,
+    html.pc-menu-open #settings-panel,
+    html.pc-menu-open #notice-panel,
+    html.pc-menu-open #feedback-panel {
+        right: var(--pc-menu-w) !important;
+    }
+
+    /* ═══ T5：卡详情 = 聊天页内右侧抽屉（PC）═══════════════════════════════
+       问题：`#pack-view` 原是"整页覆盖"（style.css：position:fixed; inset:0; z-index:6），
+       由卡库/首页等 6 处 openPackView 打开 ⇒ 与"卡内一切都在聊天页内"（IA 方案）冲突。
+       处置：PC 档只把**同一个** `#pack-view` 改成"聊天页右缘的受限宽抽屉"，**不新增第二套呈现**
+       （⇒ 不可能出现"抽屉 + 整页"并存）：
+         · 宽度锁定在 --pc-drawer-w（< 视口宽 ⇒ 左侧聊天列仍可见，满足"页内抽屉"）；
+         · 打开时由 pc_shell.js 给 <html> 挂 `pc-drawer-open`，聊天列 `right: --pc-drawer-w` 让位
+           ⇒ 抽屉与对话并排、互不遮挡（与菜单把手让位同一套做法，输入区完整可见）；
+         · 关闭后（`#pack-view.show` 移除）pc_shell.js 再摘掉 `pc-drawer-open`，聊天列复原。
+       ⚠ 窄屏一行不改：本块全在 @media(min-width:1100px) 内，`#pack-view` 在 <1100px 仍是整页。 */
+    #pack-view {
+        left: auto !important;
+        right: 0 !important;
+        width: var(--pc-drawer-w) !important;
+        max-width: 60vw !important;
+        border-left: 1px solid var(--border-mid) !important;
+        box-shadow: -12px 0 34px rgba(0, 0, 0, 0.35) !important;
+    }
+    html.pc-drawer-open #app { right: var(--pc-drawer-w) !important; }
+    /* 抽屉打开时收起菜单把手（它贴在右缘、会被抽屉压住；抽屉自带 ← 返回，不会失去出口）。 */
+    html.pc-drawer-open #pc-menu-handle { display: none; }
+
+    /* PC 档显示菜单页里的「卡详情」入口（窄屏由块外的 `.pc-only{display:none}` 隐藏）。 */
+    .menu-actions button.pc-only { display: flex; }
+}
+

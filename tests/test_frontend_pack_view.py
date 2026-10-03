@@ -25,6 +25,7 @@ except Exception:
 ROOT = Path(__file__).resolve().parent.parent
 # 2026-09-13（阶段 2.5）：包详情页从 js/panels.js 拆到 js/panels/packs.js，守卫跟着实现走
 PANELS = ROOT / "app" / "static" / "js" / "panels" / "packs.js"
+TREE = ROOT / "app" / "static" / "js" / "panels" / "pack_tree.js"   # 知识库树渲染（P4-7c 加）
 BUNDLE = ROOT / "app" / "static" / "js" / "bundle.js"
 PASS = FAIL = 0
 
@@ -95,6 +96,17 @@ print("=== D. bundle 三副本同源（漂移由 sync_frontends --check 兜底�
 bundle = BUNDLE.read_text(encoding="utf-8")
 check("D1 bundle 含 _packViewMode", "_packViewMode" in bundle)
 check("D2 bundle 含代际校验", "gen !== _modeGen" in bundle)
+
+print("=== E. 知识库文件名显示（P4-7c：扁平名不能显示成空串） ===")
+# 2026-10-01 真实显示 bug：契约 06 §3.1 允许**扁平**知识名 `knowledge/世界观.md`，
+# 而 `f.path.split("/").slice(1).join("/")` 对一段路径返回空串 ⇒ 行内文件名整个空掉
+# （能点能编辑，但用户看不见点的是哪个文件）。E2 钉住"不再有那种写法"。
+_tree = TREE.read_text(encoding="utf-8")
+_FLAT_FIX = 'const label = f.path.includes("/") ? f.path.split("/").slice(1).join("/") : f.path;'
+check("E1 pack_tree.js 显示名对扁平 path 兜底（非空，且保留分组的多段显示）", _FLAT_FIX in _tree)
+check("E2 不再用裸 slice(1) 当显示名（那正是空串的来源）",
+      'escapeHtml(f.path.split("/").slice(1).join("/"))' not in _tree)
+check("E3 bundle 里也带着这段（构建产物同源）", _FLAT_FIX in bundle)
 
 print(f"\n统计: PASS={PASS} FAIL={FAIL}")
 sys.exit(0 if FAIL == 0 else 1)

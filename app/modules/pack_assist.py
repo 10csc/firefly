@@ -181,19 +181,20 @@ def validate_proposal(content: str, changes: list, file: str) -> tuple[bool, lis
     cur = content
     for i, ch in enumerate(changes):
         if not isinstance(ch, dict):
-            errors.append(f"#{i + 1} 不是合法修改项"); continue
+            errors.append(f"第 {i + 1} 处修改格式不对，请重新生成修改清单"); continue
         op = ch.get("op")
         if op not in rule["ops"]:
-            errors.append(f"#{i + 1} 操作 {op} 不被该文件允许"); continue
+            errors.append(f"第 {i + 1} 处修改的方式不被该文件允许"); continue
         new = str(ch.get("new") or "")
         if len(new) > _MAX_CHANGE_CHARS:
-            errors.append(f"#{i + 1} 新内容超过 {_MAX_CHANGE_CHARS} 字")
+            errors.append(f"第 {i + 1} 处新内容太长（上限 {_MAX_CHANGE_CHARS} 字）")
         if op == "replace":
             old = str(ch.get("old") or "")
             if not old:
-                errors.append(f"#{i + 1} replace 缺 old 锚点")
+                errors.append(f"第 {i + 1} 处修改缺少要替换的原文")
             elif cur.count(old) != 1:
-                errors.append(f"#{i + 1} 锚点在文件中不是逐字唯一（出现 {cur.count(old)} 次）")
+                errors.append(f"第 {i + 1} 处修改没对上原文：这段原文需在文件中恰好出现 1 次"
+                              f"（当前出现 {cur.count(old)} 次），请重新生成修改清单")
             else:
                 cur = cur.replace(old, new, 1)
         else:
@@ -201,7 +202,7 @@ def validate_proposal(content: str, changes: list, file: str) -> tuple[bool, lis
     # 结构硬边界：改后必须仍含的标记（输出协议段/记忆区结构）
     for marker in rule.get("must_contain", []):
         if marker not in cur:
-            errors.append(f"改后内容缺失必要结构标记 {marker}（该段禁止修改）")
+            errors.append(f"这次修改会破坏必要的内容结构（{marker} 这段不能改），请换个改法")
     return (not errors), errors
 
 
