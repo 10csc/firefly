@@ -47,7 +47,7 @@ print("沙箱 USER_DIR:", DATA_DIR, flush=True)
 print("沙箱 plaza  :", PLAZA_DIR, flush=True)
 
 PASS = FAIL = 0
-FAKE_SK = "sk-manualtestonly0000000000000000"      # 形态合法、绝不会被真的用出去
+FAKE_SK = "sk-FAKEmanualtestonly0000000000000000"      # 形态合法、绝不会被真的用出去
 
 
 def check(desc, cond, extra=""):

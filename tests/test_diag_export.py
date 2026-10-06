@@ -32,7 +32,7 @@ cfg.USER_DIR = _TMP / "user_data"
 cfg.CONFIG_FILE = cfg.USER_DIR / "config.json"
 
 # 造一份带"明显可识别"正文与假 Key 的现场，用来证明它们**不会**进包
-SECRET_KEY = "sk-DEADBEEFdeadbeefDEADBEEFdeadbeef1234"
+SECRET_KEY = "sk-FAKEDEADBEEFdeadbeefDEADBEEFdeadbeef1234"
 MARKER = "标记正文不可外泄-MARKER-77001"
 (cfg.USER_DIR / "story" / "data").mkdir(parents=True, exist_ok=True)
 (cfg.USER_DIR / "story" / "journal").mkdir(parents=True, exist_ok=True)

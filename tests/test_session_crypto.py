@@ -146,12 +146,12 @@ else:
         check("A1 Node 侧生成了信封", bool(cases), f"{len(cases)} 条")
         expect = {
             "webcrypto-中文与空格": {"Authorization": "Bearer 0f8a1b2c3d4e5f60718293a4b5c6d7e8",
-                                 "X-API-Key": "sk-abcdefghijklmnopqrstuvwxyz0123456789",
+                                 "X-API-Key": "sk-FAKEefghijklmnopqrstuvwxyz0123456789",
                                  "X-API-Base": "https://api.deepseek.com/v1"},
             "webcrypto-短值": {"Authorization": "Bearer x"},
             "webcrypto-长值(4096)": {"X-API-Key": "K" * 4096},
             "no-subtle-纯JS兜底": {"Authorization": "Bearer 0123456789abcdef0123456789abcdef",
-                                "X-API-Key": "sk-plain-js-path"},
+                                "X-API-Key": "sk-FAKEn-js-path"},
         }
         for c in cases:
             want = expect.get(c["name"], {})
@@ -212,11 +212,11 @@ if not HAVE_KEY:
     skip("C 头级行为", "没有私钥")
 else:
     SC.reset_for_test()
-    env = client_env({"Authorization": "Bearer enc-value", "X-API-Key": "sk-enc"})
+    env = client_env({"Authorization": "Bearer enc-value", "X-API-Key": "sk-FAKEenc"})
     got = SC.decrypt_headers(_H({"X-Firefly-Enc": env,
                                  "X-API-Mode": "proxy"}))
     check("C1 加密头解出正确值", got.get("Authorization") == "Bearer enc-value"
-          and got.get("X-API-Key") == "sk-enc", str(sorted(got)))
+          and got.get("X-API-Key") == "sk-FAKEenc", str(sorted(got)))
     check("C2 非敏感头不进返回值（由调用方读原头）", "X-API-Mode" not in got)
     # 坏包 + 明文同时在：必须用明文（灰度期"宁可用明文也不让用户登不进去"）
     SC.reset_for_test()
@@ -292,7 +292,7 @@ else:
         H = None
     if H is not None:
         SC.reset_for_test()
-        env = client_env({"Authorization": "Bearer from-envelope", "X-API-Key": "sk-from-envelope"})
+        env = client_env({"Authorization": "Bearer from-envelope", "X-API-Key": "sk-FAKE-envelope"})
 
         class _Probe:
             """只借 FireflyHandler 的 _decrypt_once/_hdr（不跑 socket）。"""
@@ -306,7 +306,7 @@ else:
         p = _Probe({"X-Firefly-Enc": env, "User-Agent": "probe"})
         check("F1 ★ Authorization 从信封里读出来", p._hdr("Authorization") == "Bearer from-envelope",
               p._hdr("Authorization")[:20])
-        check("F2 ★ X-API-Key 从信封里读出来", p._hdr("X-API-Key") == "sk-from-envelope")
+        check("F2 ★ X-API-Key 从信封里读出来", p._hdr("X-API-Key") == "sk-FAKE-envelope")
         check("F3 非敏感头照常直读", p._hdr("User-Agent") == "probe")
         check("F4 只解一次（第二次不重算）",
               SC.stats()["enc"] == 1, str(SC.stats()))

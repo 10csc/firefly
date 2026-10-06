@@ -27,10 +27,10 @@ check("A2 默认 get_api_key 走 config", cfg.get_api_key() == cfg.config.get("a
 print("\n=== B. 上下文设置后路径与 Key 隔离 ===")
 tok = cfg.set_user_context(
     user_dir=cfg.USER_DIR / "u-test-1",
-    api_key="user-key-1", api_base=cfg.API_BASE)
+    api_key="user-FAKE-key-1", api_base=cfg.API_BASE)
 check("B1 上下文下 mode_data_dir 指向用户目录",
       cfg.mode_data_dir() == cfg.USER_DIR / "u-test-1" / "story" / "data")
-check("B2 上下文下 get_api_key 用用户 Key", cfg.get_api_key() == "user-key-1")
+check("B2 上下文下 get_api_key 用用户 Key", cfg.get_api_key() == "user-FAKE-key-1")
 check("B3 上下文下 mode_journal_dir 隔离",
       cfg.mode_journal_dir() == cfg.USER_DIR / "u-test-1" / "story" / "journal")
 check("B4 上下文下 mode_character_dir 隔离",

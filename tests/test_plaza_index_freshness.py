@@ -75,8 +75,8 @@ srv_db.init_db(USER_DIR / "firefly.db")
 EXP = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(time.time() + 7 * 86400))
 UID = srv_db.create_user("fresh@qq.com", "h", "s", install_id="inst-" + "f" * 32, role="user")
 ADM = srv_db.create_user("freshadmin@qq.com", "h", "s", install_id="inst-" + "g" * 32, role="admin")
-srv_db.create_session("tok-fresh-user", UID, "t", EXP)
-srv_db.create_session("tok-fresh-admin", ADM, "t", EXP)
+srv_db.create_session("tok-FAKE-fresh-user", UID, "t", EXP)
+srv_db.create_session("tok-FAKE-fresh-admin", ADM, "t", EXP)
 
 
 def publish(cid):
@@ -117,7 +117,7 @@ proc = subprocess.Popen([sys.executable, "server_app.py"], cwd=str(ROOT / "serve
 BASE = f"http://127.0.0.1:{PORT}"
 
 
-def req(method, path, body=None, token="tok-fresh-user"):
+def req(method, path, body=None, token="tok-FAKE-fresh-user"):
     h = {"Authorization": "Bearer " + token}
     data = None
     if body is not None:
@@ -167,13 +167,13 @@ try:
 
     print("== A. 产品路径：同进程写（HTTP /admin/status）⇒ 下一次读立刻可见（对照组）==")
     s, raw = req("POST", "/plaza/api/admin/status", {"id": "fresh_a", "status": "archived"},
-                 token="tok-fresh-admin")
+                 token="tok-FAKE-fresh-admin")
     check(f"A1 管理端点 200（实际 {s}）", s == 200)
     idsA = list_ids()                      # ★ 不等待
     check(f"A2 下一次 HTTP 读立刻不见 fresh_a（实际 {idsA}）",
           idsA is not None and "fresh_a" not in idsA)
     req("POST", "/plaza/api/admin/status", {"id": "fresh_a", "status": "published"},
-        token="tok-fresh-admin")
+        token="tok-FAKE-fresh-admin")
     warm("A 复原")
     idsA2 = list_ids()
     check("A3 复原后立刻又可见", idsA2 is not None and "fresh_a" in idsA2)

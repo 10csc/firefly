@@ -2311,3 +2311,6 @@ body.low-end #pz-modal { backdrop-filter: none; background: rgba(8, 8, 18, 0.82)
     font-size: 0.62em; color: var(--fg-bright); text-align: center; padding: 2px 4px;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
+
+/* 新手引导正文：guide.js 把 step.text（内含 \n\n 分段）塞进 .guide-text，需要 white-space:pre-line 才能让 \n\n 真正换行，否则会被 HTML 折叠成空格、引导分段失效。 */
+.guide-text{white-space:pre-line}

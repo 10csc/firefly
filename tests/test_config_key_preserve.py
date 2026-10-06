@@ -26,7 +26,7 @@ TMP = Path(tempfile.mkdtemp(prefix="firefly_test_key_"))
 os.environ["FIREFLY_DATA_DIR"] = str(TMP)
 os.environ.pop("FIREFLY_SERVER", None)
 
-GOOD = "sk-test-key-must-survive-0123456789abcdef"
+GOOD = "sk-FAKE-key-must-survive-0123456789abcdef"
 
 # 造一份"磁盘上已经有 Key"的现场
 from core import paths as _paths          # noqa: E402

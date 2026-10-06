@@ -35,15 +35,15 @@ cfg.CONFIG_FILE = _tmp / "config.json"
 
 print("=== A. 旧结构迁移（api_key/api_base → providers） ===")
 cfg.CONFIG_FILE.write_text(
-    json.dumps({"api_key": "sk-old-1234567890", "api_base": cfg.API_BASE,
+    json.dumps({"api_key": "sk-FAKE1234567890", "api_base": cfg.API_BASE,
                 "analyzer_model": "deepseek-v4-pro"}),
     encoding="utf-8")
 cfg.config = cfg._load_config()
 check("A1 迁移出 providers 列表", len(cfg.config["providers"]) >= 1)
 p = next((p for p in cfg.config["providers"] if p["base_url"] == cfg.API_BASE), None)
-check("A2 deepseek provider 携带旧 Key", p is not None and p["api_key"] == "sk-old-1234567890")
+check("A2 deepseek provider 携带旧 Key", p is not None and p["api_key"] == "sk-FAKE1234567890")
 check("A3 激活供应商为 deepseek", cfg.config["active_provider"] == "deepseek")
-check("A4 派生 api_key 同步", cfg.config["api_key"] == "sk-old-1234567890")
+check("A4 派生 api_key 同步", cfg.config["api_key"] == "sk-FAKE1234567890")
 check("A5 派生 api_base 同步", cfg.config["api_base"] == cfg.API_BASE)
 
 # save 后旧字段不再落盘（删旧字段）
@@ -51,12 +51,12 @@ cfg.save_config()
 saved = json.loads(cfg.CONFIG_FILE.read_text(encoding="utf-8"))
 check("A6 保存后无顶层 api_key", "api_key" not in saved)
 check("A7 保存后无顶层 api_base", "api_base" not in saved)
-check("A8 providers 落盘含 Key", saved["providers"][0]["api_key"] == "sk-old-1234567890")
+check("A8 providers 落盘含 Key", saved["providers"][0]["api_key"] == "sk-FAKE1234567890")
 
 # 幂等：再加载一次（新结构）不应重复迁移/丢 Key
 cfg.config = cfg._load_config()
 p2 = next((p for p in cfg.config["providers"] if p["id"] == "deepseek"), None)
-check("A9 二次加载幂等", p2 is not None and p2["api_key"] == "sk-old-1234567890")
+check("A9 二次加载幂等", p2 is not None and p2["api_key"] == "sk-FAKE1234567890")
 
 print("=== B. 供应商校验（normalize_providers） ===")
 ok = cfg.normalize_providers([
@@ -140,12 +140,12 @@ class FakeH:
 
 
 cfg.config["providers"] = [{"id": "deepseek", "name": "DeepSeek",
-                            "base_url": cfg.API_BASE, "api_key": "sk-t", "models": [], "caps": {}}]
+                            "base_url": cfg.API_BASE, "api_key": "sk-FAKEt", "models": [], "caps": {}}]
 cfg.config["active_provider"] = "deepseek"
 
 
 def fake_urlopen(req, timeout=None):
-    check("E1 /models 请求带 Bearer", req.headers.get("Authorization", "").startswith("Bearer sk-t"))
+    check("E1 /models 请求带 Bearer", req.headers.get("Authorization", "").startswith("Bearer sk-FAKEt"))
     class R:
         def __enter__(self): return self
         def __exit__(self, *a): return False
@@ -166,9 +166,9 @@ check("E3 未知供应商 404", h404.status == 404)
 
 print("=== F. set_config：providers 空 Key 保留（后端不回传全量 Key） ===")
 cfg.config["providers"] = [_deepseek := {"id": "deepseek", "name": "DeepSeek",
-                                         "base_url": cfg.API_BASE, "api_key": "sk-keep", "models": [], "caps": {}}]
+                                         "base_url": cfg.API_BASE, "api_key": "sk-FAKE", "models": [], "caps": {}}]
 cfg.config["active_provider"] = "deepseek"
-cfg.config["api_key"] = "sk-keep"
+cfg.config["api_key"] = "sk-FAKE"
 
 
 class H2:
@@ -182,8 +182,8 @@ with patch("routes._read_json", return_value={"providers": [
         {"id": "deepseek", "name": "DeepSeek", "base_url": cfg.API_BASE, "api_key": ""}]}) as m:
     routes.set_config(H2())
 p = cfg.provider_by_id("deepseek")
-check("F1 空 Key 保留原 Key", p is not None and p["api_key"] == "sk-keep")
-check("F2 保存后派生 api_key 不变", cfg.config["api_key"] == "sk-keep")
+check("F1 空 Key 保留原 Key", p is not None and p["api_key"] == "sk-FAKE")
+check("F2 保存后派生 api_key 不变", cfg.config["api_key"] == "sk-FAKE")
 
 print(f"\n统计: PASS={PASS} FAIL={FAIL}")
 sys.exit(0 if FAIL == 0 else 1)

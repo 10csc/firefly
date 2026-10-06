@@ -1,0 +1,20 @@
+#!/bin/sh
+# 提交前：凭据 / 大文件自检（**全量工作区**）
+#
+# 安装（每个 clone 一次）：
+#     git config core.hooksPath .githooks
+#
+# 为什么要全量（--worktree）而不是只扫暂存区（默认）：
+#   只扫暂存区时，仓库里**早已存在**的凭据不会被发现 —— 2026-10-03 实测：
+#   暂存区 8 个文件零命中，全量 780 个文件却扫出 14 处（都在已入库的 tests/ 里）。
+#
+# 确需跳过时（例如一次纯文档改动且已人工确认）：git commit --no-verify
+# ——但请不要为了让提交变绿而修改 tools/check_no_secrets.py 的形态检测。
+
+set -e
+
+# Windows / Unix 通用：优先 python，退化 python3
+PY=python
+command -v python >/dev/null 2>&1 || PY=python3
+
+exec "$PY" tools/check_no_secrets.py --worktree

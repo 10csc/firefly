@@ -7,6 +7,16 @@
     python tools/check_hotupdate.py                      # 查默认发布区最新一个
     python tools/check_hotupdate.py --all                # 查全部 serial
     python tools/check_hotupdate.py --dist <dir> --base 0.9.0
+    python tools/check_hotupdate.py --declare <file>     # 指定声明文件
+
+★ **P6-14 修法（2026-10-04）：门禁不许"空过"**
+  旧行为：base 目录（hotupdate_dist/<APP_VERSION>）不存在 ⇒ 打印"本次无热更"并 **PASS**。
+  这在升版后必然发生（新版本的目录还没建），等于**门禁在"什么都没有"时也给绿灯** ——
+  "有意不发补丁" 与 "忘了产补丁" 长得一模一样，无法区分。
+  新行为：本次有没有热更，由 **hotupdate_declare.json 的显式声明**决定：
+      hotupdate = "none"         ⇒ 通过，但**必须打印该声明**（是有意选择，不是没扫到）
+      hotupdate = "<base>/<N>"   ⇒ 必须真的存在且校验通过，否则**红**
+      未声明 / 声明文件缺失 / version 与当前版本不符 ⇒ **红**
 
 校验项（与规范一一对应）：
   1. patch-<N>.json 结构合法、manifest 字段完整
@@ -42,6 +52,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "tools"))
 DEFAULT_KEY = Path.home() / ".firefly" / "hotupdate_key.pem"
 DEFAULT_DIST = ROOT / "hotupdate_dist"
+DEFAULT_DECLARE = ROOT / "hotupdate_declare.json"
 
 PASS = FAIL = 0
 
@@ -412,12 +423,22 @@ def check_notice(dist: Path, key: Path) -> None:
     check("★ 引用的图片齐备且 sha256 匹配", not bad, str(bad) if bad else f"{len(imgs)} 张")
 
 
+def load_declare(path: Path) -> dict:
+    """读热更声明文件。读不到/解析不了 ⇒ 返回空 dict（由调用方判红）。"""
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="热更新补丁门禁")
     ap.add_argument("--dist", default=str(DEFAULT_DIST), help="发布区根目录")
     ap.add_argument("--base", default=None, help="base 版本（默认取 app 的 APP_VERSION）")
     ap.add_argument("--all", action="store_true", help="校验全部 serial（默认只校最新）")
     ap.add_argument("--key", default=str(DEFAULT_KEY), help="私钥（用于自洽验签）")
+    ap.add_argument("--declare", default=str(DEFAULT_DECLARE),
+                    help="本次热更声明文件（默认仓库根 hotupdate_declare.json）")
     a = ap.parse_args()
 
     if a.base is None:
@@ -431,53 +452,82 @@ def main() -> int:
             print("X 无法确定 base，请用 --base 指定")
             return 2
 
-    dist = Path(a.dist) / a.base
-    print(f"=== 热更新门禁：{dist} ===")
-    # 信任根、公告、py 注入点：**无论本次有没有补丁都要查**
+    key = Path(a.key).expanduser()
+    print(f"=== 热更新门禁：base={a.base} ===")
+
+    # 信任根、公告、py 注入点、会话加密：**无论本次有没有补丁都要查**
     # （它们与补丁无关，但一坏就是"整条通道静默失效"）
     check_keys()
     check_py_injection()
     check_session_crypto()
-    check_notice(Path(a.dist) / "notice", Path(a.key).expanduser())
-    if not dist.is_dir():
-        # 语义要分清（否则会挡住正常发版）：
-        #   · 没显式指定 --dist（用默认发布区）→ 本次就是没有补丁要发 → **通过**，只是打一行说明
-        #   · 显式指定了却不存在 → 拼错路径/上传漏了 → **失败**
-        if a.dist == str(DEFAULT_DIST):
-            print("\n本次无热更补丁（默认发布区不存在）—— 跳过补丁校验")
-            print(f"\n统计: PASS={PASS} FAIL={FAIL}")
-            print("结果: " + ("PASS 可发布" if FAIL == 0 else "FAIL 禁止发布"))
-            return 1 if FAIL else 0
-        print(f"X 指定的发布区不存在：{dist}")
-        return 2
+    check_notice(Path(a.dist) / "notice", key)
 
-    latest_f = dist / "latest"
-    serials = sorted(int(p.stem.split("-")[1]) for p in dist.glob("patch-*.json")
-                     if p.stem.split("-")[1].isdigit())
-    if not serials:
-        print("X 发布区里没有任何补丁")
-        return 2
-    print(f"  发现 serial：{serials}")
-
-    # 7. serial 单调 + latest 指向最大
-    check("serial 从 1 起连续无缺口", serials == list(range(1, len(serials) + 1)), str(serials))
-    if latest_f.is_file():
-        try:
-            lt = json.loads(latest_f.read_text(encoding="utf-8"))
-            check("latest.base 与目录一致", lt.get("base") == a.base, str(lt))
-            check("latest.serial == 最大 serial",
-                  int(lt.get("serial") or 0) == max(serials), str(lt))
-        except Exception as e:
-            check("latest 可解析", False, str(e))
+    # ══════════════════════════════════════════════════════════════
+    # ★ P6-14：本次有没有热更补丁，必须由**显式声明**决定，
+    #   不许再从"目录存不存在"推断（旧行为：目录不在 ⇒ 打印"本次无热更"并 PASS = 空过）。
+    # ══════════════════════════════════════════════════════════════
+    dec_p = Path(a.declare)
+    print(f"\n--- 本次热更声明（{dec_p.name}）---")
+    if not dec_p.is_file():
+        check("热更声明文件存在", False, str(dec_p))
+        print("X 缺少热更声明 ⇒ 禁止发布。")
+        print('  必须显式声明：{"version": "<版本号>", "hotupdate": "none" 或 "<base>/<serial>"}')
+        print("  （旧行为：目录不存在 ⇒ 打印'本次无热更'并 PASS ⇒ 门禁在'什么都没有'时也绿灯）")
     else:
-        check("latest 存在", False, "缺 latest（客户端第一个请求就是它）")
+        dec = load_declare(dec_p)
+        hv = str(dec.get("hotupdate") or "").strip()
+        dv = str(dec.get("version") or "").strip()
+        check("声明含 hotupdate 字段", bool(hv), f"值={hv!r}" if hv else "（空）")
+        check("声明的 version 与当前版本一致（防声明过期）", dv == a.base,
+              f"声明 {dv!r} vs 当前 {a.base!r}" if dv != a.base else dv)
 
-    for s in (serials if a.all else [max(serials)]):
-        check_one(dist, s, Path(a.key).expanduser())
+        if not hv:
+            print("X 未声明 hotupdate ⇒ 禁止发布（填 none 或 <base>/<serial>）")
+        elif hv.lower() == "none":
+            print(f"\n★ 已显式声明：本次**不发**热更补丁（hotupdate: none）")
+            print(f"  声明文件：{dec_p}")
+            print("  ⇒ 跳过补丁本体校验。这是**明确选择**，不是'没扫到就当没事'。")
+        else:
+            # 声明了具体补丁：<base>/<serial>
+            if "/" not in hv:
+                check("patch-id 形如 <base>/<serial>", False, f"{hv!r}")
+            else:
+                pb, ps = hv.split("/", 1)
+                check("patch-id 的 base 与当前版本一致", pb == a.base, f"{pb!r} vs {a.base!r}")
+                if not ps.isdigit():
+                    check("patch-id 的 serial 是数字", False, f"{ps!r}")
+                else:
+                    serial = int(ps)
+                    d2 = Path(a.dist) / pb
+                    check(f"补丁目录存在（{d2}）", d2.is_dir())
+                    if d2.is_dir():
+                        lt_f = d2 / "latest"
+                        if lt_f.is_file():
+                            try:
+                                lt = json.loads(lt_f.read_text(encoding="utf-8"))
+                                check("latest.base 与声明一致", str(lt.get("base")) == pb, str(lt))
+                                check("latest.serial == 声明的 serial",
+                                      int(lt.get("serial") or -1) == serial, str(lt))
+                            except Exception as e:
+                                check("latest 可解析", False, str(e))
+                        else:
+                            check("latest 存在（客户端第一个请求就是它）", False)
+                        jf, zf = d2 / f"patch-{serial}.json", d2 / f"patch-{serial}.zip"
+                        check(f"patch-{serial}.json 存在", jf.is_file())
+                        check(f"patch-{serial}.zip 存在", zf.is_file())
+                        if jf.is_file() and zf.is_file():
+                            serials = sorted(
+                                int(p.stem.split("-")[1]) for p in d2.glob("patch-*.json")
+                                if p.stem.split("-")[1].isdigit())
+                            check("serial 从 1 起连续无缺口",
+                                  serials == list(range(1, len(serials) + 1)), str(serials))
+                            for s in (serials if a.all else [serial]):
+                                check_one(d2, s, key)
 
     print(f"\n统计: PASS={PASS} FAIL={FAIL}")
     print("结果: " + ("PASS 可发布" if FAIL == 0 else "FAIL 禁止发布"))
     return 1 if FAIL else 0
+
 
 
 if __name__ == "__main__":

@@ -45,7 +45,7 @@ function record(name, env) { cases.push({ name, env }); }
 // ① WebCrypto 路径
 record("webcrypto-中文与空格", (await mod.encHead([
     ["Authorization", "Bearer 0f8a1b2c3d4e5f60718293a4b5c6d7e8"],
-    ["X-API-Key", "sk-abcdefghijklmnopqrstuvwxyz0123456789"],
+    ["X-API-Key", "sk-FAKEefghijklmnopqrstuvwxyz0123456789"],
     ["X-API-Base", "https://api.deepseek.com/v1"],
 ])).enc);
 record("webcrypto-短值", (await mod.encHead([["Authorization", "Bearer x"]])).enc);
@@ -57,7 +57,7 @@ record("webcrypto-长值(4096)", (await mod.encHead([
 setCrypto({ getRandomValues: (a) => _nodeCrypto.getRandomValues(a) });   // 只有随机源
 record("no-subtle-纯JS兜底", (await mod.encHead([
     ["Authorization", "Bearer 0123456789abcdef0123456789abcdef"],
-    ["X-API-Key", "sk-plain-js-path"],
+    ["X-API-Key", "sk-FAKEn-js-path"],
 ])).enc);
 setCrypto(webcrypto);
 

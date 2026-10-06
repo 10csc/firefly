@@ -43,6 +43,13 @@ RE_ASSIGN = re.compile(
 PLACEHOLDER = re.compile(
     r"(?i)^(xxx+|\*{3,}|your[_\-]?\w+|<[^>]+>|\$\{[^}]+\}|%s|changeme|todo|none|null|placeholder|example|\.\.\.)$"
 )
+# 已声明的假值：值里带这些词 ⇒ 判定为"测试用的假凭据"，**降级为提示**而不是命中。
+# ★ 这不是放宽：形态检测（sk- / token= / secret=）一条都没删，只是不再把「自己写明是假的」
+#   的值当事故报 —— 否则工具永远红灯，红灯就失去意义。
+#   真实凭据是随机串，不会恰好含这些词；若有人刻意加词伪装，属有意规避，不在本工具的威胁模型内。
+DECLARED_FAKE = re.compile(
+    r"(?i)(FAKE|TEST[_\-]?ONLY|MANUALTESTONLY|DEADBEEF|DUMMY|EXAMPLE|PLACEHOLDER|NOTAREAL|NOT[_\-]A[_\-]REAL|CHANGEME)"
+)
 
 SKIP_SUFFIX = {
     ".png", ".jpg", ".jpeg", ".gif", ".webp", ".ico", ".bmp",  # 图片
@@ -52,6 +59,9 @@ SKIP_SUFFIX = {
     ".db", ".sqlite", ".pdf",
 }
 DEFAULT_MAX_MB = 10
+# 已知的大体积**项目资产**：超过阈值不算问题（字体/图片本来就有几 MB~十几 MB，且必须入库）。
+# 仍然会在报告里列出来，只是不阻断提交 —— 免得每次都被 `StarRailFont.ttf`(11.5MB) 挡住。
+LARGE_ASSET_SUFFIX = {".ttf", ".otf", ".woff", ".woff2", ".png", ".jpg", ".jpeg", ".webp", ".ico"}
 
 
 def mask(s: str, keep: int = 3) -> str:
@@ -89,7 +99,7 @@ def collect_path(base: str) -> list:
 
 
 def scan(files, max_bytes, allow_large):
-    hits_secret, hits_large = [], []
+    hits_secret, hits_large, hits_fake, hits_asset = [], [], [], []
     for rel in files:
         if not os.path.isfile(rel):
             continue  # 已删除
@@ -98,7 +108,11 @@ def scan(files, max_bytes, allow_large):
         except OSError:
             continue
         if not allow_large and size > max_bytes:
-            hits_large.append((rel, size))
+            ext0 = os.path.splitext(rel)[1].lower()
+            if ext0 in LARGE_ASSET_SUFFIX:
+                hits_asset.append((rel, size))     # 已知资产：列出但不阻断
+            else:
+                hits_large.append((rel, size))
 
         ext = os.path.splitext(rel)[1].lower()
         if ext in SKIP_SUFFIX or size > 8 * 1024 * 1024:
@@ -107,15 +121,18 @@ def scan(files, max_bytes, allow_large):
             with open(rel, "r", encoding="utf-8", errors="ignore") as fh:
                 for i, line in enumerate(fh, 1):
                     for m in RE_SK.finditer(line):
-                        hits_secret.append((rel, i, "sk-前缀 API Key", mask(m.group(0), 3)))
+                        v = m.group(0)
+                        bucket = hits_fake if DECLARED_FAKE.search(v) else hits_secret
+                        bucket.append((rel, i, "sk-前缀 API Key", mask(v, 3)))
                     for m in RE_ASSIGN.finditer(line):
                         val = m.group(2)
                         if PLACEHOLDER.match(val.strip()):
                             continue
-                        hits_secret.append((rel, i, f"{m.group(1)} 赋值", mask(val, 0)))
+                        bucket = hits_fake if DECLARED_FAKE.search(val) else hits_secret
+                        bucket.append((rel, i, f"{m.group(1)} 赋值", mask(val, 0)))
         except OSError:
             continue
-    return hits_secret, hits_large
+    return hits_secret, hits_large, hits_fake, hits_asset
 
 
 def main() -> int:
@@ -140,9 +157,9 @@ def main() -> int:
     print(f"范围: {scope} ｜ 文件数: {len(files)} ｜ 大文件阈值: {args.max_mb} MB")
     print()
 
-    secrets, large = scan(files, max_bytes, args.allow_large)
+    secrets, large, fake, assets = scan(files, max_bytes, args.allow_large)
 
-    print("=== ① 凭据命中 ===")
+    print("=== ① 凭据命中（真实风险，会阻断提交）===")
     if secrets:
         for rel, ln, kind, m in secrets:
             print(f"  ✗ {rel}:{ln}  [{kind}]  {m}")
@@ -150,12 +167,28 @@ def main() -> int:
         print("  无 ✓")
 
     print()
-    print("=== ② 大文件（> {} MB）===".format(args.max_mb))
+    print("=== ② 已声明假值（不阻断，列出供人工复核）===")
+    if fake:
+        for rel, ln, kind, m in fake:
+            print(f"  · {rel}:{ln}  [{kind}]  {m}  ← 含 FAKE/TEST/DEADBEEF 等标记")
+    else:
+        print("  无")
+
+    print()
+    print("=== ③ 大文件（> {} MB，会阻断）===".format(args.max_mb))
     if large:
         for rel, size in sorted(large, key=lambda x: -x[1]):
             print(f"  ✗ {rel}  {size:,} B ({size / 1024 / 1024:.1f} MB)")
     else:
         print("  无 ✓")
+
+    print()
+    print("=== ④ 已知项目资产（超阈值但不阻断）===")
+    if assets:
+        for rel, size in sorted(assets, key=lambda x: -x[1]):
+            print(f"  · {rel}  {size:,} B ({size / 1024 / 1024:.1f} MB)  ← 字体/图片类，必须入库")
+    else:
+        print("  无")
 
     print()
     code = 0

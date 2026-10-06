@@ -139,7 +139,7 @@ time.sleep(0.6)
 check("O13 另一个账号独立发送（不串账号）", len(_sent) == 1 and _sent[0]["to"] == "oldb@qq.com")
 
 _sent.clear()
-st4, data4 = call("POST", "/sync/upload", token="invalid-token")
+st4, data4 = call("POST", "/sync/upload", token="tok-FAKE-invalid")
 check("O14 未登录（无效 token）→ 401", st4 == 401)
 check("O15 未登录不发邮件", len(_sent) == 0)
 st5, _ = call("POST", "/sync/upload")

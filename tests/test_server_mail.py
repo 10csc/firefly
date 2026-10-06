@@ -31,7 +31,7 @@ SERVER = ROOT / "server"
 sys.path.insert(0, str(ROOT / "app"))
 sys.path.insert(0, str(SERVER))
 os.environ["FIREFLY_SERVER"] = "1"
-SECRET = "SECRET-AUTH-CODE-0001"
+SECRET = "SECRET-FAKE-AUTH-CODE-0001"
 os.environ["FIREFLY_SMTP_USER"] = "sender@qq.com"
 os.environ["FIREFLY_SMTP_AUTH"] = SECRET
 
