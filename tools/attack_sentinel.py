@@ -27,7 +27,7 @@ import paramiko
 import requests
 
 HOST = "101.200.14.126"
-KEY_FILE = r"C:\Users\FANGL\.ssh\id_rsa"
+KEY_FILE = r"C:\Users\<用户>\.ssh\id_rsa"
 FLAG_FILE = "/opt/firefly/user_data/attack_flag.json"
 INTERVAL = 60
 REPORT = Path(r"F:\CodeFile\firefly\docs\安全日报.md")

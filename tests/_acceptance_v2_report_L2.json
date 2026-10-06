@@ -216,7 +216,7 @@
    "note": "401"
   }
  ],
- "sandbox": "C:\\Users\\FANGL\\AppData\\Local\\Temp\\ff_accept_v2_inoli1fi",
+ "sandbox": "C:\Users\<用户>\\AppData\\Local\\Temp\\ff_accept_v2_inoli1fi",
  "baseline_reference": "F:\\CodeFile\\firefly\\_harden\\baseline_plaza_traffic.json",
  "layer": "L2"
 }

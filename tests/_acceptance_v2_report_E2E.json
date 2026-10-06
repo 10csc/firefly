@@ -94,21 +94,21 @@
    "id": "E11",
    "name": "包落在 user_data/1/acc_e2e_card/character/",
    "status": "PASS",
-   "note": "C:\\Users\\FANGL\\AppData\\Local\\Temp\\ff_accept_v2_8vpj516r\\user_data\\1\\acc_e2e_card"
+   "note": "C:\Users\<用户>\\AppData\\Local\\Temp\\ff_accept_v2_8vpj516r\\user_data\\1\\acc_e2e_card"
   },
   {
    "layer": "E2E",
    "id": "E12",
    "name": "卡内**扁平**知识库随包落地",
    "status": "PASS",
-   "note": "C:\\Users\\FANGL\\AppData\\Local\\Temp\\ff_accept_v2_8vpj516r\\user_data\\1\\acc_e2e_card\\character\\knowledge\\世界观.md"
+   "note": "C:\Users\<用户>\\AppData\\Local\\Temp\\ff_accept_v2_8vpj516r\\user_data\\1\\acc_e2e_card\\character\\knowledge\\世界观.md"
   },
   {
    "layer": "E2E",
    "id": "E13",
    "name": "卡内**一层分组**知识库随包落地",
    "status": "PASS",
-   "note": "C:\\Users\\FANGL\\AppData\\Local\\Temp\\ff_accept_v2_8vpj516r\\user_data\\1\\acc_e2e_card\\character\\knowledge\\world\\星核猎手.md"
+   "note": "C:\Users\<用户>\\AppData\\Local\\Temp\\ff_accept_v2_8vpj516r\\user_data\\1\\acc_e2e_card\\character\\knowledge\\world\\星核猎手.md"
   },
   {
    "layer": "E2E",
@@ -129,7 +129,7 @@
    "id": "E15",
    "name": "★检索器认到该包**有知识库**（has_knowledge=True）",
    "status": "PASS",
-   "note": "has_knowledge=True roots=[\"(WindowsPath('C:/Users/FANGL/AppData/Local/Temp/ff_consumer_rr7393x8/user_data/acc_e2e_card/character/knowledge'), 'pkg')\", \"(WindowsPath('F:/CodeFile/firefly/app/assets/character/acc_e2e_card/knowledge'), 'pkg')\"]"
+   "note": "has_knowledge=True roots=[\"(WindowsPath('C:/Users/<用户>/AppData/Local/Temp/ff_consumer_rr7393x8/user_data/acc_e2e_card/character/knowledge'), 'pkg')\", \"(WindowsPath('F:/CodeFile/firefly/app/assets/character/acc_e2e_card/knowledge'), 'pkg')\"]"
   },
   {
    "layer": "E2E",
@@ -192,7 +192,7 @@
    "id": "E22",
    "name": "账号目录里的包已删",
    "status": "PASS",
-   "note": "C:\\Users\\FANGL\\AppData\\Local\\Temp\\ff_accept_v2_8vpj516r\\user_data\\1\\acc_e2e_card"
+   "note": "C:\Users\<用户>\\AppData\\Local\\Temp\\ff_accept_v2_8vpj516r\\user_data\\1\\acc_e2e_card"
   },
   {
    "layer": "E2E",
@@ -223,7 +223,7 @@
    "note": "收到 b'/etc/passwd'（若为 None 说明被丢弃；两种都不是'跟随链接'）"
   }
  ],
- "sandbox": "C:\\Users\\FANGL\\AppData\\Local\\Temp\\ff_accept_v2_8vpj516r",
+ "sandbox": "C:\Users\<用户>\\AppData\\Local\\Temp\\ff_accept_v2_8vpj516r",
  "baseline_reference": "F:\\CodeFile\\firefly\\_harden\\baseline_plaza_traffic.json",
  "layer": "E2E"
 }
