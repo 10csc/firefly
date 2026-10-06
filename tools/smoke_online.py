@@ -8,16 +8,16 @@
 用法：
     python tools/smoke_online.py --base http://101.200.14.126:8787
     python tools/smoke_online.py --base <url> --token <登录令牌>   # 需要登录态的组才有效
-    python tools/smoke_online.py --base <url> --allow-sync-write   # 第 6 组才真的写（默认跳过）
+    python tools/smoke_online.py --base <url> --allow-sync-write   # 第 6 组写入型校验（手动端点已退役，当前仍 SKIP）
 
 七组判据（见 docs/交接/PC端-交接执行计划/12_发布前合并任务单.md §四）：
-  1. 登录与身份：`/auth/me` 与 `/auth/state` 都回 `role`（管理员能发官方卡）
+  1. 登录与身份：服务器版 `/auth/me` 回 `role`（管理员能发官方卡）；`/auth/state` 在服务器版**按设计 403** ⇒ 改用 `/auth/me`
   2. 公告：`/notice/*` 可拉、含 `refreshing` 语义
   3. 热更清单：`/hotupdate/<ver>/latest.json` 可达且版本正确（声明 none 时说明预期）
   4. 平台六端点：广场 · 我的卡 · 已装（GET，断言 200）· 详情 · 草稿（先取真实 id 再 GET，断言 200）
      · `derive`（POST 存在性探针：接受 400/401/403，仅 404 判失败；不代表功能通过）
   5. 图片资产：**自己包 200 · 他人包 404 · 未登录 401 · 全局资产 200**
-  6. 数据同步：写入 → 拉回**一致**（会写生产数据 ⇒ 默认跳过，需 --allow-sync-write）
+  6. 数据同步：`GET /sync/manifest` 只读可达且含 `ok`/`files`（手动上传/下载已按规范下线；写入型往返需单独授权，默认跳过）
   7. 下载清单：`/version.json` 的 `tag` 与两个下载 URL **指向同一版本**（哈希回填之后）
 
 输出：每组 PASS/FAIL + 原始片段；失败项会区分**服务端问题**（连不上 / 5xx / 超时）
@@ -75,20 +75,45 @@ def rec(name: str, ok: bool, detail: str = "", server_side: bool = False) -> Non
 
 
 def g1_identity(base: str, token: str) -> None:
-    print("=== 1. 登录与身份（/auth/me 与 /auth/state 都回 role）===")
-    for path in ("/auth/me", "/auth/state"):
-        st, body, err = http("GET", base + path, token)
-        if err:
-            rec(f"{path} 可达", False, err, server_side=True)
-            continue
-        rec(f"{path} 返回 {st}", st == 200, "" if st == 200 else body[:120].decode("utf-8", "ignore"),
+    print("=== 1. 登录与身份（服务器版 /auth/me 回 role；/auth/state 在服务器版按设计 403）===")
+    # ── /auth/me：两种模式都期望 200 且含 role ──
+    st, body, err = http("GET", base + "/auth/me", token)
+    if err:
+        rec("/auth/me 可达", False, err, server_side=True)
+    else:
+        rec(f"/auth/me 返回 {st}", st == 200,
+            "" if st == 200 else body[:120].decode("utf-8", "ignore"),
             server_side=(st >= 500))
         if st == 200:
             try:
                 d = json.loads(body.decode("utf-8"))
-                rec(f"{path} 含 role 字段", "role" in d, f"role={d.get('role')!r}")
+                rec("/auth/me 含 role 字段", "role" in d, f"role={d.get('role')!r}")
             except Exception as e:
-                rec(f"{path} 可解析", False, str(e))
+                rec("/auth/me 可解析", False, str(e))
+
+    # ── /auth/state：分模式判定 ──
+    #   服务器版**按设计**返回 403「服务器版请用 /auth/me」（app/routes_auth.py:101-102）；
+    #   因为服务器版若用 /auth/state 探测登录态，会让"已登录"也跳登录页 ⇒ 死循环
+    #   （见 server/frontend/platform.js:20）⇒ 403 判 PASS，指示改走 /auth/me。
+    #   本地版正常 200 且含 role（app/routes_auth.py:93+）。
+    st, body, err = http("GET", base + "/auth/state", token)
+    if err:
+        rec("/auth/state 可达", False, err, server_side=True)
+        return
+    text = body[:200].decode("utf-8", "ignore")
+    if st == 403 and "服务器版请用 /auth/me" in text:
+        rec("/auth/state 返回 403（服务器版按设计）", True,
+            "服务器版按设计拒绝 /auth/state，改用 /auth/me —— 见 routes_auth.py:101-102 与 platform.js:20 的死循环说明")
+        return
+    if st == 200:
+        rec("/auth/state 返回 200（本地版）", True)
+        try:
+            d = json.loads(body.decode("utf-8"))
+            rec("/auth/state 含 role 字段", "role" in d, f"role={d.get('role')!r}")
+        except Exception as e:
+            rec("/auth/state 可解析", False, str(e))
+        return
+    rec(f"/auth/state 返回 {st}（非 200/403-server）", False, text, server_side=(st >= 500))
 
 
 def g2_notice(base: str, token: str) -> None:
@@ -246,16 +271,23 @@ def _probe_derive(base: str, token: str) -> None:
 
 
 def g5_assets(base: str, token: str) -> None:
-    print("\n=== 5. 图片资产（自己包 200 · 他人包 404 · 未登录 401 · 全局资产 200）===")
-    print("    ⚠️ 需要真实包 id 才能构造 URL；未提供 --own-pack / --other-pack 时**只做全局资产**")
-    # 全局资产（不依赖登录态）
+    print("\n=== 5. 图片资产（未登录 401 · 全局资产 200 · 自己包 200 · 他人包 404）===")
+    print("    ⚠️ 需要真实包 id 才能构造 URL；未提供 --own-pack / --other-pack 时只做全局资产与未登录判据")
+    # 未登录（不带 Authorization）⇒ 期望 401 —— "未登录拿不到资产"的关键判据
+    for path in ("/assets/index", "/assets/raw"):
+        st, _, err = http("GET", base + path, "")     # 空 token ⇒ 不发 Authorization 头
+        if err:
+            rec(f"未登录 {path}（应 401）", False, err, server_side=True)
+        else:
+            rec(f"未登录 {path} → {st}", st == 401, "期望 401", server_side=(st >= 500))
+    # 全局资产（带登录态）⇒ 期望 200
     st, _, err = http("GET", base + "/assets/index", token)
     if err:
-        rec("全局资产 /assets/index", False, err, server_side=True)
+        rec("全局资产 /assets/index（带令牌）", False, err, server_side=True)
     else:
         rec(f"全局资产 /assets/index → {st}", st == 200, str(st), server_side=(st >= 500))
-    # 自己包 / 他人包 / 未登录（需要参数）
-    for label, path in (("自己包（应为 200）", _a.own), ("他人包（应为 404）", _a.other)):
+    # 自己包 / 他人包（需要 --own-pack / --other-pack 才测，否则 SKIP 且说明，不伪装通过）
+    for label, path in (("自己包（应为 200）", _a.own_pack), ("他人包（应为 404）", _a.other_pack)):
         if not path:
             print(f"    - SKIP {label}：未提供对应包 id")
             continue
@@ -265,8 +297,8 @@ def g5_assets(base: str, token: str) -> None:
             rec(label, False, err, server_side=True)
         else:
             rec(f"{label} → {st}", st == want, f"期望 {want}", server_side=(st >= 500))
-    if _a.own:
-        st, _, err = http("GET", base + _a.own, "")     # 不带 token ⇒ 期望 401
+    if _a.own_pack:
+        st, _, err = http("GET", base + _a.own_pack, "")     # 不带 token ⇒ 期望 401
         if err:
             rec("未登录访问自己包（应 401）", False, err, server_side=True)
         else:
@@ -274,29 +306,31 @@ def g5_assets(base: str, token: str) -> None:
 
 
 def g6_sync(base: str, token: str) -> None:
-    print("\n=== 6. 数据同步：写入 → 拉回一致（往返一次）===")
-    if not _a.allow_sync_write:
-        print("    - SKIP：会写生产数据。加 --allow-sync-write 才执行（跑完需人工确认已清理）")
-        return
-    if not token:
-        rec("同步往返", False, "需要 --token（同步接口要登录态）")
-        return
-    marker = "smoke_" + str(int(__import__("time").time()))
-    body = json.dumps({"marker": marker}).encode("utf-8")
-    st, _, err = http("POST", base + "/sync/upload", token, body,
-                      {"Content-Type": "application/json"})
+    print("\n=== 6. 数据同步：只读可达性 + 结构校验（手动上传/下载已按规范下线）===")
+    print("    ℹ️ 手动上传/下载已按规范下线（upload 返回业务错误、download 410）；现由「自动同步 +")
+    print("       本地备份」保障，写入型往返需单独授权 ⇒ 本门禁只做只读可达性 + 结构校验。")
+    # 只读：GET /sync/manifest，期望 200 且响应体含 ok + files（mode 可选）
+    st, body, err = http("GET", base + "/sync/manifest", token)
     if err:
-        rec("写入 /sync/upload", False, err, server_side=True)
+        rec("同步清单 /sync/manifest 可达", False, err, server_side=True)
+    else:
+        rec(f"同步清单 /sync/manifest → {st}", st == 200,
+            "" if st == 200 else body[:120].decode("utf-8", "ignore"),
+            server_side=(st >= 500))
+        if st == 200:
+            try:
+                d = json.loads(body.decode("utf-8"))
+                rec("同步清单含 ok + files 结构", ("ok" in d) and ("files" in d),
+                    f"keys={list(d)[:6]} mode={d.get('mode')!r}")
+            except Exception as e:
+                rec("同步清单可解析", False, str(e))
+    # 写入型往返：手动端点已退役；默认 SKIP（不写生产数据）
+    if not _a.allow_sync_write:
+        print("    - SKIP 写入型往返：手动上传/下载端点已退役（upload 业务错误 / download 410）；"
+              "现役写端点（POST /sync/import|export|now）需单独授权 ⇒ 本组只做只读校验。")
         return
-    rec(f"写入 /sync/upload → {st}", st == 200, str(st), server_side=(st >= 500))
-    st2, b2, err2 = http("GET", base + "/sync/download", token)
-    if err2:
-        rec("拉回 /sync/download", False, err2, server_side=True)
-        return
-    rec(f"拉回 /sync/download → {st2}", st2 == 200, str(st2), server_side=(st2 >= 500))
-    if st2 == 200:
-        rec("往返一致（marker 能拉回）", marker.encode() in b2,
-            f"marker={marker}")
+    print("    - SKIP 写入型往返：端点已退役，写入型校验待定"
+          "（即使 --allow-sync-write 也暂不写生产数据）。")
 
 
 def g7_version(base: str, token: str) -> None:
@@ -346,7 +380,7 @@ def main() -> int:
     ap.add_argument("--own-pack", default="", help="自己包的一个资产 URL 路径（用于 200/401 判据）")
     ap.add_argument("--other-pack", default="", help="他人包的资产 URL 路径（用于 404 判据）")
     ap.add_argument("--allow-sync-write", action="store_true",
-                    help="第 6 组真的写生产数据（默认跳过）")
+                    help="第 6 组写入型校验（手动端点已退役，当前仍 SKIP、不写生产数据）")
     _a = ap.parse_args()
 
     base = _a.base.rstrip("/")
