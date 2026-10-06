@@ -33,7 +33,11 @@ import sys
 # ── 凭据模式 ──
 # sk- 前缀：厂商 API Key 最常见的形态（字面量写作 sk- 后跟一串字符；
 # 注意别在本文件里写能匹配自身正则的示例，否则自检会命中自己）
-RE_SK = re.compile(r"\bsk-[A-Za-z0-9_\-]{8,}")
+# 2026-10-06 隐私复查新增：本机用户目录与 SSH 私钥路径（公开文档里不该出现）
+RE_LOCAL_HOME = re.compile(r"[A-Za-z]:\\\\Users\\\\[A-Za-z0-9_.\-]+")
+RE_SSH_KEY = re.compile(r"\.ssh[\\\\/]id_(rsa|ed25519|ecdsa)")
+
+RE_SK = re.compile(r"\bsk-[A-Za-z0-9_\-]{5,}")
 # 常见凭据字段赋值：key = "非空且不像占位符的值"
 RE_ASSIGN = re.compile(
     r"(?i)\b(password|passwd|pwd|token|secret|api[_\-]?key|access[_\-]?key|private[_\-]?key)"
