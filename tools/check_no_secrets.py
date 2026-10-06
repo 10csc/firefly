@@ -35,7 +35,7 @@ import sys
 # 注意别在本文件里写能匹配自身正则的示例，否则自检会命中自己）
 # 2026-10-06 隐私复查新增：本机用户目录与 SSH 私钥路径（公开文档里不该出现）
 RE_LOCAL_HOME = re.compile(r"[A-Za-z]:\\\\Users\\\\[A-Za-z0-9_.\-]+")
-RE_SSH_KEY = re.compile(r"\.ssh[\\\\/]id_(rsa|ed25519|ecdsa)")
+RE_SSH_KEY = re.compile(r"(?:Users|home|Documents and Settings)[\\\\/][^\\\\/]+[\\\\/]\.ssh")  # 只认带用户名的路径，通用的 ~/.ssh 不算泄漏
 
 RE_SK = re.compile(r"\bsk-[A-Za-z0-9_\-]{5,}")
 # 常见凭据字段赋值：key = "非空且不像占位符的值"
