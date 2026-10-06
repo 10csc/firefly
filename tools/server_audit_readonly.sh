@@ -8,7 +8,7 @@
 #   4. 输出仅聚合计数、路径存在性、权限、归属、版本号
 #
 # 用法（在本地执行，脚本经 stdin 送过去，不在服务器落盘）：
-#   ssh -i C:\Users\<用户>\.ssh\id_rsa root@<公网IP> 'bash -s' < server_audit_readonly.sh
+#   ssh -i "<本机用户目录>/.ssh 下的私钥文件" root@<公网IP> 'bash -s' < server_audit_readonly.sh
 #
 # 若某些路径不存在，命令会打印"缺失"而不是报错中断。
 
