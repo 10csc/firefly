@@ -14,7 +14,8 @@
   1. 登录与身份：`/auth/me` 与 `/auth/state` 都回 `role`（管理员能发官方卡）
   2. 公告：`/notice/*` 可拉、含 `refreshing` 语义
   3. 热更清单：`/hotupdate/<ver>/latest.json` 可达且版本正确（声明 none 时说明预期）
-  4. 平台六端点 200：广场 / 详情 / 我的卡 / 已装 / 配额 / `derive`
+  4. 平台六端点：广场 · 我的卡 · 已装（GET，断言 200）· 详情 · 草稿（先取真实 id 再 GET，断言 200）
+     · `derive`（POST 存在性探针：接受 400/401/403，仅 404 判失败；不代表功能通过）
   5. 图片资产：**自己包 200 · 他人包 404 · 未登录 401 · 全局资产 200**
   6. 数据同步：写入 → 拉回**一致**（会写生产数据 ⇒ 默认跳过，需 --allow-sync-write）
   7. 下载清单：`/version.json` 的 `tag` 与两个下载 URL **指向同一版本**（哈希回填之后）
@@ -30,6 +31,7 @@ import json
 import re
 import sys
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -131,23 +133,116 @@ def g3_hotupdate(base: str, token: str) -> None:
 
 
 def g4_platform(base: str, token: str) -> None:
-    print("\n=== 4. 平台六端点 ===")
-    # ⚠️ 端点必须是仓库里**真实存在**的（对照 app/plaza/api.py 的路由键）：
-    #    曾误写 `/plaza/api/quota` —— 仓库无此端点（grep "/plaza/api/[a-z_]+" 无 quota）。
-    #    安装配额（used_cards/used_bytes/max_cards/max_bytes）本就由 `/plaza/api/installed`
-    #    **一并返回**（见 plaza_installed 的 docstring），故不再单列"配额"，改用另一真实端点
-    #    `/plaza/api/draft`（草稿读取）—— 六项互不重复、无一杜撰。
-    eps = [("广场", "/plaza/api/list"), ("详情", "/plaza/api/card"),
-           ("我的卡", "/plaza/api/drafts"), ("已装", "/plaza/api/installed"),
-           ("草稿", "/plaza/api/draft"), ("derive", "/plaza/api/derive")]
-    for name, path in eps:
-        st, body, err = http("GET", base + path, token)
-        if err:
-            rec(f"{name} {path}", False, err, server_side=True)
-        else:
-            rec(f"{name} {path} → {st}", st == 200,
-                "" if st == 200 else body[:100].decode("utf-8", "ignore"),
-                server_side=(st >= 500))
+    print("\n=== 4. 平台六端点（每项判据见行末；全程单请求、不并发、不重试）===")
+    # ⚠️ 端点对照 app/plaza/api.py 的 GET_ROUTES / POST_ROUTES，禁杜撰、禁重名：
+    #    · `/plaza/api/derive` 是 **POST-only**（两份 GET_ROUTES 均无它、仅 POST_ROUTES 有：
+    #      app/api/router.py:146 · app/plaza/api.py:1037）⇒ 发 GET 会落 do_GET() 的 404，
+    #      故必须用 POST 探测（⑥ 为「存在性探针」，**不是**功能通过）。
+    #    · `/plaza/api/card?id=` 缺 id ⇒ 400（api.py:231-233）；
+    #      `/plaza/api/draft?id=` 缺 id ⇒ 404（api.py:788-791）⇒ 二者必须先取**真实 id**。
+    # 判据两类：**200 断言**（无参即可 GET）· **存在性断言**（需参数/登录，仅 404 判失败）。
+
+    # ① 广场 —— GET，判据 200；响应顺带供 ② 取真实 id（同一响应复用，不重复请求）
+    st, body, err = http("GET", base + "/plaza/api/list", token)
+    if err:
+        rec("广场 GET /plaza/api/list（判据：200）", False, err, server_side=True)
+        cards: list = []
+    else:
+        rec(f"广场 GET /plaza/api/list → {st}（判据：200）", st == 200,
+            "" if st == 200 else body[:100].decode("utf-8", "ignore"),
+            server_side=(st >= 500))
+        cards = _json_items(body)
+
+    # ② 详情 —— GET ?id=，判据 200；id 取自广场列表首张，列表为空则如实 SKIP（不伪装通过）
+    cid = _first_id(cards)
+    if cid:
+        _probe_get_id("详情", "/plaza/api/card", cid, base, token)
+    else:
+        print("  - SKIP 详情 /plaza/api/card：广场列表为空（取不到 id）⇒ 无法构造 200 判据，不伪装通过")
+
+    # ③ 我的卡 —— GET，判据 200；响应顺带供 ⑤ 取真实 id（同一响应复用，不重复请求）
+    st, body, err = http("GET", base + "/plaza/api/drafts", token)
+    if err:
+        rec("我的卡 GET /plaza/api/drafts（判据：200）", False, err, server_side=True)
+        drafts: list = []
+    else:
+        rec(f"我的卡 GET /plaza/api/drafts → {st}（判据：200）", st == 200,
+            "" if st == 200 else body[:100].decode("utf-8", "ignore"),
+            server_side=(st >= 500))
+        drafts = _json_items(body)
+
+    # ④ 已装 —— GET，判据 200
+    _probe_get_200("已装", "/plaza/api/installed", base, token)
+
+    # ⑤ 草稿 —— GET ?id=，判据 200；id 取自我的草稿列表首条，列表为空则如实 SKIP（不伪装通过）
+    did = _first_id(drafts)
+    if did:
+        _probe_get_id("草稿", "/plaza/api/draft", did, base, token)
+    else:
+        print("  - SKIP 草稿 /plaza/api/draft：我的草稿列表为空（取不到 id）⇒ 无法构造 200 判据，不伪装通过")
+
+    # ⑥ derive —— POST，判据「存在性」：接受 200/400/401/403，仅 404 判失败
+    _probe_derive(base, token)
+
+
+def _json_items(body: bytes) -> list:
+    """从响应体解析 {…, 'items': [...]}；解析失败或形状不符返回 []。"""
+    try:
+        items = (json.loads(body.decode("utf-8")) or {}).get("items")
+    except Exception:
+        return []
+    return items if isinstance(items, list) else []
+
+
+def _first_id(items: list) -> str:
+    """取 items[0]['id']；缺失或非字符串返回 ""。"""
+    if items and isinstance(items[0], dict):
+        v = items[0].get("id")
+        if isinstance(v, str) and v:
+            return v
+    return ""
+
+
+def _probe_get_200(name: str, path: str, base: str, token: str) -> None:
+    """G4 项：无参 GET，判据「200 断言」。"""
+    st, body, err = http("GET", base + path, token)
+    if err:
+        rec(f"{name} GET {path}（判据：200）", False, err, server_side=True)
+        return
+    rec(f"{name} GET {path} → {st}（判据：200）", st == 200,
+        "" if st == 200 else body[:100].decode("utf-8", "ignore"),
+        server_side=(st >= 500))
+
+
+def _probe_get_id(name: str, path: str, cid: str, base: str, token: str) -> None:
+    """G4 项：带 ?id= 的 GET，判据「200 断言」。"""
+    url = f"{base}{path}?id={urllib.parse.quote(cid)}"
+    st, body, err = http("GET", url, token)
+    if err:
+        rec(f"{name} GET {path}?id=…（判据：200）", False, err, server_side=True)
+        return
+    rec(f"{name} GET {path}?id=… → {st}（判据：200）", st == 200,
+        "" if st == 200 else body[:100].decode("utf-8", "ignore"),
+        server_side=(st >= 500))
+
+
+def _probe_derive(base: str, token: str) -> None:
+    """G4 项：`/plaza/api/derive` 是 POST-only ⇒ 用 POST 做「存在性探针」。
+
+    判据：接受 200 / 400 / 401 / 403（端点可达，只是需要参数或登录）；**仅 404 判失败**。
+    ⚠️ 这是「端点存在性」探针，**不代表** derive 业务功能通过。
+    """
+    st, body, err = http("POST", base + "/plaza/api/derive", token, b"{}",
+                         {"Content-Type": "application/json"})
+    if err:
+        rec("derive POST /plaza/api/derive（判据：存在性，仅 404 失败）", False, err,
+            server_side=True)
+        return
+    ok = st in (200, 400, 401, 403)
+    detail = ("端点存在：可达但需参数/登录（存在性探针 ≠ 功能通过）" if ok
+              else f"404 ⇒ 端点缺失：{body[:80].decode('utf-8', 'ignore')}")
+    rec(f"derive POST /plaza/api/derive → {st}（判据：存在性，仅 404 失败）", ok, detail,
+        server_side=(st >= 500))
 
 
 def g5_assets(base: str, token: str) -> None:
