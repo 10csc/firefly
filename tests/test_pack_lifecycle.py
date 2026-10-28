@@ -166,4 +166,11 @@ check("E4c 归档后可抹除（清单与目录都没了）",
 
 shutil.rmtree(_tmp, ignore_errors=True)
 print(f"\n统计: PASS={PASS} FAIL={FAIL}")
-sys.exit(0 if FAIL == 0 else 1)
+
+
+def test_pack_lifecycle():
+    assert FAIL == 0, f"pack lifecycle failures: {FAIL} / checks: {PASS + FAIL}"
+
+
+if __name__ == "__main__":
+    test_pack_lifecycle()
