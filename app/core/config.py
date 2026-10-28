@@ -18,13 +18,13 @@ logger = logging.getLogger(__name__)
 
 
 # ── 包级配置（主动消息等随角色走的设置；2026-09-08 主动消息按包化）──
-# 存 user_data/{mode}/data/proactive.json；读取顺序：包级 → 全局 config → 默认。
-# 全局 config 的 proactive_* 保留作"默认值"（新包/未配置包继承）。
+# 存 user_data/{mode}/data/proactive.json；读取顺序：包级 → 用户 overlay → 全局 config → 默认。
+# 全局 config 的 proactive_* 保留作底层"默认值"（新包/未配置包继承）。
 _PACK_CFG_NAME = "proactive.json"
 
 
 def pack_cfg(mode: str, key: str, default=None):
-    """包级配置读取：user_data/{mode}/data/proactive.json → 全局 config → default。"""
+    """包级配置读取：包级文件 → 用户 overlay → 全局 config → default。"""
     fp = mode_data_dir(mode) / _PACK_CFG_NAME
     try:
         if fp.exists():

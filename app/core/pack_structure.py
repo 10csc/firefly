@@ -152,8 +152,8 @@ def build_tree(mode: str) -> dict:
                 src["assistable"] = assistable(s["path"])
             elif t == "dir":
                 try:
-                    from routes_pack import _kb_bundled_root, _kb_user_root
-                    b, u = _kb_bundled_root(mode), _kb_user_root(mode)
+                    from api.pack_paths import kb_bundled_root, kb_user_root
+                    b, u = kb_bundled_root(mode), kb_user_root(mode)
                     n = 0
                     for root in (b, u):
                         if root.is_dir():

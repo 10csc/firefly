@@ -18,6 +18,8 @@ from pathlib import Path
 
 from modules import app_config as cfg
 from modules.app_config import DEFAULT_MODE
+from api.pack_paths import kb_bundled_root as _kb_bundled_root
+from api.pack_paths import kb_user_root as _kb_user_root
 from routes_common import _read_json, _body_mode, _query_mode
 
 logger = logging.getLogger(__name__)
@@ -316,16 +318,6 @@ __all__ = [
 # 五域（world/factions/story/character/dialogues）是 App 编辑器的**推荐分组**，不再是白名单
 # ——契约 06 §3.1 起也收扁平 `knowledge/<名>.md`（广场制卡产出的形态）。
 _KB_CONTENT_MAX = 500_000        # 单文件写入上限（防巨型文本打爆磁盘）
-
-
-def _kb_user_root(mode: str) -> Path:
-    """知识库用户副本根（写路径唯一落点）。"""
-    return cfg.mode_character_dir(mode) / "knowledge"
-
-
-def _kb_bundled_root(mode: str) -> Path:
-    """知识库 bundled 根（包内；不存在则空——haruno 等包目前没有知识库）。"""
-    return cfg.bundled_character_dir(mode) / "knowledge"
 
 
 def _safe_kb_rel(rel: str) -> str | None:

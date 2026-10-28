@@ -6,6 +6,7 @@
 """
 from __future__ import annotations
 
+import ast
 import json
 import sys
 import tempfile
@@ -204,6 +205,40 @@ def _check_asset_md5() -> None:
     check("资产版本指纹覆盖完整文本", first != second, f"{first} == {second}")
 
 
+def _routes_pack_imports(path: Path) -> list[str]:
+    """返回文件中导入 routes_pack 的语句位置（运行时与延迟导入都算）。"""
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    found = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module == "routes_pack":
+            found.append(f"{path.name}:{node.lineno}: from routes_pack")
+        elif isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name == "routes_pack":
+                    found.append(f"{path.name}:{node.lineno}: import routes_pack")
+    return found
+
+
+def _check_pack_dependency_boundary() -> None:
+    guarded = [
+        APP / "api" / "pack_paths.py",
+        APP / "core" / "pack_structure.py",
+    ]
+    reverse = [hit for path in guarded for hit in _routes_pack_imports(path)]
+    check("pack_paths/core 不再反向导入 routes_pack", not reverse, repr(reverse))
+
+    from api import pack_paths
+
+    mode = "dependency-probe"
+    user_fp, bundled_fp = pack_paths._paths_for(mode, "knowledge/probe.md")
+    check(
+        "知识库路径由 pack_paths 直接解析",
+        user_fp == pack_paths.kb_user_root(mode) / "probe.md"
+        and bundled_fp == pack_paths.kb_bundled_root(mode) / "probe.md",
+        f"user={user_fp} bundled={bundled_fp}",
+    )
+
+
 def run() -> None:
     with tempfile.TemporaryDirectory(prefix="firefly_phase2_") as td:
         tmp = Path(td)
@@ -215,6 +250,8 @@ def run() -> None:
         _check_multiuser_concurrency(tmp)
         print("=== D. 资产版本缓存键 ===")
         _check_asset_md5()
+        print("=== E. pack 路径依赖方向 ===")
+        _check_pack_dependency_boundary()
 
 
 def main() -> int:

@@ -2,8 +2,9 @@
 """包文本文件读写统一口（阶段 E）：人设槽位 / 知识库 / 出厂记忆三类文件的
 「读（用户副本→bundled 回落）」与「写（备份 → 原子写）」收口在这里。
 
-边界：路径合法性由调用方（routes_pack 的 _safe_kb_rel / assistable 白名单）负责；
-本模块只管"从哪读、往哪写、写前备份"。
+边界：路径合法性由调用方（_safe_kb_rel / assistable 白名单）负责；本模块只管
+"从哪读、往哪写、写前备份"。知识库路径函数也在这里定义，供 routes/core 共用，
+不得反向依赖路由层。
 """
 
 import logging
@@ -17,11 +18,21 @@ logger = logging.getLogger(__name__)
 _BACKUP_KEEP = 5   # 每文件滚动备份份数
 
 
+def kb_user_root(mode: str) -> Path:
+    """知识库用户副本根（写路径唯一落点）。"""
+    return cfg.mode_character_dir(mode) / "knowledge"
+
+
+def kb_bundled_root(mode: str) -> Path:
+    """知识库 bundled 根（包内；不存在则空——haruno 等包目前没有知识库）。"""
+    return cfg.bundled_character_dir(mode) / "knowledge"
+
+
 def _paths_for(mode: str, file: str) -> tuple[Path, Path]:
     """返回 (用户副本路径, bundled 路径)。知识库/出厂记忆走子目录，人设槽位走包根。"""
     if file.startswith("knowledge/"):
-        from routes_pack import _kb_user_root, _kb_bundled_root
-        return _kb_user_root(mode) / file[len("knowledge/"):], _kb_bundled_root(mode) / file[len("knowledge/"):]
+        return (kb_user_root(mode) / file[len("knowledge/"):],
+                kb_bundled_root(mode) / file[len("knowledge/"):])
     if file.startswith("memory/"):
         return (cfg.mode_character_dir(mode) / "memory" / "default.md",
                 cfg.bundled_character_dir(mode) / "memory" / "default.md")
