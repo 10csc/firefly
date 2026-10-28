@@ -454,8 +454,8 @@ def _restore_full_snapshot(data: bytes, backup: bool = True,
         if backup:
             try:
                 _backup_current_mode(mode, "pre-restore")
-            except Exception:
-                pass    # 备份失败不阻塞恢复（快照本身即数据源）；调用方可传 backup=False 跳过
+            except Exception as e:
+                return False, f"[{mode}] 恢复前备份失败（未改动该包数据）: {e}", n
         tmp = root.with_name(root.name + ".restore_tmp")
         try:
             if tmp.exists():
@@ -479,11 +479,7 @@ def _restore_full_snapshot(data: bytes, backup: bool = True,
     # ── 阶段 2b：自建包用户数据（逐子目录换入，保留阶段 1 的 character/ 定义）──
     for pid, stage in pack_stage.items():
         pack_dir = user_root / pid
-        if backup:
-            try:
-                _backup_current_mode(pid, "pre-restore")
-            except Exception:
-                pass
+        # 阶段 1 已在换入角色定义前备份整个自建包；这里不重复备份。
         try:
             for sub in sorted(p for p in stage.iterdir() if p.is_dir()):
                 if sub.name == "character":

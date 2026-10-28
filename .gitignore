@@ -80,7 +80,7 @@ dsh-update/
 /流萤_头像.png
 settings.local.json
 
-# 服务器后端（四部分之一，不提交 git/github，防泄露）
+# 服务器后端（不进入公开主仓；源码同步到受控私有仓库）
 /server/
 
 # 0.8.0 整合追加（2026-08-14）
@@ -89,6 +89,7 @@ _trash/
 _research/
 tests/*.db
 .tmp_test/
+.test_tmp/
 
 # ── 提交前审查补（2026-09-19）──
 # /hotupdate/ = PC 开发时热更的运行期状态（state.json + 覆盖层 web/），是可再生缓存；

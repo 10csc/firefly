@@ -202,6 +202,7 @@ def _load_config() -> dict:
         "proactive_enabled": False, "proactive_hard": 6, "proactive_soft": 0.35,
         "prob_reply_enabled": True, "prob_reply_value": 0.10,
         "hidden_reply_enabled": True,
+        "memory_window_turns": 100, "memory_keep_turns": 30, "memory_warn_turns": 80,
     }
     data = None
     try:
@@ -212,6 +213,9 @@ def _load_config() -> dict:
             if not _srv:
                 # 旧字段迁移：0.8.0 的 server_url（远程部署用）语义并入 auth_server_url
                 _srv = str(data.get("server_url", "") or "").strip().rstrip("/")
+            # 2026-10-24：老配置里存过官方明文地址，统一迁到 443 TLS。
+            if _srv in ("http://101.200.14.126:8787", "http://101.200.14.126"):
+                _srv = AUTH_SERVER_DEFAULT
             cfg["auth_server_url"] = (_srv if _srv.startswith(("http://", "https://"))
                                       else AUTH_SERVER_DEFAULT)
             # 多供应商：新结构直接读；旧结构（顶层 api_key/api_base）自动迁移
@@ -279,6 +283,16 @@ def _load_config() -> dict:
                 cfg["prob_reply_value"] = 0.10
             # 隐藏式回复配置（缺省：跟随概率式开启；独立开关，关前台概率式不影响隐藏式）
             cfg["hidden_reply_enabled"] = bool(data.get("hidden_reply_enabled", True))
+            # 记忆活跃窗口策略：轮次上限 / 整理后保留 / 顶部提醒阈值
+            for key, default, lo, hi in (
+                ("memory_window_turns", 100, 0, 1000),
+                ("memory_keep_turns", 30, 0, 500),
+                ("memory_warn_turns", 80, 0, 1000),
+            ):
+                try:
+                    cfg[key] = max(lo, min(hi, int(data.get(key, default))))
+                except (TypeError, ValueError):
+                    cfg[key] = default
     except Exception as e:
         # B1（审计 2026-09-15）：损坏（而非缺失）的 config.json 不再静默吞——先告警
         # 并备份留证再回退默认值。原逻辑下损坏现场会被下一次 save_config 覆盖，
@@ -514,6 +528,9 @@ def save_config() -> None:
             "prob_reply_enabled": bool(config.get("prob_reply_enabled", True)),
             "prob_reply_value": max(0.0, min(1.0, float(config.get("prob_reply_value", 0.10)))),
             "hidden_reply_enabled": bool(config.get("hidden_reply_enabled", True)),
+            "memory_window_turns": max(0, min(1000, int(config.get("memory_window_turns", 100)))),
+            "memory_keep_turns": max(0, min(500, int(config.get("memory_keep_turns", 30)))),
+            "memory_warn_turns": max(0, min(1000, int(config.get("memory_warn_turns", 80)))),
         })
 
 

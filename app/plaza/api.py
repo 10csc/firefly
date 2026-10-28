@@ -750,6 +750,12 @@ def plaza_review(h) -> None:
                           review=result, is_admin=_is_admin_user(h))
         except dr.DraftError as e:
             logger.warning("审核结论落草稿失败：%s", e.code)
+            if e.code == dr.DRAFT_PUBLISH_FAILED:
+                return _err(h, 500, "审核结果保存失败，请稍后重试",
+                            error_kind="storage_error", code=e.code)
+            if e.code == dr.DRAFT_LIMIT:
+                return _err(h, 400, e.message, error_kind="draft_limit", code=e.code)
+            return _err(h, 400, e.message, code=e.code)
     except cf.CardError as e:
         return _err(h, 400, f"卡片校验未通过：{e.message}；请按提示修改后重试")
     except rv.ReviewError as e:
