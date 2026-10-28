@@ -37,6 +37,7 @@ cfg.CONFIG_FILE = _tmp / "config.json"
 
 import routes
 import routes_pack as rp
+from core import pack_templates
 
 PASS = FAIL = 0
 
@@ -95,13 +96,13 @@ check("B2 残留目录已删除（不留孤儿）", not (_tmp / "custom_fail1").
 check("B3 未进注册表", "custom_fail1" not in cfg.PRESETS)
 
 # B2：文件写入阶段（模板）就炸 → 半写状态也必须整体清掉
-_orig_tpl = rp._PACK_IDENTITY_TPL
-rp._PACK_IDENTITY_TPL = None      # None.format(...) → AttributeError
+_orig_tpl = pack_templates._PACK_IDENTITY_TPL
+pack_templates._PACK_IDENTITY_TPL = None      # None.format(...) → AttributeError
 try:
     h = FakeH({"id": "custom_fail2", "name": "失败包2", "char_name": "角色", "user_name": "你"})
     routes.create_pack(h)
 finally:
-    rp._PACK_IDENTITY_TPL = _orig_tpl
+    pack_templates._PACK_IDENTITY_TPL = _orig_tpl
 check("B4 半写失败同样回滚", h.data.get("ok") is False and not (_tmp / "custom_fail2").exists())
 check("B5 半写失败后 registry 干净", "custom_fail2" not in cfg.PRESETS)
 

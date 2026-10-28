@@ -18,6 +18,7 @@ from pathlib import Path
 
 from modules import app_config as cfg
 from modules.app_config import DEFAULT_MODE
+# 兼容旧调用；真身已移至 api.pack_paths，此处不得重新实现
 from api.pack_paths import kb_bundled_root as _kb_bundled_root
 from api.pack_paths import kb_user_root as _kb_user_root
 from routes_common import _read_json, _body_mode, _query_mode
@@ -289,11 +290,10 @@ def delete_pack_asset(h):
 # ═══ 自建角色包（仅本地版——服务器版不做自定义整包）═══
 # 阶段 2.8：建包/AI 向导/归档/两级删除的实现已移至 app/api/pack_lifecycle.py。
 # 此处 re-export，api/router 与 routes.py 兼容层、测试（`import routes_pack as rp`）的取用路径不变。
-# 模板常量保留在本模块：测试经 `rp._PACK_*_TPL = None` 打桩验证建包回滚（test_pack_lifecycle B4/B5），
-# pack_lifecycle.create_pack 在**调用时**从本模块读（保持打桩语义）。
-_PACK_CORE_TPL = "# {char_name} · 核心设定\n\n（在这里写：{char_name}是谁——身份、经历、价值观。每条一行，以 [事实] 开头）\n"
-_PACK_IDENTITY_TPL = "# {char_name} · 人际关系与认知边界\n\n（在这里写：{char_name}与{user_name}的关系、习惯与喜好、{char_name}知道什么不知道什么）\n"
-_PACK_SAMPLES_TPL = "# {char_name} · 短信风格示例\n\n（在这里贴几条{char_name}说的话的示例，模型会模仿这个语气。越真实越好）\n"
+# 兼容旧调用；真身已移至 core.pack_templates，此处不得重新实现。
+from core.pack_templates import (   # noqa: F401,E402
+    _PACK_CORE_TPL, _PACK_IDENTITY_TPL, _PACK_SAMPLES_TPL,
+)
 
 from api.pack_lifecycle import (   # noqa: F401,E402
     archive_pack, create_pack, delete_pack, restore_pack,

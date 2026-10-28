@@ -18,10 +18,8 @@ logger = logging.getLogger(__name__)
 
 
 def _templates():
-    """建包模板（**调用时**从 routes_pack 读）：测试经 `rp._PACK_*_TPL = None` 打桩
-    验证建包回滚（test_pack_lifecycle B4/B5）——模板的所有权留在 routes_pack，
-    本模块只做引用，保证打桩语义在拆分后不变。"""
-    from routes_pack import _PACK_CORE_TPL, _PACK_IDENTITY_TPL, _PACK_SAMPLES_TPL
+    """建包模板（调用时从 core 读，保证测试可打桩 core.pack_templates）。"""
+    from core.pack_templates import _PACK_CORE_TPL, _PACK_IDENTITY_TPL, _PACK_SAMPLES_TPL
     return _PACK_CORE_TPL, _PACK_IDENTITY_TPL, _PACK_SAMPLES_TPL
 
 

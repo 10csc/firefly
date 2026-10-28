@@ -205,27 +205,71 @@ def _check_asset_md5() -> None:
     check("资产版本指纹覆盖完整文本", first != second, f"{first} == {second}")
 
 
-def _routes_pack_imports(path: Path) -> list[str]:
-    """返回文件中导入 routes_pack 的语句位置（运行时与延迟导入都算）。"""
-    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+def _is_routes_pack_name(name: str) -> bool:
+    return name == "routes_pack" or name.startswith("routes_pack.")
+
+
+def _call_name(func: ast.expr) -> str | None:
+    if isinstance(func, ast.Name):
+        return func.id
+    if isinstance(func, ast.Attribute):
+        return func.attr
+    return None
+
+
+def _routes_pack_imports_in_source(source: str, filename: str) -> list[str]:
+    """返回源码中导入 routes_pack 的位置，覆盖静态导入和常见动态导入。"""
+    tree = ast.parse(source, filename=filename)
     found = []
     for node in ast.walk(tree):
-        if isinstance(node, ast.ImportFrom) and node.module == "routes_pack":
-            found.append(f"{path.name}:{node.lineno}: from routes_pack")
+        if isinstance(node, ast.ImportFrom) and node.module and _is_routes_pack_name(node.module):
+            found.append(f"{filename}:{node.lineno}: from {node.module}")
         elif isinstance(node, ast.Import):
             for alias in node.names:
-                if alias.name == "routes_pack":
-                    found.append(f"{path.name}:{node.lineno}: import routes_pack")
+                if _is_routes_pack_name(alias.name):
+                    found.append(f"{filename}:{node.lineno}: import {alias.name}")
+        elif isinstance(node, ast.Call):
+            name = _call_name(node.func)
+            if name not in ("import_module", "__import__") or not node.args:
+                continue
+            module = node.args[0]
+            if (isinstance(module, ast.Constant)
+                    and isinstance(module.value, str)
+                    and _is_routes_pack_name(module.value)):
+                found.append(f"{filename}:{node.lineno}: {name}({module.value!r})")
     return found
 
 
-def _check_pack_dependency_boundary() -> None:
-    guarded = [
-        APP / "api" / "pack_paths.py",
-        APP / "core" / "pack_structure.py",
+def _routes_pack_imports(path: Path) -> list[str]:
+    return _routes_pack_imports_in_source(
+        path.read_text(encoding="utf-8"), path.name)
+
+
+def _check_reverse_import_detector() -> None:
+    samples = {
+        "普通 import": "import routes_pack\n",
+        "from import": "from routes_pack import create_pack\n",
+        "importlib": "import importlib\nimportlib.import_module('routes_pack')\n",
+        "__import__": "__import__('routes_pack')\n",
+    }
+    missed = [
+        name for name, source in samples.items()
+        if not _routes_pack_imports_in_source(source, f"{name}.py")
     ]
+    check("AST 检查器覆盖普通/from/importlib/__import__", not missed, repr(missed))
+
+
+def _check_pack_dependency_boundary() -> None:
+    router = (APP / "api" / "router.py").resolve()
+    guarded = sorted(
+        path for directory in (APP / "core", APP / "api")
+        for path in directory.rglob("*.py")
+        if path.resolve() != router
+    )
     reverse = [hit for path in guarded for hit in _routes_pack_imports(path)]
-    check("pack_paths/core 不再反向导入 routes_pack", not reverse, repr(reverse))
+    check("core/api 全量源文件不再反向导入 routes_pack（router 除外）",
+          not reverse, repr(reverse))
+    _check_reverse_import_detector()
 
     from api import pack_paths
 
@@ -237,6 +281,13 @@ def _check_pack_dependency_boundary() -> None:
         and bundled_fp == pack_paths.kb_bundled_root(mode) / "probe.md",
         f"user={user_fp} bundled={bundled_fp}",
     )
+
+    from api import pack_lifecycle
+    from core import pack_templates
+
+    with patch.object(pack_templates, "_PACK_IDENTITY_TPL", None):
+        check("建包模板打桩路径位于 core.pack_templates",
+              pack_lifecycle._templates()[1] is None)
 
 
 def run() -> None:
