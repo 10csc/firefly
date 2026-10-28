@@ -218,38 +218,3 @@ def plan_sync(local_m: dict, remote_m: dict) -> dict:
             to_download.append(path)
     return {"to_upload": to_upload, "to_download": to_download,
             "to_merge": to_merge, "same": same}
-
-
-def _content_sha(content) -> str:
-    """合并输入内容哈希（blob 判定用；bytes 直算，str 按 utf-8 编码）。"""
-    if isinstance(content, str):
-        content = content.encode("utf-8")
-    return hashlib.sha256(content).hexdigest()
-
-
-def apply_merge_file(root: Path, relpath: str, local_text: str, remote_text: str,
-                     local_mtime: float, remote_mtime: float) -> tuple[str, list, bool]:
-    """执行层裁决：返回 (新内容, 冲突行备份列表, 是否有变化)。
-    - blob（images/ 不可变文件）：不做内容合并——同 sha 跳过；异 sha（uuid 命名下几乎
-      不可能）记日志 + 保留本地 + 返回不变（changed=False）；
-    - .jsonl：append 行级确定性合并；favorites.json：并集；
-    - 其余文档类：本地已有文件时新者胜（mtime）。"""
-    fp = root / relpath
-    if storage.is_blob(relpath):
-        if _content_sha(local_text) != _content_sha(remote_text):
-            logger.warning("blob 合并请求异 sha（应罕见，uuid 命名），保留本地: %s", relpath)
-        return local_text, [], False
-    if relpath.endswith(".jsonl"):
-        merged, conflicts = merge_jsonl(local_text, remote_text)
-        changed = merged.rstrip("\n") != local_text.rstrip("\n")
-        return merged, conflicts, changed
-    if relpath.endswith("favorites.json"):
-        merged, conflicts = merge_favorites(local_text, remote_text)
-        changed = merged != local_text
-        return merged, conflicts, changed
-    # 文档类：新者胜（本地 mtime 更新则保留本地；否则用远程）
-    if (remote_mtime or 0) > (local_mtime or 0):
-        if remote_text != local_text:
-            return remote_text, [], True
-        return local_text, [], False
-    return local_text, [], False

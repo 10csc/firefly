@@ -85,6 +85,33 @@ MAX_TAGS = 20                        # ★2026-10-02：5 → 20（标签是元�
 MAX_TAG_LEN = 12
 MAX_STICKER_LABEL = 12               # 表情包标签 ≤12 字（06 §3.2；落 character/stickers.json）
 
+# 创建与改编共用的卡元数据字段。id 是卡身份，由创建/改编入口单独处理；
+# 这里不混入广场展示、审核或归档字段，避免 manifest 与 preset 的职责再次漂移。
+CARD_METADATA_FIELDS = (
+    "name", "char_name", "user_name", "presentation", "desc", "tagline",
+    "category", "tags",
+)
+
+
+def build_preset(manifest: dict) -> dict:
+    """从完整 manifest 投影安装后运行所需的 preset.json 字段。
+
+    广场展示、治理和归档字段只属于 manifest；preset 只保留聊天、检索和
+    `/modes` 实际消费的字段。需要新增运行时字段时，必须同时扩展
+    `core.preset_parse._parse_preset()` 的白名单。
+    """
+    m = manifest if isinstance(manifest, dict) else {}
+    return {
+        "id": m.get("id"),
+        "name": m.get("name"),
+        "char_name": m.get("char_name"),
+        "user_name": m.get("user_name"),
+        "presentation": m.get("presentation") or "sticker",
+        "desc": m.get("desc"),
+        "tagline": m.get("tagline") or "",
+        "schema": PRESET_SCHEMA,
+    }
+
 # character/ 下的文本白名单（06 §3.1）：根目录固定 5 个 + 根/knowledge/ 下的**自由命名**文本。
 # 自由命名是"制卡自由度"的关键（用户要能自己加删文本文件），但必须挡住路径穿越与伪扩展名。
 TEXT_EXT = (".md", ".txt", ".json")

@@ -22,185 +22,42 @@ GET /plaza/api/download 下载 card.zip（计入下载数；字节配额见 04 �
 
 import json
 import logging
-import time
-import urllib.error
-import urllib.request
 from pathlib import Path
-from urllib.parse import parse_qs, quote, urlparse
+from urllib.parse import quote
 
 from plaza import card_format as cf
 from plaza import store as st
+from plaza.card_payload import (
+    _ASSET_MIME,
+    _IMAGE_KEYS,
+    _blob_data_url,
+    _card_zip_from_payload,
+    _data_url_rel,
+    _derive_auto_id,
+    _derive_patch_files,
+    _derive_patch_images,
+)
+from plaza.http_transport import (
+    _LOCAL_PROXY_TIMEOUT,
+    _auth_base,
+    _current_user,
+    _err,
+    _is_admin_user,
+    _is_server,
+    _local_token,
+    _plaza_side,
+    _plaza_side_post,
+    _proxy,
+    _proxy_post,
+    _q,
+    _send_bytes,
+)
 
 logger = logging.getLogger(__name__)
 
 # 超时（秒）：列表/详情要快；下载在 3Mbps 上 1.5MB ≈ 4s，留足重传余量
 _T_LIST = 12
 _T_DOWNLOAD = 60
-_LOCAL_PROXY_TIMEOUT = 30
-
-_ASSET_MIME = {".webp": "image/webp", ".png": "image/png",
-               ".jpg": "image/jpeg", ".jpeg": "image/jpeg"}
-# 制卡 payload 里 `images` 允许的键（06 §3.2）；`stickers` 是数组，其余是单图 data URL。
-# `cover` 是 M1 老字段（平铺 `card.cover` 也继续接受），只为老客户端兼容而保留。
-_IMAGE_KEYS = ("avatar", "thumb", "display", "cover")
-
-
-# ── 环境判定 ─────────────────────────────────────────
-def _is_server() -> bool:
-    from routes_common import _is_server as f
-    return bool(f())
-
-
-def _auth_base() -> str:
-    from routes_auth import _auth_server_base
-    return _auth_server_base()
-
-
-def _local_token() -> str:
-    try:
-        from modules.auth_store import get_token
-        return str(get_token() or "")
-    except Exception:
-        return ""
-
-
-# ── 通用响应 ─────────────────────────────────────────
-def _send_bytes(h, blob: bytes, mime: str, *, cache: str = "no-store",
-                extra: dict | None = None, status: int = 200) -> None:
-    h.send_response(status)
-    h.send_header("Content-Type", mime)
-    h.send_header("Content-Length", len(blob))
-    h.send_header("Cache-Control", cache)
-    for k, v in (extra or {}).items():
-        h.send_header(k, v)
-    h._cors_headers()
-    h.end_headers()
-    h.wfile.write(blob)
-
-
-def _err(h, status: int, msg: str, **extra) -> None:
-    """错误响应：`{ok:false, error}`；`extra` 用于附带机读字段（如 `error_kind`）。"""
-    payload = {"ok": False, "error": msg}
-    payload.update({k: v for k, v in extra.items() if v not in (None, "")})
-    h._json(payload, status)
-
-
-def _q(h) -> dict:
-    return {k: v[0] for k, v in parse_qs(urlparse(h.path).query).items() if v}
-
-
-# ── 本地模式：代理 ────────────────────────────────────
-def _proxy(h, sub: str, timeout: int = _LOCAL_PROXY_TIMEOUT) -> None:
-    """把 /plaza/api/<sub>?<query> 原样转发到认证服务器并回传（含二进制）。
-
-    转发 `If-None-Match`：否则浏览器对广场图片的条件请求永远拿不到 304，
-    每次都要重传整张图（3Mbps 下这是白花的带宽）。
-    """
-    base = _auth_base().rstrip("/")
-    target = f"{base}/plaza/api/{sub}"
-    if "?" in h.path:
-        target += "?" + h.path.split("?", 1)[1]
-    headers = {}
-    tok = _local_token()
-    if tok:
-        headers["Authorization"] = f"Bearer {tok}"
-    inm = (h.headers.get("If-None-Match") or "").strip()
-    if inm:
-        headers["If-None-Match"] = inm
-    req = urllib.request.Request(target, headers=headers, method="GET")
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as r:
-            blob = r.read()
-            ctype = r.headers.get("Content-Type", "application/json")
-            cache = r.headers.get("Cache-Control", "no-store")
-            extra = {}
-            for key in ("Content-Disposition", "ETag"):
-                val = r.headers.get(key)
-                if val:
-                    extra[key] = val
-            _send_bytes(h, blob, ctype, cache=cache, extra=extra, status=r.status)
-    except urllib.error.HTTPError as e:
-        if e.code == 304:
-            # 304 在 urllib 里走异常分支：必须原样回 304（无 body），否则条件请求永远不命中
-            h.send_response(304)
-            etag = e.headers.get("ETag") if e.headers else None
-            if etag:
-                h.send_header("ETag", etag)
-            h.send_header("Cache-Control", "public, max-age=86400")
-            h.end_headers()
-            return
-        try:
-            h._json(json.loads(e.read().decode("utf-8")), e.code)
-        except Exception:
-            _err(h, e.code, f"广场服务返回 {e.code}")
-    except Exception as e:
-        logger.warning("广场代理失败 %s: %s", target, e)
-        _err(h, 502, f"无法连接广场服务（{base}）：{e}")
-
-
-def _proxy_post(h, sub: str, timeout: int = _LOCAL_PROXY_TIMEOUT) -> None:
-    """POST 版代理：把请求体原样转发到认证服务器（本地模式下制卡/审核/发布走这条）。
-
-    注意：**不记录请求体**（里面可能有用户自己的 API Key）。
-    """
-    from routes import _read_json
-    body = _read_json(h) or {}
-    base = _auth_base().rstrip("/")
-    headers = {"Content-Type": "application/json"}
-    tok = _local_token()
-    if tok:
-        headers["Authorization"] = f"Bearer {tok}"
-    req = urllib.request.Request(f"{base}/plaza/api/{sub}",
-                                 data=json.dumps(body, ensure_ascii=False).encode("utf-8"),
-                                 headers=headers, method="POST")
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as r:
-            h._json(json.loads(r.read().decode("utf-8")), r.status)
-    except urllib.error.HTTPError as e:
-        try:
-            h._json(json.loads(e.read().decode("utf-8")), e.code)
-        except Exception:
-            _err(h, e.code, f"广场服务返回 {e.code}")
-    except Exception as e:
-        logger.warning("广场代理失败（POST %s）", sub)
-        _err(h, 502, f"无法连接广场服务（{base}）：{e}")
-
-
-def _plaza_side(h, sub: str, timeout: int = _LOCAL_PROXY_TIMEOUT) -> bool:
-    """**广场侧**端点：本地模式一律代理到认证服务器，服务器模式由本端实现。
-
-    为什么要区分：制卡/审核/发布/下架改的是**广场的数据**（在服务器上），
-    本地后端不能在自己的盘上另存一份；而安装/卸载改的是**本人的聊天数据根**，
-    必须由本端执行。两类端点的代理策略因此相反。
-    """
-    if _is_server():
-        return False
-    _proxy(h, sub, timeout=timeout)
-    return True
-
-
-def _plaza_side_post(h, sub: str) -> bool:
-    if _is_server():
-        return False
-    _proxy_post(h, sub)
-    return True
-
-
-def _current_user(h) -> dict | None:
-    """服务器模式下取当前登录用户（本地模式由代理侧解析，本端拿不到也不影响）。"""
-    try:
-        return h._bearer_user()
-    except Exception:
-        return None
-
-
-def _is_admin_user(h) -> bool:
-    """当前用户是否管理员（**只判断、不发响应** —— 需要拒绝的端点用 `_require_admin`）。
-
-    口径与 `_require_admin` 保持一致（`role == "admin"`）。用于"管理员豁免"类语义：
-    安装配额不限（2026-10-01 用户拍板）。
-    """
-    return str((_current_user(h) or {}).get("role") or "") == "admin"
 
 
 # ── 端点 ────────────────────────────────────────────
@@ -348,277 +205,6 @@ def plaza_uninstall(h) -> None:
     h._json({"ok": True, "id": cid})
 
 
-def _data_url_rel(data_url: str, slot: str) -> tuple:
-    """图片 data URL → `(character/ 相对路径, 字节)`。扩展名按**魔数**判定（不信 MIME 声明）。
-
-    槽位名进文件名（`assets/thumb.webp`）—— store 的 `_find_asset` 按 stem 匹配，天然支持。
-    """
-    blob = cf.decode_data_url(data_url)
-    if blob[:8] == b"\x89PNG\r\n\x1a\n":
-        ext = ".png"
-    elif blob[:2] == b"\xff\xd8":
-        ext = ".jpg"
-    elif blob[:4] == b"RIFF" and blob[8:12] == b"WEBP":
-        ext = ".webp"
-    else:
-        raise cf.CardError(cf.E_BAD_IMAGE, f"{slot} 不是受支持的图片格式（只允许 png/jpg/webp）")
-    return f"assets/{slot}{ext}", blob
-
-
-def _blob_data_url(rel: str, blob: bytes) -> str:
-    """卡内图片字节 → data URL（草稿回读给前端继续编辑用）。"""
-    import base64 as _b64
-    mime = _ASSET_MIME.get(Path(rel).suffix.lower(), "application/octet-stream")
-    return "data:%s;base64,%s" % (mime, _b64.b64encode(blob).decode())
-
-
-def _card_zip_from_payload(card: dict, *, require_thumb: bool | None = None,
-                           is_admin: bool = False) -> bytes:
-    """把制卡 payload 组装成 card.zip（**preset.json 由后端生成**）。
-
-    V1 契约（06 §3.2）：`files:[{path,text}]` + `images:{avatar,thumb,display,stickers:[{data,label}]}`。
-    `label` 落 `character/stickers.json`（App 组织器按 label 选图；缺 label 合法）。
-    **老字段继续接受并等价映射**：`core`/`identity`/`sms_samples` → `files[]`，
-    平铺 `cover`/`avatar` → `assets/<槽位>.<ext>`（老客户端与老草稿不能坏）。
-
-    安全要点：用户**不能**提交自己的 `preset.json` —— 否则就能塞 `knowledge_dirs`
-    之类会改变运行时的字段（"卡只是内容"这条边界必须由后端结构性地保证）。
-    组装结果仍走 `build_card_zip` 的完整校验（体积/白名单/哈希/图片/宽高）。
-
-    `require_thumb`：默认 `None` = **看 payload 是不是新格式**（出现 `files` 或 `images` 即为新格式
-    ⇒ 强制 thumb，06 §3.3）；只发老字段的老客户端走兼容通道（否则老客户端全挂）。
-    """
-    c = card if isinstance(card, dict) else {}
-    for key in ("id", "name", "char_name", "user_name", "desc"):
-        if not str(c.get(key) or "").strip():
-            raise cf.CardError(cf.E_BAD_MANIFEST, f"缺少必填字段：{key}")
-
-    manifest = {k: c.get(k) for k in ("id", "name", "char_name", "user_name", "presentation",
-                                      "desc", "tagline", "category", "tags")}
-    files: dict = {}
-
-    # 1) 老字段（core/identity/sms_samples）——继续接受，等价映射到 files[]
-    for rel, key in (("core.md", "core"), ("identity.md", "identity"),
-                     ("sms_samples.md", "sms_samples")):
-        if str(c.get(key) or "").strip():
-            files[rel] = str(c[key]).encode("utf-8")
-
-    # 2) files[]：自由文本（V1）。同一路径**以 files[] 为准**（新格式覆盖老字段）
-    raw_files = c.get("files")
-    if raw_files is not None and not isinstance(raw_files, list):
-        raise cf.CardError(cf.E_BAD_MANIFEST, "files 必须是数组")
-    for item in raw_files or []:
-        if not isinstance(item, dict):
-            raise cf.CardError(cf.E_BAD_MANIFEST, "files[] 元素必须是 {path, text} 对象")
-        path = str(item.get("path") or "").strip().replace("\\", "/").lstrip("/")
-        if not path:
-            raise cf.CardError(cf.E_BAD_PATH, "files[] 里有条目缺 path")
-        if item.get("text") is None:
-            raise cf.CardError(cf.E_BAD_MANIFEST, f"files[] 条目缺 text：{path}")
-        if path == "preset.json":
-            raise cf.CardError(cf.E_UNKNOWN_FILE,
-                               "preset.json 由服务器生成，不接受用户提交（安全边界）")
-        if path == "opening.json":
-            raise cf.CardError(cf.E_UNKNOWN_FILE,
-                               "opening.json 请走 payload 的 opening 字段（结构化开场白）")
-        if path == "stickers.json":
-            raise cf.CardError(cf.E_UNKNOWN_FILE,
-                               "stickers.json 由 images.stickers[].label 生成，请不要直接提交")
-        cf.classify(path)          # 白名单审查：越界目录/伪扩展名一律中文报错
-        files[path] = str(item["text"]).encode("utf-8")
-
-    # 3) opening（结构化开场白；老格式允许直接给字符串）
-    opening = c.get("opening")
-    if opening:
-        if isinstance(opening, dict):
-            op = {"narrations": list(opening.get("narrations") or []),
-                  "first_messages": [str(x) for x in (opening.get("first_messages") or []) if str(x).strip()]}
-        else:
-            op = {"narrations": [], "first_messages": [str(opening)]}
-        if op["first_messages"] or op["narrations"]:
-            files["opening.json"] = json.dumps(op, ensure_ascii=False).encode("utf-8")
-
-    # 4) images：V1 `images{}` + 老平铺 `cover`/`avatar`（同一槽位以 images 为准）
-    imgs = c.get("images")
-    if imgs is not None and not isinstance(imgs, dict):
-        raise cf.CardError(cf.E_BAD_MANIFEST, "images 必须是对象")
-    imgs = imgs or {}
-    unknown = sorted(k for k in imgs if k not in _IMAGE_KEYS + ("stickers",))
-    if unknown:
-        raise cf.CardError(cf.E_UNKNOWN_FILE,
-                           f"images 里有未知槽位：{'、'.join(unknown)}"
-                           f"（可用：{'、'.join(_IMAGE_KEYS)}、stickers）")
-    for slot in _IMAGE_KEYS:                       # avatar / thumb / display / cover(老)
-        data_url = str(imgs.get(slot) or c.get(slot) or "")
-        if not data_url:
-            continue
-        rel, blob = _data_url_rel(data_url, slot)
-        files[rel] = blob
-    stickers = imgs.get("stickers")
-    if stickers is not None and not isinstance(stickers, list):
-        raise cf.CardError(cf.E_BAD_MANIFEST, "images.stickers 必须是数组")
-    labels: dict = {}
-    idx = 0
-    for s in stickers or []:
-        # V1：`{"data": "data:image/webp;base64,…", "label": "开心"}`；裸 data URL 字符串也接受（无标签）
-        if isinstance(s, dict):
-            data_url, label = str(s.get("data") or ""), s.get("label")
-        else:
-            data_url, label = str(s or ""), None
-        if not data_url:
-            continue
-        idx += 1
-        if idx > len(cf.STICKER_SLOTS):
-            raise cf.CardError(cf.E_TOO_BIG, f"表情包最多 {len(cf.STICKER_SLOTS)} 张（收到第 {idx} 张）")
-        slot = cf.STICKER_SLOTS[idx - 1]
-        rel, blob = _data_url_rel(data_url, slot)
-        files[rel] = blob
-        lab = str(label or "").strip()
-        if lab:
-            if len(lab) > cf.MAX_STICKER_LABEL:
-                raise cf.CardError(cf.E_BAD_MANIFEST,
-                                   f"表情包标签超过 {cf.MAX_STICKER_LABEL} 字：{lab}")
-            labels[Path(rel).name] = lab
-    if labels:
-        # 标签落 character/stickers.json（App 组织器按 label 语义选图，06 §3.2）
-        files["stickers.json"] = json.dumps(labels, ensure_ascii=False).encode("utf-8")
-
-    preset = {"id": c.get("id"), "name": c.get("name"), "char_name": c.get("char_name"),
-              "user_name": c.get("user_name"),
-              "presentation": c.get("presentation") or "sticker",
-              "desc": c.get("desc"), "tagline": c.get("tagline") or "", "schema": 1}
-    files["preset.json"] = json.dumps(preset, ensure_ascii=False).encode("utf-8")
-
-    if require_thumb is None:
-        require_thumb = raw_files is not None or "images" in c
-    return cf.build_card_zip(manifest, files, require_thumb=bool(require_thumb), is_admin=is_admin)
-
-
-def _derive_auto_id(base_id: str, ohash: str) -> str:
-    """没给新 id 时自动派生一个：`<base>-copy`、`-copy2`… （避开该用户已有草稿）。"""
-    from plaza import drafts as dr
-    for i in range(1, 21):
-        cid = f"{base_id}-copy" if i == 1 else f"{base_id}-copy{i}"
-        if len(cid) <= 64 and dr.load_draft(ohash, cid)[1] is None:
-            return cid
-    return f"{base_id}-copy-{int(time.time())}"[:64]
-
-
-def _derive_patch_files(card: dict, files: dict, remove: dict) -> tuple[list, list]:
-    """把文本 patch（新增/替换）与删除应用进 `files`（就地改）。返回 `(上传的路径, 删除的路径)`。"""
-    uploaded, removed = [], []
-    raw_files = card.get("files")
-    if raw_files is not None and not isinstance(raw_files, list):
-        raise cf.CardError(cf.E_BAD_MANIFEST, "files 必须是数组")
-    for item in raw_files or []:
-        if not isinstance(item, dict):
-            raise cf.CardError(cf.E_BAD_MANIFEST, "files[] 元素必须是 {path, text} 对象")
-        path = str(item.get("path") or "").strip().replace("\\", "/").lstrip("/")
-        if not path:
-            raise cf.CardError(cf.E_BAD_PATH, "files[] 里有条目缺 path")
-        if item.get("text") is None:
-            raise cf.CardError(cf.E_BAD_MANIFEST, f"files[] 条目缺 text：{path}")
-        if path in ("preset.json", "opening.json", "stickers.json"):
-            raise cf.CardError(cf.E_UNKNOWN_FILE,
-                               f"{path} 由服务器生成，不能作为 patch 上传（opening 走 opening 字段）")
-        cf.classify(path)                       # 白名单审查（越界/伪扩展名一律中文报错）
-        files[path] = str(item["text"]).encode("utf-8")
-        uploaded.append(path)
-    raw_del = remove.get("files")
-    if raw_del is not None and not isinstance(raw_del, list):
-        raise cf.CardError(cf.E_BAD_MANIFEST, "remove.files 必须是数组")
-    for rel in raw_del or []:
-        rel = str(rel or "").strip().replace("\\", "/").lstrip("/")
-        if not rel:
-            continue
-        if rel == "preset.json":
-            raise cf.CardError(cf.E_UNKNOWN_FILE, "preset.json 不能删（每张卡都必须有）")
-        if rel not in files:
-            raise cf.CardError(cf.E_UNKNOWN_FILE, f"要删的文件不在基础卡里：{rel}")
-        files.pop(rel, None)
-        removed.append(rel)
-    return uploaded, removed
-
-
-def _derive_patch_images(card: dict, remove: dict, files: dict) -> tuple[list, list]:
-    """把图片 patch（**只替换出现的槽位**）与删除应用进 `files`（就地改）。
-
-    与普通制卡的差别（也是省流量的点）：没出现的槽位/表情包**沿用基础卡**（服务端已复制），
-    不像制卡 payload 那样"给什么就是什么"。
-    `images.stickers` 一旦给出 ⇒ **整组替换**（列表本身是位置的 sticker-1..N，部分替换语义含糊）；
-    只想删某张时用 `remove.images: ["sticker-2"]`。
-    """
-    uploaded, removed = [], []
-    imgs = card.get("images")
-    if imgs is not None and not isinstance(imgs, dict):
-        raise cf.CardError(cf.E_BAD_MANIFEST, "images 必须是对象")
-    imgs = imgs or {}
-    unknown = sorted(k for k in imgs if k not in _IMAGE_KEYS + ("stickers",))
-    if unknown:
-        raise cf.CardError(cf.E_UNKNOWN_FILE,
-                           f"images 里有未知槽位：{'、'.join(unknown)}"
-                           f"（可用：{'、'.join(_IMAGE_KEYS)}、stickers）")
-    for slot in _IMAGE_KEYS:                     # 替换：先删旧同槽位（扩展名可能不同），再写新的
-        url = str(imgs.get(slot) or "")
-        if not url:
-            continue
-        rel, blob = _data_url_rel(url, slot)
-        for old in [k for k in files if k.startswith("assets/") and Path(k).stem == slot]:
-            files.pop(old, None)
-        files[rel] = blob
-        uploaded.append(rel)
-    stickers = imgs.get("stickers")
-    if stickers is not None:
-        if not isinstance(stickers, list):
-            raise cf.CardError(cf.E_BAD_MANIFEST, "images.stickers 必须是数组")
-        labels = st._sticker_labels_from_files(files)   # 先用基础卡的标签做底
-        for old in [k for k in files if k.startswith("assets/sticker-")]:
-            files.pop(old, None)
-        files.pop("stickers.json", None)
-        idx = 0
-        for s in stickers:
-            data_url = str(s.get("data") or "") if isinstance(s, dict) else str(s or "")
-            label = (s.get("label") if isinstance(s, dict) else None)
-            if not data_url:
-                continue
-            idx += 1
-            if idx > len(cf.STICKER_SLOTS):
-                raise cf.CardError(cf.E_TOO_BIG, f"表情包最多 {len(cf.STICKER_SLOTS)} 张（收到第 {idx} 张）")
-            slot = cf.STICKER_SLOTS[idx - 1]
-            rel, blob = _data_url_rel(data_url, slot)
-            files[rel] = blob
-            uploaded.append(rel)
-            lab = str(label or "").strip()
-            if lab and len(lab) > cf.MAX_STICKER_LABEL:
-                raise cf.CardError(cf.E_BAD_MANIFEST, f"表情包标签超过 {cf.MAX_STICKER_LABEL} 字：{lab}")
-            if lab:
-                labels[Path(rel).name] = lab
-        # 标签只留**还在卡里**的那些（删掉的表情包不能留悬空标签）
-        labels = {k: v for k, v in labels.items() if f"assets/{k}" in files}
-        if labels:
-            files["stickers.json"] = json.dumps(labels, ensure_ascii=False).encode("utf-8")
-    raw_del = remove.get("images")
-    if raw_del is not None and not isinstance(raw_del, list):
-        raise cf.CardError(cf.E_BAD_MANIFEST, "remove.images 必须是数组")
-    for item in raw_del or []:
-        key = str(item or "").strip().replace("\\", "/")
-        if not key:
-            continue
-        stem = Path(key).stem if key.startswith("assets/") else key
-        hits = [k for k in files if k.startswith("assets/") and Path(k).stem == stem]
-        if not hits:
-            raise cf.CardError(cf.E_UNKNOWN_FILE, f"要删的图片不在基础卡里：{key}")
-        for k in hits:
-            files.pop(k, None)
-            removed.append(k)
-    labels = {k: v for k, v in st._sticker_labels_from_files(files).items() if f"assets/{k}" in files}
-    if labels:
-        files["stickers.json"] = json.dumps(labels, ensure_ascii=False).encode("utf-8")
-    elif "stickers.json" in files and not any(k.startswith("assets/sticker-") for k in files):
-        files.pop("stickers.json", None)          # 表情包全删了就别留空标签文件
-    return uploaded, removed
-
-
 def plaza_derive(h) -> None:
     """POST /plaza/api/derive —— 以**已发布的广场卡**为模板，**服务端复制**成自己的新草稿，
     只上传 `patch` 里变化的文件（未改的文本/图片不用重传 ⇒ 省流量）。
@@ -667,12 +253,10 @@ def plaza_derive(h) -> None:
         up_i, rm_i = _derive_patch_images(card, remove, files)
         # ② 元数据：base 的**卡字段**打底，patch 里出现的才覆盖；id 换新（其余运行期字段一律不带过来）
         manifest = {}
-        for k in ("name", "char_name", "user_name", "presentation", "desc", "tagline",
-                  "category", "tags"):
+        for k in cf.CARD_METADATA_FIELDS:
             if base["manifest"].get(k) is not None:
                 manifest[k] = base["manifest"][k]
-        for k in ("name", "char_name", "user_name", "presentation", "desc", "tagline",
-                  "category", "tags"):
+        for k in cf.CARD_METADATA_FIELDS:
             if k in card and card.get(k) is not None:
                 manifest[k] = card.get(k)
         new_id = str(card.get("id") or "").strip() or _derive_auto_id(base_id, ohash)
@@ -687,13 +271,10 @@ def plaza_derive(h) -> None:
             if op["first_messages"] or op["narrations"]:
                 files["opening.json"] = json.dumps(op, ensure_ascii=False).encode("utf-8")
                 up_f.append("opening.json")
-        # preset.json 由后端**按新卡重新生成**（与 `_card_zip_from_payload` 同一口径）
+        # preset.json 由后端按新卡重新生成，与制卡入口共用同一字段投影。
         files["preset.json"] = json.dumps(
-            {"id": new_id, "name": manifest.get("name"), "char_name": manifest.get("char_name"),
-             "user_name": manifest.get("user_name"),
-             "presentation": manifest.get("presentation") or "sticker",
-             "desc": manifest.get("desc"), "tagline": manifest.get("tagline") or "",
-             "schema": 1}, ensure_ascii=False).encode("utf-8")
+            cf.build_preset(manifest), ensure_ascii=False
+        ).encode("utf-8")
         require_thumb = bool(card.get("files") or "images" in card or cf.thumb_name(files))
         data = cf.build_card_zip(manifest, files, require_thumb=require_thumb, is_admin=is_admin)
         meta = dr.save_draft(ohash, data, display=dr.clean_display(body.get("display"), user),
