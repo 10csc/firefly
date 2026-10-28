@@ -439,8 +439,10 @@ export async function loadConfig() {
         const srcField = _$("api-source-field");
         const localSrc = (() => { try { return localStorage.getItem("firefly_api_source") || "own"; } catch (e) { return "own"; } })();
         if (srcSel) {
-            srcSel.value = localSrc === "proxy" ? "proxy" : "own";
-            applyApiSource(IS_SERVER && localSrc === "proxy");
+            // 2026-10-22：托管入口已下线；旧 localStorage 里的 proxy 一律迁回 own。
+            try { localStorage.setItem("firefly_api_source", "own"); } catch (e) {}
+            srcSel.value = "own";
+            applyApiSource(false);
         }
         if (srcField) srcField.style.display = IS_SERVER ? "" : "none";
         // A5：增量同步（本地版登录后可用；服务器版数据天然在云端）
@@ -569,7 +571,8 @@ _$("provider-fetch-models")?.addEventListener("click", () => _fetchAndFillModels
 
 const apiSourceSel = _$("api-source-select");
 if (apiSourceSel) {
-    apiSourceSel.addEventListener("change", () => applyApiSource(apiSourceSel.value === "proxy"));
+    // 2026-10-22：只剩 own 一个选项，不再触发托管分支。
+    apiSourceSel.addEventListener("change", () => applyApiSource(false));
 }
 
 _$("key-save")?.addEventListener("click", () => saveConfigNow(true));

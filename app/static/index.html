@@ -206,7 +206,7 @@ svg.ico{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:1.8;st
 <!-- ★ PC 覆盖样式必须**放在这个内联 <style> 之后**：内联块里有针对
      `#settings-panel .settings-body > *` 的限宽规则，同优先级下后加载的才生效。
      （2026-09-19 实测：放在 <head> 开头时，PC 的设置两栏栅格被这条 720px 规则压回单列。） -->
-<link rel="stylesheet" href="pc.css?v=7cd47170">
+<link rel="stylesheet" href="pc.css?v=9cdd5abe">
 </head>
 <body>
 <!-- SVG 图标精灵（用 <use href="#i-…"> 引用） -->
@@ -634,11 +634,7 @@ svg.ico{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:1.8;st
                     <label>API 来源</label>
                     <select id="api-source-select">
                         <option value="own">用户自带 Key（默认）</option>
-                        <option value="proxy">服务器托管 API</option>
                     </select>
-                    <div id="api-proxy-tip" style="display:none;color:var(--fg-accent);font-size:0.7em;line-height:1.7;margin-top:6px;padding:8px 10px;border:1px solid var(--gold-line);border-radius:8px;background:var(--gold-glow)">
-                        ⚠ 托管模式下，开发者可能会收集对话数据以优化 Agent 流程。
-                    </div>
                 </div>
                 <div class="field" id="api-own-fields">
                     <label id="key-label">API Key（仅存本机，不上传）</label>
@@ -1203,7 +1199,7 @@ svg.ico{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:1.8;st
 </script>
 <script src="config.js"></script>
 <!-- 运行时入口：bundle.js（classic script，file:// 兼容；ES Module 在安卓服务器模式 file:// 下被 CORS 拦截） -->
-<script src="js/bundle.js?v=8cbd20bf"></script>
+<script src="js/bundle.js?v=8f545dac"></script>
 <script src="js/pc_shell.js"></script>
 </body>
 </html>

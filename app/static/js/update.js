@@ -27,7 +27,7 @@ const UPDATE_SOURCES = [
     { api: "https://gitee.com/api/v5/repos/cpt-asymmetry/firefly/releases/latest", html: "https://gitee.com/cpt-asymmetry/firefly/releases" },
 ];
 // 公共下载页：APK 主通道走 Gitee，微信/QQ 等不支持 blob 下载的内置浏览器会自动走服务器直连（正确 MIME）
-const DOWNLOAD_PAGE_URL = "http://101.200.14.126:8787/download/";
+const DOWNLOAD_PAGE_URL = "https://101.200.14.126/download/";
 function compareVersions(a, b) {
     const pa = String(a).split(".").map(n => parseInt(n) || 0);
     const pb = String(b).split(".").map(n => parseInt(n) || 0);
@@ -59,11 +59,11 @@ function _renderFound(msg, latest, cur, opts) {
     const notes = opts.notes ? ` ｜ <a href="${escapeHtml(opts.notes)}" target="_blank" rel="noopener" style="color:var(--fg-muted)">发行说明</a>` : "";
     const head = `发现新版本 <b style="color:var(--fg-accent)">${escapeHtml(latest)}</b>（当前 ${escapeHtml(cur)}）`;
     if (opts.auto) {
+        // 2026-10-22 安全缓解（P8-5）：py 安全补丁要重启才生效，重启前旧更新链仍有 MITM 风险。
+        // 在用户重启、py 验签器生效之前，不再提供"自动更新"入口；改为引导下载页手动安装。
         msg.innerHTML = head + `<br>` +
-            `<button id="auto-update-btn" style="margin-top:6px;padding:4px 12px;border-radius:6px;border:none;background:var(--fg-accent);color:#fff;cursor:pointer">自动更新</button>` +
-            notes;
-        const btn = document.getElementById("auto-update-btn");
-        if (btn) btn.addEventListener("click", () => autoUpdate(opts.isAndroid));
+            `<span style="color:var(--fg-muted)">安全修复待重启：请完全退出并重新打开 App 后，再前往下载页手动更新。</span>` +
+            ` <a href="${DOWNLOAD_PAGE_URL}" target="_blank" rel="noopener" style="color:var(--fg-bright)">前往下载页</a>` + notes;
         return;
     }
     if (opts.directUrl) {
@@ -165,7 +165,10 @@ if (checkUpdateBtn) checkUpdateBtn.addEventListener("click", checkUpdate);
 async function autoUpdate(isAndroid) {
     const msg = document.getElementById("update-msg");
     if (!msg) return;
-    msg.textContent = "下载中…（约 30-60 秒，请勿关闭应用）";
+    // 2026-10-22 安全缓解：本版本不自动下载/执行安装器；等用户重启完成 py 验签器生效后，
+    // 再通过后续 web patch 或整包恢复自动更新。直接调用此函数也被挡住。
+    msg.textContent = "安全修复需要重启 App 后再生效；请完全退出并重新打开，或前往下载页手动安装。";
+    return;
     try {
         const resp = await fetch("/update-download", {
             method: "POST",

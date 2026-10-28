@@ -625,7 +625,13 @@ async function compressImage(file) {
 // 5. 检查更新：server 读服务器 version.json；local 走 GitHub/Gitee（后端优先）
 const FIREFLY_MODE = window.FIREFLY_MODE || (window.FIREFLY_SERVER_BASE ? "server" : "local");
 const IS_SERVER = FIREFLY_MODE === "server";
-const API_BASE = IS_SERVER ? (window.FIREFLY_SERVER_BASE || "") : "";
+// 2026-10-24：旧 APK 的 assets/config.js 仍写 http://101.200.14.126:8787；
+// 官方地址统一升级为 443 TLS，避免服务器网页/回退模式继续走明文。
+function _secureServerBase(v) {
+    const s = String(v || "").replace(/\/+$/, "");
+    return s === "http://101.200.14.126:8787" ? "https://101.200.14.126" : s;
+}
+const API_BASE = IS_SERVER ? _secureServerBase(window.FIREFLY_SERVER_BASE) : "";
 const _serverFetch = window.fetch;
 
 // 服务器模式：账号 + Key 请求头注入（本地模式原样直通，同源无跨域）
@@ -645,32 +651,14 @@ window.fetch = async function (url, opts) {
     const headers = new Headers(opts.headers || {});
     let k = getLocalApiKey();   // 单点读取：providers 优先 + legacy 兜底（防偶发“每轮需重设 Key”）
     let b = ""; try { b = localStorage.getItem("firefly_api_base") || ""; } catch (e) {}
-    let src = ""; try { src = localStorage.getItem("firefly_api_source") || ""; } catch (e) {}
-    if (src === "proxy") {
-        // 托管模式：不传用户 Key，标记服务器用运营者 Key 直发（OpenCode Go）
-        headers.set("X-API-Mode", "proxy");
-    } else {
-        if (k) headers.set("X-API-Key", k);
-        if (b) headers.set("X-API-Base", b);
-    }
+    // 2026-10-22：OpenCode 托管已停用，客户端不再发送 X-API-Mode:proxy（入口也已下线）。
+    if (k) headers.set("X-API-Key", k);
+    if (b) headers.set("X-API-Base", b);
     // 服务器版账号：登录态带 Bearer token（Key 仍只存本机，token 是账号会话）
     let t = ""; try { t = localStorage.getItem("firefly_token") || ""; } catch (e) {}
     if (t) headers.set("Authorization", "Bearer " + t);
-    // ── 敏感头加密（失败退回明文，见上方说明）──
-    try {
-        const pairs = [];
-        SECRET_HEADERS.forEach(function (name) {
-            const v = headers.get(name);
-            if (v) pairs.push([name, v]);
-        });
-        if (pairs.length) {
-            const r = await encHead(pairs);
-            if (r && r.enc) {
-                SECRET_HEADERS.forEach(function (name) { headers.delete(name); });
-                headers.set(ENC_HEADER, r.enc);
-            }
-        }
-    } catch (e) { /* 保持明文 —— 服务器两种都收 */ }
+    // 2026-10-22：停用应用层信封（TLS 上线后由其承担传输加密；旧信封无 nonce、且服务端未启用，
+    // 只会导致 App 服务器回落模式登录后全程 401）。不再加密/删除敏感头。
     // 相对路径 → 服务器绝对 URL（本地 file:// 页面无同源相对路径）
     let fullUrl = String(url);
     if (fullUrl.startsWith("/")) fullUrl = API_BASE + fullUrl;
@@ -7297,8 +7285,10 @@ async function loadConfig() {
         const srcField = _$("api-source-field");
         const localSrc = (() => { try { return localStorage.getItem("firefly_api_source") || "own"; } catch (e) { return "own"; } })();
         if (srcSel) {
-            srcSel.value = localSrc === "proxy" ? "proxy" : "own";
-            applyApiSource(IS_SERVER && localSrc === "proxy");
+            // 2026-10-22：托管入口已下线；旧 localStorage 里的 proxy 一律迁回 own。
+            try { localStorage.setItem("firefly_api_source", "own"); } catch (e) {}
+            srcSel.value = "own";
+            applyApiSource(false);
         }
         if (srcField) srcField.style.display = IS_SERVER ? "" : "none";
         // A5：增量同步（本地版登录后可用；服务器版数据天然在云端）
@@ -7427,7 +7417,8 @@ _$("provider-fetch-models")?.addEventListener("click", () => _fetchAndFillModels
 
 const apiSourceSel = _$("api-source-select");
 if (apiSourceSel) {
-    apiSourceSel.addEventListener("change", () => applyApiSource(apiSourceSel.value === "proxy"));
+    // 2026-10-22：只剩 own 一个选项，不再触发托管分支。
+    apiSourceSel.addEventListener("change", () => applyApiSource(false));
 }
 
 _$("key-save")?.addEventListener("click", () => saveConfigNow(true));
@@ -7461,7 +7452,7 @@ const UPDATE_SOURCES = [
     { api: "https://gitee.com/api/v5/repos/cpt-asymmetry/firefly/releases/latest", html: "https://gitee.com/cpt-asymmetry/firefly/releases" },
 ];
 // 公共下载页：APK 主通道走 Gitee，微信/QQ 等不支持 blob 下载的内置浏览器会自动走服务器直连（正确 MIME）
-const DOWNLOAD_PAGE_URL = "http://101.200.14.126:8787/download/";
+const DOWNLOAD_PAGE_URL = "https://101.200.14.126/download/";
 function compareVersions(a, b) {
     const pa = String(a).split(".").map(n => parseInt(n) || 0);
     const pb = String(b).split(".").map(n => parseInt(n) || 0);
@@ -7493,11 +7484,11 @@ function _renderFound(msg, latest, cur, opts) {
     const notes = opts.notes ? ` ｜ <a href="${escapeHtml(opts.notes)}" target="_blank" rel="noopener" style="color:var(--fg-muted)">发行说明</a>` : "";
     const head = `发现新版本 <b style="color:var(--fg-accent)">${escapeHtml(latest)}</b>（当前 ${escapeHtml(cur)}）`;
     if (opts.auto) {
+        // 2026-10-22 安全缓解（P8-5）：py 安全补丁要重启才生效，重启前旧更新链仍有 MITM 风险。
+        // 在用户重启、py 验签器生效之前，不再提供"自动更新"入口；改为引导下载页手动安装。
         msg.innerHTML = head + `<br>` +
-            `<button id="auto-update-btn" style="margin-top:6px;padding:4px 12px;border-radius:6px;border:none;background:var(--fg-accent);color:#fff;cursor:pointer">自动更新</button>` +
-            notes;
-        const btn = document.getElementById("auto-update-btn");
-        if (btn) btn.addEventListener("click", () => autoUpdate(opts.isAndroid));
+            `<span style="color:var(--fg-muted)">安全修复待重启：请完全退出并重新打开 App 后，再前往下载页手动更新。</span>` +
+            ` <a href="${DOWNLOAD_PAGE_URL}" target="_blank" rel="noopener" style="color:var(--fg-bright)">前往下载页</a>` + notes;
         return;
     }
     if (opts.directUrl) {
@@ -7599,7 +7590,10 @@ if (checkUpdateBtn) checkUpdateBtn.addEventListener("click", checkUpdate);
 async function autoUpdate(isAndroid) {
     const msg = document.getElementById("update-msg");
     if (!msg) return;
-    msg.textContent = "下载中…（约 30-60 秒，请勿关闭应用）";
+    // 2026-10-22 安全缓解：本版本不自动下载/执行安装器；等用户重启完成 py 验签器生效后，
+    // 再通过后续 web patch 或整包恢复自动更新。直接调用此函数也被挡住。
+    msg.textContent = "安全修复需要重启 App 后再生效；请完全退出并重新打开，或前往下载页手动安装。";
+    return;
     try {
         const resp = await fetch("/update-download", {
             method: "POST",
@@ -7705,20 +7699,23 @@ window.autoSyncNow = async function (force) {
             body: JSON.stringify({mode: "all"}),   // 全包同步（全部角色包）
         });
         const d = await r.json().catch(() => ({}));
-        if (d.ok) {
+        if (r.ok && d.ok) {
             const text = `同步完成：上传 ${(d.uploaded || []).length} · 下载 ${(d.downloaded || []).length} · 合并 ${(d.merged || []).length}`;
             const conflicts = d.conflicts || 0;
             if (msg) msg.textContent = "✓ " + text + (conflicts ? `，冲突 ${conflicts}（见 .sync_backups）` : "");
             showToast(text);
             if (conflicts > 0) _warnToast(`${conflicts} 处冲突已各自备份`);
         } else {
-            const err = "同步未完成：" + (d.error || "请先登录账号");
+            const code = d.code ? `[${d.code}${d.trace_id ? " · " + d.trace_id : ""}] ` : "";
+            const err = "同步未完成：" + code + (d.error || `HTTP ${r.status}`);
             if (msg) msg.textContent = err;
             showToast(err);
         }
     } catch (e) {
-        if (msg) msg.textContent = "网络错误，稍后再试";
-        showToast("同步失败：网络错误，稍后再试");
+        const detail = (e && e.message) ? `：${e.message}` : "，稍后再试";
+        const err = "同步失败：无法连接本地后端" + detail;
+        if (msg) msg.textContent = err;
+        showToast(err);
     } finally {
         _syncPillHide();
         _syncing = false;

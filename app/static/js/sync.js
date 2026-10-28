@@ -63,20 +63,23 @@ window.autoSyncNow = async function (force) {
             body: JSON.stringify({mode: "all"}),   // 全包同步（全部角色包）
         });
         const d = await r.json().catch(() => ({}));
-        if (d.ok) {
+        if (r.ok && d.ok) {
             const text = `同步完成：上传 ${(d.uploaded || []).length} · 下载 ${(d.downloaded || []).length} · 合并 ${(d.merged || []).length}`;
             const conflicts = d.conflicts || 0;
             if (msg) msg.textContent = "✓ " + text + (conflicts ? `，冲突 ${conflicts}（见 .sync_backups）` : "");
             showToast(text);
             if (conflicts > 0) _warnToast(`${conflicts} 处冲突已各自备份`);
         } else {
-            const err = "同步未完成：" + (d.error || "请先登录账号");
+            const code = d.code ? `[${d.code}${d.trace_id ? " · " + d.trace_id : ""}] ` : "";
+            const err = "同步未完成：" + code + (d.error || `HTTP ${r.status}`);
             if (msg) msg.textContent = err;
             showToast(err);
         }
     } catch (e) {
-        if (msg) msg.textContent = "网络错误，稍后再试";
-        showToast("同步失败：网络错误，稍后再试");
+        const detail = (e && e.message) ? `：${e.message}` : "，稍后再试";
+        const err = "同步失败：无法连接本地后端" + detail;
+        if (msg) msg.textContent = err;
+        showToast(err);
     } finally {
         _syncPillHide();
         _syncing = false;

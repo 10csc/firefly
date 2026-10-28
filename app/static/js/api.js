@@ -1,7 +1,6 @@
 // 双模式与请求封装：FIREFLY_MODE / fetch 鉴权注入 / 登录与注册表单
 import { showToast, getLocalApiKey } from "./util.js";
 import { initAssets } from "./relay.js";
-import { encHead, ENC_HEADER, SECRET_HEADERS } from "./session_crypto.js";
 
 // ═══════════════════════════════════════════
 // 双模式（0.8.0）
@@ -20,7 +19,13 @@ import { encHead, ENC_HEADER, SECRET_HEADERS } from "./session_crypto.js";
 // 5. 检查更新：server 读服务器 version.json；local 走 GitHub/Gitee（后端优先）
 const FIREFLY_MODE = window.FIREFLY_MODE || (window.FIREFLY_SERVER_BASE ? "server" : "local");
 export const IS_SERVER = FIREFLY_MODE === "server";
-export const API_BASE = IS_SERVER ? (window.FIREFLY_SERVER_BASE || "") : "";
+// 2026-10-24：旧 APK 的 assets/config.js 仍写 http://101.200.14.126:8787；
+// 官方地址统一升级为 443 TLS，避免服务器网页/回退模式继续走明文。
+function _secureServerBase(v) {
+    const s = String(v || "").replace(/\/+$/, "");
+    return s === "http://101.200.14.126:8787" ? "https://101.200.14.126" : s;
+}
+export const API_BASE = IS_SERVER ? _secureServerBase(window.FIREFLY_SERVER_BASE) : "";
 export const _serverFetch = window.fetch;
 
 // 服务器模式：账号 + Key 请求头注入（本地模式原样直通，同源无跨域）
@@ -40,32 +45,14 @@ window.fetch = async function (url, opts) {
     const headers = new Headers(opts.headers || {});
     let k = getLocalApiKey();   // 单点读取：providers 优先 + legacy 兜底（防偶发“每轮需重设 Key”）
     let b = ""; try { b = localStorage.getItem("firefly_api_base") || ""; } catch (e) {}
-    let src = ""; try { src = localStorage.getItem("firefly_api_source") || ""; } catch (e) {}
-    if (src === "proxy") {
-        // 托管模式：不传用户 Key，标记服务器用运营者 Key 直发（OpenCode Go）
-        headers.set("X-API-Mode", "proxy");
-    } else {
-        if (k) headers.set("X-API-Key", k);
-        if (b) headers.set("X-API-Base", b);
-    }
+    // 2026-10-22：OpenCode 托管已停用，客户端不再发送 X-API-Mode:proxy（入口也已下线）。
+    if (k) headers.set("X-API-Key", k);
+    if (b) headers.set("X-API-Base", b);
     // 服务器版账号：登录态带 Bearer token（Key 仍只存本机，token 是账号会话）
     let t = ""; try { t = localStorage.getItem("firefly_token") || ""; } catch (e) {}
     if (t) headers.set("Authorization", "Bearer " + t);
-    // ── 敏感头加密（失败退回明文，见上方说明）──
-    try {
-        const pairs = [];
-        SECRET_HEADERS.forEach(function (name) {
-            const v = headers.get(name);
-            if (v) pairs.push([name, v]);
-        });
-        if (pairs.length) {
-            const r = await encHead(pairs);
-            if (r && r.enc) {
-                SECRET_HEADERS.forEach(function (name) { headers.delete(name); });
-                headers.set(ENC_HEADER, r.enc);
-            }
-        }
-    } catch (e) { /* 保持明文 —— 服务器两种都收 */ }
+    // 2026-10-22：停用应用层信封（TLS 上线后由其承担传输加密；旧信封无 nonce、且服务端未启用，
+    // 只会导致 App 服务器回落模式登录后全程 401）。不再加密/删除敏感头。
     // 相对路径 → 服务器绝对 URL（本地 file:// 页面无同源相对路径）
     let fullUrl = String(url);
     if (fullUrl.startsWith("/")) fullUrl = API_BASE + fullUrl;
