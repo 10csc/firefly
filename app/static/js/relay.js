@@ -9,50 +9,88 @@ import { getLocalApiKey } from "./util.js";
 // 服务器流水线的 LLM 请求在服务器入队（资产用 __CORE__ 等占位符表示），
 // 本页 1s 轮询取件 → 占位符填充（本地资产）→ 用户 Key 直连 api_base 代发 → 回传。
 // 资产（知识库/核心设定/身份/短信样本，~500KB）下载后缓存 localStorage（5MB 上限绰绰有余）。
-let _assets = { knowledge: "", core: "", identity: "", sms_samples: "" };
+let _assets = { scope: "", knowledge: "", core: "", identity: "", sms_samples: "" };
 let _relayBusy = false;
+let _assetLoadSeq = 0;
 
-function _assetStoreKey(name) { return "firefly_asset_" + name + "_" + CURRENT_MODE; }
+function _scopePart(value) {
+    const text = String(value || "").trim();
+    return encodeURIComponent(text || "none");
+}
+
+function _accountKey() {
+    try {
+        const account = localStorage.getItem("firefly_account") || "";
+        if (account) return account;
+        // 兼容升级前的会话：旧版本未保存邮箱，用 token 自身承担账号归属；
+        // /auth/me 或下次登录会补成稳定邮箱键，并触发对应资产刷新。
+        const token = localStorage.getItem("firefly_token") || "";
+        return token ? "token-" + token : "";
+    } catch (e) { return ""; }
+}
+
+function _assetScope(mode = CURRENT_MODE) {
+    return [_scopePart(API_BASE || "local"), _scopePart(_accountKey()), _scopePart(mode)].join("::");
+}
+
+function _assetStoreKey(name, scope = _assetScope()) {
+    return "firefly_asset_" + scope + "::" + name;
+}
+
+function _assetIndexKey(scope) {
+    return "firefly_assets_idx_" + scope;
+}
+
+function _assetsCurrent() {
+    return !!_assets.scope && _assets.scope === _assetScope();
+}
 
 export async function initAssets() {
     // 资产本地化：清单指纹对比 → 差异下载 → 缓存。登录后/模式切换时调用。
     if (!IS_SERVER) return;   // 本地模式：知识库/设定由本地后端直接注入，无需本地化
     const mode = CURRENT_MODE;
+    const scope = _assetScope(mode);
+    const loadSeq = ++_assetLoadSeq;
+    const snapshot = { knowledge: "", core: "", identity: "", sms_samples: "" };
     try {
         const idxResp = await fetch("/assets/index?mode=" + mode);
         const idx = await idxResp.json();
-        const local = (() => { try { return JSON.parse(localStorage.getItem("firefly_assets_idx") || "{}"); } catch (e) { return {}; } })();
+        const local = (() => { try { return JSON.parse(localStorage.getItem(_assetIndexKey(scope)) || "{}"); } catch (e) { return {}; } })();
         const assetGroups = {
             knowledge: idx.knowledge, core: idx.character.core,
             identity: idx.character.identity, sms_samples: idx.character.sms_samples,
         };
         for (const [name, info] of Object.entries(assetGroups || {})) {
-            const cacheKey = name + ":" + mode;
             const ver = (info && info.version) || "0";
-            if ((local[cacheKey] || "") !== ver && ver !== "0") {
+            if ((local[name] || "") !== ver && ver !== "0") {
                 try {
                     const rawResp = await fetch("/assets/raw?name=" + name + "&mode=" + mode);
                     const raw = await rawResp.json();
                     if (raw.content) {
-                        localStorage.setItem(_assetStoreKey(name), raw.content);
-                        local[cacheKey] = ver;
+                        localStorage.setItem(_assetStoreKey(name, scope), raw.content);
+                        local[name] = ver;
                     }
                 } catch (e) { /* 单项失败不阻塞其余资产 */ }
             }
         }
-        try { localStorage.setItem("firefly_assets_idx", JSON.stringify(local)); } catch (e) {}
+        try { localStorage.setItem(_assetIndexKey(scope), JSON.stringify(local)); } catch (e) {}
     } catch (e) {
         // 同步失败（未登录/网络）：用已有缓存兜底（首次无缓存时占位符以空串填充，模型仍可聊天）
     }
-    // 无论同步成败，从缓存装配当前模式资产
+    // 无论同步成败，从缓存装配捕获到的模式资产；若期间已切包/切账号/切服务器，
+    // 完成较晚的旧请求不得覆盖当前内存快照。
     for (const name of ["knowledge", "core", "identity", "sms_samples"]) {
-        try { _assets[name] = localStorage.getItem(_assetStoreKey(name)) || ""; } catch (e) { _assets[name] = ""; }
+        try { snapshot[name] = localStorage.getItem(_assetStoreKey(name, scope)) || ""; } catch (e) { snapshot[name] = ""; }
+    }
+    if (loadSeq === _assetLoadSeq && scope === _assetScope()) {
+        _assets = { scope, ...snapshot };
     }
 }
 
 function fillPlaceholders(payload) {
+    if (!_assetsCurrent()) return false;
     const msgs = payload && payload.messages;
-    if (!Array.isArray(msgs)) return;
+    if (!Array.isArray(msgs)) return true;
     for (const m of msgs) {
         if (typeof m.content === "string" && m.content.indexOf("__") >= 0) {
             m.content = m.content
@@ -62,6 +100,7 @@ function fillPlaceholders(payload) {
                 .replaceAll("__KNOWLEDGE__", _assets.knowledge || "");
         }
     }
+    return true;
 }
 
 // A8 能力探测（服务器版）：供应商拒绝 DeepSeek 私有参数（thinking/reasoning_effort）时
@@ -104,6 +143,7 @@ async function relayTick() {
     if (_relayBusy) return;
     const token = (() => { try { return localStorage.getItem("firefly_token") || ""; } catch (e) { return ""; } })();
     if (!token) return;   // 未登录：服务器不会入队
+    if (!_assetsCurrent()) return;   // 资产尚未就绪时先取件会让旧包内容填进新请求
     let pending = null;
     try {
         const resp = await _serverFetch(API_BASE + "/relay/pending", {
@@ -120,7 +160,7 @@ async function relayTick() {
         const apiBase = pending.api_base || "https://api.deepseek.com/v1";
         const key = getLocalApiKey();   // 单点读取：providers 优先 + legacy 兜底
         if (!key) throw new Error("no key");
-        fillPlaceholders(pending.payload);
+        if (!fillPlaceholders(pending.payload)) throw new Error("asset scope changed");
         // 中转降级：服务器用本请求 X-API-Key 头代发（Key 内存即弃不落盘），
         // call_id 必须匹配服务器队列中真实 pending 项（非开放代理），
         // 服务器回传时已唤醒流水线（带状态码做错误分类），前端无需再调 /relay/result

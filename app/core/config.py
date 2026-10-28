@@ -33,7 +33,7 @@ def pack_cfg(mode: str, key: str, default=None):
                 return data[key]
     except Exception:
         pass
-    return config.get(key, default)
+    return eff_cfg(key, default)
 
 
 def set_pack_cfg(mode: str, updates: dict) -> None:

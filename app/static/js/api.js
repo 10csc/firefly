@@ -116,9 +116,13 @@ export function initAuth() {
         fetch("/auth/me").then(r => r.json()).then(d => {
             if (d.error) {
                 try { localStorage.removeItem("firefly_token"); } catch (e) {}
+                try { localStorage.removeItem("firefly_account"); } catch (e) {}
                 if (loginEntry) loginEntry.style.display = "flex";
                 if (userEntry) userEntry.style.display = "none";
             } else {
+                try {
+                    if (d.email) localStorage.setItem("firefly_account", String(d.email).trim().toLowerCase());
+                } catch (e) {}
                 const emailEl = document.getElementById("auth-email");
                 const meta = document.getElementById("auth-meta");
                 if (emailEl) emailEl.textContent = "邮箱 " + (d.email || "");
@@ -152,6 +156,7 @@ function logout() {
     const t = (() => { try { return localStorage.getItem("firefly_token") || ""; } catch (e) { return ""; } })();
     if (t) fetch("/auth/logout", {method: "POST"}).catch(() => {});
     try { localStorage.removeItem("firefly_token"); } catch (e) {}
+    try { localStorage.removeItem("firefly_account"); } catch (e) {}
     location.reload();
 }
 window.logout = logout;   // 内联 onclick（账号卡片「退出登录」）
@@ -226,6 +231,7 @@ function initAuthForms() {
         }).then(r => r.json()).then(d => {
             if (d.ok) {
                 localStorage.setItem("firefly_token", d.token);
+                try { localStorage.setItem("firefly_account", $("loginEmail").value.trim().toLowerCase()); } catch (e) {}
                 location.reload();
             } else showErr($("loginErr"), d.error || "登录失败");
         }).catch(() => showErr($("loginErr"), "网络错误"));

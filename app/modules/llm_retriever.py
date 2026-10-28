@@ -65,9 +65,9 @@ _KNOWLEDGE_SHADOW_GROUP = "pkg"       # 同组内的根按"先出现者优先"�
 
 def _knowledge_roots(mode: str = DEFAULT_MODE) -> tuple:
     """知识源根清单：`((目录, 遮蔽组), …)`，顺序 = 优先级。"""
-    from modules.app_config import PRESETS, bundled_character_dir, mode_character_dir
+    from modules.app_config import bundled_character_dir, mode_character_dir, pack_meta
     roots: list = []
-    for d in ((PRESETS.get(mode) or {}).get("knowledge_dirs") or []):
+    for d in ((pack_meta(mode) or {}).get("knowledge_dirs") or []):
         # 声明的仓库目录各自独立成组：互不遮蔽，保持既有语义
         roots.append((ROOT / d, f"declared::{d}"))
     roots.append((mode_character_dir(mode) / "knowledge", _KNOWLEDGE_SHADOW_GROUP))

@@ -137,8 +137,8 @@ class Organizer:
     def organize(self, inp: OrganizerInput) -> OrganizerOutput:
         # 演出形态按预设包声明分发（presentation）：sticker=表情包 / narration=旁白 /
         # none=纯文本（零 LLM 调用直接空输出）
-        from modules.app_config import PRESETS
-        pres = (PRESETS.get(inp.mode) or {}).get("presentation", "sticker")
+        from modules.app_config import pack_meta
+        pres = (pack_meta(inp.mode) or {}).get("presentation", "sticker")
         if pres == "narration":
             return self._organize_narration(inp)
         if pres == "none":

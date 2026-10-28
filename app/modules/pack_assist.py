@@ -105,8 +105,8 @@ def assist_turn(client, mode: str, file: str, message: str,
     fp = resolve_character_file(file, mode)
     # 知识库/出厂记忆不走 resolve_character_file 的槽位（它们在子目录），单独解析
     if file.startswith(("knowledge/", "memory/")):
-        from api.pack_paths import resolve_pack_text  # 见下（路径统一口）
-        content = resolve_pack_text(mode, file)
+        from api.pack_paths import read_pack_text  # 路径统一口
+        content = read_pack_text(mode, file)
     else:
         content = fp.read_text(encoding="utf-8") if fp.exists() else ""
     cname = cfg.char_name(mode)

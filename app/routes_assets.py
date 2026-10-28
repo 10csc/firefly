@@ -272,10 +272,10 @@ def _asset_md5(text: str) -> str:
     """资产版本指纹（内容 hash 前 8 位，内容变化即版本变化）。"""
     import hashlib
     with _ASSET_MD5_LOCK:
-        key = text[:64]
+        key = hashlib.md5(text.encode("utf-8")).hexdigest()
         if key in _ASSET_MD5_CACHE:
             return _ASSET_MD5_CACHE[key]
-        digest = hashlib.md5(text.encode("utf-8")).hexdigest()[:8]
+        digest = key[:8]
         _ASSET_MD5_CACHE[key] = digest
         return digest
 
