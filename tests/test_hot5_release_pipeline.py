@@ -42,7 +42,14 @@ APP = ROOT / "app"
 PYTHON = sys.executable
 DEFAULT_DIST_ROOT = ROOT / "hotupdate_dist" / "prod"
 DECLARE = json.loads((ROOT / "hotupdate_declare.json").read_text(encoding="utf-8"))
-DECLARED_BASE, DECLARED_SERIAL = DECLARE["hotupdate"].split("/", 1)
+DECLARED_ID = str(DECLARE.get("hotupdate") or "").strip()
+if DECLARED_ID.lower() == "none":
+    if __name__ == "__main__":
+        print("SKIP: hotupdate_declare.json 显式声明本次不发热更，跳过候选发布物验收")
+        raise SystemExit(0)
+    raise __import__("unittest").SkipTest("本次未声明热更新")
+
+DECLARED_BASE, DECLARED_SERIAL = DECLARED_ID.split("/", 1)
 LATEST_POINTER = json.loads(
     (DEFAULT_DIST_ROOT / DECLARED_BASE / "latest").read_text(encoding="utf-8")
 )
