@@ -12,7 +12,7 @@
   = 仓库根/notice，与 `/voice/` 同一个公式、同样 gitignored）。两者同名会把"人写的内容源"
   和"跑出来的缓存"混在一起 —— 2026-09-19 第一版就是这样，建目录时才发现。
 
-**产物**（默认 `hotupdate_dist/notice/`，gitignored，上传用）：
+**产物**（默认 `hotupdate_dist/prod/notice/`，gitignored，上传用）：
     latest                 {"serial":N}
     notice-<N>.json        {v, manifest_b64, sig}
     img-<名>               与清单里 sha256 对应的图片字节
@@ -51,7 +51,7 @@ IMG_SRC = SRC / "images"
 SERIAL_F = SRC / "serial.txt"
 
 DEFAULT_KEY = Path.home() / ".firefly" / "hotupdate_key.pem"
-DEFAULT_DIST = ROOT / "hotupdate_dist" / "notice"
+DEFAULT_DIST = ROOT / "hotupdate_dist" / "prod" / "notice"
 
 MAX_IMG = 1536 * 1024
 _SAFE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")

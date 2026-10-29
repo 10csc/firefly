@@ -31,7 +31,7 @@ except Exception:
     pass
 
 ROOT = Path(__file__).resolve().parent.parent
-DEFAULT_DIST = ROOT / "hotupdate_dist" / "notice"
+DEFAULT_DIST = ROOT / "hotupdate_dist" / "prod" / "notice"
 TOKEN_FILE = Path.home() / ".config" / "firefly" / "gitee_token.txt"
 
 SSH_KEY = Path.home() / ".ssh" / "id_rsa"
