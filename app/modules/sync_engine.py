@@ -21,6 +21,7 @@ import time
 from pathlib import Path
 
 from modules import storage
+from modules import sync_state
 
 logger = logging.getLogger(__name__)
 
@@ -86,9 +87,9 @@ def scan_manifest(root: Path) -> dict:
 
 def _line_key(line: str) -> tuple:
     """jsonl 行的 (去重键, 排序键)：
-    - 去重键：有 seq 字段（int 化）→ "seq:<int>"；否则 → "sha:<行sha256>"（全行内容）；
+    - 去重键：新消息优先 mid；旧消息 → legacy:<seq>:<内容sha16>；无 seq → sha:<行sha256>；
     - 排序键（确定性重排，两端各自合并后字节一致、sha 收敛）：
-      有 seq → (0, seq, 行sha前8位)；无 seq 有 _ts(float) → (1, 0, _ts, 行sha前8位)；
+      有 seq → (0, epoch, seq, 行sha前8位)；无 seq 有 _ts(float) → (1, 0, _ts, 行sha前8位)；
       无 _ts 有 time 字符串 → (1, 1, time字符串, 行sha前8位)；都没有 → (2, 行sha)。
       第 1 档内的 0/1 子档是类型分组（_ts 行与 time 行分档，避免 float/str 混比不可排序）。
       行sha前8位作同键 tie-break，保证同 seq/_ts/time 的不同行顺序也确定。"""
@@ -99,12 +100,35 @@ def _line_key(line: str) -> tuple:
     except Exception:
         rec = None
     if isinstance(rec, dict):
+        # SPEC §3.1：新消息的跨设备身份是 mid。两台设备从 seq=1 各自追加时，
+        # 旧实现按 seq 去重会把其中一条当冲突或静默丢掉。
+        mid = str(rec.get("mid") or "").strip()
+        if mid:
+            dedup = f"mid:{mid}"
+        else:
+            dedup = ""
+        try:
+            epoch = int(rec.get("epoch") or 0)
+        except (TypeError, ValueError):
+            epoch = 0
         if "seq" in rec:
             try:
                 seq = int(rec["seq"])
-                return (f"seq:{seq}", (0, seq, sha8))
+                if not dedup:
+                    dedup = f"legacy:{seq}:{sha[:16]}"
+                return (dedup, (0, epoch, seq, sha8))
             except (TypeError, ValueError):
                 pass
+        if mid:
+            # 缺 seq 的新消息仍按 mid 身份收敛；按时间/内容生成稳定排序。
+            if "_ts" in rec:
+                try:
+                    return (dedup, (1, 0, float(rec["_ts"]), sha8))
+                except (TypeError, ValueError):
+                    pass
+            if isinstance(rec.get("time"), str):
+                return (dedup, (1, 1, rec["time"], sha8))
+            return (dedup, (2, sha))
         if "_ts" in rec:
             try:
                 return (f"sha:{sha}", (1, 0, float(rec["_ts"]), sha8))
@@ -115,13 +139,18 @@ def _line_key(line: str) -> tuple:
     return (f"sha:{sha}", (2, sha))
 
 
-def merge_jsonl(local_text: str, remote_text: str) -> tuple[str, list]:
+def merge_jsonl(local_text: str, remote_text: str, state: dict | None = None) -> tuple[str, list]:
     """append-only 行级合并（conversation.jsonl / pipeline.jsonl / proactive_log.jsonl）。
     去重键 = seq（int 化）或行全文 sha；同键异内容 → 后处理的一侧行（=远端）进冲突备份
     （本地行先处理=本地优先，不静默丢数据）。
     去重后按确定性排序键重排再拼接（见 _line_key）——两端各自合并的结果字节完全相等
     （sha 收敛），消除「本地在前、远端追加」导致的行序发散与重复全量重传。
+    传入 state 时先按历史代际/墓碑过滤（仅 conversation 调用方传）。
     返回 (合并文本, 冲突行)。"""
+    if state:
+        local_text = sync_state.filter_conversation_text(local_text, state)
+        remote_text = sync_state.filter_conversation_text(remote_text, state)
+
     def parse(text):
         out = []
         for ln in text.splitlines():
@@ -150,8 +179,12 @@ def merge_jsonl(local_text: str, remote_text: str) -> tuple[str, list]:
     return text, conflicts
 
 
-def merge_favorites(local_text: str, remote_text: str) -> tuple[str, list]:
-    """收藏并集（按 seq 或 f 前缀 id 去重，现有 favorite_store 同语义）。"""
+def merge_favorites(local_text: str, remote_text: str, state: dict | None = None) -> tuple[str, list]:
+    """收藏并集（按 seq 或 f 前缀 id 去重，现有 favorite_store 同语义）。
+    传入 state 时先过滤 favorites 删除墓碑。"""
+    if state:
+        local_text = sync_state.filter_favorites_text(local_text, state)
+        remote_text = sync_state.filter_favorites_text(remote_text, state)
     def parse(text):
         try:
             arr = json.loads(text)

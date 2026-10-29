@@ -11,9 +11,10 @@ import logging
 import time
 
 from modules import app_config as cfg
+from modules import sync_state
 from modules.context_manager import ContextManager
 from routes_auth import _auth_server_base
-from routes_common import (_body_mode, _is_server, _query_mode, _read_json,
+from routes_common import (_body_mode, _body_mode_ex, _is_server, _query_mode, _read_json,
                            get_session)
 
 logger = logging.getLogger(__name__)
@@ -29,7 +30,17 @@ def rest(h):
     session = get_session(body.get("session_id", "default"), mode)
     with session["lock"]:
         from modules.memory_manager import MemoryManager
-        from modules.conversation_store import load_all_context, count_user_turns
+        from modules.conversation_store import load_all_context, count_user_turns, conv_file
+        try:
+            _root = conv_file(mode).parent.parent
+            _st0 = sync_state.load(_root)
+            _txn = sync_state.begin_txn(_root, "rest", {"base_rev": int(_st0.get("history_rev") or 0)})
+        except sync_state.SyncRecoveryPending as e:
+            h._json({"ok": False, "code": "SYNC_RECOVERY_PENDING",
+                     "error": str(e)}, 503)
+            return
+        except Exception:
+            _root, _txn = None, None
         mm = MemoryManager(client, cfg.MODEL, mode=mode)
         # ★ 2026-09-18 修复：这里的两个入参过去都取自**内存里的会话上下文**
         #   （get_full() / turn_count），而它被 hydrate_context 的窗口截断过。
@@ -53,6 +64,18 @@ def rest(h):
             # 立即刷新当前会话的 memory_head：新头部随下一条消息生效，
             # 不再等进程重启 / 30 会话淘汰（真 bug 修复）
             session["memory_head"] = mm.load_head()
+            try:
+                root = conv_file(mode).parent.parent
+                st = sync_state.load(root)
+                sync_state.record_rest(root, int(st.get("history_rev") or 0))
+                if _txn is not None:
+                    sync_state.commit_txn(root, _txn)
+                else:
+                    sync_state.append_op(root, "rest", {"base_rev": int(st.get("history_rev") or 0)})
+            except Exception as e:
+                logger.warning("整理：写同步操作失败: %s", e)
+        elif _txn is not None and _root:
+            sync_state.abort_txn(_root)
     # skipped：无新对话可整理（LLM 未运行，added/resolved 均为 0——前端显示"没有新内容"而非"记忆已更新"）
     skipped = bool(result.error) and result.success
     h._json({"ok": result.success, "added": len(result.added_entries),
@@ -99,8 +122,30 @@ def undo(h):
     session = get_session(body.get("session_id", "default"), mode)
     with session["lock"]:
         result = session["context"].pop_last_turn()
-        from modules.conversation_store import remove_last_turn
-        removed = remove_last_turn(mode=mode)
+        from modules.conversation_store import remove_last_turn, conv_file
+        try:
+            _root = conv_file(mode).parent.parent
+            _txn = sync_state.begin_txn(_root, "retract")
+        except sync_state.SyncRecoveryPending as e:
+            h._json({"ok": False, "code": "SYNC_RECOVERY_PENDING",
+                     "error": str(e)}, 503)
+            return
+        except Exception:
+            _root, _txn = None, None
+        removed, removed_mids = remove_last_turn(mode=mode, return_mids=True)
+        if removed:
+            try:
+                root = conv_file(mode).parent.parent
+                sync_state.add_tombstones(root, removed_mids)
+                if _txn is not None:
+                    _txn["payload"] = {"mids": removed_mids}
+                    sync_state.commit_txn(root, _txn)
+                else:
+                    sync_state.append_op(root, "retract", {"mids": removed_mids})
+            except Exception as e:
+                logger.warning("撤回：写墓碑失败: %s", e)
+        elif _txn is not None and _root:
+            sync_state.abort_txn(_root)
         # 语音随撤回同步清理（docs/工具/tts.md §6）：以"文件里还剩的最大 seq"为准，
         # 不依赖 remove_last_turn 的返回值口径 —— 对 seq 间隙、连续撤回都成立。
         try:
@@ -140,97 +185,88 @@ def undo(h):
 
 def clear_history(h):
     body = _read_json(h)
-    mode = _body_mode(body)
+    mode, fell_back = _body_mode_ex(body)
+    if fell_back:
+        h._json({"ok": False, "code": "MODE_NOT_FOUND",
+                 "error": "当前角色包不存在，已拒绝清理历史"}, 400)
+        return
     session = get_session(body.get("session_id", "default"), mode)
     with session["lock"]:
-        session["context"] = ContextManager()
-        # 清空持久化文件
-        from modules.conversation_store import conv_file
-        from modules.memory_files import _memory_file, _index_file, _journal_file
         try:
-            fp = conv_file(mode)
-            if fp.exists():
-                fp.write_text("", encoding="utf-8")
-        except Exception:
-            pass
-        # ── 记忆与手账随历史一起清（2026-09-18 用户要求）──
-        # 背景：老代码**故意不动**这两样，注释写着"除配置/已写进设定文件的"——因为当时
-        # 用户把核心设定放在「设定文件」里（那时聊天产生的记忆还没和对话内容分开）。
-        # 现在核心设定已归位到角色卡（{pack}/memory/default.md 出厂记忆 + 用户设定.md），
-        # 「设定文件」页签里只剩**聊天产物**（用户记忆 + 手账），必须一起清。
-        # 只清一半的副作用（不只是"留脏数据"）：游标归零但旧头部还在 → 下次休息会把
-        # "从第 0 轮重新切片的新对话"并进一段本该消失的记忆里。
-        # ⚠️ 出厂记忆 {mode}/character/memory/default.md **绝不能清**：它是角色卡资产。
-        #
-        # 为什么连 .memory_index 一起删、而不是写 0：
-        #   get_wake_status 用「index 在 + memory.md 不在」判定"上次休息被中断"，
-        #   只写 0 会让下次进聊天误报"睡眠被打断"。两个一起删 = 干净的"新角色、无记忆"，
-        #   此时 load_head() 自然回落到包内出厂记忆的「核心记忆」（她认识你之前的她）。
-        for fp in (_memory_file(mode), _index_file(mode), _journal_file(mode)):
+            from modules.conversation_store import conv_file
+            root = conv_file(mode).parent.parent
+        except Exception as e:
+            logger.exception("清理历史：定位模式目录失败 mode=%s", mode)
+            h._json({"ok": False, "code": "SYNC_CLEAR_PREPARE_FAILED",
+                     "error": f"清理事务准备失败：{e}"}, 500)
+            return
+        # 与完整同步回合共用模式锁；会话锁只保护内存上下文，不能隔离
+        # clear 的文件/epoch/outbox 与 sync_now 的状态/上传/拉取窗口。
+        with sync_state.mode_lock(root):
             try:
-                if fp.exists():
-                    fp.unlink()
-            except OSError as e:
-                logger.warning("清理历史：删除 %s 失败: %s", fp, e)
-        # 历史归档同理（P2）：它是聊天产物，留着就等于"清了历史还记得细节"
-        try:
-            import shutil as _shutil
-            from modules.memory_archive import archive_dir
-            ad = archive_dir(mode)
-            if ad.is_dir():
-                _shutil.rmtree(ad, ignore_errors=True)
-        except Exception as e:
-            logger.warning("清理历史：删除历史归档失败: %s", e)
-        # 手账进的是回复器的 system 稳定层（进程内缓存），必须同步失效，
-        # 否则清完历史后流萤还在"记得"手账里的旧约定。
-        try:
-            from modules.llm_base import reload_journal
-            reload_journal(mode)
-        except Exception as e:
-            logger.warning("清理历史：重载手账失败: %s", e)
-        # 记忆头部同理：本会话缓存的 memory_head 要立刻换成"无运行时记忆"的基线，
-        # 不然当前这个会话到进程结束前都还在用已删掉的旧摘要。
-        try:
-            from modules.memory_manager import wake as memory_wake
-            session["memory_head"] = memory_wake(cfg.get_client(), cfg.MODEL, mode)
-        except Exception as e:
-            session["memory_head"] = ""
-            logger.warning("清理历史：重载记忆头失败（置空）: %s", e)
-        # 会话聊天产生的数据全部随历史清理（配置与角色卡资产除外，见上）：
-        # proactive_log（主动判断记录）、pipeline（流水线日志）、
-        # 内存信号量（ACTIVE 复位）+ 忽视计数清零
-        try:
-            from modules.proactive import _log_file, _active_set, reset_states
-            fp = _log_file(mode)
-            if fp.exists():
-                fp.unlink()
-            _active_set(mode, 1)
-            # C-6.1（2026-09-13）：这里原来写的是 _IGNORED.pop(mode) / _HIDDEN.pop(mode)，
-            # 而这些表的键是 (mode, 用户作用域) 元组 → 按字符串 pop 从来删不掉任何东西：
-            # 清了历史，降档惩罚与隐藏式冷却仍在（"清空后角色依然不主动开口"）。
-            reset_states(mode)
-        except Exception:
-            pass
-        # 语音文件随历史清理（docs/工具/tts.md §6，用户 2026-09-18 要求）：
-        #   · 语音按 v{seq}.wav 命名，seq 已清空 → 留着也无人能播
-        #   · 卸载软件由系统连 user_data 一起清，不需要代码
-        #   · **覆盖更新不触发**（本函数只在用户主动清历史时才走）
-        # 语音绝不能影响聊天主流程，故整段吞异常。
-        try:
-            import voice
-            n = voice.purge_all(mode)
-            if n:
-                logger.info("清理历史：同时删除语音 %d 个（mode=%s）", n, mode)
-        except Exception as e:
-            logger.warning("清理历史时删除语音失败（不影响主流程）: %s", e)
-        try:
-            from modules.app_config import mode_data_dir
-            fp = mode_data_dir(mode) / "pipeline.jsonl"
-            if fp.exists():
-                fp.unlink()
-        except Exception:
-            pass
-    h._json({"ok": True})
+                resume_clear = False
+                if sync_state.txn_path(root).exists():
+                    try:
+                        pending = json.loads(
+                            sync_state.txn_path(root).read_text(encoding="utf-8"))
+                        resume_clear = isinstance(pending, dict) and pending.get("type") == "clear"
+                    except Exception:
+                        resume_clear = False
+                    if not sync_state.recover_txn(root):
+                        h._json({"ok": False, "code": "SYNC_CLEAR_PARTIAL",
+                                 "error": "历史清理尚未完整提交，请稍后重试；现场已保留"},
+                                503)
+                        return
+                if not resume_clear:
+                    sync_state.begin_txn(root, "clear", {"reason": "user_clear_history"})
+            except sync_state.SyncRecoveryPending as e:
+                h._json({"ok": False, "code": "SYNC_RECOVERY_PENDING",
+                         "error": str(e)}, 503)
+                return
+            except Exception as e:
+                logger.exception("清理历史：事务准备失败 mode=%s", mode)
+                h._json({"ok": False, "code": "SYNC_CLEAR_PREPARE_FAILED",
+                         "error": f"清理事务准备失败：{e}"}, 500)
+                return
+
+            # 数据文件、epoch/rev 与 outbox 都走同一恢复事务。保存或提交失败时保留
+            # PREPARED/COMMITTED 现场，下一次入口先恢复，避免“文件已清、状态未落盘”假成功。
+            if not resume_clear and not sync_state.recover_txn(root):
+                h._json({"ok": False, "code": "SYNC_CLEAR_PARTIAL",
+                         "error": "历史清理尚未完整提交，请稍后重试；现场已保留"},
+                        503)
+                return
+
+            session["context"] = ContextManager()
+            # 手账进的是回复器的 system 稳定层（进程内缓存），必须同步失效，
+            # 否则清完历史后流萤还在"记得"手账里的旧约定。
+            try:
+                from modules.llm_base import reload_journal
+                reload_journal(mode)
+            except Exception as e:
+                logger.warning("清理历史：重载手账失败: %s", e)
+            # 记忆头部同理：本会话缓存的 memory_head 要立刻换成"无运行时记忆"的基线，
+            # 不然当前这个会话到进程结束前都还在用已删掉的旧摘要。
+            try:
+                from modules.memory_manager import wake as memory_wake
+                session["memory_head"] = memory_wake(cfg.get_client(), cfg.MODEL, mode)
+            except Exception as e:
+                session["memory_head"] = ""
+                logger.warning("清理历史：重载记忆头失败（置空）: %s", e)
+            # 会话聊天产生的数据全部随历史清理（配置与角色卡资产除外，见上）：
+            # 文件已经由事务处理；这里只复位进程内信号量并清零忽视计数。
+            try:
+                from modules.proactive import _active_set, reset_states
+                _active_set(mode, 1)
+                # C-6.1（2026-09-13）：这里原来写的是 _IGNORED.pop(mode) / _HIDDEN.pop(mode)，
+                # 而这些表的键是 (mode, 用户作用域) 元组 → 按字符串 pop 从来删不掉任何东西：
+                # 清了历史，降档惩罚与隐藏式冷却仍在（"清空后角色依然不主动开口"）。
+                reset_states(mode)
+            except Exception:
+                pass
+            # 语音、pipeline 与 proactive_log 已由 CLEAR 事务的
+            # `_clear_local_history_files` 一并处理；事务提交后不再做可失败的文件副作用。
+        h._json({"ok": True})
 
 
 def get_wake_status(h):

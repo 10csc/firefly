@@ -30,7 +30,10 @@ def atomic_write_text(fp: Path, text: str) -> bool:
     try:
         fp.parent.mkdir(parents=True, exist_ok=True)
         tmp = fp.with_name(fp.name + ".tmp")
-        tmp.write_text(text, encoding="utf-8")
+        # 同步清单按字节计算 sha。Windows 默认把 "\n" 展开成 "\r\n"，
+        # 文本经过一次下载/合并就会多出 "\r"，导致跨平台反复冲突。
+        # 数据文件统一落 UTF-8/LF；读取仍由 Python 的通用换行兼容旧 CRLF。
+        tmp.write_text(text, encoding="utf-8", newline="\n")
         tmp.replace(fp)
         return True
     except OSError as e:
@@ -98,6 +101,24 @@ REGISTRY: dict[str, dict] = {
     "memory_index":    {"rel": "{mode}/data/.memory_index", "format": "json",
         "owner": "modules.memory_manager",
                         "media": False, "sensitive": False, "sync": "newest"},
+    # 2026-10-25：本地同步状态（代际/墓碑）。最终协议由服务器 rev/op 账本承载，
+    # 本文件只作为本机缓存，绝不按普通文件同步，否则会把本地确认进度覆盖到服务器。
+    "sync_state":      {"rel": "{mode}/data/sync_state.json", "format": "json",
+        "owner": "modules.sync_state",
+                        "media": False, "sensitive": False, "sync": "exclude",
+                        "note": "本机同步代际/墓碑；不参与普通文件同步"},
+    "sync_txn":        {"rel": "{mode}/data/.sync_txn.json", "format": "json",
+        "owner": "modules.sync_state",
+                        "media": False, "sensitive": False, "sync": "exclude"},
+    "sync_outbox":     {"rel": "{mode}/data/.sync_outbox.jsonl", "format": "jsonl",
+        "owner": "modules.sync_state",
+                        "media": False, "sensitive": False, "sync": "exclude"},
+    "server_sync_state": {"rel": "{mode}/data/.server_sync_state.json", "format": "json",
+        "owner": "modules.sync_server_state",
+                        "media": False, "sensitive": False, "sync": "exclude"},
+    "server_sync_ops":  {"rel": "{mode}/data/.server_sync_ops.jsonl", "format": "jsonl",
+        "owner": "modules.sync_server_state",
+                        "media": False, "sensitive": False, "sync": "exclude"},
     "favorites":       {"rel": "{mode}/data/favorites.json", "format": "json",
         "owner": "modules.favorite_store",
                         "media": False, "sensitive": False, "sync": "merge-favorites"},

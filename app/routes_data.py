@@ -25,7 +25,7 @@ from api.data_export import (
 )
 from api.data_sync import (
     _sync_mode_root, _sync_one_mode, sync_export, sync_import,
-    sync_manifest, sync_now,
+    sync_manifest, sync_now, sync_ops, sync_state,
 )
 from infra.sync.restore import (
     _AUTO_KEEP, _BACKUP_KEEP, _EXPORT_EXCLUDE_DIRS, _IMPORT_MAX_BYTES,

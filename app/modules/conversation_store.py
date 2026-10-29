@@ -15,6 +15,7 @@ from datetime import datetime
 
 from modules.app_config import USER_DIR, BASE_DIR, mode_data_dir, DEFAULT_MODE
 from modules.storage import atomic_write_text   # B4（审计 2026-09-15）：撤回全量重写改原子写
+from modules import sync_state
 
 logger = logging.getLogger(__name__)
 _lock = threading.Lock()
@@ -145,11 +146,11 @@ def _next_seq(mode: str = DEFAULT_MODE) -> int:
     return last_seq + 1
 
 
-def remove_last_turn(mode: str = DEFAULT_MODE) -> int:
+def remove_last_turn(mode: str = DEFAULT_MODE, return_mids: bool = False):
     """移除 {mode} 最后一轮（优先最后一段主动轮，否则最后一条 user 到末尾）。
 
     Returns:
-        移除的行数
+        移除的行数；return_mids=True 时返回 (行数, 被删消息的稳定 id 列表)
     """
     _migrate_legacy(mode)
     fp = conv_file(mode)
@@ -170,16 +171,17 @@ def remove_last_turn(mode: str = DEFAULT_MODE) -> int:
             while j > 0 and _line_is_proactive(lines[j - 1]):
                 j -= 1
             original_len = len(lines)
+            removed_lines = lines[j:]
             lines = lines[:j]
             # B4（审计 2026-09-15）：全量重写改原子写——写中途崩溃/断电/磁盘满会把
             # conversation.jsonl 截断成半截，整个会话历史损坏（不是丢一轮）。会话越长
             # 窗口越大。失败返回 0（调用方视为撤回未生效，文件保持原样）
             if not atomic_write_text(fp, "".join(lines)):
                 logger.error("撤回主动轮写盘失败（会话文件保持原样）: %s", fp)
-                return 0
+                return (0, []) if return_mids else 0
             removed = original_len - len(lines)
             logger.debug("remove_last_turn: 移除主动轮 %d 行", removed)
-            return removed
+            return (removed, _mids_of_lines(removed_lines)) if return_mids else removed
 
         i = None
         for idx in range(len(lines) - 1, -1, -1):
@@ -212,15 +214,30 @@ def remove_last_turn(mode: str = DEFAULT_MODE) -> int:
                 break
 
         original_len = len(lines)
+        removed_lines = lines[i:]
         lines = lines[:i]
         # B4（审计 2026-09-15）：同上——全量重写改原子写，防半截会话文件
         if not atomic_write_text(fp, "".join(lines)):
             logger.error("撤回写盘失败（会话文件保持原样）: %s", fp)
-            return 0
+            return (0, []) if return_mids else 0
 
     removed = original_len - len(lines)
     logger.debug("remove_last_turn: 移除 %d 行, 剩余 %d 行", removed, len(lines))
-    return removed
+    return (removed, _mids_of_lines(removed_lines)) if return_mids else removed
+
+
+def _mids_of_lines(lines) -> list:
+    out = []
+    for line in lines or []:
+        try:
+            obj = json.loads(line.strip())
+            if isinstance(obj, dict):
+                mid = sync_state.message_mid(obj)
+                if mid:
+                    out.append(mid)
+        except Exception:
+            continue
+    return out
 
 
 def _line_is_proactive(line: str) -> bool:
@@ -272,7 +289,15 @@ def append_message(who: str, msg: dict, mode: str = DEFAULT_MODE) -> tuple:
         _ensure_dir(mode)
         seq = _next_seq(mode)
         time_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        record = {"seq": seq, "time": time_str, "who": who}
+        # 同步架构 SPEC §3.1：新消息用 UUID 身份；不再依赖本地 seq 当跨设备身份。
+        root = conv_file(mode).parent.parent
+        record = {
+            "seq": seq,
+            "mid": sync_state.new_mid(),
+            "epoch": sync_state.current_epoch(root),
+            "time": time_str,
+            "who": who,
+        }
         record.update(msg)
         # 引用净化：只保留白名单字段（防前端注入任意键/超长字符串）
         if "quote" in record:

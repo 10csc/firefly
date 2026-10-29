@@ -10,14 +10,17 @@
 - 上限 _MAX_FAVORITES 条，超出丢最旧；按 seq 去重（同一条消息重复收藏 = 更新不重复）。
 """
 
+import hashlib
 import json
 import logging
 import threading
 import time
+import uuid
 from datetime import datetime
 from pathlib import Path
 
 from modules.app_config import mode_data_dir
+from modules import sync_state
 
 logger = logging.getLogger(__name__)
 _lock = threading.Lock()
@@ -48,11 +51,43 @@ def _load(mode: str) -> list:
         return []
 
 
-def _save(mode: str, items: list) -> None:
+def _save(mode: str, items: list) -> bool:
     # A2 收口：统一原子写（storage.atomic_write_text，tmp+replace）
     from modules.storage import atomic_write_text
-    atomic_write_text(_fav_file(mode),
-                      json.dumps(items, ensure_ascii=False, indent=1))
+    return atomic_write_text(_fav_file(mode),
+                             json.dumps(items, ensure_ascii=False, indent=1))
+
+
+def _source_key(msg: dict, rec: dict) -> str:
+    """收藏对象的稳定来源键；id 只做展示/删除句柄，不能拿跨设备 seq 当身份。"""
+    mid = str((msg or {}).get("mid") or "").strip()
+    if mid:
+        return "mid:" + mid
+    body = json.dumps(rec, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    sha = hashlib.sha256(body.encode("utf-8")).hexdigest()[:16]
+    if rec.get("seq") is not None:
+        return f"legacy:{rec.get('seq')}:{sha}"
+    return "content:" + sha
+
+
+def _begin_sync_txn(root: Path, typ: str, payload: dict):
+    try:
+        return sync_state.begin_txn(root, typ, payload)
+    except sync_state.SyncRecoveryPending as e:
+        raise FavoriteError(str(e)) from e
+    except Exception as e:
+        logger.warning("收藏同步事务写入失败（使用直接 outbox 兜底）: %s", e)
+        return None
+
+
+def _commit_sync_txn(root: Path, txn, typ: str, payload: dict) -> None:
+    try:
+        if txn is not None:
+            sync_state.commit_txn(root, txn)
+        else:
+            sync_state.append_op(root, typ, payload)
+    except Exception as e:
+        logger.warning("收藏同步 op 写入失败: %s", e)
 
 
 def _snapshot(msg) -> dict:
@@ -114,19 +149,34 @@ def add_favorite(mode: str, msg: dict) -> dict:
     rec = _snapshot(msg)
     with _lock:
         items = _load(mode)
-        # 去重：带 seq 的按 seq 唯一（重复收藏 = 更新时间，不重复插入）
-        if rec.get("seq") is not None:
-            items = [it for it in items if it.get("seq") != rec["seq"]]
-        if rec.get("seq") is not None:
-            rec["id"] = str(rec["seq"])
-        else:
-            rec["id"] = f"f{int(time.time() * 1000)}"
+        source = _source_key(msg, rec)
+        same = [it for it in items
+                if isinstance(it, dict)
+                and (str(it.get("source") or "") == source
+                     or (not it.get("source") and rec.get("seq") is not None
+                         and str(it.get("id")) == str(rec.get("seq"))))]
+        existing_id = str(same[0].get("id") or "") if same else ""
+        rec["source"] = source
+        rec["id"] = existing_id or ("fav_" + uuid.uuid4().hex)
         rec["time"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        items = [it for it in items
+                 if not (isinstance(it, dict)
+                         and (str(it.get("source") or "") == source
+                              or str(it.get("id") or "") == rec["id"]))]
         items.append(rec)
         # 上限：丢最旧（文件顺序 = 收藏时间正序）
         if len(items) > _MAX_FAVORITES:
             items = items[-_MAX_FAVORITES:]
-        _save(mode, items)
+        root = _fav_file(mode).parent.parent
+        txn = _begin_sync_txn(root, "favorite", {"id": rec["id"], "item": rec})
+        if not _save(mode, items):
+            sync_state.abort_txn(root)
+            raise FavoriteError("收藏写入失败")
+        try:
+            sync_state.add_favorite_tombstone(root, rec.get("id"), keep=True)
+        except Exception as e:
+            logger.warning("收藏撤销墓碑失败: %s", e)
+        _commit_sync_txn(root, txn, "favorite", {"id": rec["id"], "item": rec})
     return rec
 
 
@@ -140,5 +190,15 @@ def delete_favorite(mode: str, fav_id) -> bool:
         kept = [it for it in items if str(it.get("id", "")) != key]
         if len(kept) == len(items):
             return False
-        _save(mode, kept)
+        root = _fav_file(mode).parent.parent
+        payload = {"id": key}
+        txn = _begin_sync_txn(root, "unfavorite", payload)
+        if not _save(mode, kept):
+            sync_state.abort_txn(root)
+            raise FavoriteError("收藏删除写入失败")
+        try:
+            sync_state.add_favorite_tombstone(root, key)
+        except Exception as e:
+            logger.warning("收藏删除墓碑失败: %s", e)
+        _commit_sync_txn(root, txn, "unfavorite", payload)
     return True

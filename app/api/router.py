@@ -27,7 +27,7 @@ from routes_config import (
 from routes_data import (
     backup_create, backup_delete, backup_restore, backups_list,
     export_data, import_data, sync_export, sync_import,
-    sync_manifest, sync_now,
+    sync_manifest, sync_now, sync_ops, sync_state,
 )
 from routes_fix import (
     setting_fix_apply, setting_fix_dismiss, setting_fix_message, setting_fix_reset,
@@ -103,6 +103,7 @@ POST_ROUTES = {
     "/backup/restore": backup_restore,
     "/backup/delete": backup_delete,
     "/sync/import": sync_import,
+    "/sync/ops": sync_ops,
     "/sync/export": sync_export,
     "/sync/now": sync_now,
     "/undo": undo,
@@ -165,6 +166,7 @@ GET_ROUTES = {
     "/models": get_models,
     "/modes": get_modes,
     "/sync/manifest": sync_manifest,
+    "/sync/state": sync_state,
     "/image": get_image,
     "/time": get_time,
     "/auth/state": auth_state,
