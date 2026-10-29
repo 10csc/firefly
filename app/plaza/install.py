@@ -48,6 +48,12 @@ logger = logging.getLogger(__name__)
 SOURCE = "plaza"                       # packs.json 里的来源标记（区别于 custom/imported/bundled）
 QUOTA_MAX_CARDS = 5                    # 服务器模式：每人最多安装张数
 QUOTA_MAX_BYTES = 8 * 1024 * 1024      # 服务器模式：每人安装总量上限
+# S-6（2026-10-22）：覆盖/卸载备份必须有界。以前 backups/plaza 无上限、且不计配额，
+# 一个登录账号可反复 install/uninstall 把共享磁盘写满。策略：每卡最多保留 N 份、
+# 每用户备份总量软上限；达到上限后**跳过新备份**（不删旧备份，避免误删用户数据），
+# 并写 WARNING，管理员可手工清理。这样增长被截断，且不新增删除语义。
+BACKUP_KEEP_MAX = 3
+BACKUP_TOTAL_MAX_BYTES = 64 * 1024 * 1024
 _FETCH_TIMEOUT = 60
 
 
@@ -158,11 +164,26 @@ def _backup_existing(pid: str) -> str:
 
     留档目录名带**唯一后缀**：同一秒内连续两次覆盖安装时，`f"{pid}-{时间戳}"` 会重名，
     `copytree` 直接抛 FileExistsError ⇒ 留档静默失败（只打一条 warning），
-    而"覆盖前留档"是删数据的最后一道保险（本项目踩过"删除不可恢复"）。"""
+    而"覆盖前留档"是删数据的最后一道保险（本项目踩过"删除不可恢复"）。
+
+    S-6（2026-10-22）：达到保留上限后跳过新备份（不删旧备份），防止 backups/plaza 无界增长。"""
     src = _user_root() / pid
     if not src.is_dir():
         return ""
     base = _user_root() / "backups" / "plaza"
+    # 有界检查：每卡最多 N 份 + 用户总备份字节软上限。超限只告警跳过，绝不删旧备份。
+    try:
+        mine = [d for d in base.iterdir() if d.is_dir() and (d.name == pid or d.name.startswith(pid + "-"))]
+        total = 0
+        for d in base.iterdir():
+            if d.is_dir():
+                total += sum(f.stat().st_size for f in d.rglob("*") if f.is_file())
+        if len(mine) >= BACKUP_KEEP_MAX or total >= BACKUP_TOTAL_MAX_BYTES:
+            logger.warning("覆盖备份达到上限，跳过新备份 pid=%s count=%d total=%d",
+                           pid, len(mine), total)
+            return ""
+    except OSError:
+        pass
     stamp = int(time.time())
     dst = base / f"{pid}-{stamp}"
     n = 1
