@@ -15,6 +15,7 @@ export function openAssist(mode, file, label) {
     document.getElementById("av-proposal").style.display = "none";
     document.getElementById("av-input").value = "";
     v.style.display = "flex";
+    window.__raiseView && window.__raiseView(v);
     setTimeout(() => document.getElementById("av-input").focus(), 200);
 }
 window.__openAssist = openAssist;

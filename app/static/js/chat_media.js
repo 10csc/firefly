@@ -106,6 +106,7 @@ stickerBtn.addEventListener("click", async () => {
 // 点击聊天区关闭表情面板
 messagesEl.addEventListener("click", _stickerPanelClose);
 document.getElementById("sticker-panel-close").addEventListener("click", _stickerPanelClose);
+window.__closeStickerPanel = function () { try { _stickerPanelClose(); } catch (e) {} };
 
 /** 发送表情包：作为一条消息立即发送（与文字同一窗口合并，不碰输入框内容） */
 function sendStickerMessage(label, file) {

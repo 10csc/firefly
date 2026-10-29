@@ -53,6 +53,16 @@ function escapeHtml(s) {
  *  opts: { title, body, confirmText, cancelText, danger, input, placeholder, validate, validateMsg }
  *  返回 Promise：普通确认 → true/false；opts.input → 输入的字符串 / null（取消）。
  *  确认按钮在 input 模式下由 validate 决定是否放行；输入为空时直接拦截。 */
+// 同时可能叠着多个确认弹层（例如连点两次删除）。返回键要关的是最上面那个，
+// 所以按打开顺序记栈，而不是 querySelector 抓第一个。
+let _modalStack = [];
+window.__closeAppModal = function () {
+    const top = _modalStack[_modalStack.length - 1];
+    if (!top) return false;
+    try { top.cancel(); } catch (e) {}
+    return true;
+};
+
 function uiConfirm(opts) {
     const o = opts || {};
     return new Promise((resolve) => {
@@ -98,12 +108,17 @@ function uiConfirm(opts) {
         mask.appendChild(box);
         document.body.appendChild(mask);
 
+        const entry = { cancel: null };
         const done = (val) => {
             document.removeEventListener("keydown", onKey, true);
             mask.remove();
+            const i = _modalStack.indexOf(entry);
+            if (i >= 0) _modalStack.splice(i, 1);
             resolve(val);
         };
         const cancelValue = () => (o.input ? null : false);
+        entry.cancel = () => done(cancelValue());
+        _modalStack.push(entry);
         function onKey(e) {
             if (e.key === "Escape") { e.preventDefault(); done(cancelValue()); }
             else if (e.key === "Enter" && (!inputEl || document.activeElement === inputEl)) {
@@ -535,6 +550,8 @@ function _closeAllPopups(except) {
         if (p !== except) p.classList.remove("show");
     });
 }
+
+window.__closeSelectPopups = function () { _closeAllPopups(); };
 
 // 全局关闭：点外 / Esc / 滚动（弹层跟随是 fixed，滚动时直接关，防错位）
 document.addEventListener("pointerdown", e => {
@@ -2019,6 +2036,7 @@ function openAssist(mode, file, label) {
     document.getElementById("av-proposal").style.display = "none";
     document.getElementById("av-input").value = "";
     v.style.display = "flex";
+    window.__raiseView && window.__raiseView(v);
     setTimeout(() => document.getElementById("av-input").focus(), 200);
 }
 window.__openAssist = openAssist;
@@ -2766,7 +2784,10 @@ function _pzOnPanelClose() {
 function _pzOpen() {
     if (!_pzRoot) return;
     _pzInit();
+    // 卡库/语音与广场同级：开一个关另外两个（原来这里一个都不关，于是三页能叠在一起）
+    window.__closePeerViews && window.__closePeerViews("plaza-view");
     _pzRoot.classList.add("show");
+    window.__raiseView && window.__raiseView(_pzRoot);
     _pzSetView("list");
     _pzIsOpen = true;
     if (_pzSort) _pzSort.value = _pzS.sort;
@@ -9140,6 +9161,7 @@ stickerBtn.addEventListener("click", async () => {
 // 点击聊天区关闭表情面板
 messagesEl.addEventListener("click", _stickerPanelClose);
 document.getElementById("sticker-panel-close").addEventListener("click", _stickerPanelClose);
+window.__closeStickerPanel = function () { try { _stickerPanelClose(); } catch (e) {} };
 
 /** 发送表情包：作为一条消息立即发送（与文字同一窗口合并，不碰输入框内容） */
 function sendStickerMessage(label, file) {
@@ -9562,17 +9584,19 @@ function openVoiceView() {
     if (cv) cv.classList.remove("show");
     const v = document.getElementById("voice-view");
     if (!v) return;
+    window.__closePeerViews && window.__closePeerViews("voice-view");
     v.classList.add("show");
+    window.__raiseView && window.__raiseView(v);
     try { if (location.hash !== "#voice") history.pushState({voice: true}, "", "#voice"); } catch (e) {}
     renderVoiceView();
 }
 window.openVoiceView = openVoiceView;
 
-function closeVoiceView() {
+function closeVoiceView(opts) {
     const v = document.getElementById("voice-view");
     if (v) v.classList.remove("show");
     if (_vpTimer) { clearTimeout(_vpTimer); _vpTimer = null; }
-    showHome();
+    if (!(opts && opts.silent)) showHome();
     try { if (location.hash === "#voice") history.replaceState({}, "", location.pathname + location.search); } catch (e) {}
 }
 window.closeVoiceView = closeVoiceView;
@@ -10032,6 +10056,111 @@ function _updateCarouselChar() {
     c.querySelector(".cc-scene").textContent = m.name || "";
 }
 
+// ── 全屏视图层级 ───────────────────────────────────────────────
+// 卡库 / 广场 / 语音是同一级域（PC 侧栏三选一），同时只允许一个；包详情、AI 辅助
+// 是叠在父页上的子层。
+// 层级用**打开顺序**重排 z-index 表达"后打开的在上"——这四个视图原来都是
+// z-index:6，谁在上面只看 DOM 顺序（voice 排在 cards 之前），于是后开的广场/语音
+// 会被先开的卡库压住。基值 6、最多 5 层 ⇒ 6~10，不会顶到菜单(50)/设置(58)。
+let _viewOrder = [];
+function _raiseView(el) {
+    if (!el) return;
+    _viewOrder = _viewOrder.filter(id => id !== el.id);
+    _viewOrder.push(el.id);
+    _viewOrder.forEach((id, i) => {
+        const v = document.getElementById(id);
+        if (v) v.style.zIndex = String(6 + i);
+    });
+}
+window.__raiseView = _raiseView;
+// 同级域互斥：打开一个，关掉另外两个（走各自的 close，保留它们的收尾逻辑——
+// 广场要释放图片 objectURL、语音要清定时器，直接 classList.remove 会漏）
+const _PEER_VIEWS = [
+    ["cards-view", "closeCardsView"],
+    ["plaza-view", "closePlaza"],
+    ["voice-view", "closeVoiceView"],
+];
+function _closePeers(keepId) {
+    _PEER_VIEWS.forEach(pair => {
+        if (pair[0] === keepId) return;
+        const v = document.getElementById(pair[0]);
+        if (!v || !v.classList.contains("show")) return;
+        const fn = window[pair[1]];
+        if (typeof fn === "function") { try { fn({silent: true}); } catch (e) {} }
+    });
+}
+window.__closePeerViews = _closePeers;
+// 所有全屏视图的关闭函数（清场用）
+const _FULL_VIEWS = ["assist-view", "pack-view", "plaza-view", "cards-view", "voice-view"];
+function _anyFullViewOpen() {
+    return _FULL_VIEWS.some(id => {
+        const el = document.getElementById(id);
+        if (!el) return false;
+        if (id === "assist-view") return getComputedStyle(el).display === "flex";
+        return el.classList.contains("show");
+    });
+}
+function _closeAllViews() {
+    ["closeAssist", "closePackView", "closePlaza", "closeCardsView", "closeVoiceView"].forEach(name => {
+        const fn = window[name];
+        if (typeof fn === "function") { try { fn({silent: true}); } catch (e) {} }
+    });
+    _viewOrder = [];
+}
+
+// 返回键的唯一真相：找当前**最上层**的可关闭层，依据是实际 computed z-index。
+// 原来 Kotlin 侧写死过一张优先级表，漏掉了 #assist-view（z 最高、本该最先关）、
+// 表情面板、确认弹层、下拉弹层，还把 cards 排在 pack 前面 —— 于是对着角色卡编辑页
+// 按返回，先关掉的是底下那一层，AI 辅助页则永远不退出。
+// 第三项是可见判定（默认看 display）：#menu-drawer 是靠 translateX 移出屏幕的，
+// display 一直是 block，只按 display 判会把它当成常开。
+// "__block" = 吞掉返回键但什么都不关：起床/休息这类过程遮罩，关掉会打断状态。
+const _BACK_CANDS = [
+    [".app-modal-mask", "__closeAppModal"],          // 1300 确认弹层
+    [".ui-select-pop.show", "__closeSelectPopups"],  // 1000 自绘下拉
+    ["#msg-long-menu", "_closeMsgMenu"],             // 120  长按菜单
+    ["#wake-overlay", "__block"],                    // 60   起床中
+    ["#rest-overlay", "__block"],                    // 60   休息中
+    ["#settings-panel", "closeSettings"],
+    ["#feedback-panel", "closeFeedback"],
+    ["#notice-panel", "closeNotice"],
+    ["#sticker-panel", "__closeStickerPanel"],
+    ["#menu-drawer", "closeMenu", el => el.classList.contains("open")],
+    ["#assist-view", "closeAssist"],
+    ["#pack-view", "closePackView"],
+    ["#plaza-view", "closePlaza"],
+    ["#cards-view", "closeCardsView"],
+    ["#voice-view", "closeVoiceView"],
+];
+window.__backTarget = function () {
+    let best = null, bestZ = -1;
+    _BACK_CANDS.forEach(pair => {
+        const el = document.querySelector(pair[0]);
+        if (!el) return;
+        const cs = getComputedStyle(el);
+        const visible = pair[2] ? pair[2](el)
+            : (cs.display !== "none" && cs.visibility !== "hidden");
+        if (!visible) return;
+        const z = parseInt(cs.zIndex, 10) || 0;
+        if (z > bestZ) { bestZ = z; best = pair[1]; }
+    });
+    return best;
+};
+// 执行一次"返回"：关掉最上层；关完没有全屏视图了就回首页。
+// 返回 true 表示这次返回键被消费了，false 表示已到首页（交给壳决定双击退出）。
+window.__back = function () {
+    const fn = window.__backTarget();
+    if (fn === "__block") return true;   // 起床/休息中：消费掉返回键，什么都不关
+    if (!fn) return false;
+    const wasPack = (fn === "closePackView");
+    const fromCards = _packFrom === "cards";
+    try { window[fn]({silent: true}); } catch (e) {}
+    // 从列表进的包详情：退回列表而不是首页（与 closePackView 的非静默语义一致）
+    if (wasPack && fromCards) { try { window.openCardsView(); } catch (e) {} return true; }
+    if (!_anyFullViewOpen()) { try { showHome(); } catch (e) {} }
+    return true;
+};
+
 // 角色编辑页（独立全屏）：切换目标包 + 打开；_packFrom 记录来源（cards=列表页 / 其他=首页）
 let _packFrom = "";
 function openPackView(mode, from) {
@@ -10043,13 +10172,16 @@ function openPackView(mode, from) {
     const v = document.getElementById("pack-view");
     if (!v) return;
     v.classList.add("show");
+    _raiseView(v);
     try { if (location.hash !== "#pack") history.pushState({pack: true}, "", "#pack"); } catch (e) {}
     try { window.loadPackView && window.loadPackView(); } catch (e) {}
 }
 window.openPackView = openPackView;
-function closePackView() {
+function closePackView(opts) {
     const v = document.getElementById("pack-view");
     if (v) v.classList.remove("show");
+    // silent：清场或返回键调用，去哪儿由调用方决定（返回键那边会判断是否回列表）
+    if (opts && opts.silent) return;
     if (_packFrom === "cards") { showCardsView(); return; }   // 从列表来则回列表
     showHome();
     try { if (location.hash === "#pack") history.replaceState({}, "", location.pathname + location.search); } catch (e) {}
@@ -10061,7 +10193,9 @@ function openCardsView() {
     homeView.classList.remove("show");
     const v = document.getElementById("cards-view");
     if (!v) return;
+    _closePeers("cards-view");
     v.classList.add("show");
+    _raiseView(v);
     // 服务器版不做自定义整包：隐藏新建区
     const newBox = document.querySelector("#cards-view .cv-new");
     if (newBox) newBox.style.display = IS_SERVER ? "none" : "";
@@ -10070,10 +10204,10 @@ function openCardsView() {
 }
 window.openCardsView = openCardsView;
 function showCardsView() { openCardsView(); }
-function closeCardsView() {
+function closeCardsView(opts) {
     const v = document.getElementById("cards-view");
     if (v) v.classList.remove("show");
-    showHome();
+    if (!(opts && opts.silent)) showHome();
     try { if (location.hash === "#cards") history.replaceState({}, "", location.pathname + location.search); } catch (e) {}
 }
 window.closeCardsView = closeCardsView;
@@ -10325,6 +10459,10 @@ function applyModeBranding() {
 }
 
 function showHome() {
+    // 回首页 = 清掉所有全屏视图。它们是 z-index 更高的独立层，只加首页的 show
+    // 不会把它们收起来——返回键经 popstate 走 showHome 时，残留的包详情/AI 辅助
+    // 就是这样继续盖在首页上的。
+    _closeAllViews();
     homeView.classList.add("show");
     appView.style.display = "none";     // 首页独立视图：真正隐藏聊天页（避免半透明透视）
     closeMenu();
@@ -10445,9 +10583,11 @@ function enterMode(mode) {
 window.enterMode = enterMode;
 
 
-// 返回键支持（PC 浏览器后退 / Android WebView goBack → popstate → 回首页）
+// 返回键支持（PC 浏览器后退 / Android WebView goBack → popstate）
+// 交给统一的返回栈：先关最上层，关完没有全屏视图了才回首页。
 window.addEventListener("popstate", () => {
-    if (location.hash !== "#chat") showHome();
+    if (location.hash === "#chat") return;
+    if (!window.__back()) showHome();
 });
 function toggleNotice() {
     const panel = document.getElementById("notice-panel");

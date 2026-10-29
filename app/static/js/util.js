@@ -26,6 +26,16 @@ export function escapeHtml(s) {
  *  opts: { title, body, confirmText, cancelText, danger, input, placeholder, validate, validateMsg }
  *  返回 Promise：普通确认 → true/false；opts.input → 输入的字符串 / null（取消）。
  *  确认按钮在 input 模式下由 validate 决定是否放行；输入为空时直接拦截。 */
+// 同时可能叠着多个确认弹层（例如连点两次删除）。返回键要关的是最上面那个，
+// 所以按打开顺序记栈，而不是 querySelector 抓第一个。
+let _modalStack = [];
+window.__closeAppModal = function () {
+    const top = _modalStack[_modalStack.length - 1];
+    if (!top) return false;
+    try { top.cancel(); } catch (e) {}
+    return true;
+};
+
 export function uiConfirm(opts) {
     const o = opts || {};
     return new Promise((resolve) => {
@@ -71,12 +81,17 @@ export function uiConfirm(opts) {
         mask.appendChild(box);
         document.body.appendChild(mask);
 
+        const entry = { cancel: null };
         const done = (val) => {
             document.removeEventListener("keydown", onKey, true);
             mask.remove();
+            const i = _modalStack.indexOf(entry);
+            if (i >= 0) _modalStack.splice(i, 1);
             resolve(val);
         };
         const cancelValue = () => (o.input ? null : false);
+        entry.cancel = () => done(cancelValue());
+        _modalStack.push(entry);
         function onKey(e) {
             if (e.key === "Escape") { e.preventDefault(); done(cancelValue()); }
             else if (e.key === "Enter" && (!inputEl || document.activeElement === inputEl)) {

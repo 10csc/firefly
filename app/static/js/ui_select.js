@@ -12,6 +12,8 @@ function _closeAllPopups(except) {
     });
 }
 
+window.__closeSelectPopups = function () { _closeAllPopups(); };
+
 // 全局关闭：点外 / Esc / 滚动（弹层跟随是 fixed，滚动时直接关，防错位）
 document.addEventListener("pointerdown", e => {
     if (!e.target.closest(".ui-select-pop") && !e.target.closest(".ui-select-btn")) _closeAllPopups();

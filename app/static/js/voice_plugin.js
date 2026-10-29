@@ -162,17 +162,19 @@ function openVoiceView() {
     if (cv) cv.classList.remove("show");
     const v = document.getElementById("voice-view");
     if (!v) return;
+    window.__closePeerViews && window.__closePeerViews("voice-view");
     v.classList.add("show");
+    window.__raiseView && window.__raiseView(v);
     try { if (location.hash !== "#voice") history.pushState({voice: true}, "", "#voice"); } catch (e) {}
     renderVoiceView();
 }
 window.openVoiceView = openVoiceView;
 
-function closeVoiceView() {
+function closeVoiceView(opts) {
     const v = document.getElementById("voice-view");
     if (v) v.classList.remove("show");
     if (_vpTimer) { clearTimeout(_vpTimer); _vpTimer = null; }
-    showHome();
+    if (!(opts && opts.silent)) showHome();
     try { if (location.hash === "#voice") history.replaceState({}, "", location.pathname + location.search); } catch (e) {}
 }
 window.closeVoiceView = closeVoiceView;

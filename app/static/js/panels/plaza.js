@@ -282,7 +282,10 @@ function _pzOnPanelClose() {
 function _pzOpen() {
     if (!_pzRoot) return;
     _pzInit();
+    // 卡库/语音与广场同级：开一个关另外两个（原来这里一个都不关，于是三页能叠在一起）
+    window.__closePeerViews && window.__closePeerViews("plaza-view");
     _pzRoot.classList.add("show");
+    window.__raiseView && window.__raiseView(_pzRoot);
     _pzSetView("list");
     _pzIsOpen = true;
     if (_pzSort) _pzSort.value = _pzS.sort;

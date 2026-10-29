@@ -589,31 +589,23 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    /** 返回键策略：遮罩/全屏页（设置/反馈/菜单/角色卡列表/包详情/纠错）先关闭，
-     * 聊天页回首页，首页双击退出。
-     * （旧实现只区分 home/chat：角色卡管理等全屏页按返回无反应，真机实测复现。） */
+    /** 返回键策略：视图栈在前端（views.js 的 __back），壳只管最后一层。
+     * 前端按**实际 z-index** 找最上层可关闭的东西并关掉，返回 true 表示这键已消费；
+     * 壳在没人消费时决定：聊天页回首页，首页双击退出。
+     *
+     * 这里原先写死过一张优先级表，漏了 AI 辅助页（z 最高、本该最先关）、表情面板、
+     * 确认弹层与下拉弹层，还把角色卡列表排在包详情前面——对着包详情按返回，先关掉
+     * 的是底下那层，AI 辅助页则永远退不出去。 */
     private fun handleBackPressed() {
         val wv = webView
         if (wv == null) { finish(); return }
-        wv.evaluateJavascript(
-            "(function(){" +
-            " if (document.querySelector('#settings-panel.show')) return 'settings';" +
-            " if (document.querySelector('#feedback-panel.show')) return 'feedback';" +
-            " if (document.querySelector('#menu-drawer.open')) return 'menu';" +
-            " if (document.querySelector('#cards-view.show')) return 'cards';" +
-            " if (document.querySelector('#pack-view.show')) return 'pack';" +
-            " if (document.querySelector('#fix-view.show')) return 'fix';" +
-            " var hv=document.getElementById('home-view');" +
-            " return (hv && hv.classList.contains('show')) ? 'home' : 'chat'; })()"
-        ) { result ->
-            when (result?.trim('"')) {
-                "settings" -> wv.evaluateJavascript("closeSettings()", null)
-                "feedback" -> wv.evaluateJavascript("closeFeedback()", null)
-                "menu" -> wv.evaluateJavascript("closeMenu()", null)
-                "cards" -> wv.evaluateJavascript("closeCardsView()", null)
-                "pack" -> wv.evaluateJavascript("closePackView()", null)
-                "fix" -> wv.evaluateJavascript("closeFixView()", null)
-                "home" -> {
+        wv.evaluateJavascript("window.__back ? window.__back() : false") { result ->
+            if (result?.trim('"') == "true") return@evaluateJavascript
+            wv.evaluateJavascript(
+                "(function(){var hv=document.getElementById('home-view');" +
+                "return (hv && hv.classList.contains('show')) ? 'home' : 'chat';})()"
+            ) { where ->
+                if (where?.trim('"') == "home") {
                     val now = System.currentTimeMillis()
                     if (now - exitBackPressedAt < 2000) {
                         exitBackPressedAt = 0
@@ -622,8 +614,9 @@ class MainActivity : AppCompatActivity() {
                         exitBackPressedAt = now
                         Toast.makeText(this, "再按一次返回键退出", Toast.LENGTH_SHORT).show()
                     }
+                } else {
+                    wv.evaluateJavascript("showHome()", null)
                 }
-                else -> wv.evaluateJavascript("showHome()", null)
             }
         }
     }
