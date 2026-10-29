@@ -20,6 +20,7 @@ GET /plaza/api/download 下载 card.zip（计入下载数；字节配额见 04 �
 体积纪律（3Mbps 带宽）：列表响应**不含卡正文**；图片长缓存；zip 走低优先通道（M4）。
 """
 
+import hashlib
 import json
 import logging
 from pathlib import Path
@@ -116,7 +117,7 @@ def plaza_asset(h) -> None:
         blob = fp.read_bytes()
     except OSError:
         return _err(h, 404, "图片读取失败")
-    etag = '"%s"' % __import__("hashlib").sha256(blob).hexdigest()[:32]
+    etag = '"%s"' % hashlib.sha256(blob).hexdigest()[:32]
     if (h.headers.get("If-None-Match") or "").strip() == etag:
         h.send_response(304)
         h.send_header("ETag", etag)

@@ -54,7 +54,6 @@ def _url_for(template: str, filename: str) -> str:
 
 
 # ── 仓库清单（拿 sha256 用）─────────────────────────
-API_BASE = "https://www.modelscope.cn"   # 仅当模板是"无 scheme 的相对路径"时的兜底
 _MANIFEST_RE = re.compile(r"/models/([^/]+)/([^/]+)/repo\b")
 
 
@@ -73,7 +72,9 @@ def _manifest_url(template: str) -> str | None:
     if not m:
         return None
     sp = urlsplit(template or "")
-    origin = f"{sp.scheme}://{sp.netloc}" if (sp.scheme and sp.netloc) else API_BASE
+    if sp.scheme != "https" or not sp.netloc:
+        return None
+    origin = f"{sp.scheme}://{sp.netloc}"
     rev = "master"
     mr = re.search(r"[?&]Revision=([^&]+)", template or "")
     if mr:

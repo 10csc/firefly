@@ -315,7 +315,10 @@ def snapshot_restore(h):
         pre = build_full_snapshot_zip()
         d = _snapshots_dir()
         pre_name = f"pre-restore-{time.strftime('%Y%m%d-%H%M%S')}.zip"
-        (d / pre_name).write_bytes(pre)
+        from modules.storage import atomic_write_bytes
+
+        if not atomic_write_bytes(d / pre_name, pre):
+            raise OSError("pre-restore 快照原子写失败")
         olds = sorted(p.name for p in d.glob("pre-restore-*.zip"))
         for old in olds[:max(len(olds) - 3, 0)]:
             try: (d / old).unlink()
@@ -326,7 +329,13 @@ def snapshot_restore(h):
     ok, err, n = _restore_full_snapshot(data, backup=not pre_ok, summary=_sum)
     if not ok:
         h._json({"ok": False, "error": err, "backup_ok": pre_ok}); return
-    resp = {"ok": True, "restored": name, "files": n, "backup_ok": pre_ok}
+    resp = {
+        "ok": True,
+        "restored": name,
+        "files": n,
+        "backup_ok": pre_ok,
+        "cache_reload_ok": bool(_sum.get("cache_reload_ok", True)),
+    }
     if _sum.get("manifest"):
         resp["manifest"] = _sum["manifest"]          # 3.4：把清单摘要回给前端
     h._json(resp)

@@ -122,8 +122,6 @@ def _summary() -> dict:
                      "android": bool(os.environ.get("FIREFLY_ANDROID")),
                      "server": bool(os.environ.get("FIREFLY_SERVER"))}
     d["generated_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
-    for name, fn in (("hotupdate", "/hotupdate/status"), ("notice", "/notice/status")):
-        pass
     try:
         from hotupdate import running_id as _hu_running
         # ★ 排障第一问"你在跑哪份代码"：三元组必须是诊断包里的**顶层字段**，

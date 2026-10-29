@@ -222,6 +222,10 @@ def save_draft(ohash: str, card_zip: bytes, *, display: str = "",
         if not atomic_write_bytes(draft_zip(ohash, did), card_zip):
             raise DraftError(DRAFT_PUBLISH_FAILED, "草稿保存失败（磁盘写入错误）")
         if not atomic_write_json(draft_meta(ohash, did), meta):
+            try:
+                draft_zip(ohash, did).unlink(missing_ok=True)
+            except OSError as exc:
+                logger.warning("草稿元数据失败后清理卡体失败 %s/%s: %s", ohash, did, exc)
             raise DraftError(DRAFT_PUBLISH_FAILED, "草稿元数据保存失败")
     return meta
 

@@ -211,7 +211,31 @@ def recover_swap_leftovers(base: Path | None = None) -> list[str]:
     return notes
 
 
-def _import_zip_to_mode(data: bytes, mode: str, backup_prefix: str = "auto") -> tuple[bool, str, int]:
+def _reload_restore_caches(modes) -> bool:
+    """恢复落盘后重建内存缓存；失败必须可见，不能把旧内容当成功。"""
+    try:
+        from modules.llm_base import clear_cache, reload_journal
+        from modules.polisher import clear_samples_cache
+
+        clear_cache()
+        clear_samples_cache()
+        for mode in modes:
+            reload_journal(mode)
+        return True
+    except Exception as exc:
+        logger.warning(
+            "恢复后缓存重载失败（数据已落盘，但后续读取可能暂用旧缓存）: %s",
+            exc,
+        )
+        return False
+
+
+def _import_zip_to_mode(
+    data: bytes,
+    mode: str,
+    backup_prefix: str = "auto",
+    summary: dict | None = None,
+) -> tuple[bool, str, int]:
     """zip 数据覆盖导入到指定模式（导入前把当前模式备份到 backups/，前缀 backup_prefix）。
 
     返回 (ok, error, 文件数)。
@@ -264,14 +288,9 @@ def _import_zip_to_mode(data: bytes, mode: str, backup_prefix: str = "auto") -> 
         _sh.rmtree(tmp, ignore_errors=True)
         return False, err, 0
     # 清缓存：设定/手账/短信样本的内存缓存必须重载（旧内容会串进新数据）
-    try:
-        from modules.llm_base import clear_cache, reload_journal
-        from modules.polisher import clear_samples_cache
-        clear_cache()
-        clear_samples_cache()
-        reload_journal(mode)
-    except Exception:
-        pass
+    cache_ok = _reload_restore_caches((mode,))
+    if summary is not None:
+        summary["cache_reload_ok"] = cache_ok
     return True, "", n
 
 
@@ -516,13 +535,7 @@ def _restore_full_snapshot(data: bytes, backup: bool = True,
             return False, f"表情包恢复失败: {e}", n
 
     # 缓存重载：设定/手账/短信样本的内存缓存必须重建（旧内容会串进新数据）
-    try:
-        from modules.llm_base import clear_cache, reload_journal
-        from modules.polisher import clear_samples_cache
-        clear_cache()
-        clear_samples_cache()
-        for m in by_mode:
-            reload_journal(m)
-    except Exception:
-        pass
+    cache_ok = _reload_restore_caches(by_mode)
+    if summary is not None:
+        summary["cache_reload_ok"] = cache_ok
     return True, "", n

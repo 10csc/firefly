@@ -9,7 +9,7 @@
 - server.py（本文件）    FireflyHandler + 启动块
 """
 
-import json, sys, os, logging, warnings
+import json, sys, os, logging, subprocess, warnings
 # 屏蔽 requests 依赖版本不匹配的警告（不影响功能）
 warnings.filterwarnings("ignore", message=".*urllib3.*", module="requests")
 warnings.filterwarnings("ignore", message=".*chardet.*", module="requests")
@@ -90,6 +90,49 @@ class LocalServer(ThreadingHTTPServer):
     """
 
     request_queue_size = 128
+
+
+def _kill_listener_on_port(port: int) -> bool:
+    """查找并强杀监听指定端口的进程；全程使用参数列表，不经过 shell。"""
+    try:
+        listing = subprocess.run(
+            ["netstat", "-ano", "-p", "tcp"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+        )
+    except OSError as exc:
+        print(f"  [WARN] 无法运行 netstat: {exc}", flush=True)
+        return False
+
+    pid = ""
+    for line in (listing.stdout or "").splitlines():
+        parts = line.split()
+        if (len(parts) >= 5
+                and parts[0].upper() == "TCP"
+                and parts[1].rsplit(":", 1)[-1] == str(port)
+                and parts[3].upper() == "LISTENING"
+                and parts[-1].isdigit()):
+            pid = parts[-1]
+            break
+    if not pid:
+        return False
+
+    try:
+        killed = subprocess.run(
+            ["taskkill", "/F", "/PID", pid],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+        )
+    except OSError as exc:
+        print(f"  [WARN] 无法运行 taskkill: {exc}", flush=True)
+        return False
+    return killed.returncode == 0
 
 
 def _static_file(rel: str) -> Path:
@@ -294,15 +337,7 @@ def main():
             _probe3.connect(("127.0.0.1", cfg.PORT))
             print("  [WARN] 旧实例未响应优雅关闭，尝试强杀", flush=True)
             _probe3.close()
-            _out = os.popen(f'netstat -ano | findstr ":{cfg.PORT}" | findstr LISTENING').read()
-            for _line in _out.splitlines():
-                _parts = _line.split()
-                if len(_parts) >= 5:
-                    try:
-                        os.system(f"taskkill /F /PID {_parts[-1]} >nul 2>&1")
-                    except Exception:
-                        pass
-                    break
+            _kill_listener_on_port(cfg.PORT)
             _tm.sleep(1)
         except (ConnectionRefusedError, OSError):
             pass  # 端口已释放

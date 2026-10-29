@@ -32,6 +32,7 @@ D1 限额（**仅服务器模式**，用户 2026-10-01 拍板）：每人 ≤5 �
 import json
 import logging
 import shutil
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -55,6 +56,8 @@ QUOTA_MAX_BYTES = 8 * 1024 * 1024      # 服务器模式：每人安装总量上
 BACKUP_KEEP_MAX = 3
 BACKUP_TOTAL_MAX_BYTES = 64 * 1024 * 1024
 _FETCH_TIMEOUT = 60
+_INSTALL_LOCKS: dict[str, threading.Lock] = {}
+_INSTALL_LOCKS_GUARD = threading.Lock()
 
 
 def _is_server() -> bool:
@@ -65,6 +68,17 @@ def _is_server() -> bool:
 def _user_root() -> Path:
     from core.userctx import _user_ctx_dir
     return Path(_user_ctx_dir() or cfg.USER_DIR)
+
+
+def _install_lock() -> threading.Lock:
+    """同一用户数据根的“配额检查 → 覆盖备份 → 落盘 → 登记”必须串行。"""
+    key = str(_user_root().resolve())
+    with _INSTALL_LOCKS_GUARD:
+        lock = _INSTALL_LOCKS.get(key)
+        if lock is None:
+            lock = threading.Lock()
+            _INSTALL_LOCKS[key] = lock
+        return lock
 
 
 # ── 取卡 ────────────────────────────────────────────
@@ -124,7 +138,7 @@ def plaza_usage() -> dict:
     return out
 
 
-def check_quota(new_bytes: int, *, replacing: bool = False,
+def check_quota(new_bytes: int, *, replacing: bool = False, replacing_id: str = "",
                 is_admin: bool = False) -> tuple[bool, str]:
     """服务器模式配额检查；本地模式恒放行。返回 (ok, 错误文案)。
 
@@ -141,8 +155,22 @@ def check_quota(new_bytes: int, *, replacing: bool = False,
     u = plaza_usage()
     if not replacing and u["count"] >= QUOTA_MAX_CARDS:
         return False, f"最多安装 {QUOTA_MAX_CARDS} 张广场角色卡（可先卸载不再使用的）"
-    if u["bytes"] + new_bytes > QUOTA_MAX_BYTES:
-        return False, f"广场角色卡总量不能超过 {QUOTA_MAX_BYTES // 1024 // 1024}MB（当前已用 {u['bytes'] // 1024}KB）"
+    used_bytes = u["bytes"]
+    if replacing and replacing_id:
+        try:
+            used_bytes -= sum(
+                fp.stat().st_size
+                for fp in (_user_root() / replacing_id).rglob("*")
+                if fp.is_file()
+            )
+        except OSError as exc:
+            logger.warning("覆盖安装统计旧卡体积失败 %s: %s", replacing_id, exc)
+        used_bytes = max(0, used_bytes)
+    if used_bytes + new_bytes > QUOTA_MAX_BYTES:
+        return False, (
+            f"广场角色卡总量不能超过 {QUOTA_MAX_BYTES // 1024 // 1024}MB"
+            f"（当前已用 {used_bytes // 1024}KB）"
+        )
     return True, ""
 
 
@@ -359,41 +387,48 @@ def install_card(card_id: str, *, replace: bool = False,
         return False, f"卡片校验未通过（{e.code}）：{e.message}", {}
 
     cid = parsed["manifest"]["id"]
-    target = _user_root() / cid
-    if target.exists() and not replace:
-        return False, f"已安装同名角色卡「{parsed['manifest']['name']}」，如需更新请选择覆盖", {}
+    with _install_lock():
+        target = _user_root() / cid
+        if target.exists() and not replace:
+            return False, f"已安装同名角色卡「{parsed['manifest']['name']}」，如需更新请选择覆盖", {}
 
-    ok, why = check_quota(len(data), replacing=target.exists(), is_admin=is_admin)
-    if not ok:
-        return False, why, {}
+        replacing = target.exists()
+        ok, why = check_quota(
+            len(data),
+            replacing=replacing,
+            replacing_id=cid if replacing else "",
+            is_admin=is_admin,
+        )
+        if not ok:
+            return False, why, {}
 
-    backup = _backup_existing(cid) if target.exists() else ""
-    try:
-        # 只写 character/：卡里的键都是 character/ 相对路径（01 契约）
-        for rel, blob in parsed["files"].items():
-            if rel == "preset.json":
-                blob = _sanitize_preset(blob)
-            dst = target / "character" / rel
-            if not atomic_write_bytes(dst, blob):
-                raise OSError(f"写入失败：{rel}")
-        # 覆盖安装时清掉卡里已不含的旧文件（否则被删掉的槽位会残留旧内容）
-        allowed = {Path(r).as_posix() for r in parsed["files"]} | {"preset.json"}
-        for fp in (target / "character").rglob("*"):
-            if fp.is_file():
-                rel = fp.relative_to(target / "character").as_posix()
-                if rel not in allowed:
-                    try:
-                        fp.unlink()
-                    except OSError:
-                        pass
-        reg = cfg.pack_registry()
-        entry = reg.register(cid, source=SOURCE, parsed=parsed["preset"])
-        if not entry:
-            raise OSError("登记进包清单失败")
-        cfg.reload_presets()
-    except (OSError, cf.CardError) as e:
-        logger.warning("安装广场卡失败 %s: %s", cid, e)
-        return False, f"安装失败：{e}", {}
+        backup = _backup_existing(cid) if replacing else ""
+        try:
+            # 只写 character/：卡里的键都是 character/ 相对路径（01 契约）
+            for rel, blob in parsed["files"].items():
+                if rel == "preset.json":
+                    blob = _sanitize_preset(blob)
+                dst = target / "character" / rel
+                if not atomic_write_bytes(dst, blob):
+                    raise OSError(f"写入失败：{rel}")
+            # 覆盖安装时清掉卡里已不含的旧文件（否则被删掉的槽位会残留旧内容）
+            allowed = {Path(r).as_posix() for r in parsed["files"]} | {"preset.json"}
+            for fp in (target / "character").rglob("*"):
+                if fp.is_file():
+                    rel = fp.relative_to(target / "character").as_posix()
+                    if rel not in allowed:
+                        try:
+                            fp.unlink()
+                        except OSError:
+                            pass
+            reg = cfg.pack_registry()
+            entry = reg.register(cid, source=SOURCE, parsed=parsed["preset"])
+            if not entry:
+                raise OSError("登记进包清单失败")
+            cfg.reload_presets()
+        except (OSError, cf.CardError) as e:
+            logger.warning("安装广场卡失败 %s: %s", cid, e)
+            return False, f"安装失败：{e}", {}
 
     info = {
         "id": cid, "name": parsed["manifest"]["name"],

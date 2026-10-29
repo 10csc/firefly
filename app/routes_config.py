@@ -478,11 +478,15 @@ def get_balance(h):
     # 查询 DeepSeek 账户余额（仅 DeepSeek 官方端点与激活供应商 Key；其它供应商不支持）
     import urllib.request
     api_base = cfg.config.get("api_base", cfg.API_BASE)
-    if not api_base.startswith("https://api.deepseek.com"):
+    normalized_base = str(api_base or "").rstrip("/")
+    official_base = str(cfg.API_BASE or "").rstrip("/")
+    if normalized_base != official_base:
         h._json({"error": "仅 DeepSeek 官方支持余额查询", "supported": False}); return
     try:
+        balance_base = (normalized_base[:-3]
+                        if normalized_base.endswith("/v1") else normalized_base)
         req = urllib.request.Request(
-            f"{cfg.API_BASE.replace('/v1', '')}/user/balance",
+            f"{balance_base}/user/balance",
             headers={"Authorization": f"Bearer {cfg.get_api_key()}"},
         )
         with urllib.request.urlopen(req, timeout=10) as r:

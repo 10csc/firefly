@@ -156,6 +156,7 @@ def import_data(h):
         if not ok:
             h._json({"ok": False, "error": err}); return
         resp = {"ok": True, "files": n, "snapshot": True}
+        resp["cache_reload_ok"] = bool(_sum.get("cache_reload_ok", True))
         if _sum.get("manifest"):
             resp["manifest"] = _sum["manifest"]      # 3.4：清单摘要（旧 zip 无此项）
         h._json(resp)
@@ -163,10 +164,16 @@ def import_data(h):
     mode = fields.get("mode", DEFAULT_MODE)
     if not cfg.valid_mode(mode):
         h._json({"ok": False, "error": "非法模式"}); return
-    ok, err, n = _import_zip_to_mode(data, mode)
+    _sum: dict = {}
+    ok, err, n = _import_zip_to_mode(data, mode, summary=_sum)
     if not ok:
         h._json({"ok": False, "error": err}); return
-    h._json({"ok": True, "files": n, "mode": mode})
+    h._json({
+        "ok": True,
+        "files": n,
+        "mode": mode,
+        "cache_reload_ok": bool(_sum.get("cache_reload_ok", True)),
+    })
 
 
 # ── 本地备份管理（/backup/*）：{用户目录}/backups/，每模式留最近 _BACKUP_KEEP 份 ──
@@ -273,10 +280,18 @@ def backup_restore(h):
         data = fp.read_bytes()
     except OSError as e:
         h._json({"ok": False, "error": f"备份读取失败: {e}"}); return
-    ok, err, n = _import_zip_to_mode(data, mode, backup_prefix="pre-restore")
+    _sum: dict = {}
+    ok, err, n = _import_zip_to_mode(
+        data, mode, backup_prefix="pre-restore", summary=_sum)
     if not ok:
         h._json({"ok": False, "error": err}); return
-    h._json({"ok": True, "restored": name, "mode": mode, "files": n})
+    h._json({
+        "ok": True,
+        "restored": name,
+        "mode": mode,
+        "files": n,
+        "cache_reload_ok": bool(_sum.get("cache_reload_ok", True)),
+    })
 
 
 def backup_delete(h):

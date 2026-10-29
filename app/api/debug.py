@@ -7,6 +7,7 @@
 
 
 from routes_common import _CONTENT_MAX, _body_mode, _is_server, _query_mode, _read_json
+from modules.storage import atomic_write_text
 
 import logging
 
@@ -60,8 +61,8 @@ def save_user_memory(h):
         h._json({"ok": False, "error": f"内容过长（当前 {len(content)} 字，上限 {_CONTENT_MAX} 字）；请精简后重试"}); return
     try:
         fp = _memory_file(mode)
-        fp.parent.mkdir(parents=True, exist_ok=True)
-        fp.write_text(content, encoding="utf-8")
+        if not atomic_write_text(fp, content):
+            raise OSError("原子写失败")
         h._json({"ok": True})
     except Exception as e:
         logger.warning("保存用户记忆失败: %s", e)

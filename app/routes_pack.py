@@ -18,7 +18,7 @@ from pathlib import Path
 
 from modules import app_config as cfg
 from modules.app_config import DEFAULT_MODE
-# 兼容旧调用；真身已移至 api.pack_paths，此处不得重新实现
+# 兼容旧调用；真身已移至 core.pack_paths，此处不得重新实现
 from api.pack_paths import kb_bundled_root as _kb_bundled_root
 from api.pack_paths import kb_user_root as _kb_user_root
 from routes_common import _read_json, _body_mode, _query_mode

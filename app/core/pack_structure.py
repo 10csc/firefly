@@ -144,7 +144,7 @@ def build_tree(mode: str) -> dict:
                 from modules.pack_assist import assistable
                 src["assistable"] = assistable(s["file"])
             elif t == "file":
-                from api.pack_paths import read_pack_text
+                from core.pack_paths import read_pack_text
                 text = read_pack_text(mode, s["path"])
                 src["exists"] = bool(text)
                 src["user_copy"] = (cfg.mode_character_dir(mode) / s["path"]).is_file()
@@ -152,7 +152,7 @@ def build_tree(mode: str) -> dict:
                 src["assistable"] = assistable(s["path"])
             elif t == "dir":
                 try:
-                    from api.pack_paths import kb_bundled_root, kb_user_root
+                    from core.pack_paths import kb_bundled_root, kb_user_root
                     b, u = kb_bundled_root(mode), kb_user_root(mode)
                     n = 0
                     for root in (b, u):

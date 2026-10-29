@@ -8,6 +8,7 @@
 
 import json
 import logging
+import threading
 from pathlib import Path
 
 from core import paths as _paths
@@ -275,6 +276,7 @@ class PackRegistry:
 
 
 _REGISTRIES: dict[str, PackRegistry] = {}
+_REGISTRIES_GUARD = threading.Lock()
 
 
 def pack_registry(fp: Path | None = None) -> PackRegistry:
@@ -286,8 +288,14 @@ def pack_registry(fp: Path | None = None) -> PackRegistry:
     服务器版按账号各自缓存独立实例。"""
     key = str(fp or ((_user_ctx_dir() or _paths.USER_DIR) / _PACKS_FILE))
     reg = _REGISTRIES.get(key)
-    if reg is None:
-        reg = PackRegistry(Path(key))
-        reg.load(persist=False)
-        _REGISTRIES[key] = reg
+    if reg is not None:
+        return reg
+    # 首次 load 可能扫描多个包目录；get → load → set 必须处于同一临界区，
+    # 否则两个请求会各自创建一个实例，后续修改落到不同内存对象。
+    with _REGISTRIES_GUARD:
+        reg = _REGISTRIES.get(key)
+        if reg is None:
+            reg = PackRegistry(Path(key))
+            reg.load(persist=False)
+            _REGISTRIES[key] = reg
     return reg
