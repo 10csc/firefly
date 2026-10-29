@@ -1,6 +1,6 @@
 {
   "schema": 1,
   "version": "0.9.1",
-  "hotupdate": "0.9.1/7",
-  "note": "hot7 候选补齐当前同步、安全与热更新源码闭包；仅在本地重建，未发布。"
+  "hotupdate": "0.9.1/8",
+  "note": "serial 8 候选补齐 core/pack_paths.py 闭包，并纳入内部逻辑、安全与并发修复；仅在本地重建，未发布。"
 }
