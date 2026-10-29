@@ -23,6 +23,26 @@ function _syncPillShow(text) {
 }
 function _syncPillHide() { if (_syncPill) _syncPill.style.display = "none"; }
 
+/** 同步失败 → 用户能读懂、且知道下一步做什么的一句话。
+ *  后端 error 里常带 `[code]` 前缀与角色包 id（如「服务端把 robin 解析成 story」），
+ *  那是给开发者看的；界面只放结论，原始串由调用方 console.warn 落日志/进诊断包。 */
+function _humanSyncError(d, status) {
+    const raw = String((d && d.error) || "");
+    const tech = friendlyError(raw);
+    if (tech) return tech;
+    if (/解析成/.test(raw)) {
+        return "本地与服务端的角色包对不上，已安全中止，没有写入任何数据";
+    }
+    if (/同步包损坏/.test(raw)) {
+        return "服务端返回的同步包损坏了，已中止，没有写入任何数据";
+    }
+    if (/拉取失败|上传失败|导入失败/.test(raw)) {
+        return "和服务端交换数据时中断了，稍后再试";
+    }
+    const body = raw.replace(/\[[^\]]*\]\s*/g, "").trim();
+    return body || `服务器返回 ${status}`;
+}
+
 window.autoSyncNow = async function (force) {
     if (IS_SERVER) return;   // 服务器版数据天然在云端，无需同步
     if (_syncing) return;    // 并发护栏：上一次同步还在飞
@@ -57,8 +77,7 @@ window.autoSyncNow = async function (force) {
         } else {
             // 原始错误只进控制台/诊断包，界面给人话（用户读到的是"该做什么"，不是异常类名）
             console.warn("[sync] 同步失败", { code: d.code, trace: d.trace_id, error: d.error, status: r.status });
-            const human = friendlyError(d.error) || d.error || `服务器返回 ${r.status}`;
-            const err = "同步没完成：" + human;
+            const err = "同步没完成：" + _humanSyncError(d, r.status);
             if (msg) msg.textContent = err;
             showToast("同步没完成，稍后再试", "error");
         }
