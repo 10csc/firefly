@@ -8,8 +8,9 @@
   · `web/` → 覆盖层替换 → 空闲时前端 reload（或壳 reload）
   · `py/`  → 覆盖层替换 → 空闲时**重启 App 进程**（Chaquopy 一进程只能 `Python.start()` 一次）
 因为方式不同，`status()` 把两个标志分开报：`reload_pending`（可 reload）与
-`restart_pending`（必须重启进程，reload 无意义）。**含 py 的补丁必须是"已 import 的模块"**，
-否则重启也换不掉旧代码 —— 这一点由 `_overlay_effective()` 在应用时就查清并如实上报（见 §七）。
+`restart_pending`（必须重启进程，reload 无意义）。新进程会重新 import 覆盖层，因此
+“本进程已 import”不构成障碍；应用前只拒绝缺祖先 `__init__.py` 的半套包和 PC 入口
+`server.py`（见 §七）。
 
 铁律：
   · 公开函数**永不抛异常**（都兜成状态字段）—— 热更是后台设施，不许拖垮聊天主链。
@@ -20,11 +21,13 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import logging
 import os
 import sys
 import threading
 import time
+import uuid
 from pathlib import Path
 
 from core import paths
@@ -71,6 +74,10 @@ _DEFAULTS = {
     "last_check": 0.0,
     "last_error": "",
     "rolled_back_reason": "",
+    "client_id": "",
+    "rollout_percent": 0,
+    "rollout_bucket": -1,
+    "rollout_deferred": False,
 }
 
 # 运行期状态（不落盘）
@@ -204,31 +211,62 @@ def base_urls(d: dict) -> list:
     return out
 
 
+def _rollout_decision(d: dict, manifest: dict, serial: int) -> bool:
+    """按稳定安装标识决定是否进入灰度；返回本机是否被选中。
+
+    `rollout_percent` 已签名但此前客户端完全没消费，等于“灰度字段只是装饰”。
+    现在用 `sha256(client_id:base:serial)` 落桶：同一台设备对同一补丁的判定稳定，
+    不会刷新一次就随机换组；不同补丁重新分桶，不会永远只有同一小批用户。
+    """
+    cid = str(d.get("client_id") or "")
+    if not cid:
+        cid = uuid.uuid4().hex
+        d["client_id"] = cid
+    try:
+        pct = int(manifest.get("rollout_percent", 100))
+    except Exception:
+        pct = 100
+    pct = max(0, min(100, pct))
+    raw = f"{cid}:{cfg.APP_VERSION}:{int(serial)}".encode("utf-8")
+    bucket = int.from_bytes(hashlib.sha256(raw).digest()[:8], "big") % 100
+    selected = bucket < pct
+    d["rollout_percent"] = pct
+    d["rollout_bucket"] = bucket
+    d["rollout_deferred"] = not selected
+    return selected
+
+
+def _py_package_init_gaps(file_paths) -> list[str]:
+    """返回 py 覆盖层缺失的祖先 `__init__.py`。
+
+    hot3 事故的**客户端运行时防线**：补丁带 `modules/app_config.py` 却漏了
+    `modules/__init__.py` 时，Python 会回到底座加载旧包，覆盖层里的新模块永远不可见。
+    发布端负责完整包闭包，客户端至少必须拒绝这种“祖先包不完整”的包。
+    """
+    provided = {str(p) for p in (file_paths or [])}
+    missing = set()
+    for arc in provided:
+        if not arc.startswith("py/") or not arc.endswith(".py"):
+            continue
+        parts = arc[3:].split("/")
+        for i in range(1, len(parts)):
+            init = "py/" + "/".join(parts[:i]) + "/__init__.py"
+            if init not in provided:
+                missing.add(init)
+    return sorted(missing)
+
+
 # ── py 层生效性检查（★ v2 的关键，别删）──────────────
 def _overlay_effective(files: list) -> tuple[bool, str]:
     """清单里的 py 文件**重启后是否真的会生效**。
 
-    为什么必须有这条：`py/` 层靠"进程启动早期把覆盖层插进 `sys.path` 首位"生效，
-    而**已经 import 过的模块换不掉**（Python import 机制）。如果补丁恰好改了一个
-    启动链路上早就 import 的模块，重启也只会加载底座那份 —— 此时若还上报
-    `restart_pending=true`，壳就会为一无所获而反复重启用户。
+    进程重启时覆盖层先于底座进入 `sys.path` 首位，因此本进程是否已经 import 过某个模块
+    不构成障碍；新进程会重新 import。旧实现按 `sys.modules` 误判成“已加载 ⇒ 重启无效”，
+    正是 P8-5 的假阴性。完整包闭包会带上 `modules/__init__.py` 等已加载文件，继续沿用旧
+    判据会让所有正常 py 补丁都不重启。
 
-    判据 = **这个模块是否已经被 import 进本进程**（`sys.modules` 才是权威）：
-
-    | 情况 | 判定 |
-    |------|------|
-    | 在 `sys.modules`，`__file__` 落在覆盖层 | 已经是补丁那份 ⇒ 有效 |
-    | 在 `sys.modules`，`__file__` 在底座 | 本进程内换不掉 ⇒ **上报"重启无效"** |
-    | 不在 `sys.modules` | 新进程启动时会走覆盖层 ⇒ 有效（**默认放行**） |
-
-    ★ 默认必须是"放行"：漏报 restart 的症状是**改的模块没换、且零提示**（用户以为修好了），
-      而误报的代价只是重启一次进程（几秒、不丢数据）。两侧代价不对称，所以宁可多报。
-
-    ★ 早期版本用 `find_spec` 的 origin 判落点，被 E2E 抓到两个假信号：
-      ① `find_spec("modules.newthing")` 在子模块**不存在**时会拿父包 `__path__` 兜底回答
-         一个 origin ⇒ "补丁新增的模块"被误判成"已从底座加载" ⇒ `restart_pending` 永远为假；
-      ② "底座里有、但本进程根本没 import"的模块同样被误判。
-      `sys.modules` 两个都能判对，且不依赖任何路径推测。
+    真正需要拦截的是包边界问题：祖先包缺 `__init__.py`（hot3 形态），或 PC 端补丁试图
+    覆盖当前进程的入口 `server.py`。
 
     ⚠️ 必须在**覆盖层落盘之前**调用（调用点在 `apply_available` 里、`_swap_layers` 之前）。
     """
@@ -236,32 +274,12 @@ def _overlay_effective(files: list) -> tuple[bool, str]:
            if str(f.get("path") or "").startswith("py/")]
     if not pys:
         return True, ""
-    try:
-        od = str(py_dir().resolve())
-        bad = []
-        for p in pys:
-            rel = p[len("py/"):]
-            if not rel.endswith(".py"):
-                continue
-            name = rel[:-3].replace("/", ".").removesuffix(".__init__")
-            mod = sys.modules.get(name)
-            if mod is None:
-                continue                          # 尚未 import ⇒ 重启会走覆盖层
-            src = str(getattr(mod, "__file__", "") or "")
-            if src.startswith(od):
-                continue                          # 已经加载的就是覆盖层那份
-            bad.append(name)
-        if bad:
-            return False, f"{len(bad)} 个模块本进程已加载（重启不换代码）：{', '.join(bad[:3])}"
-        return True, ""
-    except NameError as e:
-        # 本函数自己的 bug（例如漏 import sys）—— 一定 log 成 error：
-        # 它会被兜成"按可重启处理"，症状是"该报 restart 的不报"或反之，极难察觉。
-        logger.error("py 层生效性检查自身有错（按可重启处理）: %s", e)
-        return True, ""
-    except Exception as e:                     # 检查本身坏了不能挡住补丁应用
-        logger.warning("py 层生效性检查异常（按可重启处理）: %s", e)
-        return True, ""
+    gaps = _py_package_init_gaps(pys)
+    if gaps:
+        return False, f"覆盖层缺祖先包初始化文件：{', '.join(gaps[:4])}"
+    if not os.environ.get("FIREFLY_ANDROID") and "py/server.py" in pys:
+        return False, "PC 入口 server.py 不能在自身进程内热替换"
+    return True, ""
 
 
 # ── 空闲判定（规范 §5.2.1）──────────────────────────
@@ -307,6 +325,9 @@ def status() -> dict:
             "last_check": d["last_check"],
             "last_error": d["last_error"],
             "rolled_back_reason": d["rolled_back_reason"],
+            "rollout_percent": int(d.get("rollout_percent") or 0),
+            "rollout_bucket": int(d.get("rollout_bucket", -1)),
+            "rollout_deferred": bool(d.get("rollout_deferred")),
             "overlay_files": _overlay_files(),
             "web_files": _layer_files("web"),
             "py_files": _layer_files("py"),
@@ -402,10 +423,20 @@ def check(manual: bool = False) -> dict:
     min_safe = int(m.get("min_safe_serial") or 1)
     bad = applied and (applied in revoked or applied < min_safe)
     d["last_error"] = ""
-    save_state(d)
     if bad:
         rollback(f"补丁 {applied} 已被吊销（min_safe={min_safe}, revoked={revoked}）")
+        d = load_state()                 # rollback 已独立落盘，别用回滚前的旧 d 覆盖它
 
+    if not _rollout_decision(d, m, serial):
+        save_state(d)
+        with _LOCK:
+            _RT["available"] = None
+        return {"ok": True, "serial": serial, "deferred_by_rollout": True,
+                "rollout_percent": int(d["rollout_percent"]),
+                "rollout_bucket": int(d["rollout_bucket"]),
+                "status": status()}
+
+    save_state(d)
     with _LOCK:
         _RT["available"] = {"serial": serial, "hash": net.manifest_hash(raw),
                             "raw": raw, "sig": sig, "manifest": m, "base_url": used,
@@ -487,6 +518,21 @@ def apply_available() -> dict:
     m = avail["manifest"]
     if str(m.get("base_version")) != cfg.APP_VERSION:
         return {"ok": False, "error": f"补丁底座不符（{m.get('base_version')}）"}
+    if not _rollout_decision(d, m, int(avail["serial"])):
+        save_state(d)
+        with _LOCK:
+            _RT["available"] = None
+        return {"ok": False, "deferred_by_rollout": True,
+                "error": f"灰度未选中（{d['rollout_bucket']} / {d['rollout_percent']}%）"}
+
+    files = m.get("files") or []
+    py_ok, py_note = _overlay_effective(files)
+    if not py_ok:
+        d["last_error"] = f"补丁未通过 py 覆盖层安全检查：{py_note}"
+        save_state(d)
+        with _LOCK:
+            _RT["available"] = None
+        return {"ok": False, "error": d["last_error"], "status": status()}
 
     with _LOCK:
         _RT["applying"] = True
@@ -496,11 +542,12 @@ def apply_available() -> dict:
         net.download_zip(avail["base_url"], m["zip"]["name"], zip_path,
                          sha_expect=str(m["zip"].get("sha256") or ""),
                          size_expect=int(m["zip"].get("size") or 0))
-        files = m.get("files") or []
         staged = _stage_layers(zip_path, files)          # 先全部落盘校验（一层不过就整包丢弃）
         layer = "+".join(l for l in LAYERS if l in staged)
-        # py 层生效性：必须在换入**之前**问（换入本身就是它要看的目录状态）
+        # 下载期间清单不会变；这里再查一次，保证暂存与换入之间仍遵守同一安全判据。
         py_ok, py_note = _overlay_effective(files)
+        if not py_ok:
+            raise ValueError(f"py 覆盖层安全检查失败：{py_note}")
         _swap_layers(staged)
         zip_path.unlink(missing_ok=True)
         d["applied_serial"] = int(avail["serial"])
@@ -514,8 +561,7 @@ def apply_available() -> dict:
         save_state(d)
         with _LOCK:
             _RT["reload_pending"] = "web" in staged
-            # 含 py ⇒ 必须重启进程；py_ok=False（模块早已 import）时不报 restart，
-            # 否则壳会为一无所获反复重启用户（见 _overlay_effective 的说明）
+            # 含 py ⇒ 必须重启进程；不安全包已在下载前拒绝，这里保留防御性判定。
             _RT["restart_pending"] = ("py" in staged) and py_ok
             _RT["last_note"] = "" if py_ok else f"py 层重启无效：{py_note}（装新整包后才生效）"
             _RT["available"] = None

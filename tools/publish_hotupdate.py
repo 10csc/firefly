@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """热更新 · 发布器：把补丁推到**主源（自己的服务器）+ Gitee 兜底镜像**，并逐个 URL 验证。
 
-见 `docs/热更新规范.md §六`。发布端固定三步：审查 → 推送 → 验证。
+见 `docs/参考/热更新协议.md`。发布端固定三步：审查 → 推送 → 验证。
 
     python tools/publish_hotupdate.py --serial 1              # 推最新一个 serial（服务器 + Gitee）
     python tools/publish_hotupdate.py --serial 1 --only server
@@ -35,7 +35,7 @@ except Exception:
     pass
 
 ROOT = Path(__file__).resolve().parent.parent
-DEFAULT_DIST = ROOT / "hotupdate_dist"
+DEFAULT_DIST = ROOT / "hotupdate_dist" / "prod"
 TOKEN_FILE = Path.home() / ".config" / "firefly" / "gitee_token.txt"
 
 SSH_KEY = Path.home() / ".ssh" / "id_rsa"
@@ -91,12 +91,53 @@ def gitee_release_id(tag: str, tok: str) -> int:
     return 0
 
 
+def gitee_attachments(release_id: int, tok: str) -> list:
+    """列出 release 附件，供切换 latest 前清理同名旧索引。"""
+    req = urllib.request.Request(
+        f"{GITEE_API}/releases/{release_id}/attach_files",
+        headers={"Authorization": f"token {tok}"},
+    )
+    with urllib.request.urlopen(req, timeout=30) as r:
+        data = json.loads(r.read().decode())
+    return data if isinstance(data, list) else []
+
+
+def delete_gitee_attachment(release_id: int, attach_id: int, tok: str) -> bool:
+    req = urllib.request.Request(
+        f"{GITEE_API}/releases/{release_id}/attach_files/{attach_id}",
+        method="DELETE",
+        headers={"Authorization": f"token {tok}"},
+    )
+    with urllib.request.urlopen(req, timeout=30) as r:
+        return 200 <= r.status < 300
+
+
+def clear_gitee_latest(release_id: int, tok: str) -> bool:
+    """同名附件会同时存在，而下载 URL 可能命中旧附件；切换前必须清干净。"""
+    ok = True
+    for item in gitee_attachments(release_id, tok):
+        if str(item.get("name") or "") != "latest":
+            continue
+        try:
+            removed = delete_gitee_attachment(release_id, int(item.get("id") or 0), tok)
+            print(f"  {'V' if removed else 'X'} 清理旧 latest 附件 id={item.get('id')}")
+            ok = ok and removed
+        except Exception as e:
+            print(f"  X 清理旧 latest 附件 id={item.get('id')}  → {type(e).__name__}: {e}")
+            ok = False
+    return ok
+
+
 def push_server(local_dir: Path, base: str, files: list) -> None:
     print(f"\n--- 主源：{SSH_HOST}:{SERVER_DIR}/{base}/ ---")
     subprocess.run(["ssh", "-i", str(SSH_KEY), "-o", "StrictHostKeyChecking=no",
                     SSH_HOST, f"mkdir -p {SERVER_DIR}/{base}"],
                    capture_output=True, timeout=60)
-    for f in files:
+    # 先传不可变资产，最后切 latest。反序会让客户端短暂拿到新 serial，
+    # 但对应 json/zip 还没到服务器，白白制造一轮 404。
+    ordered = ([f for f in files if f != "latest"] + ["latest"]
+               if "latest" in files else files)
+    for f in ordered:
         r = subprocess.run(["scp", "-i", str(SSH_KEY), "-o", "StrictHostKeyChecking=no",
                             str(local_dir / f), f"{SSH_HOST}:{SERVER_DIR}/{base}/{f}"],
                            capture_output=True, timeout=300)
@@ -111,7 +152,12 @@ def push_gitee(local_dir: Path, base: str, files: list, tok: str) -> None:
         print(f"  X 找不到 Gitee release {tag}（不新建 release：会打断整包兜底）")
         return
     print(f"  release id = {rid}")
-    for f in files:
+    ordered = ([f for f in files if f != "latest"] + ["latest"]
+               if "latest" in files else files)
+    for f in ordered:
+        if f == "latest" and not clear_gitee_latest(rid, tok):
+            print("  X 旧 latest 未清理，跳过上传，避免同名附件把客户端锁在旧 serial")
+            continue
         r = subprocess.run(["curl.exe", "-s", "-X", "POST",
                             f"{GITEE_API}/releases/{rid}/attach_files?access_token={tok}",
                             "-F", f"file=@{local_dir / f}"],

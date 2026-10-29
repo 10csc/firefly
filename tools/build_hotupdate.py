@@ -9,8 +9,10 @@
     python tools/build_hotupdate.py --init                    # 建立 base 基线（base 刚发布时跑一次）
     python tools/build_hotupdate.py --note "修语音条间距"       # 产出累积补丁（serial 自动 +1）
     python tools/build_hotupdate.py --init --note "…"         # 一次做完（新 base 首发补丁）
+    python tools/build_hotupdate.py --rollout-percent 100 --promotion-of 3
+                                                              # 同内容灰度晋级 → serial 4
 
-产物（默认 `hotupdate_dist/`，**gitignored**，上传到服务器即可）：
+产物（默认 `hotupdate_dist/prod/`，**gitignored**，上传到服务器即可）：
     <dist>/<base>/latest                       {"base":"0.8.1","serial":3}   ← 客户端先拿它
     <dist>/<base>/patch-<N>.json               {v, manifest_b64, sig}
     <dist>/<base>/patch-<N>.zip
@@ -57,7 +59,7 @@ PY_SKIP_DIRS = {"__pycache__", "hotupdate", "assets"}
 
 DEFAULT_KEY = Path.home() / ".firefly" / "hotupdate_key.pem"
 DEFAULT_BUILD = ROOT / ".tmp_hotupdate"          # 基线 + serial 计数（gitignored）
-DEFAULT_DIST = ROOT / "hotupdate_dist"           # 发布区（gitignored，上传用）
+DEFAULT_DIST = ROOT / "hotupdate_dist" / "prod"  # 生产候选区（gitignored，上传用）
 
 _OPENSSL_CANDIDATES = (
     r"C:\Program Files\Git\usr\bin\openssl.exe",
@@ -159,6 +161,50 @@ def layer_of(paths) -> str:
     return "+".join(have)
 
 
+def py_package_roots(paths) -> list[str]:
+    """返回补丁触及的**顶层 Python 包**（`py/api/x.py` → `api`）。"""
+    roots = set()
+    for raw in paths:
+        arc = str(raw)
+        if not arc.startswith("py/"):
+            continue
+        parts = arc[3:].split("/")
+        if len(parts) >= 2 and parts[0]:
+            roots.add(parts[0])
+    return sorted(roots)
+
+
+def expand_py_package_closure(changed: dict, current: dict) -> tuple[dict, list[str], list[str]]:
+    """把触及的顶层 Python 包补全为**完整包闭包**。
+
+    ★ 2026-10-26 真机事故：hot3 只带了 `py/api/data_sync.py`，没有 `py/api/__init__.py`。
+    `sys.path` 虽然首位移到覆盖层，但 Python 在覆盖层找不到 `api` 包，就从 APK 底座加载了
+    旧 `api` 包；旧包的 `__path__` 又只指向底座目录，因此新 `data_sync.py` 永远不可见，
+    最终 `ImportError: cannot import name 'sync_ops'`。
+
+    只补 `__init__.py` 仍不够：有 `__init__.py` 的普通包会把 `__path__` 收窄到覆盖层，
+    包里没被带上的兄弟模块会从"旧版可用"变成"导入失败"。所以这里采用更保守、
+    更容易验证的规则：**改到某一个顶层包里的任何文件，就带上该包当前全部 `.py`**。
+    包大了几十 KB，但不会制造半套包。
+
+    返回 `(扩展后的 changed, 触及的包, 缺 __init__.py 的包)`。缺初始化文件的包由调用方拒绝；
+    本项目所有包含 Python 模块的包都必须有 `__init__.py`。
+    """
+    out = dict(changed)
+    roots = py_package_roots(changed)
+    missing_init = []
+    for root in roots:
+        init = f"py/{root}/__init__.py"
+        if init not in current:
+            missing_init.append(root)
+            continue
+        prefix = f"py/{root}/"
+        for arc, meta in current.items():
+            if str(arc).startswith(prefix):
+                out[str(arc)] = meta
+    return out, roots, missing_init
+
+
 def sign(key: Path, data: bytes) -> bytes:
     r = subprocess.run([find_openssl(), "dgst", "-sha256", "-sign", str(key)],
                        input=data, capture_output=True)
@@ -195,6 +241,10 @@ def main() -> int:
     ap = argparse.ArgumentParser(description="热更新补丁产出器（v2：web 层 + py 层）")
     ap.add_argument("--init", action="store_true", help="建立/刷新 base 基线")
     ap.add_argument("--note", default="", help="本补丁说明（写进 manifest/CHANGELOG）")
+    ap.add_argument("--rollout-percent", type=int, default=10,
+                    help="灰度比例 1..100；先用 10%% 验证，再产出下一个 serial 升到 100%%")
+    ap.add_argument("--promotion-of", type=int, default=0, metavar="SERIAL",
+                    help="同内容灰度晋级：以上一个 serial 的同一文件集产出新 serial")
     ap.add_argument("--key", default=str(DEFAULT_KEY), help="私钥路径")
     ap.add_argument("--build-dir", default=str(DEFAULT_BUILD))
     ap.add_argument("--dist", default=str(DEFAULT_DIST))
@@ -208,6 +258,10 @@ def main() -> int:
     baseline_f = build / "baseline.json"
     serial_f = build / "serial.txt"
     key = Path(a.key).expanduser()
+    if not (1 <= a.rollout_percent <= 100):
+        die("--rollout-percent 必须在 1..100 之间")
+    if not key.is_file():
+        die(f"私钥不存在：{key}\n  先跑 `python tools/hotupdate_keys.py --gen`")
 
     print("=== ① 审查 ===")
     if not STATIC_DIR.is_dir():
@@ -244,7 +298,13 @@ def main() -> int:
     #   若直接按 v2 口径比 diff，会把**每一个 py 文件**都当成"新增"，产出一个假的大补丁。
     #   所以先把缺的层以**当前工作区**的哈希补齐 —— 迁移后 diff 仍真实反映"之后改了什么"。
     if not a.init:
-        absent = [k for k in cur if k not in base_files]
+        # 2026-10-25 修复：只对**整层缺失**做 v1→v2 基线迁移。
+        # 旧实现把任何“基线里没有的文件”都补进基线，导致之后新增的 py 模块
+        # （例如 modules/sync_state.py）永远不进补丁——客户端 import 失败。
+        layers_present = {k.split("/", 1)[0] for k in base_files}
+        missing_layers = {k.split("/", 1)[0] for k in cur} - layers_present
+        absent = [k for k in cur
+                  if k not in base_files and k.split("/", 1)[0] in missing_layers]
         if absent:
             layers = sorted({k.split("/", 1)[0] for k in absent})
             base_files.update({k: cur[k] for k in absent})
@@ -261,6 +321,15 @@ def main() -> int:
 
     changed = {k: v for k, v in cur.items()
                if k not in base_files or base_files[k]["sha256"] != v["sha256"]}
+    changed_before_closure = set(changed)
+    changed, package_roots, missing_init = expand_py_package_closure(changed, cur)
+    if missing_init:
+        die("以下 Python 包缺少 __init__.py，覆盖层会退化成底座包，拒绝打包：\n    "
+            + "\n    ".join(missing_init))
+    closure_added = sorted(set(changed) - changed_before_closure)
+    if closure_added:
+        print(f"  ! Python 包闭包：触及 {len(package_roots)} 个包 "
+              f"({', '.join(package_roots)})，自动补入 {len(closure_added)} 个同包文件")
     if not changed and not a.init:
         die("与基线相比没有任何变化 —— 没有东西可发。")
     new_n = len(set(cur) - set(base_files))
@@ -272,6 +341,57 @@ def main() -> int:
     dist.mkdir(parents=True, exist_ok=True)
     zip_name = f"patch-{serial}.zip"
     json_name = f"patch-{serial}.json"
+
+    # 灰度晋级：文件内容不变，只把签名清单的 rollout_percent 升到下一档。
+    # latest 不受信任，不能在服务端直接改百分比；必须产出下一个已签名 serial。
+    # 其余“内容完全相同但没声明晋级”的重复构建一律拒绝，防止手滑白占 serial。
+    prev_manifest = None
+    prev_serial = int(a.promotion_of or 0)
+    if prev_serial:
+        if prev_serial != serial - 1:
+            die(f"--promotion-of 必须指向刚发布的 serial {serial - 1}，收到 {prev_serial}")
+        prev_json = dist / f"patch-{prev_serial}.json"
+        if not prev_json.is_file():
+            die(f"要晋级的补丁清单不存在：{prev_json}")
+        try:
+            payload = json.loads(prev_json.read_text(encoding="utf-8"))
+            prev_raw = base64.b64decode(payload["manifest_b64"], validate=True)
+            prev_sig = base64.b64decode(payload["sig"], validate=True)
+            if not verify_sig(key, prev_raw, prev_sig):
+                die(f"serial {prev_serial} 的签名自检失败，禁止在其上晋级")
+            prev_manifest = json.loads(prev_raw.decode("utf-8"))
+        except SystemExit:
+            raise
+        except Exception as e:
+            die(f"读取 serial {prev_serial} 清单失败：{type(e).__name__}: {e}")
+        if int(prev_manifest.get("serial") or 0) != prev_serial:
+            die(f"serial {prev_serial} 清单内序号不一致：{prev_manifest.get('serial')}")
+        try:
+            prev_rollout = int(prev_manifest.get("rollout_percent"))
+        except Exception:
+            die(f"serial {prev_serial} 的 rollout_percent 非法")
+        if a.rollout_percent <= prev_rollout:
+            die(f"灰度晋级必须提高比例：serial {prev_serial}={prev_rollout}% "
+                f"→ 新 serial={a.rollout_percent}%")
+    elif serial > 1 and (dist / f"patch-{serial - 1}.json").is_file():
+        try:
+            payload = json.loads(
+                (dist / f"patch-{serial - 1}.json").read_text(encoding="utf-8"))
+            prev_raw = base64.b64decode(payload["manifest_b64"], validate=True)
+            prev_manifest = json.loads(prev_raw.decode("utf-8"))
+        except Exception:
+            prev_manifest = None
+
+    current_files = sorted((p, meta["sha256"]) for p, meta in changed.items())
+    if prev_manifest is not None:
+        prev_files = sorted((str(f.get("path") or ""), str(f.get("sha256") or ""))
+                            for f in (prev_manifest.get("files") or []))
+        if current_files == prev_files and not prev_serial:
+            die(f"内容与 serial {serial - 1} 完全相同，但未声明同内容灰度晋级。\n"
+                f"  若本次就是提升灰度，请加 --promotion-of {serial - 1}；否则先改代码。")
+        if prev_serial and current_files != prev_files:
+            die("灰度晋级时文件集/哈希必须与上一 serial 完全一致；本次工作区内容变了。")
+
     for n in (zip_name, json_name):
         if (dist / n).exists():
             die(f"发布区已存在 {n} —— 已发布的补丁**永不覆盖**。"
@@ -306,13 +426,13 @@ def main() -> int:
         "note": a.note or "(无说明)",
         "zip": {"name": zip_name, "sha256": zip_sha, "size": zip_size},
         "files": files_meta,
-        "rollout_percent": 100,
+        "rollout_percent": a.rollout_percent,
         "min_safe_serial": 1,
         "revoked_serials": [],
     }
+    if prev_serial:
+        manifest["promotion_of"] = prev_serial
     raw = canonical_bytes(manifest)
-    if not key.is_file():
-        die(f"私钥不存在：{key}\n  先跑 `python tools/hotupdate_keys.py --gen`")
     sig = sign(key, raw)
     payload = {"v": 1,
                "manifest_b64": base64.b64encode(raw).decode("ascii"),
@@ -322,6 +442,7 @@ def main() -> int:
     print(f"  V 清单：{json_name}（规范化 {len(raw)} 字节，签名 {len(sig)} 字节）")
     print(f"  V 层：{manifest['layer']}"
           + ("（含 py，客户端会**重启进程**生效）" if "py" in manifest["layer"] else ""))
+    print(f"  V 灰度：{manifest['rollout_percent']}%")
 
     print("\n=== ③ 验证 ===")
     # 3.1 公钥自检签名
@@ -362,6 +483,9 @@ def main() -> int:
         f.write(f"## {base} · serial {serial} · "
                 f"{time.strftime('%Y-%m-%d %H:%M', time.localtime())}\n")
         f.write(f"- 说明：{a.note or '(无)'}\n")
+        if prev_serial:
+            f.write(f"- 灰度晋级：serial {prev_serial} → {serial}，"
+                    f"{a.rollout_percent}%\n")
         f.write(f"- 包：`{zip_name}`（{zip_size / 1024:.1f} KB，sha256 `{zip_sha[:16]}…`）\n")
         f.write(f"- 文件（{len(files_meta)}）：\n")
         for fm in files_meta:

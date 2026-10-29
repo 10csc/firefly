@@ -90,7 +90,8 @@ try:
     target.write_bytes(orig + MARK)
     r = subprocess.run([PY, str(ROOT / "tools" / "build_hotupdate.py"),
                         "--base", cfg.APP_VERSION, "--dist", str(DIST), "--build-dir", str(BUILD),
-                        "--key", str(KEY), "--note", "E2E 冒烟"],
+                        "--key", str(KEY), "--note", "E2E 冒烟",
+                        "--rollout-percent", "100"],
                        capture_output=True, encoding="utf-8", errors="replace")
     check("A2 产出 patch-1", (DIST / cfg.APP_VERSION / "patch-1.zip").is_file(),
           (r.stderr or "")[-200:] if r.returncode else "ok")
@@ -324,7 +325,8 @@ try:
     probe.write_text("# E2E 探针（测试结束即删）\nE2E_VALUE = 'patched'\n", encoding="utf-8")
     r = subprocess.run([PY, str(ROOT / "tools" / "build_hotupdate.py"),
                         "--base", cfg.APP_VERSION, "--dist", str(KDIST),
-                        "--build-dir", str(KBUILD), "--key", str(KEY), "--note", "E2E py 层"],
+                        "--build-dir", str(KBUILD), "--key", str(KEY), "--note", "E2E py 层",
+                        "--rollout-percent", "100"],
                        capture_output=True, encoding="utf-8", errors="replace")
     check("K2 产出 py 层补丁", r.returncode == 0,
           ((r.stdout or "")[-160:] + (r.stderr or "")[-80:]).strip())
@@ -332,9 +334,12 @@ try:
     man = json.loads(_b64.b64decode(json.loads(
         (KBASE / "patch-1.json").read_text(encoding="utf-8"))["manifest_b64"]))
     check("K3 清单 layer 如实报 py", man.get("layer") == "py", str(man.get("layer")))
-    check("K4 清单路径带 py/ 前缀",
-          [f["path"] for f in man["files"]] == ["py/modules/hu_e2e_probe.py"],
-          str([f["path"] for f in man["files"]]))
+    _k4_paths = [f["path"] for f in man["files"]]
+    check("K4 清单带完整 modules 包闭包（含探针与 __init__.py）",
+          "py/modules/hu_e2e_probe.py" in _k4_paths
+          and "py/modules/__init__.py" in _k4_paths
+          and all(p.startswith("py/modules/") for p in _k4_paths),
+          f"{len(_k4_paths)} 个 py 文件")
 
     # K5：客户端应用 → 必须走"重启生效"那一路
     rr = HU.check(manual=True)
@@ -400,6 +405,66 @@ try:
 finally:
     probe.unlink(missing_ok=True)
     ksrv.shutdown()
+
+print("\n=== P. 灰度晋级：10% → 100% 必须产出新的已签名 serial ===")
+p_dist = TMP / "promotion_dist"
+p_build = TMP / "promotion_build"
+p_probe = ROOT / "app" / "static" / "js" / "hu_e2e_rollout_probe.js"
+try:
+    p_probe.write_text("// rollout probe: base\n", encoding="utf-8")
+    r = subprocess.run([PY, str(ROOT / "tools" / "build_hotupdate.py"), "--init",
+                        "--base", cfg.APP_VERSION, "--dist", str(p_dist),
+                        "--build-dir", str(p_build), "--key", str(KEY)],
+                       capture_output=True, encoding="utf-8", errors="replace")
+    check("P1 灰度测试基线建立成功", r.returncode == 0,
+          (r.stdout or r.stderr or "")[-160:])
+
+    p_probe.write_text("// rollout probe: patched\n", encoding="utf-8")
+    r = subprocess.run([PY, str(ROOT / "tools" / "build_hotupdate.py"),
+                        "--base", cfg.APP_VERSION, "--dist", str(p_dist),
+                        "--build-dir", str(p_build), "--key", str(KEY),
+                        "--note", "灰度 10%", "--rollout-percent", "10"],
+                       capture_output=True, encoding="utf-8", errors="replace")
+    check("P2 首发 10% 补丁成功", r.returncode == 0,
+          (r.stdout or r.stderr or "")[-160:])
+
+    r = subprocess.run([PY, str(ROOT / "tools" / "build_hotupdate.py"),
+                        "--base", cfg.APP_VERSION, "--dist", str(p_dist),
+                        "--build-dir", str(p_build), "--key", str(KEY),
+                        "--note", "灰度晋级 100%", "--rollout-percent", "100",
+                        "--promotion-of", "1"],
+                       capture_output=True, encoding="utf-8", errors="replace")
+    check("P3 同内容晋级产出新 serial 成功", r.returncode == 0,
+          (r.stdout or r.stderr or "")[-200:])
+    p_base = p_dist / cfg.APP_VERSION
+
+    def _read_hu_manifest(serial):
+        payload = json.loads(
+            (p_base / f"patch-{serial}.json").read_text(encoding="utf-8"))
+        return json.loads(_b64.b64decode(payload["manifest_b64"]).decode("utf-8"))
+
+    p1 = _read_hu_manifest(1)
+    p2 = _read_hu_manifest(2)
+    check("P4 晋级清单指向 serial 1", p2.get("promotion_of") == 1,
+          str(p2.get("promotion_of")))
+    check("P5 晋级只改签名清单，文件集与哈希不变",
+          sorted((f["path"], f["sha256"]) for f in p1["files"])
+          == sorted((f["path"], f["sha256"]) for f in p2["files"])
+          and p1["rollout_percent"] == 10 and p2["rollout_percent"] == 100,
+          f"{len(p1['files'])} files")
+    check("P6 latest 已指到晋级后的 serial 2",
+          json.loads((p_base / "latest").read_text(encoding="utf-8"))["serial"] == 2)
+
+    r = subprocess.run([PY, str(ROOT / "tools" / "build_hotupdate.py"),
+                        "--base", cfg.APP_VERSION, "--dist", str(p_dist),
+                        "--build-dir", str(p_build), "--key", str(KEY),
+                        "--note", "误触重复构建", "--rollout-percent", "100"],
+                       capture_output=True, encoding="utf-8", errors="replace")
+    check("P7 未声明晋级的重复构建被拒绝",
+          r.returncode != 0 and not (p_base / "patch-3.json").exists(),
+          ((r.stdout or "") + (r.stderr or ""))[-180:])
+finally:
+    p_probe.unlink(missing_ok=True)
 
 print(f"\n统计: PASS={PASS} FAIL={FAIL}")
 print(f"（沙箱：{TMP}）")

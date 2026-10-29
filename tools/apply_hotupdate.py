@@ -67,6 +67,28 @@ def _layer_of(arc: str) -> str:
     return layer
 
 
+def _package_closure_gaps(base: Path, py_paths) -> tuple[list[str], list[str]]:
+    """返回补丁缺少的同包文件，以及缺少 `__init__.py` 的顶层包。
+
+    这个回归工具把补丁"合并"到 app 副本里，天然看不到真实覆盖层的包解析差异：
+    底座已有的 `api/__init__.py` 会一直躺在输出目录，掩盖补丁没带它的问题。
+    所以在合并前必须按真实覆盖层规则显式检查完整包闭包。
+    """
+    sys.path.insert(0, str(ROOT / "tools"))
+    import build_hotupdate as BH
+
+    current = {}
+    for p in base.rglob("*.py"):
+        rel = p.relative_to(base)
+        if any(part in BH.PY_SKIP_DIRS for part in rel.parts):
+            continue
+        current[f"py/{rel.as_posix()}"] = {"sha256": "", "size": p.stat().st_size}
+    provided = {str(p) for p in py_paths}
+    expanded, _roots, missing_init = BH.expand_py_package_closure(
+        {p: {} for p in provided}, current)
+    return sorted(set(expanded) - provided), missing_init
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="把热更补丁应用到一份干净的 base 副本")
     ap.add_argument("--patch", required=True, help="patch-N.zip")
@@ -125,6 +147,21 @@ def main() -> int:
             print("  V 签名校验通过")
         print(f"  V 清单声明 {len(files)} 个文件（base={m.get('base_version')} "
               f"serial={m.get('serial')} layer={m.get('layer')}）")
+
+    with zipfile.ZipFile(patch) as _zf:
+        patch_names = _zf.namelist()
+    py_paths = [p for p in patch_names if p.startswith("py/")]
+    missing_pkg, missing_init = _package_closure_gaps(base, py_paths)
+    if missing_init:
+        print(f"X py 顶层包缺少 __init__.py：{missing_init}")
+        return 2
+    if missing_pkg:
+        print("X py 覆盖层缺少完整包闭包；以下同包文件不会在真实运行时被看见：")
+        for p in missing_pkg[:20]:
+            print(f"    - {p}")
+        if len(missing_pkg) > 20:
+            print(f"    … 另有 {len(missing_pkg) - 20} 个")
+        return 2
 
     print(f"\n=== 应用 {patch.name} → {out} ===")
     if out.exists():

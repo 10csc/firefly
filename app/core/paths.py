@@ -16,7 +16,99 @@ from core.userctx import _user_ctx_dir
 
 
 # ── 路径 ────────────────────────────────────────
-BASE_DIR = Path(__file__).resolve().parent.parent          # app/（打包后 _internal/，安卓下=解压 backend/app/）
+def _android_base_dir() -> Path:
+    """定位 APK 底座里的 `backend/app/`，不能相信本模块自己的 `__file__`。
+
+    Python 覆盖层启用后，`core.paths` 会从
+    `{FIREFLY_DATA_DIR}/hotupdate/py/core/paths.py` 导入。此时
+    `Path(__file__).parent.parent` 是覆盖层根，而不是只读底座；若拿它拼
+    `static/`，CSS、背景图和打包资产会全部 404，页面只剩裸 HTML。
+
+    新底座会显式提供 `FIREFLY_ANDROID_APP_DIR`；旧底座没有这个变量时，从
+    `start_server` 的 `_BACKEND` 或入口文件位置取底座。这两个是启动器给出的
+    **路径事实**，不能再用 `Path.is_file()` 反向确认：Chaquopy 的 AssetFinder
+    路径是虚拟资产，`os.stat` 可能失败，文件存在探针会把合法底座误判成不存在。
+    物理 `sys.path` 只作为普通文件系统环境的兜底。
+    """
+    overlay_dir = None
+    data_root = os.environ.get("FIREFLY_DATA_DIR")
+    if data_root:
+        try:
+            overlay_dir = (Path(data_root) / "hotupdate" / "py").resolve()
+        except (OSError, RuntimeError):
+            overlay_dir = None
+    module_root = Path(__file__).resolve().parent.parent
+    explicit_candidates = [os.environ.get("FIREFLY_ANDROID_APP_DIR", "")]
+    # Chaquopy 以 start_server 执行入口；入口模块的 _BACKEND 和文件位置都是
+    # 底座事实。即使 server.py 尚未被 AssetFinder 实体化，也不能把它们判成无效。
+    for module_name in ("start_server", "__main__"):
+        module = sys.modules.get(module_name)
+        backend = getattr(module, "_BACKEND", "") if module else ""
+        if backend:
+            explicit_candidates.append(str(Path(backend) / "app"))
+        module_file = getattr(module, "__file__", "") if module else ""
+        if module_file:
+            module_path = Path(module_file).resolve()
+            if module_path.name == "start_server.py":
+                explicit_candidates.append(
+                    str(module_path.parent / "backend" / "app")
+                )
+
+    for raw in explicit_candidates:
+        if not raw:
+            continue
+        try:
+            candidate = Path(raw).resolve()
+        except (OSError, RuntimeError, TypeError):
+            continue
+        if overlay_dir and (candidate == overlay_dir
+                            or overlay_dir in candidate.parents):
+            continue
+        return candidate
+
+    # `sys.path` 首次扫描必须排除当前模块根：覆盖层自己也有 server.py，
+    # 若先扫描它就会把覆盖层误认成底座。不在覆盖层运行（PC/直接导底座）时，
+    # 模块根本身就是合法底座，留到最后一个候选兜底。
+    raw_candidates = []
+    for raw in sys.path:
+        if not raw:
+            continue
+        try:
+            same_as_module_root = Path(raw).resolve() == module_root
+        except (OSError, RuntimeError, TypeError):
+            same_as_module_root = False
+        if not same_as_module_root:
+            raw_candidates.append(raw)
+    raw_candidates.append(str(module_root))
+
+    for raw in raw_candidates:
+        if not raw:
+            continue
+        try:
+            candidate = Path(raw).resolve()
+        except (OSError, RuntimeError, TypeError):
+            continue
+        if overlay_dir and (candidate == overlay_dir
+                            or overlay_dir in candidate.parents):
+            continue
+        # 覆盖层已经提供了 core.paths；底座只需要有一个稳定的入口文件可认。
+        # 若再要求 base/core/paths.py 实体存在，Chaquopy 尚未懒解压它时会把
+        # 合法底座误判为不存在，触发覆盖层隔离并回退到旧 Python。
+        if (candidate / "server.py").is_file():
+            return candidate
+
+    # 不静默退回覆盖层：那会把“找不到底座”伪装成“能启动但前端无样式”。
+    raise RuntimeError(
+        "无法定位安卓底座 app 目录（需含 server.py）；"
+        "请检查 FIREFLY_ANDROID_APP_DIR 与 sys.path"
+    )
+
+
+BASE_DIR = (
+    _android_base_dir()
+    if os.environ.get("FIREFLY_ANDROID")
+    else Path(__file__).resolve().parent.parent
+)  # app/（打包后 _internal/，安卓下=解压 backend/app/）
 
 # 安卓（Chaquopy 内嵌）：FIREFLY_ANDROID=1 + FIREFLY_DATA_DIR=内部存储数据根
 #   ROOT（设定资料，只读） = 解压目录 backend/（BASE_DIR.parent，含 knowledge/memory/static/assets）
@@ -42,8 +134,8 @@ PORT = 8765
 CONFIG_FILE = USER_DIR / "config.json"
 
 # ── A7：认证/同步服务器（登录前置化；本地版经本地后端代理转发）──
-# 公网入口（8787 网关）；发版时若切换服务器/域名，改此处 + docs/服务器管理规范.md
-AUTH_SERVER_DEFAULT = "http://101.200.14.126:8787"
+# 公网入口：443 TLS 网关（8787 仍保留给旧客户端）；发版时若切换服务器/域名，改此处 + docs/服务器管理规范.md
+AUTH_SERVER_DEFAULT = "https://101.200.14.126"
 
 
 # 默认参数用 None 哨兵而不是 `= DEFAULT_MODE`：DEFAULT_MODE 属于 core.presets，而 presets

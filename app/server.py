@@ -46,8 +46,14 @@ if getattr(sys, "frozen", False) and (sys.stdout is None or sys.stderr is None):
 # 配置日志输出到终端
 logging.basicConfig(level=logging.INFO, format='%(name)s: %(message)s', stream=sys.stderr)
 
-# 将项目根目录加入 sys.path，使 memory/ knowledge/ 可导入
-_PROJECT_ROOT = str(Path(__file__).resolve().parent.parent)
+# 将项目根目录加入 sys.path，使 memory/ knowledge/ 可导入。
+# 安卓 py 覆盖层启用时本文件也可能来自 hotupdate/py；项目根必须从底座路径求，
+# 不能按覆盖层的 __file__ 反推。core.paths 已统一处理这个边界。
+if os.environ.get("FIREFLY_ANDROID"):
+    from core.paths import ROOT as _ANDROID_ROOT
+    _PROJECT_ROOT = str(_ANDROID_ROOT)
+else:
+    _PROJECT_ROOT = str(Path(__file__).resolve().parent.parent)
 if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 
@@ -112,7 +118,24 @@ class FireflyHandler(ResponseMixin, SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=str(cfg.STATIC_DIR), **kwargs)
 
+    def _host_ok(self) -> bool:
+        """本地服务只接受 127.0.0.1/localhost 的 Host（防 DNS rebinding 读取敏感 GET）。
+        空 Host 放行给非浏览器本地客户端；其余一律 403。"""
+        raw = (self.headers.get("Host", "") or "").strip().lower()
+        if not raw:
+            return True
+        if raw.startswith("["):
+            host = raw[1:raw.find("]")] if "]" in raw else raw
+        elif ":" in raw:
+            host = raw.rsplit(":", 1)[0]
+        else:
+            host = raw
+        return host in ("127.0.0.1", "localhost", "::1")
+
     def do_POST(self):
+        if not self._host_ok():
+            self.send_error(403)
+            return
         # 本地版跨站写防护（审计 A2，2026-09-15）：CORS 只拦"读得到响应"，拦不住
         # 免预检的跨站请求（HTML 表单/multipart POST 属 CORS 简单请求，直接发出）——
         # 写端点在服务端再验一次浏览器来源。非浏览器客户端（多开探测/安装器/curl）
@@ -128,6 +151,9 @@ class FireflyHandler(ResponseMixin, SimpleHTTPRequestHandler):
             self.send_error(404)
 
     def do_GET(self):
+        if not self._host_ok():
+            self.send_error(403)
+            return
         path = urlparse(self.path).path
         # 路径穿越防护：_serve_file 是手写的，/assets/../config.json 能读走 API Key
         if ".." in unquote(path):

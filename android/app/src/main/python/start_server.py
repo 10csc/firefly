@@ -9,9 +9,12 @@
 运行时全部解压到 app 私有目录，只读；用户数据写 os.environ["HOME"]/firefly_data。
 """
 
+import importlib
 import os
 import sys
 import threading
+import time
+import traceback
 from os.path import dirname, join
 
 _BACKEND = join(dirname(__file__), "backend")
@@ -25,11 +28,57 @@ _START_LOCK = threading.Lock()
 _STARTED = False
 
 
+def _purge_overlay_modules(overlay_dir):
+    """Import 失败后清掉已经命中的覆盖层模块，避免重试复用半初始化状态。"""
+    overlay_prefix = os.path.realpath(overlay_dir) + os.sep
+    for name, module in list(sys.modules.items()):
+        path = getattr(module, "__file__", None)
+        if path and os.path.realpath(path).startswith(overlay_prefix):
+            sys.modules.pop(name, None)
+
+
+def _load_server_with_overlay_recovery(overlay_dir, load_server):
+    """优先加载热更层；导入失败则隔离 py 覆盖层并回退 APK 底座。
+
+    热更新安全模式原先依赖 `hotupdate.on_startup()`，但该函数位于 server 导入成功之后。
+    因此覆盖层一旦在 import 阶段报错，回滚代码本身永远没有机会运行。这里仅兜底
+    “补丁坏到无法启动”这一种情况：保留 faulty 目录供诊断，不删除用户数据。
+    """
+    try:
+        return load_server()
+    except Exception:
+        if not os.path.isdir(overlay_dir):
+            raise
+        traceback.print_exc()
+        _purge_overlay_modules(overlay_dir)
+        if overlay_dir in sys.path:
+            sys.path.remove(overlay_dir)
+        quarantine = "%s.failed-%d" % (overlay_dir, int(time.time()))
+        try:
+            os.replace(overlay_dir, quarantine)
+            print(
+                "[hotupdate] Python 覆盖层导入失败，已隔离到 %s，回退 APK 底座"
+                % quarantine,
+                file=sys.stderr,
+            )
+        except Exception:
+            traceback.print_exc()
+            print(
+                "[hotupdate] Python 覆盖层隔离失败，仅从 sys.path 移除并回退 APK 底座",
+                file=sys.stderr,
+            )
+        importlib.invalidate_caches()
+        return load_server()
+
+
 def _setup_env():
     home = os.environ.get("HOME", "")
     data_root = join(home, "firefly_data")
     os.environ.setdefault("FIREFLY_ANDROID", "1")
     os.environ.setdefault("FIREFLY_DATA_DIR", data_root)
+    # 覆盖层里的 core/paths.py 不能按自身 __file__ 反推底座；这里显式提供
+    # 只读 app 目录。旧底座没有这个变量时，core.paths 仍会从 sys.path 兜底。
+    os.environ.setdefault("FIREFLY_ANDROID_APP_DIR", join(_BACKEND, "app"))
     os.environ["FIREFLY_NO_BROWSER"] = "1"
 
 
@@ -47,9 +96,16 @@ def start():
     # ★ 覆盖层必须插在**这两条之后**（insert(0) ⇒ 最后插的在最前）。
     #   若先插覆盖层再插 `_BACKEND/app`，`import modules.x` 会先命中 APK 里的底座代码，
     #   补丁形同没装 —— 这是一个不报错的静默失效，故写死顺序。
-    if os.path.isdir(_overlay_py) and _overlay_py not in sys.path:
+    use_overlay = os.path.isdir(_overlay_py)
+    if use_overlay and _overlay_py not in sys.path:
         sys.path.insert(0, _overlay_py)
-    import server
+
+    def _import_server():
+        import server
+        return server
+
+    server = (_load_server_with_overlay_recovery(_overlay_py, _import_server)
+              if use_overlay else _import_server())
     server.main()
 
 

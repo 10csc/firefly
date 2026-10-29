@@ -77,6 +77,21 @@ def _log(fmt: str, *args):
     logging.getLogger(__name__).info(fmt, *args)
 
 
+def _manifest_signature_ok(data) -> bool:
+    """更新清单验签。失败/缺 sig/缺依赖一律 False（绝不"出错就当通过"）。"""
+    try:
+        from hotupdate.net import canonical_bytes
+        from hotupdate import verify as _hu_verify
+        sig = str(data.get("sig") or "").strip()
+        if not sig:
+            return False
+        signed = {k: data.get(k) for k in _SIGNED_MANIFEST_FIELDS if k in data}
+        return bool(_hu_verify.verify(canonical_bytes(signed), sig))
+    except Exception as e:
+        _log("更新清单验签异常（按失败处理）: %s: %s", type(e).__name__, e)
+        return False
+
+
 def fetch_manifest() -> dict:
     """向服务器要版本清单（主通道）。返回已校验的 dict；不可用返回 {}（调用方降级）。
 
@@ -98,6 +113,11 @@ def fetch_manifest() -> dict:
         return {}
     if not isinstance(data, dict) or not data.get("ok"):
         _log("服务器清单 ok=false: %r", str(data)[:160])
+        return {}
+    # ★ 2026-10-22：先验签再使用；失败拒绝，让调用方降级到 HTTPS 双源。
+    #   旧客户端忽略 sig；新客户端不再信任 HTTP 明文清单。
+    if not _manifest_signature_ok(data):
+        _log("服务器清单缺少签名或验签失败（拒绝使用，降级 HTTPS 双源）")
         return {}
     tag = str(data.get("tag") or "").strip().lstrip("v")
     if not _valid_tag(tag):
@@ -123,9 +143,18 @@ _DOWNLOAD_MAX_BYTES = {"exe": 200 * 1024 * 1024, "apk": 100 * 1024 * 1024}
 _DOWNLOAD_MIN_BYTES = 100 * 1024          # 防错误页 HTML 冒充资产
 
 
-# 域名白名单：Gitee/GitHub 资产域。校验初始 URL 的 host；
+# 域名白名单 + 官方仓库路径前缀（2026-10-22 安全复审）：
+# 只校域名时，攻击者可用自己的 Gitee/GitHub release 通过校验；清单签名之外再加路径约束。
 # urllib 自动跟随 GitHub 官方重定向（objects.githubusercontent.com），重定向链信任官方域。
 _DOWNLOAD_HOSTS = ("gitee.com", "github.com")
+_OFFICIAL_ASSET_PREFIXES = (
+    "https://gitee.com/cpt-asymmetry/firefly/releases/download/",
+    "https://github.com/10csc/firefly/releases/download/",
+)
+# 更新清单签名覆盖的字段（与 server/update_manifest.py::sanitize 的输出一一对应；
+# ok/sig/download_page 是传输信封字段，不进签名）。
+_SIGNED_MANIFEST_FIELDS = ("schema", "tag", "channel", "released_at",
+                           "notes_url", "min_supported", "assets")
 
 # ★ 下载落盘的**固定文件名**（2026-09-25）：安卓壳要把这个文件交给系统安装器，
 #   而安卓侧拿到的是一个**路径字符串** —— 随机文件名没法让 Kotlin 侧安全定位文件
@@ -143,6 +172,8 @@ def _validate_download_url(url: str, kind: str) -> str:
         return "下载地址必须为 https"
     if not any(host == h or host.endswith("." + h) for h in _DOWNLOAD_HOSTS):
         return "下载地址域名不在白名单"
+    if not any(url.startswith(p) for p in _OFFICIAL_ASSET_PREFIXES):
+        return "下载地址不在官方仓库路径"
     suffix = ".apk" if kind == "apk" else ".exe"
     if not p.path.lower().endswith(suffix):
         return "下载地址与资产类型不符"

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""热更新 · 第 5 条门禁（见 `docs/热更新规范.md §九`）。
+"""热更新 · 第 5 条门禁（见 `docs/参考/热更新协议.md`）。
 
 对发布区里的补丁做**发布前**审查。任何一条不过 ⇒ 非零退出，禁止上传。
 
@@ -51,7 +51,7 @@ except Exception:
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "tools"))
 DEFAULT_KEY = Path.home() / ".firefly" / "hotupdate_key.pem"
-DEFAULT_DIST = ROOT / "hotupdate_dist"
+DEFAULT_DIST = ROOT / "hotupdate_dist" / "prod"
 DEFAULT_DECLARE = ROOT / "hotupdate_declare.json"
 
 PASS = FAIL = 0
@@ -99,7 +99,7 @@ def verify_with_key(key: Path, data: bytes, sig: bytes) -> bool:
     return r.returncode == 0
 
 
-def check_one(dist: Path, serial: int, key: Path) -> None:
+def check_one(dist: Path, serial: int, key: Path, *, current: bool = True) -> None:
     print(f"\n--- serial {serial} ---")
     jf = dist / f"patch-{serial}.json"
     zf = dist / f"patch-{serial}.zip"
@@ -143,6 +143,11 @@ def check_one(dist: Path, serial: int, key: Path) -> None:
     check("manifest 字段完整", not missing, f"缺 {missing}" if missing else "")
     check("serial 与文件名一致", int(m.get("serial", -1)) == serial)
     check("cumulative 为 true（v1 只接受累积式）", m.get("cumulative") is True)
+    try:
+        rollout = int(m.get("rollout_percent"))
+    except Exception:
+        rollout = -1
+    check("rollout_percent 在 1..100", 1 <= rollout <= 100, f"{rollout}")
 
     # 3. zip 本体 sha256
     zsha = hashlib.sha256(zf.read_bytes()).hexdigest()
@@ -184,6 +189,11 @@ def check_one(dist: Path, serial: int, key: Path) -> None:
               f"缺 {sorted({f['path'] for f in files} - names)[:3]}")
         total = sum(zi.file_size for zi in z.infolist())
     print(f"    （解压后 {total / 1024:.1f} KB，压缩包 {zf.stat().st_size / 1024:.1f} KB）")
+    if current:
+        check_py_package_closure(files)
+    else:
+        print("    - 历史 serial 跳过“对当前工作区闭包”的重判（旧包不可变）")
+    check_rollout_promotion(dist, serial, m, files, key)
 
     # ★ 8. layer 字段与 files 前缀互相印证（任一单边错都会让客户端走错生效方式：
     #      "含 py 却报 web" ⇒ 只 reload 页面 ⇒ 代码根本没换，且看起来"已生效"）
@@ -245,8 +255,9 @@ def check_session_crypto() -> None:
         out_f = Path(_tf.mkdtemp(prefix="hu_gate_")) / "cases.json"
         env = dict(os.environ)
         env["FIREFLY_ROOT"] = str(ROOT).replace("\\", "/")
-        r = _sp.run([node, str(ROOT / "tests" / "js" / "test_session_crypto.mjs"), str(out_f)],
-                    capture_output=True, text=True, env=env)
+        r = _sp.run([node, str(ROOT / "tests" / "session_crypto_contract.mjs"), str(out_f)],
+                    capture_output=True, text=True, encoding="utf-8",
+                    errors="replace", env=env)
         if r.returncode == 0 and out_f.is_file():
             cases = json.loads(out_f.read_text(encoding="utf-8")).get("cases") or []
             for c in cases:
@@ -330,6 +341,77 @@ def check_py_injection() -> None:
         t = srv.read_text(encoding="utf-8")
         check("★ PC 入口 server.py 也挂载了 py 覆盖层",
               "hotupdate" in t and '"py"' in t and "sys.path.insert" in t)
+
+
+def check_py_package_closure(files: list) -> None:
+    """★ Python 覆盖层必须带完整顶层包（2026-10-26 hot3 真机事故）。
+
+    覆盖层不是"把文件合并进 app/"。Python 一旦在覆盖层命中 `api/__init__.py`，
+    `api.__path__` 就只指向覆盖层；若包里只带了一个新子模块，其余兄弟模块会全部消失。
+    反过来，若不带 `__init__.py`，Python 会回到底座加载旧包，新子模块也不会被看见。
+
+    因此发布门禁要求：补丁只要触及 `py/<pkg>/...`，就必须带上当前工作区里该顶层包的全部
+    `.py`。产出器会自动补齐；这里独立复查，防止手造包或旧工具绕过。
+    """
+    provided = {str(f.get("path") or "") for f in files}
+    try:
+        sys.path.insert(0, str(ROOT / "tools"))
+        import build_hotupdate as BH
+        current = {f"py/{k}": v for k, v in BH.collect_py().items()}
+        expanded, roots, missing_init = BH.expand_py_package_closure(
+            {p: {} for p in provided if p.startswith("py/")}, current)
+    except Exception as ex:
+        check("★ Python 包闭包可审查", False, f"{type(ex).__name__}: {ex}")
+        return
+    if not roots:
+        return
+    missing = sorted(set(expanded) - provided)
+    check("★ py 覆盖层触及的顶层包均带完整包闭包",
+          not missing, f"触及 {roots}；缺 {missing[:8]}"
+          + (f" 等 {len(missing)} 个" if len(missing) > 8 else ""))
+    check("★ 每个 py 顶层包都有 __init__.py", not missing_init, str(missing_init))
+
+
+def check_rollout_promotion(dist: Path, serial: int, manifest: dict,
+                            files: list, key: Path) -> None:
+    """同内容灰度晋级必须可追溯到上一个已签名 serial。"""
+    if "promotion_of" not in manifest:
+        return
+    try:
+        prev_serial = int(manifest.get("promotion_of"))
+    except Exception:
+        check("promotion_of 是数字", False, str(manifest.get("promotion_of")))
+        return
+    check("灰度晋级只指向紧邻的上一 serial", prev_serial == serial - 1,
+          f"promotion_of={prev_serial}, serial={serial}")
+    prev_json = dist / f"patch-{prev_serial}.json"
+    check("被晋级的上一 serial 清单存在", prev_json.is_file(), prev_json.name)
+    if not prev_json.is_file():
+        return
+    try:
+        payload = json.loads(prev_json.read_text(encoding="utf-8"))
+        prev_raw = base64.b64decode(payload["manifest_b64"], validate=True)
+        prev_sig = base64.b64decode(payload["sig"], validate=True)
+        prev = json.loads(prev_raw.decode("utf-8"))
+    except Exception as e:
+        check("被晋级的上一 serial 可解析", False, f"{type(e).__name__}: {e}")
+        return
+    if key.is_file():
+        check("★ 被晋级的上一 serial 签名有效",
+              verify_with_key(key, prev_raw, prev_sig))
+    try:
+        before = int(prev.get("rollout_percent"))
+        after = int(manifest.get("rollout_percent"))
+    except Exception:
+        check("灰度晋级前后比例可比较", False)
+        return
+    check("★ 灰度晋级只升不降", after > before, f"{before}% → {after}%")
+    prev_files = sorted((str(f.get("path") or ""), str(f.get("sha256") or ""))
+                        for f in (prev.get("files") or []))
+    current_files = sorted((str(f.get("path") or ""), str(f.get("sha256") or ""))
+                           for f in files)
+    check("★ 灰度晋级文件集与哈希完全不变", current_files == prev_files,
+          f"{len(prev_files)} → {len(current_files)} 个文件")
 
 
 
@@ -522,7 +604,7 @@ def main() -> int:
                             check("serial 从 1 起连续无缺口",
                                   serials == list(range(1, len(serials) + 1)), str(serials))
                             for s in (serials if a.all else [serial]):
-                                check_one(d2, s, key)
+                                check_one(d2, s, key, current=(s == serial))
 
     print(f"\n统计: PASS={PASS} FAIL={FAIL}")
     print("结果: " + ("PASS 可发布" if FAIL == 0 else "FAIL 禁止发布"))

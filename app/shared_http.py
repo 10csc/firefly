@@ -20,6 +20,13 @@ class ResponseMixin:
         ".gif": "image/gif", ".json": "application/json",
     }
 
+    def _security_headers(self):
+        # 2026-10-22：低成本的 Web 加固。IP 证书无 HSTS（IP 不适用），但 XFO/Referrer-Policy
+        # 对登录页/平台页仍有意义；本地版同源页面也一并带上。
+        self.send_header("X-Frame-Options", "DENY")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Referrer-Policy", "no-referrer")
+
     def _serve_file(self, filepath: Path):
         try:
             content = filepath.read_bytes()
@@ -34,6 +41,7 @@ class ResponseMixin:
             self.send_header("Pragma", "no-cache")
             self.send_header("Expires", "0")
             self.send_header("Content-Length", len(content))
+            self._security_headers()
             self._cors_headers()
             self.end_headers()
             self.wfile.write(content)
@@ -45,6 +53,7 @@ class ResponseMixin:
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", len(body))
+        self._security_headers()
         self._cors_headers()
         self.end_headers()
 
@@ -62,6 +71,7 @@ class ResponseMixin:
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", len(body))
         self.send_header("Cache-Control", "no-store")
+        self._security_headers()
         self._cors_headers()
         self.end_headers()
         self.wfile.write(body)
