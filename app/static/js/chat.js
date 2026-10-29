@@ -1,6 +1,6 @@
 // 聊天核心：长按菜单 / 引用 / 发送四阶段 / 提交窗口状态机 / 数据备份导入导出
 import { S, SESSION_ID, inputEl, messagesEl, sendBtn } from "./state.js";
-import { _toast, escapeHtml, showToast } from "./util.js";
+import { escapeHtml, showToast, uiConfirm } from "./util.js";
 import { IS_SERVER, API_BASE } from "./api.js";
 import { openMenu, openSettings } from "./panels.js";
 import { addTextMessage, _quoteContentText, _quoteWhoName } from "./chat_render.js";
@@ -108,7 +108,7 @@ async function _voiceConvert(mode, snap) {
     }
     const st = await _voiceStatus(true);
     if (!st.engine_ok) {
-        showToast("语音插件不可用：" + (st.reason || "未知原因"));
+        showToast("语音插件不可用：" + (st.reason || "未知原因"), "error");
         return;
     }
 
@@ -148,13 +148,13 @@ async function _voiceConvert(mode, snap) {
             showToast((had ? "已重新生成" : "已生成") + "（" + (d.seconds || "?") + "s）");
         } else {
             if (bar) bar.remove();
-            showToast("生成失败：" + ((d && d.error) || "未知原因"));
+            showToast("生成失败：" + ((d && d.error) || "未知原因"), "error");
             _voiceStatus(true);   // 失败后刷新状态，下次点能拿到新原因
         }
     } catch (e) {
         if (bar) bar.remove();
         console.warn("[chat] 语音生成失败：连不上本机后端", e);   // 原始异常落日志（顾客可见串里不放）
-        showToast("语音没生成成功：连不上本机后端，请确认程序在运行后重试");
+        showToast("语音没生成成功：连不上本机后端，请确认程序在运行后重试", "error");
     } finally {
         _voiceBusy = false;
     }
@@ -190,7 +190,7 @@ function _showMsgMenu(row, x, y) {
             showToast(d.ok ? "已收藏（菜单 → 收藏可查看）" : "收藏失败：" + (d.error || ""));
         } catch (e) {
             console.warn("[chat] 收藏失败", e);
-            showToast("收藏没成功，请重试；仍失败请到「反馈」附诊断包");
+            showToast("收藏没成功，请重试；仍失败请到「反馈」附诊断包", "error");
         }
     }));
     // 转语音：只对流萤的 text/narration 且有 seq 的消息显示。
@@ -316,8 +316,13 @@ function importData() {
         const f = input.files && input.files[0];
         input.value = "";   // 允许重复选同一文件
         if (!f) return;
-        if (!confirm(`导入将覆盖当前「${MODE_NAMES[CURRENT_MODE] || CURRENT_MODE}」的全部数据（导入前会自动备份现有数据）。\n\n确定导入 ${f.name} 吗？`)) return;
-        _toast("正在导入…");
+        const ok = await uiConfirm({
+            title: `导入 ${f.name}？`,
+            body: `将覆盖当前「${MODE_NAMES[CURRENT_MODE] || CURRENT_MODE}」的全部数据（导入前会自动备份现有数据）。`,
+            confirmText: "导入",
+        });
+        if (!ok) return;
+        showToast("正在导入…");
         try {
             const fd = new FormData();
             fd.append("file", f);
@@ -325,12 +330,12 @@ function importData() {
             const resp = await fetch("/import-data", { method: "POST", body: fd });
             const data = await resp.json().catch(() => ({}));
             if (resp.ok && data.ok) {
-                _toast("导入成功，正在重新加载…");
+                showToast("导入成功，正在重新加载…", "success");
                 setTimeout(() => location.reload(), 800);
             } else {
-                _toast("导入失败：" + (data.error || "请检查文件"));
+                showToast("导入失败：" + (data.error || "请检查文件"), "error");
             }
-        } catch (e) { _toast("导入失败，请检查网络"); }
+        } catch (e) { showToast("导入失败，请检查网络", "error"); }
     };
     input.click();
 }
@@ -345,10 +350,15 @@ window.importData = importData;
 // ★ 2026-09-25 改名「导出当前角色」→「导出备份」：那一列按钮里「保存快照（全部角色）」
 //   已经用括号标注了范围，导出再标范围就会让人以为是两种并列的东西；而它与「导入备份」
 //   本来就是一对（导出→导入 是同一个闭环），叫「备份」才对上。功能没变：仍然导**当前角色**。
-function exportData() {
+async function exportData() {
     const name = MODE_NAMES[CURRENT_MODE] || CURRENT_MODE;
-    if (!confirm(`导出「${name}」的全部数据为本地 zip 备份？\n\n包含：角色设定、对话记录、手账、记忆（不含 API Key）。\n可用「导入备份」在本机或其他设备还原。`)) return;
-    _toast("正在打包导出…");
+    const ok = await uiConfirm({
+        title: `导出「${name}」？`,
+        body: "含角色设定、对话记录、手账、记忆（不含 API Key）。\n可用「导入备份」在本机或其他设备还原。",
+        confirmText: "导出",
+    });
+    if (!ok) return;
+    showToast("正在打包导出…");
     const url = API_BASE + "/export-data?mode=" + encodeURIComponent(CURRENT_MODE);
     // 用隐藏链接触发下载（保留 Content-Disposition 文件名；window.open 在部分 WebView 会被拦）
     const a = document.createElement("a");
@@ -370,19 +380,19 @@ function _fmtSize(n) {
 }
 
 async function createSnapshot() {
-    _toast("正在打包快照…");
+    showToast("正在打包快照…");
     try {
         const resp = await fetch("/snapshot/create", { method: "POST" });
         const data = await resp.json().catch(() => ({}));
         if (resp.ok && data.ok) {
-            _toast(data.pushed ? "快照已保存到服务器（" + _fmtSize(data.size) + "）"
+            showToast(data.pushed ? "快照已保存到服务器（" + _fmtSize(data.size) + "）"
                                : "快照已保存到本机（" + _fmtSize(data.size) + "）"
-                                 + (data.push_error ? "；" + data.push_error : ""));
+                                 + (data.push_error ? "；" + data.push_error : ""), "success");
             loadSnapshots();
         } else {
-            _toast("快照失败：" + (data.error || ""));
+            showToast("快照失败：" + (data.error || ""), "error");
         }
-    } catch (e) { _toast("快照失败，请检查网络"); }
+    } catch (e) { showToast("快照失败，请检查网络", "error"); }
 }
 
 async function loadSnapshots() {
@@ -419,7 +429,7 @@ async function loadSnapshots() {
                             a.href = url; a.download = name;
                             document.body.appendChild(a); a.click();
                             setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 1500);
-                        }).catch(() => _toast("下载失败"));
+                        }).catch(() => showToast("下载失败", "error"));
                 }
             });
         });
@@ -429,8 +439,13 @@ async function loadSnapshots() {
 }
 
 async function restoreSnapshot(name) {
-    if (!confirm(`用快照「${name}」覆盖全部角色与聊天记录？\n恢复前会自动保存当前状态的快照。\n\n确定恢复吗？`)) return;
-    _toast("正在恢复快照…");
+    const ok = await uiConfirm({
+        title: `用快照「${name}」恢复？`,
+        body: "会覆盖全部角色与聊天记录。恢复前会自动保存当前状态的快照。",
+        confirmText: "恢复",
+    });
+    if (!ok) return;
+    showToast("正在恢复快照…");
     try {
         const resp = await fetch("/snapshot/restore", {
             method: "POST", headers: {"Content-Type": "application/json"},
@@ -440,18 +455,24 @@ async function restoreSnapshot(name) {
         if (resp.ok && data.ok) {
             // E-1 配套：恢复前自动备份失败时后端会回落逐包备份并标 backup_ok=false——
             // 此时若快照本身有问题，损失不可回滚，必须让用户知道
-            _toast(data.backup_ok === false
+            showToast(data.backup_ok === false
                 ? "已恢复（注意：恢复前的保险快照生成失败）"
-                : "恢复成功，正在重新加载…");
+                : "恢复成功，正在重新加载…", "success");
             setTimeout(() => location.reload(), 800);
         } else {
-            _toast("恢复失败：" + (data.error || ""));
+            showToast("恢复失败：" + (data.error || ""), "error");
         }
-    } catch (e) { _toast("恢复失败，请检查网络"); }
+    } catch (e) { showToast("恢复失败，请检查网络", "error"); }
 }
 
 async function deleteSnapshot(name) {
-    if (!confirm(`删除快照「${name}」？此操作不可撤销。`)) return;
+    const ok = await uiConfirm({
+        title: `删除快照「${name}」？`,
+        body: "此操作不可撤销。",
+        confirmText: "删除",
+        danger: true,
+    });
+    if (!ok) return;
     try {
         const resp = await fetch("/snapshot/delete", {
             method: "POST", headers: {"Content-Type": "application/json"},
@@ -459,12 +480,12 @@ async function deleteSnapshot(name) {
         });
         const data = await resp.json().catch(() => ({}));
         if (resp.ok && data.ok) {
-            _toast("快照已删除");
+            showToast("快照已删除", "success");
             loadSnapshots();
         } else {
-            _toast("删除失败：" + (data.error || ""));
+            showToast("删除失败：" + (data.error || ""), "error");
         }
-    } catch (e) { _toast("删除失败，请检查网络"); }
+    } catch (e) { showToast("删除失败，请检查网络", "error"); }
 }
 
 document.getElementById("snapshot-create-btn")?.addEventListener("click", createSnapshot);
@@ -612,12 +633,12 @@ export async function _chatSend(msgs) {
             _notifyFirefly(data.messages);   // 切后台时回复完成通知（桥判断前台与否）
         }
         else if (data.reply) addTextMessage(data.reply, "firefly");
-        if (data.error_code) _toast(ERROR_TIPS[data.error_code] || ERROR_TIPS.unknown);
+        if (data.error_code) showToast(ERROR_TIPS[data.error_code] || ERROR_TIPS.unknown, "error");
         // R-07（服务器版）：请求的包在本端不存在时后端会静默回退默认包并打 mode_fallback 标记——
         // 必须显式告知（否则用户以为"角色坏了"而不知原因）
         if (data.mode_fallback) {
-            _toast("该角色包在服务器模式不可用，已回退到「" +
-                   (MODE_NAMES[data.mode_used] || data.mode_used || "默认包") + "」");
+            showToast("该角色包在服务器模式不可用，已回退到「" +
+                   (MODE_NAMES[data.mode_used] || data.mode_used || "默认包") + "」", "error");
         }
         // data.queued：副请求，回复由主请求带回，无 UI 操作
     } catch (e) {

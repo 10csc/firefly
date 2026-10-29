@@ -2,7 +2,7 @@
 // 数据源 = GET /pack-structure（core/pack_structure.py 的声明式规范）——
 // 本模块只按返回的域/来源渲染树：可收起可展开，文件点击**就地展开**编辑（不跳页底）。
 // 业务结构由后端规范决定；新域/新槽位出现后，本模块自动跟随，无需改代码。
-import { escapeHtml, showToast } from "../util.js";
+import { escapeHtml, showToast, uiConfirm } from "../util.js";
 import { CURRENT_MODE } from "../views.js";
 
 let _treeMode = "";
@@ -217,7 +217,13 @@ async function _saveFile(ed, s) {
 }
 
 async function _revertFile(ed, s) {
-    if (!confirm("恢复默认？（删除你的修改）")) return;
+    const ok = await uiConfirm({
+        title: "恢复默认？",
+        body: "会删除你的修改。",
+        confirmText: "恢复默认",
+        danger: true,
+    });
+    if (!ok) return;
     const msg = ed.querySelector(".pt-msg");
     const isSlot = s.type === "slot";
     try {
@@ -326,7 +332,13 @@ async function _toggleKBFile(row) {
         msg.textContent = d.ok ? "已保存（下轮对话生效）" : "保存失败：" + (d.error || "");
     };
     ed.querySelector(".pt-revert").onclick = async () => {
-        if (!confirm("恢复默认？（删除你的修改）")) return;
+        const ok = await uiConfirm({
+            title: "恢复默认？",
+            body: "会删除你的修改。",
+            confirmText: "恢复默认",
+            danger: true,
+        });
+        if (!ok) return;
         const resp = await fetch("/pack-knowledge/delete", {method: "POST",
             headers: {"Content-Type": "application/json"},
             body: JSON.stringify({mode: _treeMode, path})});

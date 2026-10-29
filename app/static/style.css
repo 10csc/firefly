@@ -212,6 +212,19 @@ body {
 }
 #messages::-webkit-scrollbar { width: 4px; }
 #messages::-webkit-scrollbar-thumb { background: var(--input-border); border-radius: 2px; }
+/* 消息区状态占位（空历史 / 加载失败）：不是聊天消息，没有气泡形态，
+   也不参与长按、引用、收藏。margin:auto 让它落在剩余空间的中央。 */
+.msg-state {
+    margin: auto; padding: 28px 20px; text-align: center;
+    color: var(--fg-muted); max-width: 320px;
+}
+.msg-state-title { font-size: 0.95em; color: var(--fg-main); margin-bottom: 6px; }
+.msg-state-sub { font-size: 0.78em; line-height: 1.7; }
+.msg-state-btn {
+    margin-top: 14px; padding: 8px 22px; border-radius: 20px;
+    border: 1px solid var(--gold-line); background: var(--ctrl-bg-2);
+    color: var(--fg-main); font-family: inherit; font-size: 0.82em; cursor: pointer;
+}
 /* 头像与**名字行顶部**对齐（官方短信 UI 就是这样）。
    ⚠️ 2026-09-18：原来是 `align-items: flex-end`（底对齐气泡底）——没有名字行时看着还行，
    但一加名字行、且遇到两行气泡，头像就被拽到气泡底部，"第二行头像又下去了"（用户真机发现）。
@@ -262,17 +275,65 @@ body {
     margin: 2px 0 6px;
 }
 
-/* 轻提示（轮播图入口占位等） */
+/* 轻提示（全站唯一）：顶部安全区下方居中。
+   ⚠ 位置必须在顶部：聊天页键盘弹起时底部会被输入栏与键盘占住；
+   形状必须与聊天气泡区分（小圆角 + 左侧色条 + 窄条），否则会被当成角色说的一句话。 */
 #app-toast {
-    position: fixed; left: 50%; bottom: 12vh; z-index: 99;
-    transform: translateX(-50%) translateY(10px);
-    padding: 10px 18px; border-radius: 20px;
+    position: fixed; left: 50%; top: calc(12px + env(safe-area-inset-top)); z-index: 1200;
+    transform: translateX(-50%) translateY(-8px);
+    max-width: 86vw; padding: 9px 14px 9px 12px;
+    border-radius: 8px; border-left: 3px solid var(--fg-accent);
     background: var(--panel-solid); color: var(--fg-main);
-    font-size: 0.85em; box-shadow: 0 4px 16px var(--shadow-panel);
+    font-size: 0.8em; line-height: 1.5; text-align: left;
+    box-shadow: 0 6px 22px var(--shadow-panel);
     opacity: 0; pointer-events: none;
-    transition: opacity 0.25s, transform 0.25s;
+    transition: opacity 0.2s, transform 0.2s;
 }
 #app-toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+#app-toast.success { border-left-color: var(--green); }
+#app-toast.error { border-left-color: var(--red); }
+
+/* ═══ 自绘确认弹层（替代原生 confirm/alert/prompt）═══
+   WebView 的原生弹窗无法主题化，在游戏风格界面里非常突兀；
+   这里统一成与面板同语言的一张卡：标题 / 正文 / 可选输入 / 取消+确认。 */
+.app-modal-mask {
+    position: fixed; inset: 0; z-index: 1300;
+    background: rgba(0,0,0,0.55);
+    display: flex; align-items: center; justify-content: center;
+    padding: 24px; animation: panelFadeIn 0.15s;
+}
+.app-modal {
+    width: 100%; max-width: 360px;
+    background: var(--panel-solid); color: var(--fg-main);
+    border: 1px solid var(--border-mid); border-radius: 16px;
+    padding: 18px 18px 14px;
+    box-shadow: 0 18px 50px rgba(0,0,0,0.5);
+}
+.app-modal-title { font-size: 1em; font-weight: 600; color: var(--fg-main); }
+.app-modal-body {
+    margin-top: 8px; font-size: 0.84em; line-height: 1.7;
+    color: var(--fg-muted); white-space: pre-wrap;
+}
+.app-modal-input {
+    width: 100%; margin-top: 12px; padding: 10px 12px; box-sizing: border-box;
+    border-radius: 10px; border: 1px solid var(--input-border);
+    background: var(--ctrl-bg); color: var(--fg-main);
+    font-family: inherit; font-size: 16px;      /* 16px 防移动端聚焦缩放 */
+}
+.app-modal-msg { min-height: 16px; margin-top: 6px; font-size: 0.72em; color: var(--red); }
+.app-modal-actions { display: flex; gap: 8px; margin-top: 10px; }
+.app-modal-btn {
+    flex: 1; padding: 10px 14px; border-radius: 10px;
+    border: 1px solid var(--border-mid); background: transparent;
+    color: var(--fg-muted); font-family: inherit; font-size: 0.86em; cursor: pointer;
+}
+.app-modal-btn:hover { border-color: var(--border-hover); color: var(--fg-main); }
+.app-modal-btn.primary { background: var(--btn-bg); border-color: transparent; color: var(--fg-bright); }
+.app-modal-btn.primary.danger {
+    background: rgba(255,107,107,0.14);
+    border: 1px solid rgba(255,107,107,0.4);
+    color: var(--red);
+}
 
 /* 消息浮入动画：新消息行从头像底部 ~50px 处上浮（游戏实测量），纯位移无淡入
    适配说明：本项目是滚动容器内追加（游戏为固定输入区+列表滚动）——
@@ -469,7 +530,8 @@ body {
     opacity: 0.75;
 }
 #sticker-btn { right: 6px; }
-#image-btn { right: 44px; }
+/* 与表情按钮的中心距 44px（原 38px + 边缘间隙仅 4px，手指容易点错） */
+#image-btn { right: 50px; }
 #image-btn:hover, #sticker-btn:hover { opacity: 1; background: var(--ctrl-bg); }
 #send-btn {
     padding: 8px clamp(12px, 4vw, 16px); border-radius: 8px;
@@ -582,6 +644,18 @@ body {
 }
 .menu-tab > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .menu-tab.active { background: var(--btn-bg); color: var(--fg-bright); }
+/* 诊断次级分组：默认折叠（低频排查工具不与主功能争夺首屏）。
+   summary 复用 .menu-group-title 的字号，去掉 details 默认三角，改自绘箭头。 */
+.menu-adv { flex: 0 0 100%; }
+.menu-adv > summary {
+    list-style: none; cursor: pointer;
+    display: flex; align-items: center; gap: 6px;
+}
+.menu-adv > summary::-webkit-details-marker { display: none; }
+.menu-adv > summary::after { content: "▾"; font-size: 0.9em; transition: transform .18s; }
+.menu-adv[open] > summary::after { transform: rotate(180deg); }
+.menu-adv-body { display: flex; gap: 6px; padding: 4px 0 2px; }
+.menu-adv-body .menu-tab { flex: 1 1 0; }
 /* 操作按钮排：4 等分网格 + 图标上/文字下，彻底避免图标把文字挤出按钮造成漂移 */
 .menu-actions {
     display: grid; grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -596,6 +670,8 @@ body {
     line-height: 1.25;
 }
 .menu-actions button:hover { color: var(--fg-main); border-color: var(--dot-bg); }
+/* 动作区图标与 tab 区同一套线性 SVG（原先是彩色 PNG，两套图标语言混用） */
+.menu-actions button svg.ico { width: 18px; height: 18px; vertical-align: 0; flex-shrink: 0; }
 
 /* 菜单内容 */
 .menu-content { display: none; padding: 16px clamp(14px, 5vw, 20px); }
@@ -1193,6 +1269,7 @@ body {
     .home-start { display: none; }
 }
 /* 聊天页模式标签 */
+.chat-mode-tag[hidden] { display: none; }
 .chat-mode-tag {
     display: inline-block;
     margin-left: 8px;
@@ -1283,6 +1360,56 @@ body {
     width: 100%; margin-top: 6px;
 }
 .settings-body button:hover { background: var(--btn-bg-hover); }
+/* ── 设置页：按钮分级 / 状态行 / 提示条 ──
+   根因：settings-body button 原本一律 width:100%，导致「复制」「知道了」这类小操作
+   与「检查更新」「保存快照」视觉重量完全相同（真机一屏 9 个等宽按钮）。
+   现在：状态用文字，动作才用按钮；同级动作两两并排；每组最多一个主操作。 */
+.settings-body .set-btn-row { display: flex; gap: 8px; margin-top: 8px; }
+.settings-body .set-btn-row button {
+    width: auto; flex: 1 1 0; min-width: 0; margin-top: 0;
+}
+.settings-body .set-state { font-size: 0.8em; color: var(--fg-muted); line-height: 1.6; }
+.settings-body .set-state-line {
+    display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+    font-size: 0.8em; color: var(--fg-muted); min-width: 0;
+}
+.settings-body .set-state-line b { color: var(--fg-main); font-size: 1.2em; }
+.settings-body .set-icon-btn {
+    width: auto; flex: 0 0 auto; margin: 0;
+    padding: 4px 7px; border-radius: 7px;
+    background: transparent; color: var(--fg-muted);
+    border: 1px solid var(--border-mid);
+    display: inline-flex; align-items: center;
+}
+.settings-body .set-icon-btn svg.ico { width: 13px; height: 13px; }
+.settings-body .set-msg {
+    font-size: 0.72em; color: var(--fg-muted); margin-top: 6px;
+    line-height: 1.6; min-height: 1em;
+}
+.settings-body .set-check {
+    display: flex; align-items: center; gap: 8px;
+    font-size: 0.84em; color: var(--fg-main); margin: 6px 0; cursor: pointer;
+}
+.settings-body .set-check input { accent-color: var(--fg-accent); }
+.settings-body .set-sub { margin-top: 8px; }
+.settings-body .set-note {
+    display: flex; align-items: flex-start; gap: 8px;
+    margin-top: 10px; padding: 8px 10px; border-radius: 8px;
+    font-size: 0.74em; line-height: 1.6;
+    background: var(--ctrl-bg-3); border-left: 3px solid var(--fg-muted);
+    color: var(--fg-muted);
+}
+.settings-body .set-note.warn { border-left-color: #e0a05c; color: #e0a05c; }
+.settings-body .set-note-x {
+    width: auto; flex-shrink: 0; margin: 0; padding: 0 2px;
+    border: none; background: transparent; color: inherit;
+    font-size: 1em; line-height: 1; cursor: pointer;
+}
+.settings-body button.danger {
+    background: rgba(255,107,107,.12);
+    color: var(--red);
+    border: 1px solid rgba(255,107,107,.35);
+}
 #config-msg { color: var(--fg-muted); font-size: 0.75em; margin-top: 6px; }
 .notice-header {
     display: flex; justify-content: space-between; align-items: center;
@@ -1487,6 +1614,23 @@ body {
     }
     #menu-drawer { max-width: 640px; }
     #home-view { max-width: 640px; box-shadow: 0 0 30px var(--shadow-panel); }
+}
+/* 设置页：宽屏两列（组可同时展开，见 settings.js 的断点）。
+   窄屏仍单列单开——屏幕小，一次只看一件事。 */
+@media (min-width: 720px) {
+    #settings-panel .settings-body {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 12px;
+        align-items: start;
+        /* 必须：grid 默认 align-content:stretch 会把剩余高度摊到行间，
+           三行卡片会被拉开成"每行之间空 200px"（2026-10-30 实测）。 */
+        align-content: start;
+        max-width: 1100px; margin: 0 auto;
+    }
+    #settings-panel .settings-body > .set-group {
+        margin: 0; max-width: none;
+    }
 }
 /* 首页作为覆盖层时桌面居中 */
 @media (min-width: 720px) {

@@ -85,6 +85,12 @@ function _addAvatar(row, who) {
     row.insertBefore(img, row.firstChild);
 }
 
+/** 有真实消息进来时清掉「空历史 / 加载失败」占位——它只代表消息区当时的状态。 */
+function _clearMsgState() {
+    const s = messagesEl.querySelector(".msg-state");
+    if (s) s.remove();
+}
+
 /** 按 seq 插序：DOM 顺序 = 记录顺序（不管渲染先后）。
  * 有 seq → 找到第一个 seq 更大的行，插它前面（同 seq 追加末尾）；无 seq → 追加。
  * 修复：多批回复动画交错时表情包"堆积"错位——插序保证显示与记录一致。 */
@@ -101,6 +107,7 @@ function _insertRow(row, seq) {
 }
 
 export function addTextMessage(text, who, prepend = false, seq = null, quote = null) {
+    _clearMsgState();
     const row = document.createElement("div");
     row.className = "msg-row " + (who === "user" ? "user" : "firefly");
     if (seq !== null) row.dataset.seq = seq;
@@ -156,6 +163,7 @@ function _buildQuotePreview(q) {
 }
 
 export async function addSticker(stickerPath, who, prepend = false, seq = null, label = null, quote = null) {
+    _clearMsgState();
     const row = document.createElement("div");
     row.className = "msg-row " + (who === "user" ? "user" : "firefly");
     if (seq !== null) row.dataset.seq = seq;
@@ -195,6 +203,7 @@ export async function addSticker(stickerPath, who, prepend = false, seq = null, 
  *  服务器版 <img> 标签带不了 Bearer：经鉴权 fetch 拿字节转 objectURL；本地版同源直接 <img src>。
  *  缺失/失败 → 显示 desc 文字占位。 */
 export async function addImage(msg, who, prepend = false, seq = null, quote = null) {
+    _clearMsgState();
     const row = document.createElement("div");
     row.className = "msg-row " + (who === "user" ? "user" : "firefly") + " image-row";
     if (seq !== null) row.dataset.seq = seq;
@@ -246,6 +255,7 @@ export async function addImage(msg, who, prepend = false, seq = null, quote = nu
 }
 
 export function addNarration(text, style, prepend = false, seq = null) {
+    _clearMsgState();
     // 视觉小说式旁白：scene=居中小字（环境/事件），action=居中括号（动作）
     // 防御：历史数据/LLM 可能自带括号，先剥离避免双重括号
     let t = (text || "").trim();
@@ -289,6 +299,7 @@ function addTypingBubble(who) {
 
 export function renderMessages(messages, who, data) {
     if (!messages || messages.length === 0) return;
+    _clearMsgState();
     S._lastRenderTs = Date.now();   // 渲染时间戳（供主动性轮询门控；原二次包装已合并进来）
     const gen = _modeGen;   // 捕获渲染启动时的模式代际
     S._rendering = true;   // 渲染动画开始：防主动轮询中途插入乱序

@@ -18,6 +18,13 @@
 
     function $(id) { return document.getElementById(id); }
 
+    /** 后端返回的原始错误翻成人话；翻不出时用 fallback。
+     *  friendlyError 由 util.js 提供（bundle 单作用域，声明提升 ⇒ 此处调用期一定存在）。 */
+    function humanErr(raw, fallback) {
+        var s = (typeof friendlyError === "function") ? friendlyError(raw) : "";
+        return s || fallback;
+    }
+
     function post(path, obj) {
         try {
             return fetch(path, {
@@ -131,15 +138,14 @@
         if (st.restart_note) {
             lines.push('<div style="opacity:.7">' + esc(st.restart_note) + "</div>");
         }
+        // 提示条（不是整行按钮）：一行说明 + 右侧小 ×，与主操作在视觉上分层
         if (st.rolled_back_reason) {
-            lines.push('<div style="color:#e0a05c">上次修复已回退：' + esc(st.rolled_back_reason) +
-                ' <button id="hotupdate-dismiss-btn" type="button" ' +
-                'style="font-size:0.9em;padding:0 6px;margin-left:4px">知道了</button></div>');
+            lines.push('<div class="set-note warn">上次修复已回退：' + esc(st.rolled_back_reason) +
+                '<button id="hotupdate-dismiss-btn" type="button" class="set-note-x" aria-label="知道了">✕</button></div>');
         }
         if (st.last_error) {
-            lines.push('<div style="opacity:.7">' + esc(st.last_error) +
-                ' <button id="hotupdate-dismiss-btn2" type="button" ' +
-                'style="font-size:0.9em;padding:0 6px;margin-left:4px">知道了</button></div>');
+            lines.push('<div class="set-note">' + esc(humanErr(st.last_error, "上次检查或安装没有成功，稍后再试")) +
+                '<button id="hotupdate-dismiss-btn2" type="button" class="set-note-x" aria-label="知道了">✕</button></div>');
         }
         box.innerHTML = lines.join("");
         // 「知道了」：清掉"上次修复已回退/上次检查失败"的提示。
@@ -194,7 +200,7 @@
                 post("/hotupdate/action", { action: "check" }).then(function (r) {
                     return r ? r.json() : null;
                 }).then(function (d) {
-                    if (m) m.textContent = (d && d.ok) ? "已检查" : ("检查失败：" + ((d && d.error) || "网络不可达"));
+                    if (m) m.textContent = (d && d.ok) ? "已检查" : ("检查失败：" + humanErr(d && d.error, "连不上更新服务器，稍后再试"));
                     poll();
                 }).catch(function () { if (m) m.textContent = "检查失败"; });
             });
@@ -210,7 +216,7 @@
                     if (m) {
                         m.textContent = (d && d.ok)
                             ? (d.restart ? "已安装，空闲时会自动重启以生效" : "已安装，即将生效")
-                            : ("安装失败：" + ((d && d.error) || ""));
+                            : ("安装失败：" + humanErr(d && d.error, "没装上，稍后再试"));
                     }
                     poll();
                 }).catch(function () { if (m) m.textContent = "安装失败"; });
@@ -219,8 +225,13 @@
         var rb = $("hotupdate-rollback-btn");
         if (rb) {
             rb.addEventListener("click", function () {
-                if (!confirm("回退到当前安装包的版本？")) return;
-                post("/hotupdate/action", { action: "rollback" }).then(poll);
+                uiConfirm({
+                    title: "回退到当前安装包的版本？",
+                    body: "会退回安装包自带的版本，之后仍可接收新的修复。",
+                    confirmText: "回退",
+                }).then(function (ok) {
+                    if (ok) post("/hotupdate/action", { action: "rollback" }).then(poll);
+                });
             });
         }
     }

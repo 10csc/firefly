@@ -1,6 +1,6 @@
 // 设定纠错助手视图
 import { SESSION_ID, sendBtn } from "./state.js";
-import { escapeHtml, showToast } from "./util.js";
+import { escapeHtml, showToast, uiConfirm } from "./util.js";
 import { openSettings } from "./panels.js";
 import { MODE_NAMES, PRESET_MODES, CURRENT_MODE, appView, homeView, showHome, charName } from "./views.js";
 
@@ -359,7 +359,12 @@ async function dismissFix() {
 window.dismissFix = dismissFix;
 
 async function rollbackFix() {
-    if (!confirm("撤销上次设定修改？将恢复到上一个版本，对话数据不受影响。")) return;
+    const ok = await uiConfirm({
+        title: "撤销上次设定修改？",
+        body: "将恢复到上一个版本，对话数据不受影响。",
+        confirmText: "撤销",
+    });
+    if (!ok) return;
     if (_fixBusy) return;
     _fixBusy = true;
     try {
@@ -382,7 +387,13 @@ async function rollbackFix() {
 window.rollbackFix = rollbackFix;
 
 async function resetFix() {
-    if (!confirm("清空当前的问题描述和待确认方案？已应用的修改记录会保留。")) return;
+    const ok = await uiConfirm({
+        title: "清空当前问题？",
+        body: "问题描述和待确认方案会清空；已应用的修改记录保留。",
+        confirmText: "清空",
+        danger: true,
+    });
+    if (!ok) return;
     _fixBusy = true;
     try {
         const resp = await fetch("/setting-fix/reset", {

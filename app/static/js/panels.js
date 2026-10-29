@@ -45,9 +45,15 @@ menuOverlay.addEventListener("click", closeMenu);
 export function openMenu() {
     menuDrawer.classList.add("open");
     menuOverlay.classList.add("show");
-    // 默认 tab 是设定文件（DOM active），无点击事件，需主动加载
-    // （2026-09-18：loadCharFiles 已随「用户设定」编辑器一起去掉——它属角色卡管理域）
-    loadJournal(); loadUserMemory(); loadArchive();
+    // 刷新**当前显示的那一页**的数据（用户可能上次停在收藏/诊断页）。
+    // 2026-09-18：loadCharFiles 已随「用户设定」编辑器一起去掉——它属角色卡管理域。
+    const cur = document.querySelector(".menu-content.active");
+    const name = cur ? cur.id.replace(/^tab-/, "") : "char";
+    if (name === "char") { loadJournal(); loadUserMemory(); loadArchive(); }
+    if (name === "state") loadStateTab();
+    if (name === "fav") loadFavorites();
+    if (name === "log") loadRequestLog();
+    if (name === "pipeline") loadPipeline();
 }
 export function closeMenu() {
     menuDrawer.classList.remove("open");
@@ -81,21 +87,41 @@ menuDrawer.addEventListener("click", (e) => {
     if (e.target === menuDrawer) closeMenu();
 });
 
-// 菜单 tab 切换
-document.querySelectorAll(".menu-tab").forEach(btn => {
-    btn.addEventListener("click", () => {
-        document.querySelectorAll(".menu-tab").forEach(b => b.classList.remove("active"));
-        document.querySelectorAll(".menu-content").forEach(c => c.classList.remove("active"));
-        btn.classList.add("active");
-        const target = document.getElementById("tab-" + btn.dataset.tab);
-        if (target) target.classList.add("active");
-        if (btn.dataset.tab === "char") { loadJournal(); loadUserMemory(); loadArchive(); }
-        if (btn.dataset.tab === "state") loadStateTab();
-        if (btn.dataset.tab === "fav") loadFavorites();
-        if (btn.dataset.tab === "log") loadRequestLog();
-        if (btn.dataset.tab === "pipeline") loadPipeline();
+/** 统一的菜单 tab 切换：高亮 / 内容 / 按需加载三件事只在这里发生。
+ *  历史上高亮只在点击时补，初始内容（#tab-char）却是 active ⇒ 打开菜单时
+ *  「内容显示设定文件、六个 tab 全灰」，用户不知道自己在哪一页。 */
+function setMenuTab(name) {
+    document.querySelectorAll(".menu-tab").forEach(b => {
+        b.classList.toggle("active", b.dataset.tab === name);
     });
+    document.querySelectorAll(".menu-content").forEach(c => c.classList.remove("active"));
+    const target = document.getElementById("tab-" + name);
+    if (target) target.classList.add("active");
+    // 选中诊断分组里的 tab 时把分组展开，否则用户看不到自己点的是哪一项
+    const btn = document.querySelector(`.menu-tab[data-tab="${name}"]`);
+    const adv = btn && btn.closest(".menu-adv");
+    if (adv) adv.open = true;
+    if (name === "char") { loadJournal(); loadUserMemory(); loadArchive(); }
+    if (name === "state") loadStateTab();
+    if (name === "fav") loadFavorites();
+    if (name === "log") loadRequestLog();
+    if (name === "pipeline") loadPipeline();
+}
+window.setMenuTab = setMenuTab;
+
+document.querySelectorAll(".menu-tab").forEach(btn => {
+    btn.addEventListener("click", () => setMenuTab(btn.dataset.tab));
 });
+
+// 初始化只同步高亮，不触发加载（加载由 openMenu 负责）
+(function syncInitialMenuTab() {
+    const cur = document.querySelector(".menu-content.active");
+    const name = cur ? cur.id.replace(/^tab-/, "") : "";
+    if (!name) return;
+    document.querySelectorAll(".menu-tab").forEach(b => {
+        b.classList.toggle("active", b.dataset.tab === name);
+    });
+})();
 
 // ═══════════════════════════════════════════
 // 状态 tab（数值状态系统已下线，接回后再渲染条）

@@ -4,6 +4,8 @@
 //   POST /voice/plugin {action,...} → install/cancel/enable/disable/uninstall/rescan/set_mood/set_repo
 // 设计与边界见 docs/工具/tts.md。本页只做展示与派发，不做任何模型逻辑。
 // ═══════════════════════════════════════════
+import { uiConfirm } from "./util.js";
+
 let _vpTimer = null;
 
 const _VP_LABEL = {
@@ -178,8 +180,24 @@ function closeVoiceView() {
 window.closeVoiceView = closeVoiceView;
 
 async function voiceAct(action, extra) {
-    if (action === "uninstall" && !confirm("确定卸载语音插件？\n\n会删除本机的模型文件（约 872 MB）。\n已生成的语音不受影响（那些随「清理历史」处理）。")) return;
-    if (action === "purge_voice" && !confirm("清除所有已生成的语音？\n\n只删音频文件 —— 模型、语气库、聊天记录都不受影响。\n清除后重新点「转语音」会用当前前端重新合成（旧音频可能带有已修复的问题）。")) return;
+    if (action === "uninstall") {
+        const ok = await uiConfirm({
+            title: "卸载语音插件？",
+            body: "会删除本机的模型文件（约 872 MB）。\n已生成的语音不受影响（那些随「清理历史」处理）。",
+            confirmText: "卸载",
+            danger: true,
+        });
+        if (!ok) return;
+    }
+    if (action === "purge_voice") {
+        const ok = await uiConfirm({
+            title: "清除所有已生成的语音？",
+            body: "只删音频文件——模型、语气库、聊天记录都不受影响。\n清除后重新点「转语音」会用当前前端重新合成。",
+            confirmText: "清除",
+            danger: true,
+        });
+        if (!ok) return;
+    }
     await _vpAct(action, extra);
     renderVoiceView();
 }

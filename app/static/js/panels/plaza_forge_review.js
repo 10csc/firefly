@@ -7,7 +7,7 @@
 // 顶层状态（`_pfS`/`_pfSeq`/`_pfModalSeq`/`_pfEl`）与 DOM 引用仍住在外壳 js/panels/plaza_forge.js；
 // 新加的名字**必须带 `_pf` 前缀**（bundle 单作用域，重名会静默覆盖）。
 // ⚠ 审核弹窗**只在这一刻读一次用户自己的 API Key**，随即清空、不落任何存储（约束 1）。
-import { showToast } from "../util.js";
+import { showToast, uiConfirm } from "../util.js";
 
 // ═══ 审核状态与按钮闸门 ═══════════════════════════════
 function _pfMarkDirty() {
@@ -613,7 +613,13 @@ async function _pfPublishReplace(id) {
 async function _pfUnpublish(id, btn) {
     const did = String(id || _pfS.id || "").trim();
     if (!did) return;
-    if (!confirm("下架「" + did + "」？\n广场上不再显示这张卡（作者可再次发布）。")) return;
+    const ok = await uiConfirm({
+        title: "下架「" + did + "」？",
+        body: "广场上不再显示这张卡（作者可再次发布）。",
+        confirmText: "下架",
+        danger: true,
+    });
+    if (!ok) return;
     if (btn) { btn.disabled = true; btn.textContent = "下架中…"; }
     const r = await _pfPost("/plaza/api/unpublish", {id: did});
     if (btn) { btn.disabled = false; btn.textContent = "下架"; }
@@ -630,7 +636,13 @@ async function _pfUnpublish(id, btn) {
 }
 
 async function _pfDelete(it) {
-    if (!confirm("删除草稿「" + (it.name || it.id) + "」？\n删除后无法恢复，卡体和审核结论一起消失。")) return;
+    const ok = await uiConfirm({
+        title: "删除草稿「" + (it.name || it.id) + "」？",
+        body: "删除后无法恢复，卡体和审核结论一起消失。",
+        confirmText: "删除",
+        danger: true,
+    });
+    if (!ok) return;
     const r = await _pfPost("/plaza/api/draft/delete", {id: it.id});
     if (!r.ok) {
         if (r.status === 401) { _pfGotoLogin(); return; }

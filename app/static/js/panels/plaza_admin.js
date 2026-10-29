@@ -18,7 +18,7 @@
 //   GET  /plaza/api/admin/list    ?status=&page=&size= → {ok,total,page,size,items:[…公开字段…,
 //                                                          report_count, reports:[{reason,at}], review]}
 //   POST /plaza/api/admin/status  {id, status}         → {ok:true, id, status}
-import { showToast } from "../util.js";
+import { showToast, uiConfirm } from "../util.js";
 
 // ── 常量 ────────────────────────────────────────────
 const _PA_REASONS = ["色情低俗", "暴力血腥", "违法违规", "侵犯权益", "越狱注入", "站外引流", "其他"];
@@ -352,9 +352,14 @@ function _paRow(c) {
 async function _paAct(c, status, btn) {
     if (_paS.busy) return;
     const label = status === "archived" ? "下架" : "恢复";
-    if (status === "archived"
-        && !confirm("下架「" + (c.name || c.id) + "」？\n公开广场上不再显示这张卡；内容与举报记录都留着，可随时恢复。")) {
-        return;
+    if (status === "archived") {
+        const ok = await uiConfirm({
+            title: "下架「" + (c.name || c.id) + "」？",
+            body: "公开广场上不再显示这张卡；内容与举报记录都留着，可随时恢复。",
+            confirmText: "下架",
+            danger: true,
+        });
+        if (!ok) return;
     }
     const old = btn ? btn.textContent : label;
     if (btn) { btn.disabled = true; btn.textContent = label + "中…"; }

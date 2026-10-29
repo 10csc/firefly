@@ -1,7 +1,7 @@
 // 表情包管理（菜单抽屉「表情包」页签：添加 / 映射表 / 启停 / 删除）
 // 阶段 B（2026-09-15）自 panels/packs.js 拆出：这段属菜单域，与角色包详情页无关。
 import { API_BASE, IS_SERVER } from "../api.js";
-import { escapeHtml, idbSaveMedia, stickerSrc } from "../util.js";
+import { escapeHtml, idbSaveMedia, stickerSrc, uiConfirm } from "../util.js";
 import { uiSelectEnhance } from "../ui_select.js";
 import { CURRENT_MODE } from "../views.js";
 
@@ -139,7 +139,8 @@ async function loadStickerList() {
                 } catch(e) {}
             });
             del.addEventListener("click", async () => {
-                if (!confirm("确认删除？")) return;
+                const ok = await uiConfirm({ title: "删除这张表情包？", confirmText: "删除", danger: true });
+                if (!ok) return;
                 try {
                     await fetch("/sticker-delete", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({id}) });
                     row.remove();

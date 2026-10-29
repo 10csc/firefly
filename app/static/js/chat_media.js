@@ -1,6 +1,6 @@
 // 聊天媒体：发图片（选图/压缩/上传/描述）/ 表情包面板与发送
 import { S, inputEl, messagesEl } from "./state.js";
-import { _toast, escapeHtml } from "./util.js";
+import { showToast, escapeHtml } from "./util.js";
 import { compressImage } from "./imgzip.js";
 import { API_BASE, IS_SERVER } from "./api.js";
 import { addImage, addSticker } from "./chat_render.js";
@@ -37,8 +37,8 @@ if (imageBtn && imageFileInput) {
         const f = imageFileInput.files && imageFileInput.files[0];
         imageFileInput.value = "";
         if (!f || S.waiting) { endMedia(false); return; }
-        if (!/^image\/(png|jpe?g|webp|gif)$/.test(f.type || "")) { _toast("仅支持 png/jpg/webp/gif 图片"); endMedia(false); return; }
-        if (f.size > 10 * 1024 * 1024) { _toast("图片过大（上限 10MB）"); endMedia(false); return; }
+        if (!/^image\/(png|jpe?g|webp|gif)$/.test(f.type || "")) { showToast("仅支持 png/jpg/webp/gif 图片", "error"); endMedia(false); return; }
+        if (f.size > 10 * 1024 * 1024) { showToast("图片过大（上限 10MB）", "error"); endMedia(false); return; }
         // 发送前压缩（imgzip.js）：GIF/小图原样；任何失败降级原图不阻塞发送
         const {blob, ext} = await compressImage(f);
         let imgId = "";
@@ -48,9 +48,9 @@ if (imageBtn && imageFileInput) {
             fd.append("mode", CURRENT_MODE);
             const resp = await fetch("/upload-image", {method: "POST", body: fd});
             const data = await resp.json();
-            if (!data.ok) { _toast("图片上传失败：" + (data.error || "")); endMedia(false); return; }   // 配额满等错误直接透传后端文案
+            if (!data.ok) { showToast("图片上传失败：" + (data.error || ""), "error"); endMedia(false); return; }   // 配额满等错误直接透传后端文案
             imgId = data.img_id || "";
-        } catch (e) { _toast("网络错误，图片未发送"); endMedia(false); return; }
+        } catch (e) { showToast("网络错误，图片未发送", "error"); endMedia(false); return; }
         // 2026-08-29：不再弹窗让用户描述——图片理解统一由模型原生识图（发图当轮注入原图）；
         // 模型真不支持时由后端 polisher 降级为"看不清"说明。
         const q = _quoteTarget;

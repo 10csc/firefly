@@ -141,11 +141,12 @@
     .settings-body, .notice-body { padding: 20px clamp(20px, 4vw, 56px); }
     .settings-body > *, .notice-body > * { max-width: 820px; margin-left: auto; margin-right: auto; }
     #settings-panel .settings-body { max-width: 1180px; margin: 0 auto; }
-    /* 设置面板的 body 是"column flex + 居中"，子项会缩成 fit-content（实测卡片只有 ~410px 宽）。
-       桌面要铺满阅读宽度：显式 width:100% + align-self:stretch。 */
+    /* 设置面板的 body 在 ≥720px 是两列 grid（style.css），子项要铺满各自那一列。
+       ⚠ 不要加 align-self:stretch：grid 里它会让折叠的空卡片跟着同行最高的卡片一起撑高
+       （2026-10-30 实测：模型/外观/数据三个折叠组被拉成 470px 空白卡）。 */
     #settings-panel .settings-body > .set-group,
     #settings-panel .settings-body > .field {
-        max-width: none; width: 100%; align-self: stretch;
+        max-width: none; width: 100%;
     }
     /* 语音插件：唯一的内容列是 #vv-body（id，不是 class） */
     #vv-body { max-width: 900px; width: 100%; margin: 0 auto; }

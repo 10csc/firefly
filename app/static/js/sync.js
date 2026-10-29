@@ -1,5 +1,5 @@
 // 增量同步 UI（/sync/now）：进度条 / 冲突警告 toast / 10 分钟节流 / 回前台补同步
-import { showToast } from "./util.js";
+import { showToast, friendlyError } from "./util.js";
 import { IS_SERVER } from "./api.js";
 import { CURRENT_MODE } from "./views.js";
 
@@ -11,7 +11,6 @@ import { CURRENT_MODE } from "./views.js";
 const _SYNC_THROTTLE_MS = 10 * 60 * 1000;
 let _syncing = false;
 let _syncPill = null;
-let _warnToastTimer = null;
 
 function _syncPillShow(text) {
     if (!_syncPill) {
@@ -23,21 +22,6 @@ function _syncPillShow(text) {
     _syncPill.style.display = "block";
 }
 function _syncPillHide() { if (_syncPill) _syncPill.style.display = "none"; }
-
-/** 橙色警告 toast（样式沿用 _toast 浮层，边框改橙）：冲突备份等需要用户注意但非阻断的提醒 */
-function _warnToast(msg) {
-    let t = document.getElementById("app-warn-toast");
-    if (!t) {
-        t = document.createElement("div");
-        t.id = "app-warn-toast";
-        t.style.cssText = "position:fixed;top:56px;left:50%;transform:translateX(-50%);z-index:999;background:rgba(46,34,22,.97);color:#ffd9b0;border:1px solid rgba(255,150,80,.65);border-radius:10px;padding:9px 16px;font-size:0.8em;max-width:86vw;text-align:center;box-shadow:0 6px 22px rgba(0,0,0,.45);pointer-events:none;display:none";
-        document.body.appendChild(t);
-    }
-    t.textContent = msg;
-    t.style.display = "block";
-    clearTimeout(_warnToastTimer);
-    _warnToastTimer = setTimeout(() => { t.style.display = "none"; }, 4000);
-}
 
 window.autoSyncNow = async function (force) {
     if (IS_SERVER) return;   // 服务器版数据天然在云端，无需同步
@@ -67,19 +51,23 @@ window.autoSyncNow = async function (force) {
             const text = `同步完成：上传 ${(d.uploaded || []).length} · 下载 ${(d.downloaded || []).length} · 合并 ${(d.merged || []).length}`;
             const conflicts = d.conflicts || 0;
             if (msg) msg.textContent = "✓ " + text + (conflicts ? `，冲突 ${conflicts}（见 .sync_backups）` : "");
-            showToast(text);
-            if (conflicts > 0) _warnToast(`${conflicts} 处冲突已各自备份`);
+            // 冲突与成功合并成一条：两者共用同一个 toast，分两次调用只会互相覆盖
+            showToast(text + (conflicts ? `，冲突 ${conflicts} 处已各自备份` : ""),
+                      conflicts ? "error" : "success");
         } else {
-            const code = d.code ? `[${d.code}${d.trace_id ? " · " + d.trace_id : ""}] ` : "";
-            const err = "同步未完成：" + code + (d.error || `HTTP ${r.status}`);
+            // 原始错误只进控制台/诊断包，界面给人话（用户读到的是"该做什么"，不是异常类名）
+            console.warn("[sync] 同步失败", { code: d.code, trace: d.trace_id, error: d.error, status: r.status });
+            const human = friendlyError(d.error) || d.error || `服务器返回 ${r.status}`;
+            const err = "同步没完成：" + human;
             if (msg) msg.textContent = err;
-            showToast(err);
+            showToast("同步没完成，稍后再试", "error");
         }
     } catch (e) {
-        const detail = (e && e.message) ? `：${e.message}` : "，稍后再试";
-        const err = "同步失败：无法连接本地后端" + detail;
+        console.warn("[sync] 同步异常", e);
+        const human = friendlyError(e && e.message) || "连不上本机后端";
+        const err = "同步失败：" + human;
         if (msg) msg.textContent = err;
-        showToast(err);
+        showToast("同步失败，稍后再试", "error");
     } finally {
         _syncPillHide();
         _syncing = false;

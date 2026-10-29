@@ -22,6 +22,8 @@ window.__appVersion = CURRENT_VERSION;
 // 设置面板版本号动态显示（单一版本源：CURRENT_VERSION；替代 index.html 硬编码文案）
 const curVersionEl = document.getElementById("current-version");
 if (curVersionEl) curVersionEl.textContent = "v" + CURRENT_VERSION;
+const aboutSummaryEl = document.getElementById("about-summary");
+if (aboutSummaryEl) aboutSummaryEl.textContent = "v" + CURRENT_VERSION;
 const UPDATE_SOURCES = [
     { api: "https://api.github.com/repos/10csc/firefly/releases/latest", html: "https://github.com/10csc/firefly/releases" },
     { api: "https://gitee.com/api/v5/repos/cpt-asymmetry/firefly/releases/latest", html: "https://gitee.com/cpt-asymmetry/firefly/releases" },

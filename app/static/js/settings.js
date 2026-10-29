@@ -1,6 +1,6 @@
 // 设置面板配置：供应商与模型管理 / 主动性预设 / 配置加载（loadConfig）与自动保存（_scheduleAutoSave）
 import { S } from "./state.js";
-import { getLocalApiKey, escapeHtml, showToast } from "./util.js";
+import { getLocalApiKey, escapeHtml, showToast, uiConfirm } from "./util.js";
 import { IS_SERVER, applyApiSource } from "./api.js";
 import { uiSelectEnhance } from "./ui_select.js";
 
@@ -185,10 +185,15 @@ async function _saveProviderForm() {
     _closeProviderForm();
 }
 
-function _deleteProviderForm() {
+async function _deleteProviderForm() {
     const editing = _$("provider-form").dataset.editing;
     if (!editing || _providers.length <= 1) { _$("provider-form-msg").textContent = "至少保留一个供应商"; return; }
-    if (!confirm("删除供应商「" + editing + "」？")) return;
+    const ok = await uiConfirm({
+        title: "删除供应商「" + editing + "」？",
+        confirmText: "删除",
+        danger: true,
+    });
+    if (!ok) return;
     _providers = _providers.filter(p => p.id !== editing);
     if (_activeId === editing) _activeId = _providers[0].id;
     _renderProviderSelect();
@@ -492,8 +497,13 @@ export async function loadConfig() {
         if (exitRow && data.platform === "pc") {
             exitRow.style.display = "";
             const exitBtn = _$("app-exit-btn");
-            if (exitBtn) exitBtn.onclick = () => {
-                if (!confirm("确定退出 Firefly 吗？聊天数据已实时保存，下次启动继续。")) return;
+            if (exitBtn) exitBtn.onclick = async () => {
+                const ok = await uiConfirm({
+                    title: "退出 Firefly？",
+                    body: "聊天数据已实时保存，下次启动继续。",
+                    confirmText: "退出",
+                });
+                if (!ok) return;
                 exitBtn.disabled = true;
                 exitBtn.textContent = "正在退出…";
                 fetch("/shutdown", {method: "GET"}).catch(() => {});
@@ -516,7 +526,11 @@ export async function checkKey() {
         head.addEventListener("click", () => {
             const group = head.closest(".set-group");
             const willOpen = !group.classList.contains("open");
-            document.querySelectorAll("#settings-panel .set-group").forEach(g => g.classList.remove("open"));
+            // 窄屏单开（屏幕小，一次只看一件事）；宽屏允许多开，
+            // 否则设置面板右侧半边永远空着（真机/PC 都实测过）。
+            if (!window.matchMedia("(min-width: 720px)").matches) {
+                document.querySelectorAll("#settings-panel .set-group").forEach(g => g.classList.remove("open"));
+            }
             if (willOpen) group.classList.add("open");
         });
     });

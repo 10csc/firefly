@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>Firefly</title>
-<link rel="stylesheet" href="style.css?v=ea180518">
+<link rel="stylesheet" href="style.css?v=a79790a0">
 <style>
 /* 服务器版：轮播图下登录/用户模块 */
 /* 首页卡片族：账号模块 / 设定纠错共用（原先只写了两份 scoped 副本，导致卡片裸渲染） */
@@ -206,7 +206,7 @@ svg.ico{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:1.8;st
 <!-- ★ PC 覆盖样式必须**放在这个内联 <style> 之后**：内联块里有针对
      `#settings-panel .settings-body > *` 的限宽规则，同优先级下后加载的才生效。
      （2026-09-19 实测：放在 <head> 开头时，PC 的设置两栏栅格被这条 720px 规则压回单列。） -->
-<link rel="stylesheet" href="pc.css?v=9cdd5abe">
+<link rel="stylesheet" href="pc.css?v=a4058bcc">
 </head>
 <body>
 <!-- SVG 图标精灵（用 <use href="#i-…"> 引用） -->
@@ -231,6 +231,10 @@ svg.ico{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:1.8;st
     <symbol id="i-bell" viewBox="0 0 24 24"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></symbol>
     <symbol id="i-voice" viewBox="0 0 24 24"><path d="M11 5 6 9H2v6h4l5 4V5z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/><path d="M18.5 5.5a9 9 0 0 1 0 13"/></symbol>
     <symbol id="i-moon" viewBox="0 0 24 24"><path d="M21 12.8A8.5 8.5 0 1 1 11.2 3a6.6 6.6 0 0 0 9.8 9.8z"/></symbol>
+    <!-- 菜单动作区（同一套线性风格；替代原先的彩色 PNG，避免与 tab 区混用两套图标语言） -->
+    <symbol id="i-home" viewBox="0 0 24 24"><path d="m3 10 9-7 9 7v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M9 22V12h6v10"/></symbol>
+    <symbol id="i-undo" viewBox="0 0 24 24"><path d="M3 7v6h6"/><path d="M3 13a9 9 0 1 0 3-7.7L3 8"/></symbol>
+    <symbol id="i-trash" viewBox="0 0 24 24"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/></symbol>
 </svg>
 <div id="bg"></div>
 <!-- 萤火粒子场：呼吸光点 · 鼠标惊扰散开 · 点击向落点轻聚（资源：单 canvas + rAF） -->
@@ -750,67 +754,75 @@ svg.ico{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:1.8;st
             </div>
         </section>
 
-        <!-- ⑤ 数据与系统 -->
-        <section class="set-group">
-            <button class="set-head" type="button" data-group="system"><span class="set-ico"><svg class="ico"><use href="#i-db"/></svg></span><span class="set-name">数据</span><span class="set-arrow">▾</span></button>
+        <!-- ④ 数据与备份（从原「数据与系统」拆出：快照 / 本地备份 / 云同步） -->
+        <section class="set-group" data-group="data">
+            <button class="set-head" type="button" data-group="data"><span class="set-ico"><svg class="ico"><use href="#i-db"/></svg></span><span class="set-name">数据与备份</span><span class="set-summary" id="data-summary"></span><span class="set-arrow">▾</span></button>
             <div class="set-body">
                 <div class="field">
-                    <label>版本与更新</label>
-                    <div style="margin-top:6px"><span id="current-version"></span></div>
-                    <!-- 运行版本三元组（2026-09-25）：热更**不改版本号**，所以"用户在跑哪份代码"
-                         只能靠 base + hot序列 + 清单指纹 三者合起来说清。给一键复制，
-                         用户报障时直接贴给我们即可（也随诊断包一起发）。 -->
-                    <div id="running-id" style="margin-top:4px;font-size:0.75em;color:var(--fg-muted)">
-                        <span id="running-id-text">运行版本读取中…</span>
-                        <button id="copy-running-id-btn" type="button"
-                                style="margin-left:6px;font-size:0.9em;padding:1px 6px">复制</button>
-                        <div id="running-id-msg" style="margin-top:4px"></div>
+                    <label>数据快照（全部角色）</label>
+                    <div class="set-btn-row">
+                        <button id="snapshot-create-btn" type="button">保存快照</button>
                     </div>
-                    <button id="check-update-btn" type="button" style="margin-top:8px">检查更新</button>
-                    <div id="update-msg" style="color:var(--fg-muted);font-size:0.75em;margin-top:6px"></div>
+                    <div id="snapshot-list" class="set-sub"></div>
+                    <div class="field-tip">存服务器，每账号留最近 5 份——换手机也能恢复。含角色卡与聊天记录，不含 Key。</div>
+                </div>
+                <div class="field">
+                    <label>本地备份（当前角色）</label>
+                    <div class="set-btn-row">
+                        <button id="import-btn" type="button" onclick="importData()">导入 zip</button>
+                        <button id="export-btn" type="button" onclick="exportData()">导出 zip</button>
+                    </div>
+                    <input id="import-file" type="file" accept=".zip,application/zip" style="display:none">
+                    <div class="field-tip">导出的是角色包与全部对话；这是唯一可离线留存的备份方式。</div>
+                </div>
+                <div class="field" id="sync-now-field">
+                    <label>云端同步</label>
+                    <div id="sync-state-text" class="set-state">登录后自动同步</div>
+                    <div class="set-btn-row">
+                        <button id="sync-now-btn" type="button" onclick="syncNow()">立即同步</button>
+                    </div>
+                    <div id="sync-now-msg" class="set-msg"></div>
+                </div>
+                <div class="set-note">图片只存压缩图，原图不出设备；表情包仅存本机。</div>
+            </div>
+        </section>
+
+        <!-- ⑤ 关于与更新（版本 / 检查更新 / 热更新 / 退出应用） -->
+        <section class="set-group" data-group="about">
+            <button class="set-head" type="button" data-group="about"><span class="set-ico"><svg class="ico"><use href="#i-flow"/></svg></span><span class="set-name">关于与更新</span><span class="set-summary" id="about-summary">v0.9.2</span><span class="set-arrow">▾</span></button>
+            <div class="set-body">
+                <div class="field">
+                    <label>版本</label>
+                    <!-- 运行版本三元组（2026-09-25）：热更不改版本号，所以"用户在跑哪份代码"
+                         只能靠 base + hot序列 + 清单指纹 三者合起来说清。 -->
+                    <div id="running-id" class="set-state-line">
+                        <b id="current-version"></b>
+                        <span id="running-id-text">运行版本读取中…</span>
+                        <button id="copy-running-id-btn" type="button" class="set-icon-btn" title="复制运行版本" aria-label="复制运行版本"><svg class="ico"><use href="#i-file"/></svg></button>
+                    </div>
+                    <div id="running-id-msg" class="set-msg"></div>
+                    <div class="set-btn-row">
+                        <button id="check-update-btn" type="button">检查更新</button>
+                        <button id="hotupdate-check-btn" type="button">检查修复</button>
+                    </div>
+                    <div id="update-msg" class="set-msg"></div>
                 </div>
                 <!-- 热更新（无需重装的修复；见 docs/热更新规范.md）。
                      运行版本三元组露给用户 + 一个手动回滚出口：热更本质是"下载并执行代码"，
                      给用户可见的开关与可查的版本是**信任**问题，不只是合规。 -->
                 <div class="field">
                     <label>自动修复（热更新）</label>
-                    <div style="margin-top:6px;display:flex;align-items:center;gap:8px">
-                        <input type="checkbox" id="hotupdate-toggle">
-                        <span style="font-size:0.8em;color:var(--fg-muted)">自动接收小修复（无需重装；随时可关）</span>
-                    </div>
-                    <div id="hotupdate-box" style="margin-top:6px;font-size:0.75em;color:var(--fg-muted);line-height:1.6"></div>
-                    <div style="margin-top:6px">
-                        <button id="hotupdate-check-btn" type="button">检查修复</button>
+                    <label class="set-check"><input type="checkbox" id="hotupdate-toggle"> 自动接收小修复（无需重装；随时可关）</label>
+                    <div id="hotupdate-box" class="set-sub"></div>
+                    <div class="set-btn-row">
                         <button id="hotupdate-apply-btn" type="button" style="display:none">立即安装</button>
                         <button id="hotupdate-rollback-btn" type="button" style="display:none">回退修复</button>
                     </div>
-                    <div id="hotupdate-msg" style="color:var(--fg-muted);font-size:0.75em;margin-top:6px"></div>
+                    <div id="hotupdate-msg" class="set-msg"></div>
                 </div>
-                <div class="field">
-                    <label>数据快照</label>
-                    <div style="margin-top:6px">
-                        <button id="snapshot-create-btn" type="button">保存快照（全部角色）</button>
-                        <button id="import-btn" type="button" onclick="importData()">导入备份（zip）</button>
-                        <button id="export-btn" type="button" onclick="exportData()">导出备份（zip）</button>
-                        <input id="import-file" type="file" accept=".zip,application/zip" style="display:none">
-                    </div>
-                    <div style="color:var(--fg-muted);font-size:0.7em;margin-top:6px">快照包含所有角色卡与聊天记录（不含 Key），存服务器，每账号留最近 5 份——换手机也能恢复。<b>「导出备份」下载本地 zip（当前角色的角色包与全部对话），是唯一可离线留存的备份方式。</b></div>
-                    <div id="snapshot-list" style="margin-top:8px"></div>
-                </div>
-                <div class="field" id="sync-now-field" style="margin-top:10px">
-                    <label>云端同步（登录后自动同步，可立即同步）</label>
-                    <button id="sync-now-btn" type="button" onclick="syncNow()">立即同步</button>
-                    <div id="sync-now-msg" style="color:var(--fg-muted);font-size:0.7em;margin-top:6px"></div>
-                </div>
-                    <div style="color:var(--fg-accent);font-size:0.7em;margin-top:8px;padding:8px 10px;border:1px solid var(--gold-line);border-radius:8px;background:var(--gold-glow)">
-                        <b>图片说明</b>：服务器只存压缩图，原图不出设备；表情包仅存本机。
-                    </div>
-                </div>
-                <div id="app-exit-row" style="display:none">
-                    <div class="field">
-                        <button id="app-exit-btn" type="button" style="background:rgba(255,107,107,.12);color:var(--red,#ff7a6b);border:1px solid rgba(255,107,107,.35)">退出应用</button>
-                        <div style="color:var(--fg-muted);font-size:0.7em;margin-top:6px">关闭后台服务并退出（聊天数据已实时保存）</div>
-                    </div>
+                <div class="field" id="app-exit-row" style="display:none">
+                    <button id="app-exit-btn" type="button" class="danger">退出应用</button>
+                    <div class="field-tip">关闭后台服务并退出（聊天数据已实时保存）。</div>
                 </div>
             </div>
         </section>
@@ -934,23 +946,30 @@ svg.ico{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:1.8;st
             <button onclick="closeMenu()">✕</button>
         </div>
         <div class="menu-tabs">
+            <!-- 顺序即优先级：设定文件是默认落点（打开菜单时高亮它，与 #tab-char 的 active 一致） -->
             <div class="menu-group-title">与角色相关</div>
+            <button class="menu-tab active" data-tab="char"><svg class="ico"><use href="#i-file"/></svg><span>设定文件</span></button>
             <button class="menu-tab" data-tab="fav"><svg class="ico"><use href="#i-heart"/></svg><span>收藏</span></button>
             <button class="menu-tab" data-tab="sticker"><svg class="ico"><use href="#i-smile"/></svg><span>表情包</span></button>
-            <button class="menu-tab" data-tab="char"><svg class="ico"><use href="#i-file"/></svg><span>设定文件</span></button>
             <!-- 角色状态：状态系统下线后的占位 tab（4.5：隐藏不删，接回后恢复） -->
             <button class="menu-tab" data-tab="state" style="display:none"><span>角色状态</span></button>
-            <div class="menu-group-title">与系统相关</div>
-            <button class="menu-tab" data-tab="log"><svg class="ico"><use href="#i-list"/></svg><span>请求记录</span></button>
-            <button class="menu-tab" data-tab="pipeline"><svg class="ico"><use href="#i-flow"/></svg><span>流程日志</span></button>
+            <!-- 诊断类收进可折叠次级分组：它们仍属「卡内」（流程日志按当前角色过滤），
+                 但使用频率远低于上面三项，不该和它们平铺争夺首屏。 -->
+            <details class="menu-adv" id="menu-adv">
+                <summary class="menu-group-title">诊断（排查问题用）</summary>
+                <div class="menu-adv-body">
+                    <button class="menu-tab" data-tab="log"><svg class="ico"><use href="#i-list"/></svg><span>请求记录</span></button>
+                    <button class="menu-tab" data-tab="pipeline"><svg class="ico"><use href="#i-flow"/></svg><span>流程日志</span></button>
+                </div>
+            </details>
         </div>
         <div class="menu-actions">
             <!-- ⚠ PC 上**隐藏**这条：侧边栏已有「首页」，同一命令出现两处会让人只认一条
                  （微软 UX 指南）；手机上它仍是回首页的主路径 ⇒ 只加 data 标记，PC 用 CSS 隐藏。 -->
-            <button data-pc-hide="dup-home" onclick="showHome()"><img class="menu-act-icon" src="assets/icon_home.png?v=1" alt=""> 返回首页</button>
-            <button id="menu-undo-btn"><img class="menu-act-icon" src="assets/icon_undo.png?v=1" alt=""> 撤回上一轮</button>
-            <button id="menu-rest-btn"><img class="menu-act-icon" src="assets/icon_rest.png?v=1" alt=""> <span data-tpl="让{c}休息">让角色休息</span></button>
-            <button id="menu-clear-btn"><img class="menu-act-icon" src="assets/icon_trash.png?v=1" alt=""> 清除历史</button>
+            <button data-pc-hide="dup-home" onclick="showHome()"><svg class="ico"><use href="#i-home"/></svg> 返回首页</button>
+            <button id="menu-undo-btn"><svg class="ico"><use href="#i-undo"/></svg> 撤回上一轮</button>
+            <button id="menu-rest-btn"><svg class="ico"><use href="#i-moon"/></svg> <span data-tpl="让{c}休息">让角色休息</span></button>
+            <button id="menu-clear-btn"><svg class="ico"><use href="#i-trash"/></svg> 清除历史</button>
             <!-- PC 档「卡详情」：进聊天页内的卡详情抽屉（人设/知识库/形象/主动消息都在 #pack-view 里）。
                  这是**卡内命令**，只在聊天页菜单页出现（侧边栏无同名入口）。
                  手机端隐藏（class=pc-only：pc.css 块外 display:none、仅 ≥1100px 显形）⇒ 手机端一行不变。 -->
@@ -1199,7 +1218,7 @@ svg.ico{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:1.8;st
 </script>
 <script src="config.js"></script>
 <!-- 运行时入口：bundle.js（classic script，file:// 兼容；ES Module 在安卓服务器模式 file:// 下被 CORS 拦截） -->
-<script src="js/bundle.js?v=f5f468a9"></script>
+<script src="js/bundle.js?v=1c17e2d3"></script>
 <script src="js/pc_shell.js"></script>
 </body>
 </html>

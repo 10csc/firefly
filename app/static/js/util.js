@@ -1,7 +1,10 @@
 // 通用小工具：toast / HTML 转义（从各节抠出合并）
-// 轻提示（3s 自动消失）
+/** 轻提示（全站唯一实现）：顶部安全区下方居中，3 秒自动消失。
+ *  level: info（默认）| success | error —— 只换左侧色条，位置与尺寸不变。
+ *  ⚠ 不要再新增第二套 toast：历史上 showToast 与 _toast 共用同一元素却各用一套
+ *  显隐机制（opacity vs inline display），谁先创建另一套就完全不可见。 */
 let toastTimer = null;
-export function showToast(msg) {
+export function showToast(msg, level) {
     let el = document.getElementById("app-toast");
     if (!el) {
         el = document.createElement("div");
@@ -9,6 +12,8 @@ export function showToast(msg) {
         document.body.appendChild(el);
     }
     el.textContent = msg;
+    el.classList.remove("success", "error");
+    if (level === "success" || level === "error") el.classList.add(level);
     el.classList.add("show");
     clearTimeout(toastTimer);
     toastTimer = setTimeout(() => el.classList.remove("show"), 3000);
@@ -16,19 +21,101 @@ export function showToast(msg) {
 export function escapeHtml(s) {
     return String(s || "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 }
-/** 轻量 toast（页面顶部浮层，3 秒消失；不打断输入） */
-export function _toast(msg) {
-    let t = document.getElementById("app-toast");
-    if (!t) {
-        t = document.createElement("div");
-        t.id = "app-toast";
-        t.style.cssText = "position:fixed;top:14px;left:50%;transform:translateX(-50%);z-index:999;background:rgba(28,30,46,.96);color:#e8e0d0;border:1px solid rgba(255,196,107,.45);border-radius:10px;padding:9px 16px;font-size:0.8em;max-width:86vw;text-align:center;box-shadow:0 6px 22px rgba(0,0,0,.45);display:none;pointer-events:none";
-        document.body.appendChild(t);
+
+/** 自绘确认弹层 —— 替代原生 confirm/alert/prompt（WebView 里原生弹窗不可主题化）。
+ *  opts: { title, body, confirmText, cancelText, danger, input, placeholder, validate, validateMsg }
+ *  返回 Promise：普通确认 → true/false；opts.input → 输入的字符串 / null（取消）。
+ *  确认按钮在 input 模式下由 validate 决定是否放行；输入为空时直接拦截。 */
+export function uiConfirm(opts) {
+    const o = opts || {};
+    return new Promise((resolve) => {
+        const mask = document.createElement("div");
+        mask.className = "app-modal-mask";
+        const box = document.createElement("div");
+        box.className = "app-modal" + (o.danger ? " danger" : "");
+        box.setAttribute("role", "dialog");
+        box.setAttribute("aria-modal", "true");
+
+        const title = document.createElement("div");
+        title.className = "app-modal-title";
+        title.textContent = o.title || "请确认";
+        const body = document.createElement("div");
+        body.className = "app-modal-body";
+        body.textContent = o.body || "";
+        box.append(title, body);
+
+        let inputEl = null;
+        if (o.input) {
+            inputEl = document.createElement("input");
+            inputEl.type = "text";
+            inputEl.className = "app-modal-input";
+            inputEl.placeholder = o.placeholder || "";
+            box.appendChild(inputEl);
+        }
+        const msg = document.createElement("div");
+        msg.className = "app-modal-msg";
+        box.appendChild(msg);
+
+        const row = document.createElement("div");
+        row.className = "app-modal-actions";
+        const cancelBtn = document.createElement("button");
+        cancelBtn.type = "button";
+        cancelBtn.className = "app-modal-btn";
+        cancelBtn.textContent = o.cancelText || "取消";
+        const okBtn = document.createElement("button");
+        okBtn.type = "button";
+        okBtn.className = "app-modal-btn primary" + (o.danger ? " danger" : "");
+        okBtn.textContent = o.confirmText || "确定";
+        row.append(cancelBtn, okBtn);
+        box.appendChild(row);
+        mask.appendChild(box);
+        document.body.appendChild(mask);
+
+        const done = (val) => {
+            document.removeEventListener("keydown", onKey, true);
+            mask.remove();
+            resolve(val);
+        };
+        const cancelValue = () => (o.input ? null : false);
+        function onKey(e) {
+            if (e.key === "Escape") { e.preventDefault(); done(cancelValue()); }
+            else if (e.key === "Enter" && (!inputEl || document.activeElement === inputEl)) {
+                e.preventDefault();
+                okBtn.click();
+            }
+        }
+        document.addEventListener("keydown", onKey, true);
+        cancelBtn.addEventListener("click", () => done(cancelValue()));
+        mask.addEventListener("click", (e) => { if (e.target === mask) done(cancelValue()); });
+        okBtn.addEventListener("click", () => {
+            if (!inputEl) { done(true); return; }
+            const v = inputEl.value.trim();
+            if (!v) { msg.textContent = "请输入内容"; return; }
+            if (typeof o.validate === "function" && !o.validate(v)) {
+                msg.textContent = o.validateMsg || "输入不匹配";
+                return;
+            }
+            done(v);
+        });
+        setTimeout(() => { (inputEl || cancelBtn).focus(); }, 30);
+    });
+}
+
+/** 把网络/后端的原始技术错误翻成用户能看懂的一句话。
+ *  认不出、或本来就是中文业务文案时返回空串 —— 调用方据此决定原样展示。
+ *  原始串仍进控制台（诊断包会带），界面只放翻译结果。 */
+export function friendlyError(raw) {
+    const s = String(raw || "").trim();
+    if (!s) return "";
+    if (/HTTPError|HTTP Error|Failed to fetch|NetworkError|Load failed|net::ERR_|ECONNREFUSED|TimeoutError|timed out/i.test(s)) {
+        const m = s.match(/\b(4\d{2}|5\d{2})\b/);
+        if (m) {
+            return (m[1][0] === "5" ? "服务器暂时出了故障" : "服务器没有找到要的东西")
+                + "（" + m[1] + "），稍后再试";
+        }
+        return "网络或服务器没响应，稍后再试";
     }
-    t.textContent = msg;
-    t.style.display = "block";
-    clearTimeout(t._timer);
-    t._timer = setTimeout(() => { t.style.display = "none"; }, 3200);
+    return "";
 }
 export function _esc(s) {
     return String(s == null ? "" : s)

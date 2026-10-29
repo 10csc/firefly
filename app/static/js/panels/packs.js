@@ -3,7 +3,7 @@
 
 import { API_BASE, IS_SERVER } from "./api.js";
 import { S } from "./state.js";
-import { escapeHtml, idbSaveMedia, showToast, stickerSrc } from "./util.js";
+import { escapeHtml, idbSaveMedia, showToast, stickerSrc, uiConfirm } from "./util.js";
 import { uiSelectEnhance } from "./ui_select.js";
 import { loadPackTree } from "./pack_tree.js";
 import { TB_AVATARS, tbChoice } from "../panels.js";
@@ -135,7 +135,12 @@ async function loadPackView() {
         const a = document.getElementById(elId);
         if (!a) continue;
         a.onclick = async () => {
-            if (!confirm(`${label}？（删除你换的图，回落到角色卡自带的）`)) return;
+            const ok = await uiConfirm({
+                title: `${label}？`,
+                body: "删除你换的图，回落到角色卡自带的。",
+                confirmText: label,
+            });
+            if (!ok) return;
             try {
                 await fetch("/pack-asset/delete", {method: "POST",
                     headers: {"Content-Type": "application/json"},
@@ -272,7 +277,12 @@ async function _loadPackStickers(mode = _packViewMode || CURRENT_MODE) {
             del.textContent = "×";
             del.title = "删除（仅专属）";
             del.onclick = async () => {
-                if (!confirm(`删除表情包「${s.label}」？`)) return;
+                const ok = await uiConfirm({
+                    title: `删除表情包「${s.label}」？`,
+                    confirmText: "删除",
+                    danger: true,
+                });
+                if (!ok) return;
                 try {
                     await fetch("/sticker-delete", {method: "POST",
                         headers: {"Content-Type": "application/json"},
@@ -372,7 +382,12 @@ document.getElementById("pv-user-name-save")?.addEventListener("click", async ()
 });
 document.getElementById("pv-user-avatar-edit")?.addEventListener("click", () => _packAssetUpload("user_avatar"));
 document.getElementById("pv-user-avatar-reset")?.addEventListener("click", async () => {
-    if (!confirm("恢复默认用户头像？（删除你上传的头像，回落到内置形象）")) return;
+    const ok = await uiConfirm({
+        title: "恢复默认用户头像？",
+        body: "删除你上传的头像，回落到内置形象。",
+        confirmText: "恢复默认",
+    });
+    if (!ok) return;
     try {
         const r = await fetch("/pack-asset/delete", {method: "POST",
             headers: {"Content-Type": "application/json"},

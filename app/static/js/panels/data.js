@@ -1,7 +1,7 @@
 // 资料面板：状态 / 收藏 / 用户记忆 / 设定文件 / 手账（阶段 2.5 自 panels.js 拆出）
 // 只注册监听 + 挂 window.*（菜单 tab 切换在外壳 panels.js 里按 tab 调用这些 loader）。
 
-import { escapeHtml, showToast } from "./util.js";
+import { escapeHtml, showToast, uiConfirm } from "./util.js";
 import { CURRENT_MODE, charName } from "./views.js";
 import { uiSelectEnhance } from "../ui_select.js";
 
@@ -70,7 +70,11 @@ async function loadUserMemory() {
         const resp = await fetch(`/user-memory?mode=${CURRENT_MODE}`);
         const data = await resp.json();
         editor.value = data.content || "";
-        if (msg) msg.textContent = data.content ? `${data.content.length} 字` : "空";
+        if (msg) {
+            msg.textContent = data.content
+                ? `${data.content.length} 字`
+                : "还没有记忆摘要——聊到一定轮数或点「让角色休息」后会生成";
+        }
     } catch (e) { if (msg) msg.textContent = "加载失败"; }
 }
 
@@ -153,10 +157,15 @@ async function _archiveAction(action, extra) {
     });
     if (reload) reload.addEventListener("click", () => loadArchive());
     if (sel) sel.addEventListener("change", () => loadArchive(sel.value));
-    if (comp) comp.addEventListener("click", () => {
+    if (comp) comp.addEventListener("click", async () => {
         const month = (sel && sel.value) || "";
         if (!month) { const m = document.getElementById("archive-msg"); if (m) m.textContent = "还没有存档可压缩"; return; }
-        if (!confirm(`把 ${month} 的存档原文压缩进「用户记忆」？\n（原文会保留，可以反复压；压缩会调用一次模型）`)) return;
+        const ok = await uiConfirm({
+            title: `压缩 ${month} 的存档？`,
+            body: "原文会保留，可以反复压；压缩会调用一次模型。",
+            confirmText: "压缩",
+        });
+        if (!ok) return;
         _archiveAction("compress", {month: month});
     });
 })();

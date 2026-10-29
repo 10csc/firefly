@@ -1,6 +1,7 @@
 // 聊天历史：历史加载（滚动翻页）/ 休息 / 清除 / 撤回
 import { S, SESSION_ID, messagesEl } from "./state.js";
 import { closeMenu } from "./panels.js";
+import { uiConfirm, showToast } from "./util.js";
 import { addImage, addNarration, addSticker, addTextMessage, addTimeDivider } from "./chat_render.js";
 import { CURRENT_MODE, _modeGen, charName } from "./views.js";
 
@@ -98,14 +99,25 @@ async function _doRest() {
 }
 
 document.getElementById("menu-rest-btn").addEventListener("click", async () => {
-    if (!confirm(`让${_cn()}去休息吗？${_cn()}会整理这段对话的记忆。`)) return;
+    const ok = await uiConfirm({
+        title: `让${_cn()}去休息？`,
+        body: `${_cn()}会整理这段对话的记忆。`,
+        confirmText: "去休息",
+    });
+    if (!ok) return;
     closeMenu();
     await _doRest();
     memoryBarRefresh();
 });
 
 document.getElementById("menu-clear-btn").addEventListener("click", async () => {
-    if (!confirm("确认清除全部对话历史？此操作不可撤销。")) return;
+    const ok = await uiConfirm({
+        title: "清除全部对话历史？",
+        body: "此操作不可撤销。",
+        confirmText: "清除",
+        danger: true,
+    });
+    if (!ok) return;
     closeMenu();
     try {
         const resp = await fetch("/clear-history", {
@@ -114,12 +126,13 @@ document.getElementById("menu-clear-btn").addEventListener("click", async () => 
         });
         const data = await resp.json();
         if (data.ok) { messagesEl.innerHTML = ""; }
-    } catch (e) { alert("网络错误"); }
+    } catch (e) { showToast("网络错误，请稍后重试", "error"); }
 });
 
 const undoBtn = document.getElementById("menu-undo-btn");
 undoBtn.addEventListener("click", async () => {
-    if (!confirm("撤回上一轮对话？")) return;
+    const ok = await uiConfirm({ title: "撤回上一轮对话？", confirmText: "撤回" });
+    if (!ok) return;
     closeMenu();
     undoBtn.disabled = true;
     try {
@@ -155,6 +168,33 @@ undoBtn.addEventListener("click", async () => {
 // ═══════════════════════════════════════════
 let _loading = false;
 let _lastWho = null;
+
+/** 消息区的状态占位（空历史 / 加载失败）。
+ *  它不是聊天消息：没有气泡、不参与长按/引用/收藏，只是一块说明 + 可选重试。
+ *  注意与「回复到达后的逐条 typing 演出」区分——后者是刻意设计，这里不动。 */
+function _showHistoryState(kind) {
+    const el = document.createElement("div");
+    el.className = "msg-state";
+    el.dataset.historyState = kind;
+    if (kind === "empty") {
+        el.innerHTML = '<div class="msg-state-title">还没有对话</div>' +
+            '<div class="msg-state-sub">在下面说点什么，开始和角色的第一段对话吧。</div>';
+    } else {
+        el.innerHTML = '<div class="msg-state-title">对话没有加载出来</div>' +
+            '<div class="msg-state-sub">可能是网络或本机服务暂时没就绪。</div>';
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "msg-state-btn";
+        btn.textContent = "重试";
+        btn.onclick = () => { _clearHistoryState(); loadHistory(); };
+        el.appendChild(btn);
+    }
+    messagesEl.appendChild(el);
+}
+
+function _clearHistoryState() {
+    messagesEl.querySelectorAll(".msg-state").forEach(el => el.remove());
+}
 function renderHistoryMessage(m, prepend=false) {
     const ts = m.time ? m.time.slice(11,16) : null;
     // 发送方变化时插入时间分割线
@@ -174,16 +214,26 @@ export async function loadHistory(beforeSeq=null) {
     _lastWho = null;
     try {
         const resp = await fetch(url);
+        if (!resp.ok) throw new Error("HTTP " + resp.status);
         const data = await resp.json();
         if (gen !== _modeGen) return;   // 模式已切换：丢弃旧模式历史，防止渲染进新模式界面
-        if (!data.messages || data.messages.length===0) { S._hasMore=false; return; }
+        _clearHistoryState();
+        if (!data.messages || data.messages.length===0) {
+            S._hasMore = false;
+            // 只对首次加载给空态；向上翻页翻到底不需要再提示一次
+            if (!beforeSeq) _showHistoryState("empty");
+            return;
+        }
         if (!beforeSeq) { data.messages.forEach(m=>renderHistoryMessage(m,false)); messagesEl.scrollTop=messagesEl.scrollHeight; undoBtn.disabled=false; }
         else { const ph=messagesEl.scrollHeight, ps=messagesEl.scrollTop; data.messages.slice().reverse().forEach(m=>renderHistoryMessage(m,true)); messagesEl.scrollTop=ps+(messagesEl.scrollHeight-ph); }
         S._hasMore = !!data.has_more;
         // 历史渲染完再补扫一次语音条（首次进来时缓存表是异步拉的，赶不上逐条渲染）
         if (typeof voiceRestoreBarsAuto === "function") voiceRestoreBarsAuto();
         if (!beforeSeq) memoryBarRefresh();   // 进聊天页时同步一次记忆窗口状态
-    } catch(e) {} finally { _loading=false; }
+    } catch(e) {
+        // 失败要看得见：此前这里静默，用户面对空白无法区分「加载中/失败/没历史」
+        if (gen === _modeGen && !beforeSeq) _showHistoryState("error");
+    } finally { _loading=false; }
 }
 messagesEl.addEventListener("scroll", () => {
     if (messagesEl.scrollTop===0 && S._hasMore && !_loading) {

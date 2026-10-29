@@ -1,7 +1,7 @@
 // 视图切换：首页 / 聊天 / 轮播 / 主题 / 界面缩放 / 粒子与降级开关
 import { S, messagesEl } from "./state.js";
 import { initAuth, showAuthModule, IS_SERVER } from "./api.js";
-import { showToast } from "./util.js";
+import { showToast, uiConfirm } from "./util.js";
 import { closeMenu, openSettings } from "./panels.js";
 import { renderMessages, scrollToBottom } from "./chat_render.js";
 import { resetBatchWindow, _clearQuote } from "./chat.js";
@@ -353,7 +353,9 @@ function renderCardsList() {
         const _nm = m.name || m.id;
         const _shown = (m.char_name && _nm.startsWith(m.char_name + "_"))
             ? _nm.slice(m.char_name.length + 1) : _nm;
-        sub.textContent = _shown + " · " + (presLabel[m.presentation] || m.presentation);
+        // 包名与角色名相同时只留演出形态，避免「知更鸟 / 知更鸟 · 短信+旁白」
+        sub.textContent = (_shown === (m.char_name || "") ? "" : _shown + " · ")
+            + (presLabel[m.presentation] || m.presentation);
         mid.append(cn, sub);
         const go = document.createElement("span");
         go.className = "cv-cgo";
@@ -457,14 +459,29 @@ async function packLifecycle(action, id, label) {
     const path = paths[action];
     if (!path || !id) return false;
     if (action === "archive") {
-        if (!confirm(`归档「${label}」？\n该包会从列表与聊天里隐藏，人设与聊天记录全部保留。`)) return false;
+        const ok = await uiConfirm({
+            title: `归档「${label}」？`,
+            body: "该包会从列表与聊天里隐藏，人设与聊天记录全部保留。",
+            confirmText: "归档",
+        });
+        if (!ok) return false;
     } else if (action === "restore") {
-        if (!confirm(`恢复「${label}」？`)) return false;
+        const ok = await uiConfirm({ title: `恢复「${label}」？`, confirmText: "恢复" });
+        if (!ok) return false;
     } else {
-        const typed = prompt(`彻底删除「${label}」后无法恢复（删除前会自动备份一份快照）。\n` +
-            `请输入包名以确认：`);
+        // 彻底删除：输入包名确认（比两次点击更难误触）。
+        // 取消返回 null；确认返回输入串（validate 已保证与包名一致）。
+        const typed = await uiConfirm({
+            title: `彻底删除「${label}」？`,
+            body: "删除前会自动备份一份快照，但删除后无法恢复。\n请输入包名以确认：",
+            input: true,
+            placeholder: label,
+            confirmText: "删除",
+            danger: true,
+            validate: (v) => v === label,
+            validateMsg: "包名不匹配",
+        });
         if (typed === null) return false;
-        if (typed.trim() !== label) { showToast("包名不匹配，已取消"); return false; }
     }
     try {
         const r = await fetch(path, {method: "POST",
@@ -612,9 +629,15 @@ export async function showChat() {
     appView.style.display = "flex";     // 恢复聊天页
     stopCarousel();   // 聊天页轮播不可见，停止自动轮播（避免返回首页时位置已乱）
     scrollToBottom();
-    // 顶部显示当前模式名
+    // 顶部显示当前模式名。包名与角色名相同时不重复展示——
+    // 自建卡常见（包就叫「知更鸟」），此前会出现「知更鸟 [知更鸟]」两个同样的字。
     const modeTag = document.getElementById("chat-mode-tag");
-    if (modeTag) modeTag.textContent = MODE_NAMES[CURRENT_MODE] || CURRENT_MODE;
+    if (modeTag) {
+        const modeName = MODE_NAMES[CURRENT_MODE] || CURRENT_MODE || "";
+        const dup = !modeName || modeName === (charName() || "");
+        modeTag.textContent = dup ? "" : modeName;
+        modeTag.hidden = dup;
+    }
     // 模式可能已切换：清空并重载当前模式历史（story/haruno 数据隔离）
     if (_lastMode !== CURRENT_MODE) {
         _lastMode = CURRENT_MODE;

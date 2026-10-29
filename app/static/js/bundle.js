@@ -26,9 +26,12 @@ const S = {
 
 /* ── 来源：js/util.js ── */
 // 通用小工具：toast / HTML 转义（从各节抠出合并）
-// 轻提示（3s 自动消失）
+/** 轻提示（全站唯一实现）：顶部安全区下方居中，3 秒自动消失。
+ *  level: info（默认）| success | error —— 只换左侧色条，位置与尺寸不变。
+ *  ⚠ 不要再新增第二套 toast：历史上 showToast 与 _toast 共用同一元素却各用一套
+ *  显隐机制（opacity vs inline display），谁先创建另一套就完全不可见。 */
 let toastTimer = null;
-function showToast(msg) {
+function showToast(msg, level) {
     let el = document.getElementById("app-toast");
     if (!el) {
         el = document.createElement("div");
@@ -36,6 +39,8 @@ function showToast(msg) {
         document.body.appendChild(el);
     }
     el.textContent = msg;
+    el.classList.remove("success", "error");
+    if (level === "success" || level === "error") el.classList.add(level);
     el.classList.add("show");
     clearTimeout(toastTimer);
     toastTimer = setTimeout(() => el.classList.remove("show"), 3000);
@@ -43,19 +48,101 @@ function showToast(msg) {
 function escapeHtml(s) {
     return String(s || "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 }
-/** 轻量 toast（页面顶部浮层，3 秒消失；不打断输入） */
-function _toast(msg) {
-    let t = document.getElementById("app-toast");
-    if (!t) {
-        t = document.createElement("div");
-        t.id = "app-toast";
-        t.style.cssText = "position:fixed;top:14px;left:50%;transform:translateX(-50%);z-index:999;background:rgba(28,30,46,.96);color:#e8e0d0;border:1px solid rgba(255,196,107,.45);border-radius:10px;padding:9px 16px;font-size:0.8em;max-width:86vw;text-align:center;box-shadow:0 6px 22px rgba(0,0,0,.45);display:none;pointer-events:none";
-        document.body.appendChild(t);
+
+/** 自绘确认弹层 —— 替代原生 confirm/alert/prompt（WebView 里原生弹窗不可主题化）。
+ *  opts: { title, body, confirmText, cancelText, danger, input, placeholder, validate, validateMsg }
+ *  返回 Promise：普通确认 → true/false；opts.input → 输入的字符串 / null（取消）。
+ *  确认按钮在 input 模式下由 validate 决定是否放行；输入为空时直接拦截。 */
+function uiConfirm(opts) {
+    const o = opts || {};
+    return new Promise((resolve) => {
+        const mask = document.createElement("div");
+        mask.className = "app-modal-mask";
+        const box = document.createElement("div");
+        box.className = "app-modal" + (o.danger ? " danger" : "");
+        box.setAttribute("role", "dialog");
+        box.setAttribute("aria-modal", "true");
+
+        const title = document.createElement("div");
+        title.className = "app-modal-title";
+        title.textContent = o.title || "请确认";
+        const body = document.createElement("div");
+        body.className = "app-modal-body";
+        body.textContent = o.body || "";
+        box.append(title, body);
+
+        let inputEl = null;
+        if (o.input) {
+            inputEl = document.createElement("input");
+            inputEl.type = "text";
+            inputEl.className = "app-modal-input";
+            inputEl.placeholder = o.placeholder || "";
+            box.appendChild(inputEl);
+        }
+        const msg = document.createElement("div");
+        msg.className = "app-modal-msg";
+        box.appendChild(msg);
+
+        const row = document.createElement("div");
+        row.className = "app-modal-actions";
+        const cancelBtn = document.createElement("button");
+        cancelBtn.type = "button";
+        cancelBtn.className = "app-modal-btn";
+        cancelBtn.textContent = o.cancelText || "取消";
+        const okBtn = document.createElement("button");
+        okBtn.type = "button";
+        okBtn.className = "app-modal-btn primary" + (o.danger ? " danger" : "");
+        okBtn.textContent = o.confirmText || "确定";
+        row.append(cancelBtn, okBtn);
+        box.appendChild(row);
+        mask.appendChild(box);
+        document.body.appendChild(mask);
+
+        const done = (val) => {
+            document.removeEventListener("keydown", onKey, true);
+            mask.remove();
+            resolve(val);
+        };
+        const cancelValue = () => (o.input ? null : false);
+        function onKey(e) {
+            if (e.key === "Escape") { e.preventDefault(); done(cancelValue()); }
+            else if (e.key === "Enter" && (!inputEl || document.activeElement === inputEl)) {
+                e.preventDefault();
+                okBtn.click();
+            }
+        }
+        document.addEventListener("keydown", onKey, true);
+        cancelBtn.addEventListener("click", () => done(cancelValue()));
+        mask.addEventListener("click", (e) => { if (e.target === mask) done(cancelValue()); });
+        okBtn.addEventListener("click", () => {
+            if (!inputEl) { done(true); return; }
+            const v = inputEl.value.trim();
+            if (!v) { msg.textContent = "请输入内容"; return; }
+            if (typeof o.validate === "function" && !o.validate(v)) {
+                msg.textContent = o.validateMsg || "输入不匹配";
+                return;
+            }
+            done(v);
+        });
+        setTimeout(() => { (inputEl || cancelBtn).focus(); }, 30);
+    });
+}
+
+/** 把网络/后端的原始技术错误翻成用户能看懂的一句话。
+ *  认不出、或本来就是中文业务文案时返回空串 —— 调用方据此决定原样展示。
+ *  原始串仍进控制台（诊断包会带），界面只放翻译结果。 */
+function friendlyError(raw) {
+    const s = String(raw || "").trim();
+    if (!s) return "";
+    if (/HTTPError|HTTP Error|Failed to fetch|NetworkError|Load failed|net::ERR_|ECONNREFUSED|TimeoutError|timed out/i.test(s)) {
+        const m = s.match(/\b(4\d{2}|5\d{2})\b/);
+        if (m) {
+            return (m[1][0] === "5" ? "服务器暂时出了故障" : "服务器没有找到要的东西")
+                + "（" + m[1] + "），稍后再试";
+        }
+        return "网络或服务器没响应，稍后再试";
     }
-    t.textContent = msg;
-    t.style.display = "block";
-    clearTimeout(t._timer);
-    t._timer = setTimeout(() => { t.style.display = "none"; }, 3200);
+    return "";
 }
 function _esc(s) {
     return String(s == null ? "" : s)
@@ -955,9 +1042,15 @@ menuOverlay.addEventListener("click", closeMenu);
 function openMenu() {
     menuDrawer.classList.add("open");
     menuOverlay.classList.add("show");
-    // 默认 tab 是设定文件（DOM active），无点击事件，需主动加载
-    // （2026-09-18：loadCharFiles 已随「用户设定」编辑器一起去掉——它属角色卡管理域）
-    loadJournal(); loadUserMemory(); loadArchive();
+    // 刷新**当前显示的那一页**的数据（用户可能上次停在收藏/诊断页）。
+    // 2026-09-18：loadCharFiles 已随「用户设定」编辑器一起去掉——它属角色卡管理域。
+    const cur = document.querySelector(".menu-content.active");
+    const name = cur ? cur.id.replace(/^tab-/, "") : "char";
+    if (name === "char") { loadJournal(); loadUserMemory(); loadArchive(); }
+    if (name === "state") loadStateTab();
+    if (name === "fav") loadFavorites();
+    if (name === "log") loadRequestLog();
+    if (name === "pipeline") loadPipeline();
 }
 function closeMenu() {
     menuDrawer.classList.remove("open");
@@ -991,21 +1084,41 @@ menuDrawer.addEventListener("click", (e) => {
     if (e.target === menuDrawer) closeMenu();
 });
 
-// 菜单 tab 切换
-document.querySelectorAll(".menu-tab").forEach(btn => {
-    btn.addEventListener("click", () => {
-        document.querySelectorAll(".menu-tab").forEach(b => b.classList.remove("active"));
-        document.querySelectorAll(".menu-content").forEach(c => c.classList.remove("active"));
-        btn.classList.add("active");
-        const target = document.getElementById("tab-" + btn.dataset.tab);
-        if (target) target.classList.add("active");
-        if (btn.dataset.tab === "char") { loadJournal(); loadUserMemory(); loadArchive(); }
-        if (btn.dataset.tab === "state") loadStateTab();
-        if (btn.dataset.tab === "fav") loadFavorites();
-        if (btn.dataset.tab === "log") loadRequestLog();
-        if (btn.dataset.tab === "pipeline") loadPipeline();
+/** 统一的菜单 tab 切换：高亮 / 内容 / 按需加载三件事只在这里发生。
+ *  历史上高亮只在点击时补，初始内容（#tab-char）却是 active ⇒ 打开菜单时
+ *  「内容显示设定文件、六个 tab 全灰」，用户不知道自己在哪一页。 */
+function setMenuTab(name) {
+    document.querySelectorAll(".menu-tab").forEach(b => {
+        b.classList.toggle("active", b.dataset.tab === name);
     });
+    document.querySelectorAll(".menu-content").forEach(c => c.classList.remove("active"));
+    const target = document.getElementById("tab-" + name);
+    if (target) target.classList.add("active");
+    // 选中诊断分组里的 tab 时把分组展开，否则用户看不到自己点的是哪一项
+    const btn = document.querySelector(`.menu-tab[data-tab="${name}"]`);
+    const adv = btn && btn.closest(".menu-adv");
+    if (adv) adv.open = true;
+    if (name === "char") { loadJournal(); loadUserMemory(); loadArchive(); }
+    if (name === "state") loadStateTab();
+    if (name === "fav") loadFavorites();
+    if (name === "log") loadRequestLog();
+    if (name === "pipeline") loadPipeline();
+}
+window.setMenuTab = setMenuTab;
+
+document.querySelectorAll(".menu-tab").forEach(btn => {
+    btn.addEventListener("click", () => setMenuTab(btn.dataset.tab));
 });
+
+// 初始化只同步高亮，不触发加载（加载由 openMenu 负责）
+(function syncInitialMenuTab() {
+    const cur = document.querySelector(".menu-content.active");
+    const name = cur ? cur.id.replace(/^tab-/, "") : "";
+    if (!name) return;
+    document.querySelectorAll(".menu-tab").forEach(b => {
+        b.classList.toggle("active", b.dataset.tab === name);
+    });
+})();
 
 // ═══════════════════════════════════════════
 // 状态 tab（数值状态系统已下线，接回后再渲染条）
@@ -1143,7 +1256,12 @@ async function loadPackView() {
         const a = document.getElementById(elId);
         if (!a) continue;
         a.onclick = async () => {
-            if (!confirm(`${label}？（删除你换的图，回落到角色卡自带的）`)) return;
+            const ok = await uiConfirm({
+                title: `${label}？`,
+                body: "删除你换的图，回落到角色卡自带的。",
+                confirmText: label,
+            });
+            if (!ok) return;
             try {
                 await fetch("/pack-asset/delete", {method: "POST",
                     headers: {"Content-Type": "application/json"},
@@ -1280,7 +1398,12 @@ async function _loadPackStickers(mode = _packViewMode || CURRENT_MODE) {
             del.textContent = "×";
             del.title = "删除（仅专属）";
             del.onclick = async () => {
-                if (!confirm(`删除表情包「${s.label}」？`)) return;
+                const ok = await uiConfirm({
+                    title: `删除表情包「${s.label}」？`,
+                    confirmText: "删除",
+                    danger: true,
+                });
+                if (!ok) return;
                 try {
                     await fetch("/sticker-delete", {method: "POST",
                         headers: {"Content-Type": "application/json"},
@@ -1380,7 +1503,12 @@ document.getElementById("pv-user-name-save")?.addEventListener("click", async ()
 });
 document.getElementById("pv-user-avatar-edit")?.addEventListener("click", () => _packAssetUpload("user_avatar"));
 document.getElementById("pv-user-avatar-reset")?.addEventListener("click", async () => {
-    if (!confirm("恢复默认用户头像？（删除你上传的头像，回落到内置形象）")) return;
+    const ok = await uiConfirm({
+        title: "恢复默认用户头像？",
+        body: "删除你上传的头像，回落到内置形象。",
+        confirmText: "恢复默认",
+    });
+    if (!ok) return;
     try {
         const r = await fetch("/pack-asset/delete", {method: "POST",
             headers: {"Content-Type": "application/json"},
@@ -1473,7 +1601,11 @@ async function loadUserMemory() {
         const resp = await fetch(`/user-memory?mode=${CURRENT_MODE}`);
         const data = await resp.json();
         editor.value = data.content || "";
-        if (msg) msg.textContent = data.content ? `${data.content.length} 字` : "空";
+        if (msg) {
+            msg.textContent = data.content
+                ? `${data.content.length} 字`
+                : "还没有记忆摘要——聊到一定轮数或点「让角色休息」后会生成";
+        }
     } catch (e) { if (msg) msg.textContent = "加载失败"; }
 }
 
@@ -1556,10 +1688,15 @@ async function _archiveAction(action, extra) {
     });
     if (reload) reload.addEventListener("click", () => loadArchive());
     if (sel) sel.addEventListener("change", () => loadArchive(sel.value));
-    if (comp) comp.addEventListener("click", () => {
+    if (comp) comp.addEventListener("click", async () => {
         const month = (sel && sel.value) || "";
         if (!month) { const m = document.getElementById("archive-msg"); if (m) m.textContent = "还没有存档可压缩"; return; }
-        if (!confirm(`把 ${month} 的存档原文压缩进「用户记忆」？\n（原文会保留，可以反复压；压缩会调用一次模型）`)) return;
+        const ok = await uiConfirm({
+            title: `压缩 ${month} 的存档？`,
+            body: "原文会保留，可以反复压；压缩会调用一次模型。",
+            confirmText: "压缩",
+        });
+        if (!ok) return;
         _archiveAction("compress", {month: month});
     });
 })();
@@ -1854,7 +1991,8 @@ async function loadStickerList() {
                 } catch(e) {}
             });
             del.addEventListener("click", async () => {
-                if (!confirm("确认删除？")) return;
+                const ok = await uiConfirm({ title: "删除这张表情包？", confirmText: "删除", danger: true });
+                if (!ok) return;
                 try {
                     await fetch("/sticker-delete", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({id}) });
                     row.remove();
@@ -2198,7 +2336,13 @@ async function _saveFile(ed, s) {
 }
 
 async function _revertFile(ed, s) {
-    if (!confirm("恢复默认？（删除你的修改）")) return;
+    const ok = await uiConfirm({
+        title: "恢复默认？",
+        body: "会删除你的修改。",
+        confirmText: "恢复默认",
+        danger: true,
+    });
+    if (!ok) return;
     const msg = ed.querySelector(".pt-msg");
     const isSlot = s.type === "slot";
     try {
@@ -2307,7 +2451,13 @@ async function _toggleKBFile(row) {
         msg.textContent = d.ok ? "已保存（下轮对话生效）" : "保存失败：" + (d.error || "");
     };
     ed.querySelector(".pt-revert").onclick = async () => {
-        if (!confirm("恢复默认？（删除你的修改）")) return;
+        const ok = await uiConfirm({
+            title: "恢复默认？",
+            body: "会删除你的修改。",
+            confirmText: "恢复默认",
+            danger: true,
+        });
+        if (!ok) return;
         const resp = await fetch("/pack-knowledge/delete", {method: "POST",
             headers: {"Content-Type": "application/json"},
             body: JSON.stringify({mode: _treeMode, path})});
@@ -3158,8 +3308,14 @@ function _pzRenderDetail(c, errText) {
 // ═══ 安装 / 卸载 ══════════════════════════════════════
 async function _pzInstall(cardId, name, replace, btn) {
     // 覆盖安装会先备份旧卡（后端 _backup_existing），这里把话说清楚再动手
-    if (replace && !confirm("覆盖安装「" + name + "」？\n" +
-            "同 id 的角色卡会被卡里的内容替换（覆盖前后端会自动留一份备份）。")) return;
+    if (replace) {
+        const ok = await uiConfirm({
+            title: "覆盖安装「" + name + "」？",
+            body: "同 id 的角色卡会被卡里的内容替换（覆盖前后端会自动留一份备份）。",
+            confirmText: "覆盖安装",
+        });
+        if (!ok) return;
+    }
     const old = btn ? btn.textContent : "";
     if (btn) { btn.disabled = true; btn.textContent = "安装中…"; }
     const r = await _pzReq("/plaza/api/install", {
@@ -3183,14 +3339,25 @@ async function _pzInstall(cardId, name, replace, btn) {
     const why = (r.data && r.data.error) || (r.status === 401 ? "请先登录后再安装。" : "安装失败，请稍后重试。");
     if (r.status === 401) { showToast(why); _pzGotoLogin(); return; }
     if (/覆盖/.test(why) && !replace) {
-        if (confirm(why + "\n\n现在就覆盖安装吗？")) _pzInstall(cardId, name, true, btn);
+        const ok = await uiConfirm({
+            title: "现在就覆盖安装吗？",
+            body: why,
+            confirmText: "覆盖安装",
+        });
+        if (ok) _pzInstall(cardId, name, true, btn);
         return;
     }
     showToast(why);
 }
 
 async function _pzUninstall(cardId, name) {
-    if (!confirm("卸载「" + name + "」？\n角色卡会从本机列表里移除（可随时从广场重新安装）。")) return;
+    const ok = await uiConfirm({
+        title: "卸载「" + name + "」？",
+        body: "角色卡会从本机列表里移除（可随时从广场重新安装）。",
+        confirmText: "卸载",
+        danger: true,
+    });
+    if (!ok) return;
     const r = await _pzReq("/plaza/api/uninstall", {
         method: "POST",
         headers: {"Content-Type": "application/json"},
@@ -5630,7 +5797,13 @@ async function _pfPublishReplace(id) {
 async function _pfUnpublish(id, btn) {
     const did = String(id || _pfS.id || "").trim();
     if (!did) return;
-    if (!confirm("下架「" + did + "」？\n广场上不再显示这张卡（作者可再次发布）。")) return;
+    const ok = await uiConfirm({
+        title: "下架「" + did + "」？",
+        body: "广场上不再显示这张卡（作者可再次发布）。",
+        confirmText: "下架",
+        danger: true,
+    });
+    if (!ok) return;
     if (btn) { btn.disabled = true; btn.textContent = "下架中…"; }
     const r = await _pfPost("/plaza/api/unpublish", {id: did});
     if (btn) { btn.disabled = false; btn.textContent = "下架"; }
@@ -5647,7 +5820,13 @@ async function _pfUnpublish(id, btn) {
 }
 
 async function _pfDelete(it) {
-    if (!confirm("删除草稿「" + (it.name || it.id) + "」？\n删除后无法恢复，卡体和审核结论一起消失。")) return;
+    const ok = await uiConfirm({
+        title: "删除草稿「" + (it.name || it.id) + "」？",
+        body: "删除后无法恢复，卡体和审核结论一起消失。",
+        confirmText: "删除",
+        danger: true,
+    });
+    if (!ok) return;
     const r = await _pfPost("/plaza/api/draft/delete", {id: it.id});
     if (!r.ok) {
         if (r.status === 401) { _pfGotoLogin(); return; }
@@ -6780,9 +6959,14 @@ function _paRow(c) {
 async function _paAct(c, status, btn) {
     if (_paS.busy) return;
     const label = status === "archived" ? "下架" : "恢复";
-    if (status === "archived"
-        && !confirm("下架「" + (c.name || c.id) + "」？\n公开广场上不再显示这张卡；内容与举报记录都留着，可随时恢复。")) {
-        return;
+    if (status === "archived") {
+        const ok = await uiConfirm({
+            title: "下架「" + (c.name || c.id) + "」？",
+            body: "公开广场上不再显示这张卡；内容与举报记录都留着，可随时恢复。",
+            confirmText: "下架",
+            danger: true,
+        });
+        if (!ok) return;
     }
     const old = btn ? btn.textContent : label;
     if (btn) { btn.disabled = true; btn.textContent = label + "中…"; }
@@ -7031,10 +7215,15 @@ async function _saveProviderForm() {
     _closeProviderForm();
 }
 
-function _deleteProviderForm() {
+async function _deleteProviderForm() {
     const editing = _$("provider-form").dataset.editing;
     if (!editing || _providers.length <= 1) { _$("provider-form-msg").textContent = "至少保留一个供应商"; return; }
-    if (!confirm("删除供应商「" + editing + "」？")) return;
+    const ok = await uiConfirm({
+        title: "删除供应商「" + editing + "」？",
+        confirmText: "删除",
+        danger: true,
+    });
+    if (!ok) return;
     _providers = _providers.filter(p => p.id !== editing);
     if (_activeId === editing) _activeId = _providers[0].id;
     _renderProviderSelect();
@@ -7338,8 +7527,13 @@ async function loadConfig() {
         if (exitRow && data.platform === "pc") {
             exitRow.style.display = "";
             const exitBtn = _$("app-exit-btn");
-            if (exitBtn) exitBtn.onclick = () => {
-                if (!confirm("确定退出 Firefly 吗？聊天数据已实时保存，下次启动继续。")) return;
+            if (exitBtn) exitBtn.onclick = async () => {
+                const ok = await uiConfirm({
+                    title: "退出 Firefly？",
+                    body: "聊天数据已实时保存，下次启动继续。",
+                    confirmText: "退出",
+                });
+                if (!ok) return;
                 exitBtn.disabled = true;
                 exitBtn.textContent = "正在退出…";
                 fetch("/shutdown", {method: "GET"}).catch(() => {});
@@ -7362,7 +7556,11 @@ async function checkKey() {
         head.addEventListener("click", () => {
             const group = head.closest(".set-group");
             const willOpen = !group.classList.contains("open");
-            document.querySelectorAll("#settings-panel .set-group").forEach(g => g.classList.remove("open"));
+            // 窄屏单开（屏幕小，一次只看一件事）；宽屏允许多开，
+            // 否则设置面板右侧半边永远空着（真机/PC 都实测过）。
+            if (!window.matchMedia("(min-width: 720px)").matches) {
+                document.querySelectorAll("#settings-panel .set-group").forEach(g => g.classList.remove("open"));
+            }
             if (willOpen) group.classList.add("open");
         });
     });
@@ -7447,6 +7645,8 @@ window.__appVersion = CURRENT_VERSION;
 // 设置面板版本号动态显示（单一版本源：CURRENT_VERSION；替代 index.html 硬编码文案）
 const curVersionEl = document.getElementById("current-version");
 if (curVersionEl) curVersionEl.textContent = "v" + CURRENT_VERSION;
+const aboutSummaryEl = document.getElementById("about-summary");
+if (aboutSummaryEl) aboutSummaryEl.textContent = "v" + CURRENT_VERSION;
 const UPDATE_SOURCES = [
     { api: "https://api.github.com/repos/10csc/firefly/releases/latest", html: "https://github.com/10csc/firefly/releases" },
     { api: "https://gitee.com/api/v5/repos/cpt-asymmetry/firefly/releases/latest", html: "https://gitee.com/cpt-asymmetry/firefly/releases" },
@@ -7647,7 +7847,6 @@ async function autoUpdate(isAndroid) {
 const _SYNC_THROTTLE_MS = 10 * 60 * 1000;
 let _syncing = false;
 let _syncPill = null;
-let _warnToastTimer = null;
 
 function _syncPillShow(text) {
     if (!_syncPill) {
@@ -7659,21 +7858,6 @@ function _syncPillShow(text) {
     _syncPill.style.display = "block";
 }
 function _syncPillHide() { if (_syncPill) _syncPill.style.display = "none"; }
-
-/** 橙色警告 toast（样式沿用 _toast 浮层，边框改橙）：冲突备份等需要用户注意但非阻断的提醒 */
-function _warnToast(msg) {
-    let t = document.getElementById("app-warn-toast");
-    if (!t) {
-        t = document.createElement("div");
-        t.id = "app-warn-toast";
-        t.style.cssText = "position:fixed;top:56px;left:50%;transform:translateX(-50%);z-index:999;background:rgba(46,34,22,.97);color:#ffd9b0;border:1px solid rgba(255,150,80,.65);border-radius:10px;padding:9px 16px;font-size:0.8em;max-width:86vw;text-align:center;box-shadow:0 6px 22px rgba(0,0,0,.45);pointer-events:none;display:none";
-        document.body.appendChild(t);
-    }
-    t.textContent = msg;
-    t.style.display = "block";
-    clearTimeout(_warnToastTimer);
-    _warnToastTimer = setTimeout(() => { t.style.display = "none"; }, 4000);
-}
 
 window.autoSyncNow = async function (force) {
     if (IS_SERVER) return;   // 服务器版数据天然在云端，无需同步
@@ -7703,19 +7887,23 @@ window.autoSyncNow = async function (force) {
             const text = `同步完成：上传 ${(d.uploaded || []).length} · 下载 ${(d.downloaded || []).length} · 合并 ${(d.merged || []).length}`;
             const conflicts = d.conflicts || 0;
             if (msg) msg.textContent = "✓ " + text + (conflicts ? `，冲突 ${conflicts}（见 .sync_backups）` : "");
-            showToast(text);
-            if (conflicts > 0) _warnToast(`${conflicts} 处冲突已各自备份`);
+            // 冲突与成功合并成一条：两者共用同一个 toast，分两次调用只会互相覆盖
+            showToast(text + (conflicts ? `，冲突 ${conflicts} 处已各自备份` : ""),
+                      conflicts ? "error" : "success");
         } else {
-            const code = d.code ? `[${d.code}${d.trace_id ? " · " + d.trace_id : ""}] ` : "";
-            const err = "同步未完成：" + code + (d.error || `HTTP ${r.status}`);
+            // 原始错误只进控制台/诊断包，界面给人话（用户读到的是"该做什么"，不是异常类名）
+            console.warn("[sync] 同步失败", { code: d.code, trace: d.trace_id, error: d.error, status: r.status });
+            const human = friendlyError(d.error) || d.error || `服务器返回 ${r.status}`;
+            const err = "同步没完成：" + human;
             if (msg) msg.textContent = err;
-            showToast(err);
+            showToast("同步没完成，稍后再试", "error");
         }
     } catch (e) {
-        const detail = (e && e.message) ? `：${e.message}` : "，稍后再试";
-        const err = "同步失败：无法连接本地后端" + detail;
+        console.warn("[sync] 同步异常", e);
+        const human = friendlyError(e && e.message) || "连不上本机后端";
+        const err = "同步失败：" + human;
         if (msg) msg.textContent = err;
-        showToast(err);
+        showToast("同步失败，稍后再试", "error");
     } finally {
         _syncPillHide();
         _syncing = false;
@@ -7812,6 +8000,12 @@ function _addAvatar(row, who) {
     row.insertBefore(img, row.firstChild);
 }
 
+/** 有真实消息进来时清掉「空历史 / 加载失败」占位——它只代表消息区当时的状态。 */
+function _clearMsgState() {
+    const s = messagesEl.querySelector(".msg-state");
+    if (s) s.remove();
+}
+
 /** 按 seq 插序：DOM 顺序 = 记录顺序（不管渲染先后）。
  * 有 seq → 找到第一个 seq 更大的行，插它前面（同 seq 追加末尾）；无 seq → 追加。
  * 修复：多批回复动画交错时表情包"堆积"错位——插序保证显示与记录一致。 */
@@ -7828,6 +8022,7 @@ function _insertRow(row, seq) {
 }
 
 function addTextMessage(text, who, prepend = false, seq = null, quote = null) {
+    _clearMsgState();
     const row = document.createElement("div");
     row.className = "msg-row " + (who === "user" ? "user" : "firefly");
     if (seq !== null) row.dataset.seq = seq;
@@ -7883,6 +8078,7 @@ function _buildQuotePreview(q) {
 }
 
 async function addSticker(stickerPath, who, prepend = false, seq = null, label = null, quote = null) {
+    _clearMsgState();
     const row = document.createElement("div");
     row.className = "msg-row " + (who === "user" ? "user" : "firefly");
     if (seq !== null) row.dataset.seq = seq;
@@ -7922,6 +8118,7 @@ async function addSticker(stickerPath, who, prepend = false, seq = null, label =
  *  服务器版 <img> 标签带不了 Bearer：经鉴权 fetch 拿字节转 objectURL；本地版同源直接 <img src>。
  *  缺失/失败 → 显示 desc 文字占位。 */
 async function addImage(msg, who, prepend = false, seq = null, quote = null) {
+    _clearMsgState();
     const row = document.createElement("div");
     row.className = "msg-row " + (who === "user" ? "user" : "firefly") + " image-row";
     if (seq !== null) row.dataset.seq = seq;
@@ -7973,6 +8170,7 @@ async function addImage(msg, who, prepend = false, seq = null, quote = null) {
 }
 
 function addNarration(text, style, prepend = false, seq = null) {
+    _clearMsgState();
     // 视觉小说式旁白：scene=居中小字（环境/事件），action=居中括号（动作）
     // 防御：历史数据/LLM 可能自带括号，先剥离避免双重括号
     let t = (text || "").trim();
@@ -8016,6 +8214,7 @@ function addTypingBubble(who) {
 
 function renderMessages(messages, who, data) {
     if (!messages || messages.length === 0) return;
+    _clearMsgState();
     S._lastRenderTs = Date.now();   // 渲染时间戳（供主动性轮询门控；原二次包装已合并进来）
     const gen = _modeGen;   // 捕获渲染启动时的模式代际
     S._rendering = true;   // 渲染动画开始：防主动轮询中途插入乱序
@@ -8155,7 +8354,7 @@ async function _voiceConvert(mode, snap) {
     }
     const st = await _voiceStatus(true);
     if (!st.engine_ok) {
-        showToast("语音插件不可用：" + (st.reason || "未知原因"));
+        showToast("语音插件不可用：" + (st.reason || "未知原因"), "error");
         return;
     }
 
@@ -8195,13 +8394,13 @@ async function _voiceConvert(mode, snap) {
             showToast((had ? "已重新生成" : "已生成") + "（" + (d.seconds || "?") + "s）");
         } else {
             if (bar) bar.remove();
-            showToast("生成失败：" + ((d && d.error) || "未知原因"));
+            showToast("生成失败：" + ((d && d.error) || "未知原因"), "error");
             _voiceStatus(true);   // 失败后刷新状态，下次点能拿到新原因
         }
     } catch (e) {
         if (bar) bar.remove();
         console.warn("[chat] 语音生成失败：连不上本机后端", e);   // 原始异常落日志（顾客可见串里不放）
-        showToast("语音没生成成功：连不上本机后端，请确认程序在运行后重试");
+        showToast("语音没生成成功：连不上本机后端，请确认程序在运行后重试", "error");
     } finally {
         _voiceBusy = false;
     }
@@ -8237,7 +8436,7 @@ function _showMsgMenu(row, x, y) {
             showToast(d.ok ? "已收藏（菜单 → 收藏可查看）" : "收藏失败：" + (d.error || ""));
         } catch (e) {
             console.warn("[chat] 收藏失败", e);
-            showToast("收藏没成功，请重试；仍失败请到「反馈」附诊断包");
+            showToast("收藏没成功，请重试；仍失败请到「反馈」附诊断包", "error");
         }
     }));
     // 转语音：只对流萤的 text/narration 且有 seq 的消息显示。
@@ -8363,8 +8562,13 @@ function importData() {
         const f = input.files && input.files[0];
         input.value = "";   // 允许重复选同一文件
         if (!f) return;
-        if (!confirm(`导入将覆盖当前「${MODE_NAMES[CURRENT_MODE] || CURRENT_MODE}」的全部数据（导入前会自动备份现有数据）。\n\n确定导入 ${f.name} 吗？`)) return;
-        _toast("正在导入…");
+        const ok = await uiConfirm({
+            title: `导入 ${f.name}？`,
+            body: `将覆盖当前「${MODE_NAMES[CURRENT_MODE] || CURRENT_MODE}」的全部数据（导入前会自动备份现有数据）。`,
+            confirmText: "导入",
+        });
+        if (!ok) return;
+        showToast("正在导入…");
         try {
             const fd = new FormData();
             fd.append("file", f);
@@ -8372,12 +8576,12 @@ function importData() {
             const resp = await fetch("/import-data", { method: "POST", body: fd });
             const data = await resp.json().catch(() => ({}));
             if (resp.ok && data.ok) {
-                _toast("导入成功，正在重新加载…");
+                showToast("导入成功，正在重新加载…", "success");
                 setTimeout(() => location.reload(), 800);
             } else {
-                _toast("导入失败：" + (data.error || "请检查文件"));
+                showToast("导入失败：" + (data.error || "请检查文件"), "error");
             }
-        } catch (e) { _toast("导入失败，请检查网络"); }
+        } catch (e) { showToast("导入失败，请检查网络", "error"); }
     };
     input.click();
 }
@@ -8392,10 +8596,15 @@ window.importData = importData;
 // ★ 2026-09-25 改名「导出当前角色」→「导出备份」：那一列按钮里「保存快照（全部角色）」
 //   已经用括号标注了范围，导出再标范围就会让人以为是两种并列的东西；而它与「导入备份」
 //   本来就是一对（导出→导入 是同一个闭环），叫「备份」才对上。功能没变：仍然导**当前角色**。
-function exportData() {
+async function exportData() {
     const name = MODE_NAMES[CURRENT_MODE] || CURRENT_MODE;
-    if (!confirm(`导出「${name}」的全部数据为本地 zip 备份？\n\n包含：角色设定、对话记录、手账、记忆（不含 API Key）。\n可用「导入备份」在本机或其他设备还原。`)) return;
-    _toast("正在打包导出…");
+    const ok = await uiConfirm({
+        title: `导出「${name}」？`,
+        body: "含角色设定、对话记录、手账、记忆（不含 API Key）。\n可用「导入备份」在本机或其他设备还原。",
+        confirmText: "导出",
+    });
+    if (!ok) return;
+    showToast("正在打包导出…");
     const url = API_BASE + "/export-data?mode=" + encodeURIComponent(CURRENT_MODE);
     // 用隐藏链接触发下载（保留 Content-Disposition 文件名；window.open 在部分 WebView 会被拦）
     const a = document.createElement("a");
@@ -8417,19 +8626,19 @@ function _fmtSize(n) {
 }
 
 async function createSnapshot() {
-    _toast("正在打包快照…");
+    showToast("正在打包快照…");
     try {
         const resp = await fetch("/snapshot/create", { method: "POST" });
         const data = await resp.json().catch(() => ({}));
         if (resp.ok && data.ok) {
-            _toast(data.pushed ? "快照已保存到服务器（" + _fmtSize(data.size) + "）"
+            showToast(data.pushed ? "快照已保存到服务器（" + _fmtSize(data.size) + "）"
                                : "快照已保存到本机（" + _fmtSize(data.size) + "）"
-                                 + (data.push_error ? "；" + data.push_error : ""));
+                                 + (data.push_error ? "；" + data.push_error : ""), "success");
             loadSnapshots();
         } else {
-            _toast("快照失败：" + (data.error || ""));
+            showToast("快照失败：" + (data.error || ""), "error");
         }
-    } catch (e) { _toast("快照失败，请检查网络"); }
+    } catch (e) { showToast("快照失败，请检查网络", "error"); }
 }
 
 async function loadSnapshots() {
@@ -8466,7 +8675,7 @@ async function loadSnapshots() {
                             a.href = url; a.download = name;
                             document.body.appendChild(a); a.click();
                             setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 1500);
-                        }).catch(() => _toast("下载失败"));
+                        }).catch(() => showToast("下载失败", "error"));
                 }
             });
         });
@@ -8476,8 +8685,13 @@ async function loadSnapshots() {
 }
 
 async function restoreSnapshot(name) {
-    if (!confirm(`用快照「${name}」覆盖全部角色与聊天记录？\n恢复前会自动保存当前状态的快照。\n\n确定恢复吗？`)) return;
-    _toast("正在恢复快照…");
+    const ok = await uiConfirm({
+        title: `用快照「${name}」恢复？`,
+        body: "会覆盖全部角色与聊天记录。恢复前会自动保存当前状态的快照。",
+        confirmText: "恢复",
+    });
+    if (!ok) return;
+    showToast("正在恢复快照…");
     try {
         const resp = await fetch("/snapshot/restore", {
             method: "POST", headers: {"Content-Type": "application/json"},
@@ -8487,18 +8701,24 @@ async function restoreSnapshot(name) {
         if (resp.ok && data.ok) {
             // E-1 配套：恢复前自动备份失败时后端会回落逐包备份并标 backup_ok=false——
             // 此时若快照本身有问题，损失不可回滚，必须让用户知道
-            _toast(data.backup_ok === false
+            showToast(data.backup_ok === false
                 ? "已恢复（注意：恢复前的保险快照生成失败）"
-                : "恢复成功，正在重新加载…");
+                : "恢复成功，正在重新加载…", "success");
             setTimeout(() => location.reload(), 800);
         } else {
-            _toast("恢复失败：" + (data.error || ""));
+            showToast("恢复失败：" + (data.error || ""), "error");
         }
-    } catch (e) { _toast("恢复失败，请检查网络"); }
+    } catch (e) { showToast("恢复失败，请检查网络", "error"); }
 }
 
 async function deleteSnapshot(name) {
-    if (!confirm(`删除快照「${name}」？此操作不可撤销。`)) return;
+    const ok = await uiConfirm({
+        title: `删除快照「${name}」？`,
+        body: "此操作不可撤销。",
+        confirmText: "删除",
+        danger: true,
+    });
+    if (!ok) return;
     try {
         const resp = await fetch("/snapshot/delete", {
             method: "POST", headers: {"Content-Type": "application/json"},
@@ -8506,12 +8726,12 @@ async function deleteSnapshot(name) {
         });
         const data = await resp.json().catch(() => ({}));
         if (resp.ok && data.ok) {
-            _toast("快照已删除");
+            showToast("快照已删除", "success");
             loadSnapshots();
         } else {
-            _toast("删除失败：" + (data.error || ""));
+            showToast("删除失败：" + (data.error || ""), "error");
         }
-    } catch (e) { _toast("删除失败，请检查网络"); }
+    } catch (e) { showToast("删除失败，请检查网络", "error"); }
 }
 
 document.getElementById("snapshot-create-btn")?.addEventListener("click", createSnapshot);
@@ -8659,12 +8879,12 @@ async function _chatSend(msgs) {
             _notifyFirefly(data.messages);   // 切后台时回复完成通知（桥判断前台与否）
         }
         else if (data.reply) addTextMessage(data.reply, "firefly");
-        if (data.error_code) _toast(ERROR_TIPS[data.error_code] || ERROR_TIPS.unknown);
+        if (data.error_code) showToast(ERROR_TIPS[data.error_code] || ERROR_TIPS.unknown, "error");
         // R-07（服务器版）：请求的包在本端不存在时后端会静默回退默认包并打 mode_fallback 标记——
         // 必须显式告知（否则用户以为"角色坏了"而不知原因）
         if (data.mode_fallback) {
-            _toast("该角色包在服务器模式不可用，已回退到「" +
-                   (MODE_NAMES[data.mode_used] || data.mode_used || "默认包") + "」");
+            showToast("该角色包在服务器模式不可用，已回退到「" +
+                   (MODE_NAMES[data.mode_used] || data.mode_used || "默认包") + "」", "error");
         }
         // data.queued：副请求，回复由主请求带回，无 UI 操作
     } catch (e) {
@@ -8765,8 +8985,8 @@ if (imageBtn && imageFileInput) {
         const f = imageFileInput.files && imageFileInput.files[0];
         imageFileInput.value = "";
         if (!f || S.waiting) { endMedia(false); return; }
-        if (!/^image\/(png|jpe?g|webp|gif)$/.test(f.type || "")) { _toast("仅支持 png/jpg/webp/gif 图片"); endMedia(false); return; }
-        if (f.size > 10 * 1024 * 1024) { _toast("图片过大（上限 10MB）"); endMedia(false); return; }
+        if (!/^image\/(png|jpe?g|webp|gif)$/.test(f.type || "")) { showToast("仅支持 png/jpg/webp/gif 图片", "error"); endMedia(false); return; }
+        if (f.size > 10 * 1024 * 1024) { showToast("图片过大（上限 10MB）", "error"); endMedia(false); return; }
         // 发送前压缩（imgzip.js）：GIF/小图原样；任何失败降级原图不阻塞发送
         const {blob, ext} = await compressImage(f);
         let imgId = "";
@@ -8776,9 +8996,9 @@ if (imageBtn && imageFileInput) {
             fd.append("mode", CURRENT_MODE);
             const resp = await fetch("/upload-image", {method: "POST", body: fd});
             const data = await resp.json();
-            if (!data.ok) { _toast("图片上传失败：" + (data.error || "")); endMedia(false); return; }   // 配额满等错误直接透传后端文案
+            if (!data.ok) { showToast("图片上传失败：" + (data.error || ""), "error"); endMedia(false); return; }   // 配额满等错误直接透传后端文案
             imgId = data.img_id || "";
-        } catch (e) { _toast("网络错误，图片未发送"); endMedia(false); return; }
+        } catch (e) { showToast("网络错误，图片未发送", "error"); endMedia(false); return; }
         // 2026-08-29：不再弹窗让用户描述——图片理解统一由模型原生识图（发图当轮注入原图）；
         // 模型真不支持时由后端 polisher 降级为"看不清"说明。
         const q = _quoteTarget;
@@ -8947,14 +9167,25 @@ async function _doRest() {
 }
 
 document.getElementById("menu-rest-btn").addEventListener("click", async () => {
-    if (!confirm(`让${_cn()}去休息吗？${_cn()}会整理这段对话的记忆。`)) return;
+    const ok = await uiConfirm({
+        title: `让${_cn()}去休息？`,
+        body: `${_cn()}会整理这段对话的记忆。`,
+        confirmText: "去休息",
+    });
+    if (!ok) return;
     closeMenu();
     await _doRest();
     memoryBarRefresh();
 });
 
 document.getElementById("menu-clear-btn").addEventListener("click", async () => {
-    if (!confirm("确认清除全部对话历史？此操作不可撤销。")) return;
+    const ok = await uiConfirm({
+        title: "清除全部对话历史？",
+        body: "此操作不可撤销。",
+        confirmText: "清除",
+        danger: true,
+    });
+    if (!ok) return;
     closeMenu();
     try {
         const resp = await fetch("/clear-history", {
@@ -8963,12 +9194,13 @@ document.getElementById("menu-clear-btn").addEventListener("click", async () => 
         });
         const data = await resp.json();
         if (data.ok) { messagesEl.innerHTML = ""; }
-    } catch (e) { alert("网络错误"); }
+    } catch (e) { showToast("网络错误，请稍后重试", "error"); }
 });
 
 const undoBtn = document.getElementById("menu-undo-btn");
 undoBtn.addEventListener("click", async () => {
-    if (!confirm("撤回上一轮对话？")) return;
+    const ok = await uiConfirm({ title: "撤回上一轮对话？", confirmText: "撤回" });
+    if (!ok) return;
     closeMenu();
     undoBtn.disabled = true;
     try {
@@ -9004,6 +9236,33 @@ undoBtn.addEventListener("click", async () => {
 // ═══════════════════════════════════════════
 let _loading = false;
 let _lastWho = null;
+
+/** 消息区的状态占位（空历史 / 加载失败）。
+ *  它不是聊天消息：没有气泡、不参与长按/引用/收藏，只是一块说明 + 可选重试。
+ *  注意与「回复到达后的逐条 typing 演出」区分——后者是刻意设计，这里不动。 */
+function _showHistoryState(kind) {
+    const el = document.createElement("div");
+    el.className = "msg-state";
+    el.dataset.historyState = kind;
+    if (kind === "empty") {
+        el.innerHTML = '<div class="msg-state-title">还没有对话</div>' +
+            '<div class="msg-state-sub">在下面说点什么，开始和角色的第一段对话吧。</div>';
+    } else {
+        el.innerHTML = '<div class="msg-state-title">对话没有加载出来</div>' +
+            '<div class="msg-state-sub">可能是网络或本机服务暂时没就绪。</div>';
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "msg-state-btn";
+        btn.textContent = "重试";
+        btn.onclick = () => { _clearHistoryState(); loadHistory(); };
+        el.appendChild(btn);
+    }
+    messagesEl.appendChild(el);
+}
+
+function _clearHistoryState() {
+    messagesEl.querySelectorAll(".msg-state").forEach(el => el.remove());
+}
 function renderHistoryMessage(m, prepend=false) {
     const ts = m.time ? m.time.slice(11,16) : null;
     // 发送方变化时插入时间分割线
@@ -9023,16 +9282,26 @@ async function loadHistory(beforeSeq=null) {
     _lastWho = null;
     try {
         const resp = await fetch(url);
+        if (!resp.ok) throw new Error("HTTP " + resp.status);
         const data = await resp.json();
         if (gen !== _modeGen) return;   // 模式已切换：丢弃旧模式历史，防止渲染进新模式界面
-        if (!data.messages || data.messages.length===0) { S._hasMore=false; return; }
+        _clearHistoryState();
+        if (!data.messages || data.messages.length===0) {
+            S._hasMore = false;
+            // 只对首次加载给空态；向上翻页翻到底不需要再提示一次
+            if (!beforeSeq) _showHistoryState("empty");
+            return;
+        }
         if (!beforeSeq) { data.messages.forEach(m=>renderHistoryMessage(m,false)); messagesEl.scrollTop=messagesEl.scrollHeight; undoBtn.disabled=false; }
         else { const ph=messagesEl.scrollHeight, ps=messagesEl.scrollTop; data.messages.slice().reverse().forEach(m=>renderHistoryMessage(m,true)); messagesEl.scrollTop=ps+(messagesEl.scrollHeight-ph); }
         S._hasMore = !!data.has_more;
         // 历史渲染完再补扫一次语音条（首次进来时缓存表是异步拉的，赶不上逐条渲染）
         if (typeof voiceRestoreBarsAuto === "function") voiceRestoreBarsAuto();
         if (!beforeSeq) memoryBarRefresh();   // 进聊天页时同步一次记忆窗口状态
-    } catch(e) {} finally { _loading=false; }
+    } catch(e) {
+        // 失败要看得见：此前这里静默，用户面对空白无法区分「加载中/失败/没历史」
+        if (gen === _modeGen && !beforeSeq) _showHistoryState("error");
+    } finally { _loading=false; }
 }
 messagesEl.addEventListener("scroll", () => {
     if (messagesEl.scrollTop===0 && S._hasMore && !_loading) {
@@ -9050,6 +9319,7 @@ messagesEl.addEventListener("scroll", () => {
 //   POST /voice/plugin {action,...} → install/cancel/enable/disable/uninstall/rescan/set_mood/set_repo
 // 设计与边界见 docs/工具/tts.md。本页只做展示与派发，不做任何模型逻辑。
 // ═══════════════════════════════════════════
+
 let _vpTimer = null;
 
 const _VP_LABEL = {
@@ -9224,8 +9494,24 @@ function closeVoiceView() {
 window.closeVoiceView = closeVoiceView;
 
 async function voiceAct(action, extra) {
-    if (action === "uninstall" && !confirm("确定卸载语音插件？\n\n会删除本机的模型文件（约 872 MB）。\n已生成的语音不受影响（那些随「清理历史」处理）。")) return;
-    if (action === "purge_voice" && !confirm("清除所有已生成的语音？\n\n只删音频文件 —— 模型、语气库、聊天记录都不受影响。\n清除后重新点「转语音」会用当前前端重新合成（旧音频可能带有已修复的问题）。")) return;
+    if (action === "uninstall") {
+        const ok = await uiConfirm({
+            title: "卸载语音插件？",
+            body: "会删除本机的模型文件（约 872 MB）。\n已生成的语音不受影响（那些随「清理历史」处理）。",
+            confirmText: "卸载",
+            danger: true,
+        });
+        if (!ok) return;
+    }
+    if (action === "purge_voice") {
+        const ok = await uiConfirm({
+            title: "清除所有已生成的语音？",
+            body: "只删音频文件——模型、语气库、聊天记录都不受影响。\n清除后重新点「转语音」会用当前前端重新合成。",
+            confirmText: "清除",
+            danger: true,
+        });
+        if (!ok) return;
+    }
     await _vpAct(action, extra);
     renderVoiceView();
 }
@@ -9727,7 +10013,12 @@ async function dismissFix() {
 window.dismissFix = dismissFix;
 
 async function rollbackFix() {
-    if (!confirm("撤销上次设定修改？将恢复到上一个版本，对话数据不受影响。")) return;
+    const ok = await uiConfirm({
+        title: "撤销上次设定修改？",
+        body: "将恢复到上一个版本，对话数据不受影响。",
+        confirmText: "撤销",
+    });
+    if (!ok) return;
     if (_fixBusy) return;
     _fixBusy = true;
     try {
@@ -9750,7 +10041,13 @@ async function rollbackFix() {
 window.rollbackFix = rollbackFix;
 
 async function resetFix() {
-    if (!confirm("清空当前的问题描述和待确认方案？已应用的修改记录会保留。")) return;
+    const ok = await uiConfirm({
+        title: "清空当前问题？",
+        body: "问题描述和待确认方案会清空；已应用的修改记录保留。",
+        confirmText: "清空",
+        danger: true,
+    });
+    if (!ok) return;
     _fixBusy = true;
     try {
         const resp = await fetch("/setting-fix/reset", {
@@ -10148,7 +10445,9 @@ function renderCardsList() {
         const _nm = m.name || m.id;
         const _shown = (m.char_name && _nm.startsWith(m.char_name + "_"))
             ? _nm.slice(m.char_name.length + 1) : _nm;
-        sub.textContent = _shown + " · " + (presLabel[m.presentation] || m.presentation);
+        // 包名与角色名相同时只留演出形态，避免「知更鸟 / 知更鸟 · 短信+旁白」
+        sub.textContent = (_shown === (m.char_name || "") ? "" : _shown + " · ")
+            + (presLabel[m.presentation] || m.presentation);
         mid.append(cn, sub);
         const go = document.createElement("span");
         go.className = "cv-cgo";
@@ -10252,14 +10551,29 @@ async function packLifecycle(action, id, label) {
     const path = paths[action];
     if (!path || !id) return false;
     if (action === "archive") {
-        if (!confirm(`归档「${label}」？\n该包会从列表与聊天里隐藏，人设与聊天记录全部保留。`)) return false;
+        const ok = await uiConfirm({
+            title: `归档「${label}」？`,
+            body: "该包会从列表与聊天里隐藏，人设与聊天记录全部保留。",
+            confirmText: "归档",
+        });
+        if (!ok) return false;
     } else if (action === "restore") {
-        if (!confirm(`恢复「${label}」？`)) return false;
+        const ok = await uiConfirm({ title: `恢复「${label}」？`, confirmText: "恢复" });
+        if (!ok) return false;
     } else {
-        const typed = prompt(`彻底删除「${label}」后无法恢复（删除前会自动备份一份快照）。\n` +
-            `请输入包名以确认：`);
+        // 彻底删除：输入包名确认（比两次点击更难误触）。
+        // 取消返回 null；确认返回输入串（validate 已保证与包名一致）。
+        const typed = await uiConfirm({
+            title: `彻底删除「${label}」？`,
+            body: "删除前会自动备份一份快照，但删除后无法恢复。\n请输入包名以确认：",
+            input: true,
+            placeholder: label,
+            confirmText: "删除",
+            danger: true,
+            validate: (v) => v === label,
+            validateMsg: "包名不匹配",
+        });
         if (typed === null) return false;
-        if (typed.trim() !== label) { showToast("包名不匹配，已取消"); return false; }
     }
     try {
         const r = await fetch(path, {method: "POST",
@@ -10407,9 +10721,15 @@ async function showChat() {
     appView.style.display = "flex";     // 恢复聊天页
     stopCarousel();   // 聊天页轮播不可见，停止自动轮播（避免返回首页时位置已乱）
     scrollToBottom();
-    // 顶部显示当前模式名
+    // 顶部显示当前模式名。包名与角色名相同时不重复展示——
+    // 自建卡常见（包就叫「知更鸟」），此前会出现「知更鸟 [知更鸟]」两个同样的字。
     const modeTag = document.getElementById("chat-mode-tag");
-    if (modeTag) modeTag.textContent = MODE_NAMES[CURRENT_MODE] || CURRENT_MODE;
+    if (modeTag) {
+        const modeName = MODE_NAMES[CURRENT_MODE] || CURRENT_MODE || "";
+        const dup = !modeName || modeName === (charName() || "");
+        modeTag.textContent = dup ? "" : modeName;
+        modeTag.hidden = dup;
+    }
     // 模式可能已切换：清空并重载当前模式历史（story/haruno 数据隔离）
     if (_lastMode !== CURRENT_MODE) {
         _lastMode = CURRENT_MODE;
@@ -10994,7 +11314,7 @@ function _guideStickerTabOpen() {
 // 详细引导 = 实际操作教程：每一步让用户真的点对应功能，操作成功自动进下一步。
 const DEEP_GUIDE_STEPS = [
     { el: "#home-settings-btn", title: "① 实际点开设置",
-      text: "请点右上角 ⚙ 打开设置页（不要点“下一步”）。\n\n设置页有 4 组卡片：账号与连接 / 模型与速度 / 外观 / 数据；除 API Key 外，改动会自动保存。",
+      text: "请点右上角 ⚙ 打开设置页（不要点“下一步”）。\n\n设置页有 5 组卡片：账号与连接 / 模型与速度 / 外观 / 数据与备份 / 关于与更新；除 API Key 外，改动会自动保存。",
       setup: () => { showHome(); },
       done: () => document.getElementById("settings-panel").classList.contains("show") },
     { el: "#key-input", title: "② 试填 API Key",
@@ -11005,13 +11325,13 @@ const DEEP_GUIDE_STEPS = [
       text: "请点「🧠 模型与速度」展开。\n\n默认真接 DeepSeek 官方（填 Key 即用）；展开「自定义」可分别调检索/分析/回复/组织四个阶段的模型与思考档位。",
       setup: () => { openSettings(); },
       done: () => _guideGroupOpen("model") },
-    { el: '#settings-panel .set-head[data-group="system"]', title: "④ 点开「数据」",
-      text: "请点「📦 数据」展开。\n\n版本更新、自动修复、数据快照（保存/恢复/导入 zip）、云端同步都在这里；主动消息则按角色卡配（角色卡管理 → 点角色卡 → 主动消息）。",
+    { el: '#settings-panel .set-head[data-group="data"]', title: "④ 点开「数据与备份」",
+      text: "请点「📦 数据与备份」展开。\n\n数据快照（保存/恢复）、导入导出 zip、云端同步都在这里；主动消息则按角色卡配（角色卡管理 → 点角色卡 → 主动消息）。",
       setup: () => { openSettings(); },
-      done: () => _guideGroupOpen("system") },
+      done: () => _guideGroupOpen("data") },
     { el: "#hotupdate-check-btn", title: "⑤ 看一眼「自动修复」",
       text: "请点「检查修复」。\n\n小 bug 修好后服务器会推一个小补丁，App 空闲时自动装上，不必重装；这里能开关、查看当前修复版本，有问题还能「回退修复」退回安装包自带的版本。",
-      setup: () => { openSettings(); _guideOpenGroup("system"); _guideArmHotupdate(); },
+      setup: () => { openSettings(); _guideOpenGroup("about"); _guideArmHotupdate(); },
       done: () => _guideHotTouched },
     { el: "#menu-btn", title: "⑥ 到聊天页打开菜单",
       text: "已经帮你切到聊天页：请点右上角 ☰ 打开菜单。\n\n菜单里是分组页签：与角色相关（收藏 / 表情包 / 设定文件）、与系统相关（请求记录 / 流程日志）。",
@@ -11241,6 +11561,13 @@ if (IS_SERVER) startRelay();   // relay 引擎仅服务器模式（本地为 dir
 
     function $(id) { return document.getElementById(id); }
 
+    /** 后端返回的原始错误翻成人话；翻不出时用 fallback。
+     *  friendlyError 由 util.js 提供（bundle 单作用域，声明提升 ⇒ 此处调用期一定存在）。 */
+    function humanErr(raw, fallback) {
+        var s = (typeof friendlyError === "function") ? friendlyError(raw) : "";
+        return s || fallback;
+    }
+
     function post(path, obj) {
         try {
             return fetch(path, {
@@ -11354,15 +11681,14 @@ if (IS_SERVER) startRelay();   // relay 引擎仅服务器模式（本地为 dir
         if (st.restart_note) {
             lines.push('<div style="opacity:.7">' + esc(st.restart_note) + "</div>");
         }
+        // 提示条（不是整行按钮）：一行说明 + 右侧小 ×，与主操作在视觉上分层
         if (st.rolled_back_reason) {
-            lines.push('<div style="color:#e0a05c">上次修复已回退：' + esc(st.rolled_back_reason) +
-                ' <button id="hotupdate-dismiss-btn" type="button" ' +
-                'style="font-size:0.9em;padding:0 6px;margin-left:4px">知道了</button></div>');
+            lines.push('<div class="set-note warn">上次修复已回退：' + esc(st.rolled_back_reason) +
+                '<button id="hotupdate-dismiss-btn" type="button" class="set-note-x" aria-label="知道了">✕</button></div>');
         }
         if (st.last_error) {
-            lines.push('<div style="opacity:.7">' + esc(st.last_error) +
-                ' <button id="hotupdate-dismiss-btn2" type="button" ' +
-                'style="font-size:0.9em;padding:0 6px;margin-left:4px">知道了</button></div>');
+            lines.push('<div class="set-note">' + esc(humanErr(st.last_error, "上次检查或安装没有成功，稍后再试")) +
+                '<button id="hotupdate-dismiss-btn2" type="button" class="set-note-x" aria-label="知道了">✕</button></div>');
         }
         box.innerHTML = lines.join("");
         // 「知道了」：清掉"上次修复已回退/上次检查失败"的提示。
@@ -11417,7 +11743,7 @@ if (IS_SERVER) startRelay();   // relay 引擎仅服务器模式（本地为 dir
                 post("/hotupdate/action", { action: "check" }).then(function (r) {
                     return r ? r.json() : null;
                 }).then(function (d) {
-                    if (m) m.textContent = (d && d.ok) ? "已检查" : ("检查失败：" + ((d && d.error) || "网络不可达"));
+                    if (m) m.textContent = (d && d.ok) ? "已检查" : ("检查失败：" + humanErr(d && d.error, "连不上更新服务器，稍后再试"));
                     poll();
                 }).catch(function () { if (m) m.textContent = "检查失败"; });
             });
@@ -11433,7 +11759,7 @@ if (IS_SERVER) startRelay();   // relay 引擎仅服务器模式（本地为 dir
                     if (m) {
                         m.textContent = (d && d.ok)
                             ? (d.restart ? "已安装，空闲时会自动重启以生效" : "已安装，即将生效")
-                            : ("安装失败：" + ((d && d.error) || ""));
+                            : ("安装失败：" + humanErr(d && d.error, "没装上，稍后再试"));
                     }
                     poll();
                 }).catch(function () { if (m) m.textContent = "安装失败"; });
@@ -11442,8 +11768,13 @@ if (IS_SERVER) startRelay();   // relay 引擎仅服务器模式（本地为 dir
         var rb = $("hotupdate-rollback-btn");
         if (rb) {
             rb.addEventListener("click", function () {
-                if (!confirm("回退到当前安装包的版本？")) return;
-                post("/hotupdate/action", { action: "rollback" }).then(poll);
+                uiConfirm({
+                    title: "回退到当前安装包的版本？",
+                    body: "会退回安装包自带的版本，之后仍可接收新的修复。",
+                    confirmText: "回退",
+                }).then(function (ok) {
+                    if (ok) post("/hotupdate/action", { action: "rollback" }).then(poll);
+                });
             });
         }
     }

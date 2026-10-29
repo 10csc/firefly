@@ -110,8 +110,10 @@ try:
         # 第二版 PC 适配层只保留底部状态栏；其余自造外壳**已删除**（不存在 = 'absent' 也算合格）。
         check("窄屏：状态栏 display:none，且没有残留的自造外壳",
               disp[0] == "none" and all(d in ("none", "absent") for d in disp[1:]), str(disp))
-        check("窄屏没有左栏/第二列占位（不该出现任何 pc-* 外壳）",
-              all(d == "absent" for d in disp[1:]), str(disp[1:]))
+        # ⚠ disp[1] 是 #pc-shell：2026-10-02 三栏骨架起它常驻 DOM（窄屏 display:none），
+        #   上一条已守卫「不漏出来」；这里只断言**已删除**的那几个旧外壳确实不存在。
+        check("窄屏没有第二列/第三列旧外壳（pc-main-head / pc-chat-side / pc-rail / pc-list）",
+              all(d == "absent" for d in disp[2:]), str(disp[2:]))
         check("无横向滚动", js("document.documentElement.scrollWidth <= innerWidth + 1"),
               f"scrollW={js('document.documentElement.scrollWidth')} vw={js('innerWidth')}")
         r = js("JSON.stringify(document.getElementById('home-view').getBoundingClientRect())")

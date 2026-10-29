@@ -4,7 +4,7 @@
 // 详情是覆盖在列表上的一层（#plaza-detail）；安装/卸载改的是**本端**数据根（必须由本端执行），
 // 与配额条（#pz-quota）共用 `_pzInstalled`（住在 js/panels/plaza.js 外壳）。
 // 新加的名字**必须带 `_pz` 前缀**（bundle 单作用域，重名会静默覆盖）。
-import { showToast } from "../util.js";
+import { showToast, uiConfirm } from "../util.js";
 
 // ═══ 详情 ═════════════════════════════════════════════
 /** 按优先级挑第一个存在的**资源槽位名**（契约 06 §3.3：新形状 display/thumb 优先，老卡的
@@ -243,8 +243,14 @@ function _pzRenderDetail(c, errText) {
 // ═══ 安装 / 卸载 ══════════════════════════════════════
 async function _pzInstall(cardId, name, replace, btn) {
     // 覆盖安装会先备份旧卡（后端 _backup_existing），这里把话说清楚再动手
-    if (replace && !confirm("覆盖安装「" + name + "」？\n" +
-            "同 id 的角色卡会被卡里的内容替换（覆盖前后端会自动留一份备份）。")) return;
+    if (replace) {
+        const ok = await uiConfirm({
+            title: "覆盖安装「" + name + "」？",
+            body: "同 id 的角色卡会被卡里的内容替换（覆盖前后端会自动留一份备份）。",
+            confirmText: "覆盖安装",
+        });
+        if (!ok) return;
+    }
     const old = btn ? btn.textContent : "";
     if (btn) { btn.disabled = true; btn.textContent = "安装中…"; }
     const r = await _pzReq("/plaza/api/install", {
@@ -268,14 +274,25 @@ async function _pzInstall(cardId, name, replace, btn) {
     const why = (r.data && r.data.error) || (r.status === 401 ? "请先登录后再安装。" : "安装失败，请稍后重试。");
     if (r.status === 401) { showToast(why); _pzGotoLogin(); return; }
     if (/覆盖/.test(why) && !replace) {
-        if (confirm(why + "\n\n现在就覆盖安装吗？")) _pzInstall(cardId, name, true, btn);
+        const ok = await uiConfirm({
+            title: "现在就覆盖安装吗？",
+            body: why,
+            confirmText: "覆盖安装",
+        });
+        if (ok) _pzInstall(cardId, name, true, btn);
         return;
     }
     showToast(why);
 }
 
 async function _pzUninstall(cardId, name) {
-    if (!confirm("卸载「" + name + "」？\n角色卡会从本机列表里移除（可随时从广场重新安装）。")) return;
+    const ok = await uiConfirm({
+        title: "卸载「" + name + "」？",
+        body: "角色卡会从本机列表里移除（可随时从广场重新安装）。",
+        confirmText: "卸载",
+        danger: true,
+    });
+    if (!ok) return;
     const r = await _pzReq("/plaza/api/uninstall", {
         method: "POST",
         headers: {"Content-Type": "application/json"},
