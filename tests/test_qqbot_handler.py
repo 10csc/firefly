@@ -23,6 +23,9 @@ import pytest
 _SERVER = Path(__file__).resolve().parent.parent / "server"
 if str(_SERVER) not in sys.path:
     sys.path.insert(0, str(_SERVER))
+_APP = Path(__file__).resolve().parent.parent / "app"
+if str(_APP) not in sys.path:
+    sys.path.insert(0, str(_APP))
 
 from qqbot import guard as guard_mod   # noqa: E402
 from qqbot import handler as handler_mod  # noqa: E402
@@ -205,13 +208,22 @@ def test_user_quota_exhausted_notifies(tmp_path, monkeypatch):
 
 
 # ── 会话模型 ────────────────────────────────
-def test_session_never_trims_context(tmp_path):
+def test_session_never_trims_context(tmp_path, monkeypatch):
     """会话层绝不能裁剪上下文。
 
     这条是回归护栏：`auto_rest.py` 写明从窗口头部裁剪会把"增长期"变成"滑动期"，
     每轮前缀缓存全部失效。初版曾在这里用 `pop_last_turn()` 裁剪——而那个方法移除的是
     **最新**一轮（撤回语义），等于让流萤不断忘掉刚发生的事。
     """
+    # GroupSession 复用 app 的 conversation_store，而后者按运行期数据根定位文件。
+    # 这里显式切断回灌和写盘，避免组合执行 pytest 时把其他用例的真实上下文
+    # 注入本用例，或反过来污染测试环境。
+    from modules import conversation_store
+    monkeypatch.setattr(conversation_store, "hydrate_context",
+                        lambda ctx, max_turns=0, mode="": 0)
+    monkeypatch.setattr(conversation_store, "append_message",
+                        lambda *args, **kwargs: None)
+
     bot = _make_bot(tmp_path)
     sess = bot.session_for(GROUP)
     ctx = sess.ctx
