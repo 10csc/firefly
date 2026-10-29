@@ -29,10 +29,6 @@ from routes_data import (
     export_data, import_data, sync_export, sync_import,
     sync_manifest, sync_now, sync_ops, sync_state,
 )
-from routes_fix import (
-    setting_fix_apply, setting_fix_dismiss, setting_fix_message, setting_fix_reset,
-    setting_fix_rollback, setting_fix_start, setting_fix_status,
-)
 from api.diag import export_diagnostics
 from api.pack_assist import pack_assist, pack_assist_apply
 from routes_pack import (
@@ -108,12 +104,6 @@ POST_ROUTES = {
     "/sync/now": sync_now,
     "/undo": undo,
     "/clear-history": clear_history,
-    "/setting-fix/message": setting_fix_message,
-    "/setting-fix/start": setting_fix_start,
-    "/setting-fix/apply": setting_fix_apply,
-    "/setting-fix/dismiss": setting_fix_dismiss,
-    "/setting-fix/rollback": setting_fix_rollback,
-    "/setting-fix/reset": setting_fix_reset,
     "/favorite": add_favorite_route,
     "/favorites/delete": delete_favorite_route,
     "/upload-image": upload_image,
@@ -199,7 +189,6 @@ GET_ROUTES = {
     "/backups": backups_list,
     "/snapshot/list": snapshot_list,
     "/snapshot/download": snapshot_download,
-    "/setting-fix/status": setting_fix_status,
     "/assets/index": assets_index,
     "/assets/raw": assets_raw,
     "/favorites": get_favorites,

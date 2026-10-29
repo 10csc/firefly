@@ -3,7 +3,7 @@
 
 设计要点：
 - **原子写**：`atomic_write_text/_bytes`（tmp + replace），供 favorite_store /
-  setting_fix_store / memory_manager 等处复用（消灭 3 处各自实现）；
+  memory_manager 等处复用（消灭 3 处各自实现）；
 - **数据类型注册表 REGISTRY**：任何新数据类型 = 注册一行，声明
   位置/格式/是否媒体类/是否敏感/同步策略——导出、同步、备份链路的排除点都查这里
   （A0 媒体本地策略的执行面：metadata 类媒体本体不进传输清单、元数据随行；
@@ -163,10 +163,6 @@ REGISTRY: dict[str, dict] = {
     "auth":            {"rel": "auth.json", "format": "json", "media": False,
         "owner": "modules.auth_store",
                         "sensitive": True, "sync": "exclude"},
-    "setting_fix":     {"rel": "{mode}/.setting_fix/", "format": "jsonl+json",
-        "owner": "modules.setting_fix_store",
-                        "media": False, "sensitive": False, "sync": "exclude",
-                        "note": "设定纠错中间态（本地工作区，不进同步）"},
     # ── 语音插件（独立子系统 app/voice/，见 docs/工具/tts.md）──
     "voice_cache":     {"rel": "{mode}/data/voice/", "format": "binary",
         "owner": "voice.store",

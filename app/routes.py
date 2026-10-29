@@ -71,10 +71,6 @@ from routes_data import (
     export_data, import_data, sync_export, sync_import,
     sync_manifest, sync_now,
 )
-from routes_fix import (
-    setting_fix_apply, setting_fix_dismiss, setting_fix_message, setting_fix_reset,
-    setting_fix_rollback, setting_fix_start, setting_fix_status,
-)
 from routes_pack import (
     character_file_update, create_pack, delete_character_file, delete_pack,
     delete_pack_asset, get_pack_files, set_pack_config, upload_pack_asset,

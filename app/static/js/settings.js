@@ -533,6 +533,26 @@ export async function checkKey() {
     try { await loadConfig(); } catch (e) { /* 服务未就绪，静默 */ }
 }
 
+// 风格三选一（设置 → 外观）。真正的切换逻辑在 views.js 的 setTheme，
+// 这里只负责把点击转过去、并让高亮跟随当前风格。
+(function initThemePicker() {
+    const box = _$("theme-picker");
+    if (!box) return;
+    const sync = (t) => {
+        box.querySelectorAll("[data-theme-pick]").forEach(b => {
+            b.classList.toggle("on", b.dataset.themePick === t);
+        });
+    };
+    box.querySelectorAll("[data-theme-pick]").forEach(b => {
+        b.addEventListener("click", () => {
+            const t = window.setTheme ? window.setTheme(b.dataset.themePick) : "dark";
+            sync(t);
+        });
+    });
+    window.__themeDidChange = sync;
+    sync(document.body.dataset.theme || "dark");
+})();
+
 // 键盘弹起时把聚焦的输入框滚到可视区中间：
 // WebView 的 adjustResize 只把面板高度压小，不会自动滚动到当前字段（真机实测：
 // 展开「自定义各阶段」后，第三个模型输入框会被键盘压住）。

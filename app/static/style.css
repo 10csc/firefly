@@ -818,20 +818,6 @@ body {
 }
 .rest-card { background:var(--home-bg); padding:32px; border-radius:12px; color:var(--fg-main); text-align:center; max-width:320px; }
 
-/* ═══════════════════════════════════════════
-   设定纠错助手（独立全屏页，与聊天页同级）
-   ═══════════════════════════════════════════ */
-#fix-view {
-    position: fixed; inset: 0; z-index: 6;   /* 高于首页(z5)，低于菜单(z49)/表情(z55) */
-    width: 100%; height: 100vh; height: 100dvh;
-    margin: 0 auto;
-    display: none; flex-direction: column;
-    background: var(--panel-solid);
-    backdrop-filter: blur(10px);
-    padding-top: env(safe-area-inset-top);
-    padding-bottom: env(safe-area-inset-bottom);
-}
-#fix-view.show { display: flex; }
 /* ── 角色卡管理页（全屏，卡片列表）── */
 #cards-view {
     position: fixed; inset: 0; z-index: 6;
@@ -947,7 +933,7 @@ body {
     font-family: inherit; font-size: 15px; cursor: pointer;
 }
 #pack-create-panel #pc-submit { background: var(--send-bg); color: var(--send-fg); border-color: var(--gold-line); }
-/* ── 角色编辑页（全屏，与 fix-view 同层级模式）── */
+/* ── 角色编辑页（全屏覆盖层）── */
 #pack-view {
     position: fixed; inset: 0; z-index: 6;
     width: 100%; height: 100vh; height: 100dvh;
@@ -1086,51 +1072,6 @@ body {
 .carousel-char img { width: 34px; height: 34px; border-radius: 50%; object-fit: cover; border: 2px solid rgba(255,217,160,0.5); box-shadow: 0 0 8px rgba(255,217,160,0.25); }
 .carousel-char .cc-name { color: #f2ead8; font-size: 0.95em; font-weight: 600; text-shadow: 0 1px 6px rgba(0,0,0,0.8); }
 .carousel-char .cc-scene { color: rgba(255,217,160,0.8); font-size: 0.7em; margin-top: 1px; text-shadow: 0 1px 4px rgba(0,0,0,0.8); }
-.fix-view-header {
-    display: flex; align-items: center; gap: 10px; flex-shrink: 0;
-    padding: clamp(10px, 3vw, 14px) clamp(12px, 4vw, 16px);
-    padding-top: max(clamp(10px, 3vw, 14px), env(safe-area-inset-top));
-    border-bottom: 1px solid var(--ctrl-bg);
-}
-#fix-back-btn {
-    width: 38px; height: 38px; flex-shrink: 0;
-    border-radius: 50%; border: 1px solid var(--border-mid);
-    background: var(--ctrl-bg-3); color: var(--fg-main);
-    font-size: 1.05em; cursor: pointer; font-family: inherit;
-}
-.fix-view-title { flex: 1; min-width: 0; }
-.fix-view-title .name {
-    color: var(--fg-main); font-size: calc(clamp(15px, 4.5vw, 18px) * var(--ui-scale));
-    font-weight: bold;
-}
-.fix-view-title .status {
-    display: flex; align-items: center; gap: 6px;
-    color: var(--fg-muted); font-size: clamp(11px, 3vw, 12px); margin-top: 2px;
-    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-}
-#fix-view .fix-modes { flex-shrink: 0; padding: 8px 10px 0; margin-bottom: 0; }
-#fix-view #fix-chat {
-    flex: 1; min-height: 0; max-height: none;
-    margin: 8px 10px; padding: 12px;
-}
-#fix-view #fix-proposal {
-    max-height: 42vh; overflow-y: auto; flex-shrink: 0;
-    margin: 0 10px 8px;
-}
-#fix-view #fix-start-btn { flex-shrink: 0; margin: 0 10px 8px; }
-#fix-view #fix-history-box {
-    flex-shrink: 0; margin: 0 10px 6px; padding: 8px 10px;
-    border: 1px solid var(--border-mid); border-radius: 10px;
-    background: var(--ctrl-bg); max-height: 120px; overflow-y: auto;
-}
-#fix-view .fix-input-row {
-    flex-shrink: 0; padding: 4px 10px calc(10px + env(safe-area-inset-bottom));
-    border-top: 1px solid var(--ctrl-bg);
-}
-#fix-view .fix-input-row #fix-input { flex: 1; }
-@media (min-width: 768px) {
-    #fix-view { max-width: 520px; box-shadow: 0 0 30px var(--shadow-panel); }
-}
 
 /* ═══════════════════════════════════════════
    首页（独立视图，覆盖层：位于对话页上层）
@@ -1155,7 +1096,7 @@ body {
     color: var(--fg-muted); font-size: 1.1em; cursor: pointer; z-index: 6;
 }
 #home-theme-btn { right: 54px; }
-#home-theme-btn img { width: 18px; height: 18px; image-rendering: pixelated; display: block; margin: 0 auto; }
+#home-theme-btn svg.ico { width: 18px; height: 18px; display: block; margin: 0 auto; vertical-align: 0; }
 .home-feedback { left: 10px; right: auto; width: auto; padding: 0 12px; border-radius: 18px; font-size: 0.85em; white-space: nowrap; }
 .fb-link, .fb-item {
     display: block; padding: 12px 14px; margin-bottom: 10px;
@@ -1178,8 +1119,8 @@ body {
     padding: 0 56px;
 }
 .home-notice:active { background: rgba(255,255,255,0.07); }
-.notice-icon { width: 20px; height: 20px; image-rendering: pixelated; flex-shrink: 0; }
-.notice-icon-sm { width: 18px; height: 18px; image-rendering: pixelated; vertical-align: -3px; }
+.notice-icon { width: 20px; height: 20px; flex-shrink: 0; vertical-align: 0; }
+.notice-icon-sm { width: 18px; height: 18px; vertical-align: -3px; }
 .notice-arrow { color: var(--fg-muted); font-size: 0.8em; transition: transform 0.2s; }
 /* 第二栏：滚动播放（4.1：高度收敛——原 aspect 2/1 全宽占首屏近半，现限高 30vh 居中） */
 .home-carousel {
@@ -1616,7 +1557,7 @@ body {
 #menu-overlay.show { animation: panelFadeIn 0.2s; }
 #settings-panel.show, #notice-panel.show, #feedback-panel.show { animation: panelSlideUp 0.22s ease-out; }
 #sticker-panel.show { animation: panelSlideUp 0.2s ease-out; }
-#fix-view.show, #home-view.show { animation: panelFadeIn 0.18s; }
+#home-view.show { animation: panelFadeIn 0.18s; }
 
 /* ═══════════════════════════════════════════
    过渡断点：720~1100px 单栏居中放宽 640px，保留模糊背景
@@ -1663,7 +1604,7 @@ body {
    低端机降级（5.5）：JS 探测 deviceMemory/hardwareConcurrency 打 body.low-end，
    关掉毛玻璃（backdrop-filter 在低端 GPU 掉帧），面板改不透明底
    ═══════════════════════════════════════════ */
-body.low-end #app, body.low-end #fix-view, body.low-end #menu-drawer,
+body.low-end #app, body.low-end #menu-drawer,
 body.low-end #settings-panel, body.low-end #notice-panel, body.low-end #feedback-panel { backdrop-filter: none; }
 body.low-end #menu-drawer, body.low-end #settings-panel, body.low-end #notice-panel, body.low-end #feedback-panel { background: var(--panel-solid); }
 body.low-end #app { background: var(--panel-solid); }
@@ -1743,6 +1684,27 @@ select.ui-select-native{position:absolute!important;opacity:0!important;pointer-
 /* 文件项右侧的 AI 辅助小图标（只是图标，不抢主操作） */
 .assist-ico{flex:0 0 auto;border:none;background:transparent;color:var(--fg-muted);cursor:pointer;font-size:0.9em;padding:2px 6px;border-radius:8px}
 .assist-ico:hover{color:var(--fg-accent);background:var(--ctrl-bg)}
+/* 消息与修改提案（原设定纠错助手的 .fix-*，该功能已并入本页，样式随之下放） */
+.av-hint{color:var(--fg-muted);font-size:0.72em;line-height:1.7}
+.av-msg{margin-top:8px}
+.av-msg:first-child{margin-top:0}
+.av-who{color:var(--fg-bright);font-size:0.68em;margin-bottom:2px}
+.av-msg.me .av-who{text-align:right}
+.av-text{color:var(--fg-main);font-size:0.82em;line-height:1.6;white-space:pre-wrap;word-break:break-all}
+.av-prop-title{display:flex;align-items:center;gap:6px;color:var(--fg-bright);font-size:0.78em;font-weight:600;margin-bottom:6px}
+.av-prop-title .av-op-tag{flex-shrink:0}
+.av-op-tag{font-size:0.68em;padding:2px 8px;border-radius:10px;border:1px solid var(--border-mid);color:var(--fg-muted)}
+.av-op-tag.correct{color:#ffb4a8;border-color:#ffb4a8}
+.av-op-tag.add{color:#8fe3b2;border-color:#8fe3b2}
+.av-change{margin-top:8px;padding-top:8px;border-top:1px dashed var(--border-mid)}
+.av-change-head{display:flex;align-items:center;gap:6px;margin-bottom:4px}
+.av-diff-old,.av-diff-new{white-space:pre-wrap;word-break:break-all;font-size:0.76em;line-height:1.6;border-radius:8px;padding:6px 8px;margin-top:4px}
+.av-diff-old{background:rgba(255,122,107,.08);color:#e9a9a0}
+.av-diff-new{background:rgba(127,217,168,.08);color:#a8e6c0}
+.av-reason{color:var(--fg-muted);font-size:0.72em;margin-top:5px;line-height:1.6}
+.av-prop-actions{display:flex;gap:8px;margin-top:10px}
+.av-btn{padding:7px 14px;border-radius:12px;border:1px solid var(--border-mid);cursor:pointer;background:transparent;color:var(--fg-muted);font-family:inherit;font-size:0.78em}
+.av-btn.primary{background:var(--btn-bg);color:var(--fg-bright);border-color:transparent}
 
 /* ── 角色卡管理树（pack_tree.js，数据驱动）：与人设文案折叠条同款（左金线 + ▶）── */
 #pv-tree{margin-top:14px}
@@ -2473,3 +2435,746 @@ body.low-end #pz-modal { backdrop-filter: none; background: rgba(8, 8, 18, 0.82)
 
 /* 新手引导正文：guide.js 把 step.text（内含 \n\n 分段）塞进 .guide-text，需要 white-space:pre-line 才能让 \n\n 真正换行，否则会被 HTML 折叠成空格、引导分段失效。 */
 .guide-text{white-space:pre-line}
+
+/* ═══════════════════════════════════════════════════════════════
+   风格三 · 流萤（参考下载页：黄昏天幕 / 切角 / 细线 / 等宽标签）
+   只做"呈现"，不改任何结构与 id：
+     · 全部规则挂在 body[data-theme="firefly"] 下 ⇒ 与简约风（:root / .theme-light）互不干扰；
+     · 变量层管颜色与质感，组件层管形状（圆角 → 切角、细线、字距）；
+     · 氛围层复用 #bg：换成天幕渐变，伪元素叠噪点与暗角，不新增 DOM。
+   ═══════════════════════════════════════════════════════════════ */
+
+body[data-theme="firefly"] {
+    --page-bg: #0a1230;
+    --panel-bg: rgba(16, 26, 60, 0.72);
+    --home-bg: rgba(14, 22, 54, 0.74);
+    --panel-solid: #0d1634;
+    --panel-veil: rgba(12, 20, 48, 0.78);
+
+    --fg-main: #fff7f9;
+    --fg-bright: #efe9f7;
+    --fg-muted: #d5d2e6;
+    --fg-accent: #e7c98e;
+
+    --bub-f-bg: rgba(28, 24, 56, 0.84);
+    --bub-f-fg: #f4eef8;
+    --bub-f-border: rgba(159, 227, 228, 0.20);
+    --bub-u-bg: rgba(56, 40, 88, 0.80);
+    --bub-u-fg: #fbe9f2;
+    --bub-u-border: rgba(242, 166, 195, 0.26);
+
+    --ctrl-bg: rgba(255, 255, 255, 0.07);
+    --ctrl-bg-2: rgba(255, 255, 255, 0.05);
+    --ctrl-bg-3: rgba(255, 255, 255, 0.03);
+    --input-border: rgba(159, 227, 228, 0.22);
+    --border-mid: rgba(255, 255, 255, 0.14);
+    --border-hover: rgba(255, 255, 255, 0.28);
+    --btn-bg: rgba(159, 227, 228, 0.14);
+    --btn-bg-hover: rgba(159, 227, 228, 0.24);
+    --dot-bg: rgba(255, 255, 255, 0.25);
+    --carousel-bg: rgba(10, 18, 48, 0.40);
+    --shadow-panel: rgba(6, 8, 26, 0.60);
+    --overlay-dark: rgba(6, 8, 26, 0.62);
+
+    /* 暖金与青绿各管一摊：金 = 主强调，青 = 焦点/激活，粉 = 角色侧 */
+    --gold-line: rgba(231, 201, 142, 0.42);
+    --gold-glow: rgba(159, 227, 228, 0.10);
+    --red: #ff9a8a;
+    --green: #9fe3e4;
+    --send-bg: rgba(231, 201, 142, 0.18);
+    --send-bg-hover: rgba(231, 201, 142, 0.30);
+    --send-fg: #f8e8c2;
+    --divider-fg: rgba(231, 201, 142, 0.50);
+
+    --particle-1: 159, 227, 228;
+    --particle-2: 231, 201, 142;
+    --particle-3: 242, 166, 195;
+    --particle-4: 255, 255, 255;
+}
+
+/* ── 氛围层：黄昏天幕 + 噪点 + 暗角（复用 #bg，零新增 DOM）── */
+body[data-theme="firefly"] { background: #0a1230; }
+body[data-theme="firefly"] #bg {
+    background: linear-gradient(180deg,
+        #527aa3 0%, #5f88b0 12%, #7895bd 28%, #a092ba 44%,
+        #c89abb 60%, #e5aac5 76%, #f6ccd7 92%, #f2cad3 100%);
+    filter: none;
+}
+body[data-theme="firefly"] #bg::before {
+    content: ""; position: absolute; inset: 0;
+    background: radial-gradient(120% 90% at 50% 42%, transparent 60%, rgba(30, 30, 60, 0.14) 100%);
+}
+body[data-theme="firefly"] #bg::after {
+    content: ""; position: absolute; inset: 0;
+    opacity: 0.08; mix-blend-mode: overlay;
+    background-image: radial-gradient(rgba(255, 255, 255, 0.55) 0.5px, transparent 0.6px);
+    background-size: 4px 4px;
+}
+/* 面板不是"盖住天幕"，而是给天幕压一层渐变遮罩：
+   顶部保留黄昏的蓝，底部沉到紫，文字对比度靠遮罩保证（下载页同款做法）。
+   ⚠ 不要用 backdrop-filter —— 它会把渐变糊成一块灰紫，层次全丢。 */
+/* 主面板：下载页的「深紫重卡片」。
+   参考页的观感是**亮天幕 + 深紫卡片**的强对比；半透明浅紫在手机全屏下会糊成一片灰。
+   所以这里压到接近实心的深紫，只留 ~10% 的天幕色偏，模糊也减半（16px 会糊掉细节）。 */
+/* 主界面**不缩小、不压背景**：天幕全屏可见，界面元素是浮在上面的玻璃片。
+   （试过两种失败做法：① 半透明底板 → 天幕被染成灰紫；② 缩进 16px 当卡片 →
+   界面变小、背景只露一圈，两个都不划算。） */
+body[data-theme="firefly"] #home-view,
+body[data-theme="firefly"] #app {
+    position: fixed;
+    inset: 0;
+    width: auto; height: auto;
+    margin: 0;
+    background: transparent;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+    clip-path: none;
+    box-shadow: none;
+}
+/* 顶栏/输入栏：半透明玻璃条，各自压住自己的文字，背景照常透出来 */
+body[data-theme="firefly"] #header {
+    background: linear-gradient(180deg, rgba(14, 12, 34, 0.62), rgba(14, 12, 34, 0.28));
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.10);
+}
+body[data-theme="firefly"] #input-bar {
+    background: linear-gradient(0deg, rgba(14, 12, 34, 0.66), rgba(14, 12, 34, 0.34));
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    border-top: 1px solid rgba(255, 255, 255, 0.12);
+}
+/* 气泡：直边深色玻璃（原来的圆角是为"柔和"，这套语言不需要） */
+body[data-theme="firefly"] .msg-row.firefly .bubble {
+    background: rgba(24, 20, 52, 0.80);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    border-radius: 0;
+    /* 平行四边形：上边左收、下边右收。斜 8px —— 10px 时内文贴斜边太紧（实测） */
+    clip-path: polygon(8px 0, 100% 0, calc(100% - 8px) 100%, 0 100%);
+}
+body[data-theme="firefly"] .msg-row.user .bubble {
+    background: rgba(58, 40, 88, 0.80);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    border: 1px solid rgba(242, 166, 195, 0.26);
+    border-radius: 0;
+    /* 镜像：上边右收、下边左收 */
+    clip-path: polygon(0 0, calc(100% - 8px) 0, 100% 100%, 8px 100%);
+}
+/* 名字行/状态压在天幕上：给一点投影保证可读 */
+body[data-theme="firefly"] .msg-who,
+body[data-theme="firefly"] #header .status,
+body[data-theme="firefly"] #header .chat-mem {
+    text-shadow: 0 1px 6px rgba(6, 6, 22, 0.75);
+}
+
+/* ── 标题字距：压缩体在这里用"系统字体 + 大字距"模拟（不内嵌字体，省体积）── */
+body[data-theme="firefly"] #header .name,
+body[data-theme="firefly"] .set-name,
+body[data-theme="firefly"] .panel-title,
+body[data-theme="firefly"] .cv-title,
+body[data-theme="firefly"] .pv-name,
+body[data-theme="firefly"] .hm-charname,
+body[data-theme="firefly"] .cv-cname,
+body[data-theme="firefly"] .pz-card-name {
+    letter-spacing: 0.16em;
+    text-shadow: 0 0 14px rgba(231, 201, 142, 0.16);
+}
+/* 元数据/标签：等宽 + 大字距（下载页的 .card-no / .specs i 语言）── */
+body[data-theme="firefly"] .msg-who,
+body[data-theme="firefly"] .time-divider,
+body[data-theme="firefly"] .set-summary,
+body[data-theme="firefly"] .chat-mode-tag,
+body[data-theme="firefly"] #header .status {
+    font-family: "Cascadia Mono", "Consolas", "SFMono-Regular", monospace;
+    letter-spacing: 0.10em;
+}
+
+/* 摘要用等宽字体后变宽，必须锁单行，否则「DeepSeek · deepseek-flash」会折断组头 */
+body[data-theme="firefly"] .set-summary {
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 46%;
+}
+/* 全屏面板同样透一点天幕：设置要可读，所以比首页更不透明 */
+body[data-theme="firefly"] #settings-panel,
+body[data-theme="firefly"] #notice-panel,
+body[data-theme="firefly"] #feedback-panel,
+body[data-theme="firefly"] #cards-view,
+body[data-theme="firefly"] #pack-view,
+body[data-theme="firefly"] #plaza-view,
+body[data-theme="firefly"] #voice-view {
+    background: rgba(10, 8, 30, 0.55);
+    backdrop-filter: blur(14px) saturate(1.06);
+    -webkit-backdrop-filter: blur(14px) saturate(1.06);
+}
+body[data-theme="firefly"] #menu-drawer {
+    background: rgba(10, 8, 30, 0.58);
+    backdrop-filter: blur(14px) saturate(1.06);
+    -webkit-backdrop-filter: blur(14px) saturate(1.06);
+}
+/* 夜空里的星点：直接叠在 #bg 的多重背景上，不新增 DOM */
+body[data-theme="firefly"] #bg {
+    background:
+        radial-gradient(1.6px 1.6px at 8% 9%, rgba(255,255,255,.75), transparent 60%),
+        radial-gradient(1.2px 1.2px at 27% 5%, rgba(255,255,255,.55), transparent 60%),
+        radial-gradient(1.8px 1.8px at 41% 14%, rgba(255,255,255,.65), transparent 60%),
+        radial-gradient(1px 1px at 58% 7%, rgba(255,255,255,.45), transparent 60%),
+        radial-gradient(1.4px 1.4px at 73% 11%, rgba(255,255,255,.60), transparent 60%),
+        radial-gradient(1.1px 1.1px at 88% 6%, rgba(255,255,255,.50), transparent 60%),
+        radial-gradient(1.3px 1.3px at 16% 22%, rgba(255,255,255,.40), transparent 60%),
+        radial-gradient(1px 1px at 64% 20%, rgba(255,255,255,.35), transparent 60%),
+        radial-gradient(1.5px 1.5px at 93% 18%, rgba(255,255,255,.45), transparent 60%),
+        linear-gradient(180deg,
+            #527aa3 0%, #5f88b0 12%, #7895bd 28%, #a092ba 44%,
+            #c89abb 60%, #e5aac5 76%, #f6ccd7 92%, #f2cad3 100%);
+}
+
+/* ── 形状：圆角 → 切角（右上 18px 斜切，卡片）── */
+body[data-theme="firefly"] .am-card,
+body[data-theme="firefly"] .cv-card,
+body[data-theme="firefly"] .hm-card,
+body[data-theme="firefly"] .pz-card,
+body[data-theme="firefly"] .pv-proactive,
+body[data-theme="firefly"] .pv-identity,
+body[data-theme="firefly"] .pv-stickers,
+body[data-theme="firefly"] .app-modal,
+body[data-theme="firefly"] .rest-card {
+    border-radius: 0;
+    clip-path: polygon(0 0, calc(100% - 18px) 0, 100% 18px, 100% 100%, 0 100%);
+}
+/* 卡片顶部一条渐变线（下载页 .card::after 的语言） */
+body[data-theme="firefly"] .set-group { position: relative; }
+body[data-theme="firefly"] .set-group::after {
+    content: ""; position: absolute; left: 0; top: 0; width: 38%; height: 1px;
+    background: linear-gradient(90deg, #9fe3e4, transparent);
+    pointer-events: none;
+}
+/* 按钮：小切角 + 细白边 */
+body[data-theme="firefly"] #send-btn,
+body[data-theme="firefly"] .settings-body .set-btn-row > button,
+body[data-theme="firefly"] .menu-actions button,
+body[data-theme="firefly"] .menu-tab,
+body[data-theme="firefly"] .app-modal-btn {
+    border-radius: 0;
+    clip-path: polygon(0 0, calc(100% - 10px) 0, 100% 10px, 100% 100%, 0 100%);
+}
+/* 输入框：只留细线，不要胶囊 */
+body[data-theme="firefly"] .input-wrap input,
+body[data-theme="firefly"] .settings-body input[type="password"],
+body[data-theme="firefly"] .settings-body input[type="text"],
+body[data-theme="firefly"] .settings-body select,
+body[data-theme="firefly"] .app-modal-input {
+    border-radius: 0;
+    border: 1px solid var(--input-border);
+    background: rgba(255, 255, 255, 0.05);
+}
+/* 聊天气泡：保留圆角（贴图习惯），但收小并换描边色 */
+/* 分割线：下载页的 1px 细线语言 */
+body[data-theme="firefly"] #header,
+body[data-theme="firefly"] #input-bar,
+body[data-theme="firefly"] .menu-header,
+body[data-theme="firefly"] .settings-header,
+body[data-theme="firefly"] .cv-head {
+    border-color: rgba(255, 255, 255, 0.10);
+}
+
+/* 设置 → 外观：风格三选一 */
+.settings-body .theme-picker { display: flex; gap: 8px; }
+.settings-body .theme-picker button {
+    width: auto; flex: 1 1 0; min-width: 0; margin: 0;
+    padding: 9px 10px; border-radius: 10px;
+    border: 1px solid var(--border-mid);
+    background: var(--ctrl-bg-3); color: var(--fg-muted);
+    font-family: inherit; font-size: 0.8em; cursor: pointer;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.settings-body .theme-picker button.on {
+    border-color: var(--gold-line); color: var(--fg-accent); background: var(--gold-glow);
+}
+
+/* ── 流萤风：按钮与通知统一为「直边 + 深色玻璃」──
+   简约风的圆润是为了柔和；这套参考语言是档案/仪表盘，边缘要利落。
+   主操作（发送、保存）保留切角，其余一律直角。 */
+body[data-theme="firefly"] .home-settings,
+body[data-theme="firefly"] .home-feedback,
+body[data-theme="firefly"] .home-entry,
+body[data-theme="firefly"] .am-btn,
+body[data-theme="firefly"] .home-start,
+body[data-theme="firefly"] .menu-tab,
+body[data-theme="firefly"] .menu-actions button,
+body[data-theme="firefly"] .settings-body button,
+body[data-theme="firefly"] .settings-body .theme-picker button,
+body[data-theme="firefly"] .app-modal-btn,
+body[data-theme="firefly"] .cv-back,
+body[data-theme="firefly"] .pv-back,
+body[data-theme="firefly"] .notice-chip,
+body[data-theme="firefly"] .notice-tab,
+body[data-theme="firefly"] .pz-chip,
+body[data-theme="firefly"] .cv-card,
+body[data-theme="firefly"] .pz-card {
+    border-radius: 0;
+    clip-path: polygon(0 0, calc(100% - 10px) 0, 100% 10px, 100% 100%, 0 100%);
+    background: rgba(22, 16, 48, 0.66);
+    border: 1px solid rgba(255, 255, 255, 0.16);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    color: #fff7f9;
+}
+body[data-theme="firefly"] .home-settings:hover,
+body[data-theme="firefly"] .home-entry:hover,
+body[data-theme="firefly"] .settings-body button:hover {
+    border-color: rgba(159, 227, 228, 0.55);
+    color: #f8e8c2;
+}
+/* 主操作：切角 + 金色描边（与参考页的下载条同构） */
+body[data-theme="firefly"] #send-btn,
+body[data-theme="firefly"] .settings-body .set-btn-row > button {
+    border-radius: 0;
+    clip-path: polygon(0 0, calc(100% - 10px) 0, 100% 10px, 100% 100%, 0 100%);
+    background: linear-gradient(100deg, rgba(231, 201, 142, 0.22), rgba(231, 201, 142, 0.08));
+    border: 1px solid rgba(231, 201, 142, 0.45);
+    color: #f8e8c2;
+}
+/* 通知：直角玻璃条，左侧色条标识级别 */
+body[data-theme="firefly"] #app-toast {
+    border-radius: 0;
+    background: rgba(18, 14, 42, 0.94);
+    border: 1px solid rgba(255, 255, 255, 0.16);
+    border-left: 3px solid var(--fg-accent);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+}
+body[data-theme="firefly"] #app-toast.error { border-left-color: #ff9a8a; }
+body[data-theme="firefly"] #app-toast.success { border-left-color: #9fe3e4; }
+body[data-theme="firefly"] .app-modal {
+    border-radius: 0;
+    background: rgba(18, 14, 42, 0.94);
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
+}
+/* 设置组：直边深玻璃，顶部保留那条青绿渐变线 */
+body[data-theme="firefly"] .set-group {
+    background: rgba(20, 15, 44, 0.72);
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    border-radius: 0;
+    clip-path: polygon(0 0, calc(100% - 18px) 0, 100% 18px, 100% 100%, 0 100%);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+}
+body[data-theme="firefly"] .set-group.open { border-color: rgba(159, 227, 228, 0.40); }
+/* 输入类控件：直角细边 */
+body[data-theme="firefly"] .input-wrap input,
+body[data-theme="firefly"] .settings-body input[type="password"],
+body[data-theme="firefly"] .settings-body input[type="text"],
+body[data-theme="firefly"] .settings-body select,
+body[data-theme="firefly"] .app-modal-input {
+    border-radius: 0;
+    background: rgba(14, 10, 34, 0.55);
+    border: 1px solid rgba(255, 255, 255, 0.18);
+}
+
+/* 流萤风：其余圆角元素一并拉直（头像、圆点这类"必须是圆"的除外） */
+body[data-theme="firefly"] .am-btn,
+body[data-theme="firefly"] .home-start,
+body[data-theme="firefly"] .menu-tab,
+body[data-theme="firefly"] .guide-btn,
+body[data-theme="firefly"] .pz-more,
+body[data-theme="firefly"] .vv-btn,
+body[data-theme="firefly"] .vv-mood,
+body[data-theme="firefly"] .pv-id-upload,
+body[data-theme="firefly"] .pv-danger-btn,
+body[data-theme="firefly"] #sticker-panel {
+    border-radius: 0;
+}
+body[data-theme="firefly"] #sticker-panel {
+    border-top: 1px solid rgba(255, 255, 255, 0.16);
+    background: rgba(16, 12, 38, 0.96);
+}
+/* 登录卡片：深色玻璃 + 直角，文字提亮 */
+body[data-theme="firefly"] .am-card {
+    background: rgba(22, 16, 48, 0.72);
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+}
+body[data-theme="firefly"] .am-sub { color: #ded9ee; }
+
+/* 组头图标块：跟随直边语言（金色细框 + 直角） */
+body[data-theme="firefly"] .set-head .set-ico {
+    border-radius: 0;
+    background: rgba(231, 201, 142, 0.08);
+    border: 1px solid rgba(231, 201, 142, 0.38);
+}
+/* 设置/公告的顶栏也透明一点，让天幕透上来 */
+body[data-theme="firefly"] .settings-header,
+body[data-theme="firefly"] .notice-header,
+body[data-theme="firefly"] .menu-header,
+body[data-theme="firefly"] .cv-head {
+    background: rgba(10, 8, 30, 0.35);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+}
+
+/* 通知类（toast / 行内提示 / 弹窗）：平行四边形。
+   矩形通知在亮天幕上太像"又一张卡片"，斜边能把"系统在说话"和"卡片内容"分开；
+   左右各斜 12px，文字用 padding 补回来，避免被裁。 */
+body[data-theme="firefly"] #app-toast,
+body[data-theme="firefly"] .set-note,
+body[data-theme="firefly"] .app-modal {
+    clip-path: polygon(12px 0, 100% 0, calc(100% - 12px) 100%, 0 100%);
+    border-radius: 0;
+}
+body[data-theme="firefly"] #app-toast { padding-left: 22px; padding-right: 22px; }
+body[data-theme="firefly"] .set-note { padding-left: 18px; padding-right: 18px; }
+body[data-theme="firefly"] .app-modal { padding-left: 26px; padding-right: 26px; }
+
+/* 方形图标按钮（顶栏圆钮、返回键、关闭键）：切两个对角 → 六边形。
+   正方形在切角语言里最尴尬（只切一个角仍是"方块缺角"），对角都切才成形状。
+   切 7px 不会碰到中心图标。 */
+body[data-theme="firefly"] .home-settings,
+body[data-theme="firefly"] .cv-back,
+body[data-theme="firefly"] .pv-back,
+body[data-theme="firefly"] .settings-header button,
+body[data-theme="firefly"] .notice-close,
+body[data-theme="firefly"] .menu-header button,
+body[data-theme="firefly"] .sp-title button {
+    border-radius: 0;
+    clip-path: polygon(7px 0, 100% 0, 100% calc(100% - 7px),
+                       calc(100% - 7px) 100%, 0 100%, 0 7px);
+    background: rgba(22, 16, 48, 0.62);
+    border: 1px solid rgba(255, 255, 255, 0.18);
+}
+
+/* 输入框：六边形（左上/右下各切 12px）——与设置页方形按钮同一套对角语言。
+   右侧两个悬浮按钮在 .input-wrap 内、不在 input 上，不受裁切影响。 */
+body[data-theme="firefly"] .input-wrap input {
+    border-radius: 0;
+    clip-path: polygon(12px 0, 100% 0, 100% calc(100% - 12px),
+                       calc(100% - 12px) 100%, 0 100%, 0 12px);
+}
+
+/* ── 流萤风：全站控件去圆角 ──
+   简约风的圆角是"柔和"，这套语言是"档案/仪表盘"，所有非圆形元素一律拉直。
+   头像、状态点、轮播圆点这类**必须圆**的保持原样。 */
+body[data-theme="firefly"] textarea,
+body[data-theme="firefly"] select,
+body[data-theme="firefly"] input[type="text"],
+body[data-theme="firefly"] input[type="password"],
+body[data-theme="firefly"] input[type="email"],
+body[data-theme="firefly"] input[type="search"],
+body[data-theme="firefly"] .ui-select-btn,
+body[data-theme="firefly"] .ui-select-pop,
+body[data-theme="firefly"] .ui-select-opt,
+body[data-theme="firefly"] .btn-row button,
+body[data-theme="firefly"] .menu-content button,
+body[data-theme="firefly"] .menu-content input,
+body[data-theme="firefly"] .menu-content select,
+body[data-theme="firefly"] .vv-card,
+body[data-theme="firefly"] .vv-btn,
+body[data-theme="firefly"] .vv-dl,
+body[data-theme="firefly"] .vv-mood,
+body[data-theme="firefly"] .vv-field input,
+body[data-theme="firefly"] .cv-thumb,
+body[data-theme="firefly"] #cv-new-btn,
+body[data-theme="firefly"] #cv-plaza-btn,
+body[data-theme="firefly"] #pz-forge-btn,
+body[data-theme="firefly"] #pz-admin-btn,
+body[data-theme="firefly"] .pz-card,
+body[data-theme="firefly"] .pz-chip,
+body[data-theme="firefly"] .pz-search-row input,
+body[data-theme="firefly"] .pz-search-row select,
+body[data-theme="firefly"] .pz-search-row .ui-select-btn,
+body[data-theme="firefly"] .pv-id-upload,
+body[data-theme="firefly"] .pv-user-avatar,
+body[data-theme="firefly"] .pv-stk-item,
+body[data-theme="firefly"] .pv-id-choice,
+body[data-theme="firefly"] .pv-danger-btn,
+body[data-theme="firefly"] .notice-tip,
+body[data-theme="firefly"] .notice-body img,
+body[data-theme="firefly"] .fb-link,
+body[data-theme="firefly"] .fb-item,
+body[data-theme="firefly"] .am-card,
+body[data-theme="firefly"] #auth-forms,
+body[data-theme="firefly"] .rest-card,
+body[data-theme="firefly"] #sticker-grid img,
+body[data-theme="firefly"] .sticker-row,
+body[data-theme="firefly"] .fav-item {
+    border-radius: 0;
+}
+/* 卡片类补切角（右上），与设置组同一套 */
+body[data-theme="firefly"] .pz-card,
+body[data-theme="firefly"] .vv-card,
+body[data-theme="firefly"] .rest-card,
+body[data-theme="firefly"] .fav-item,
+body[data-theme="firefly"] .pv-proactive,
+body[data-theme="firefly"] .pv-identity,
+body[data-theme="firefly"] .pv-stickers {
+    clip-path: polygon(0 0, calc(100% - 14px) 0, 100% 14px, 100% 100%, 0 100%);
+}
+/* 文本域直角 + 细边 */
+body[data-theme="firefly"] textarea,
+body[data-theme="firefly"] .menu-content input,
+body[data-theme="firefly"] .menu-content select {
+    background: rgba(14, 10, 34, 0.55);
+    border: 1px solid rgba(255, 255, 255, 0.18);
+}
+/* 缩略图直角 */
+body[data-theme="firefly"] .cv-thumb { border-radius: 0; }
+/* 「+ 新建角色」的虚线胶囊 → 虚线直角 */
+body[data-theme="firefly"] #cv-new-btn {
+    border: 1px dashed rgba(255, 255, 255, 0.28);
+    background: rgba(22, 16, 48, 0.45);
+}
+/* 广场剩余控件 */
+body[data-theme="firefly"] .pz-chip,
+body[data-theme="firefly"] .pz-quota,
+body[data-theme="firefly"] .pz-msg button,
+body[data-theme="firefly"] .pz-sort,
+body[data-theme="firefly"] #plaza-more,
+body[data-theme="firefly"] .pz-tag {
+    border-radius: 0;
+}
+body[data-theme="firefly"] .pz-chip.active {
+    background: rgba(231, 201, 142, 0.16);
+    border: 1px solid rgba(231, 201, 142, 0.5);
+    color: #f8e8c2;
+}
+
+/* ── 流萤风：长按菜单与语音条 ── */
+body[data-theme="firefly"] #msg-long-menu {
+    border-radius: 0;
+    clip-path: polygon(0 0, calc(100% - 12px) 0, 100% 12px, 100% 100%, 0 100%);
+    background: rgba(18, 14, 42, 0.96);
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    box-shadow: 0 10px 34px rgba(6, 4, 20, 0.55);
+}
+body[data-theme="firefly"] #msg-long-menu .mlm-btn {
+    border-radius: 0;
+    clip-path: polygon(0 0, calc(100% - 8px) 0, 100% 8px, 100% 100%, 0 100%);
+    background: rgba(255, 255, 255, 0.07);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    color: #fff7f9;
+}
+body[data-theme="firefly"] #msg-long-menu .mlm-btn:hover {
+    background: rgba(231, 201, 142, 0.14);
+    border-color: rgba(231, 201, 142, 0.45);
+    color: #f8e8c2;
+}
+/* 语音条：六边形（与方形按钮同一套对角切），青绿细边表示"可播放" */
+body[data-theme="firefly"] .voice-bar {
+    border-radius: 0;
+    clip-path: polygon(6px 0, 100% 0, 100% calc(100% - 6px),
+                       calc(100% - 6px) 100%, 0 100%, 0 6px);
+    background: rgba(20, 15, 44, 0.78);
+    border: 1px solid rgba(159, 227, 228, 0.30);
+    color: #e8f6f6;
+}
+body[data-theme="firefly"] .voice-bar.playing {
+    background: rgba(159, 227, 228, 0.16);
+    border-color: rgba(159, 227, 228, 0.55);
+    color: #9fe3e4;
+}
+/* 引用条（输入框上方那条）同样直角 */
+body[data-theme="firefly"] #quote-bar {
+    border-radius: 0;
+    border-left: 3px solid var(--fg-accent);
+    background: rgba(20, 15, 44, 0.72);
+}
+/* 公告条目/分组：直角 + 切角 */
+body[data-theme="firefly"] .notice-entry,
+body[data-theme="firefly"] .notice-stale,
+body[data-theme="firefly"] .notice-group,
+body[data-theme="firefly"] .notice-badge {
+    border-radius: 0;
+}
+body[data-theme="firefly"] .notice-entry {
+    clip-path: polygon(0 0, calc(100% - 12px) 0, 100% 12px, 100% 100%, 0 100%);
+}
+/* 角色编辑页：折叠面板与图片按钮 */
+body[data-theme="firefly"] .pv-body details,
+body[data-theme="firefly"] .pv-imgedit,
+body[data-theme="firefly"] .pv-asset-ops a,
+body[data-theme="firefly"] .pv-stk-add {
+    border-radius: 0;
+}
+body[data-theme="firefly"] .pv-body details {
+    clip-path: polygon(0 0, calc(100% - 12px) 0, 100% 12px, 100% 100%, 0 100%);
+    background: rgba(20, 15, 44, 0.70);
+    border: 1px solid rgba(255, 255, 255, 0.14);
+}
+body[data-theme="firefly"] .pv-imgedit {
+    clip-path: polygon(0 0, calc(100% - 8px) 0, 100% 8px, 100% 100%, 0 100%);
+    background: rgba(18, 14, 42, 0.86);
+    border: 1px solid rgba(255, 255, 255, 0.20);
+}
+/* 编辑页顶部的品牌信息区：压一层玻璃，别让封面图的亮边直接顶到文字 */
+body[data-theme="firefly"] .pv-head { text-shadow: 0 1px 8px rgba(6, 4, 20, 0.65); }
+/* 设置页输入控件：id 选择器 (#settings-panel input…) 的优先级高于类选择器，
+   必须用同等 id 权重才压得住，否则 API Key 输入框仍是圆角（真机实测）。 */
+body[data-theme="firefly"] #settings-panel .settings-body input,
+body[data-theme="firefly"] #settings-panel .settings-body select,
+body[data-theme="firefly"] #settings-panel .settings-body textarea,
+body[data-theme="firefly"] #settings-panel .settings-body .ui-select-btn,
+body[data-theme="firefly"] #settings-panel .theme-picker button {
+    border-radius: 0;
+    background: rgba(14, 10, 34, 0.55);
+    border: 1px solid rgba(255, 255, 255, 0.18);
+}
+
+/* 首页轮播大卡：原 18px 圆角。WebView 上靠 inset(0 round 18px) 强制裁切，
+   .home-carousel 与 .carousel-track 两层都要盖，只盖外层内层仍圆。
+   切角取 22px（大卡比设置组宽，18px 在 2:1 比例上不够显眼）。 */
+body[data-theme="firefly"] .home-carousel,
+body[data-theme="firefly"] .carousel-track {
+    border-radius: 0;
+    clip-path: polygon(0 0, calc(100% - 22px) 0, 100% 22px, 100% 100%, 0 100%);
+}
+/* 右上角编辑角标：34px 方块 → 六边形。右上角切 14px 而不是 7px，
+   是为了让它的斜边与父卡缺角线平行——角标正好嵌在缺口内，不会被父级裁掉。 */
+body[data-theme="firefly"] #carousel-manage-btn {
+    border-radius: 0;
+    clip-path: polygon(7px 0, calc(100% - 14px) 0, 100% 14px,
+                       calc(100% - 7px) 100%, 0 100%, 0 7px);
+    background: rgba(14, 10, 34, 0.72);
+    border: 1px solid rgba(255, 255, 255, 0.18);
+}
+
+/* 次级页容器统一深色玻璃：.vv-card / .fb-* 等原本吃 --ctrl-bg
+   （白色 7%），压在天幕上会泛蓝灰，与设置组的深紫不在一个体系里。
+   逐个点名而不是改 --ctrl-bg 本身——那个变量还兼做分隔线颜色，
+   改成深紫会让全站冒出一堆深色横线。 */
+body[data-theme="firefly"] .vv-card,
+body[data-theme="firefly"] .vv-dl,
+body[data-theme="firefly"] .fb-link,
+body[data-theme="firefly"] .fb-item,
+body[data-theme="firefly"] .pv-body details,
+body[data-theme="firefly"] .pz-card,
+body[data-theme="firefly"] .rest-card {
+    background: rgba(20, 15, 44, 0.66);
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    border-radius: 0;
+}
+/* 反馈条目：.fb-link 有两种标签（button / a），button 会被按钮类规则套上切角，
+   a 和 .fb-item 不会 —— 同一列表里三种外观。这里统一成卡片切角。 */
+body[data-theme="firefly"] .fb-link,
+body[data-theme="firefly"] .fb-item {
+    clip-path: polygon(0 0, calc(100% - 10px) 0, 100% 10px, 100% 100%, 0 100%);
+}
+body[data-theme="firefly"] .vv-dl,
+body[data-theme="firefly"] .rest-card {
+    clip-path: polygon(0 0, calc(100% - 10px) 0, 100% 10px, 100% 100%, 0 100%);
+}
+/* 语音页按钮：原 primary/mood.on 用 #6ea8fe 亮蓝，在暖金+青绿体系里是外来色。
+   主操作改用暖金（与 --send-bg 同源），选中态用青绿（与焦点色同源）。 */
+body[data-theme="firefly"] .vv-btn.primary,
+body[data-theme="firefly"] .vv-mood.on {
+    background: rgba(231, 201, 142, 0.22);
+    color: #f8e8c2;
+    border: 1px solid rgba(231, 201, 142, 0.48);
+}
+body[data-theme="firefly"] .vv-dl-bar i { background: rgba(159, 227, 228, 0.65); }
+body[data-theme="firefly"] .vv-mood { border-radius: 0; }
+
+/* ── 流萤风：PC 宽屏（≥1100px）──
+   左栏原本吃 --panel-solid（实色 #0d1634），整块把天幕挡死。流萤风的前提是背景可见，
+   所以换半透明玻璃。状态栏同理——它是贴底的实色横条，断得比侧栏还生硬。 */
+body[data-theme="firefly"] #pc-shell {
+    background: rgba(10, 16, 42, 0.58);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+}
+body[data-theme="firefly"] #pc-statusbar {
+    background: rgba(10, 16, 42, 0.58);
+    border-top: 1px solid rgba(255, 255, 255, 0.12);
+}
+/* 右缘菜单把手：底色是白 3%，压在亮天幕上等于没有，竖排文字几乎看不见 */
+body[data-theme="firefly"] #pc-menu-handle {
+    background: rgba(20, 15, 44, 0.72);
+    border-radius: 0;
+    border-color: rgba(231, 201, 142, 0.42);
+    color: var(--fg-main);
+}
+/* 侧栏导航与联系人：圆角方块 → 直角，联系人补卡片切角 */
+body[data-theme="firefly"] .pc-nav-btn,
+body[data-theme="firefly"] .pc-contact {
+    border-radius: 0;
+}
+body[data-theme="firefly"] .pc-contact {
+    clip-path: polygon(0 0, calc(100% - 10px) 0, 100% 10px, 100% 100%, 0 100%);
+}
+body[data-theme="firefly"] .pc-contact img,
+body[data-theme="firefly"] .pc-contact .pc-avatar-ph { border-radius: 0; }
+
+/* 登录表单：index.html 顶部 <style> 里 #auth-forms input 是 id 权重，
+   必须同等 id 权重才压得住 —— 与设置页输入框同一条坑，别再踩第二次。 */
+body[data-theme="firefly"] #auth-forms input,
+body[data-theme="firefly"] #auth-forms .am-btn,
+body[data-theme="firefly"] #auth-module .am-btn {
+    border-radius: 0;
+}
+body[data-theme="firefly"] #auth-forms input {
+    background: rgba(14, 10, 34, 0.55);
+    border-color: rgba(255, 255, 255, 0.18);
+}
+
+/* 设置/公告/反馈面板：backdrop-filter 遇到 .set-group 的 clip-path 时，
+   Chromium 会把子内容当背景重复采样成一块圆角模糊色块——只在**两列**布局下必现
+   （.set-group 被拉高，内容区留出大片空白给采样），手机单列看不出来。
+   所以只在宽屏关模糊；关掉模糊后就必须把底色压深，否则底下的首页内容会透上来。 */
+@media (min-width: 720px) {
+    body[data-theme="firefly"] #settings-panel,
+    body[data-theme="firefly"] #notice-panel,
+    body[data-theme="firefly"] #feedback-panel {
+        backdrop-filter: none;
+        -webkit-backdrop-filter: none;
+        background: rgba(10, 16, 42, 0.96);
+    }
+}
+/* PC 联系人条目：白 3% 压在深紫左栏上几乎没有对比，换成同色系玻璃 */
+body[data-theme="firefly"] .pc-contact {
+    background: rgba(255, 255, 255, 0.06);
+    border-color: rgba(255, 255, 255, 0.16);
+}
+
+/* PC 宽屏：公告条不再通栏。
+   手机上是 10vh 通栏（首屏约 10%，是设计）；但到 1600px 时它变成一整块 1160×100 的
+   浅色矩形，左右两个端点正好压在「反馈」和齿轮按钮上（实测 x=400 / x=1560），
+   浅底边界形成两条竖直分界线穿过按钮——平时说不出哪里怪，凑近看才发现。
+   改成内容自适应的居中块，背景只包住文字。 */
+@media (min-width: 720px) {
+    .home-topbar .home-notice {
+        width: fit-content;
+        min-width: 320px;
+        max-width: 70%;
+        margin: 12px auto;
+        height: auto;
+        padding: 9px 24px;
+        border-radius: 999px;
+        border-bottom: none;
+        background: var(--ctrl-bg);
+    }
+}
+/* 流萤风：胶囊换切角，与全站形状语言一致 */
+body[data-theme="firefly"] .home-topbar .home-notice {
+    border-radius: 0;
+    clip-path: polygon(10px 0, 100% 0, calc(100% - 10px) 100%, 0 100%);
+}
+
+/* AI 辅助抽屉（原纠错助手的消息/提案样式）：沿用全站形状语言 */
+body[data-theme="firefly"] #assist-view {
+    background: rgba(10, 8, 30, 0.88);
+    backdrop-filter: blur(14px) saturate(1.06);
+    -webkit-backdrop-filter: blur(14px) saturate(1.06);
+}
+body[data-theme="firefly"] .av-op-tag,
+body[data-theme="firefly"] .av-diff-old,
+body[data-theme="firefly"] .av-diff-new,
+body[data-theme="firefly"] .av-btn,
+body[data-theme="firefly"] .av-inputbar input,
+body[data-theme="firefly"] .av-inputbar button,
+body[data-theme="firefly"] .av-head button,
+body[data-theme="firefly"] .assist-ico {
+    border-radius: 0;
+}

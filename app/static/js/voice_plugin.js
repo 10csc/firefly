@@ -160,8 +160,6 @@ function openVoiceView() {
     homeView.classList.remove("show");
     const cv = document.getElementById("cards-view");
     if (cv) cv.classList.remove("show");
-    const fv = document.getElementById("fix-view");
-    if (fv) fv.classList.remove("show");
     const v = document.getElementById("voice-view");
     if (!v) return;
     v.classList.add("show");

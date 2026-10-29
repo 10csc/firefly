@@ -11,7 +11,7 @@ export function openAssist(mode, file, label) {
     if (!v) return;
     document.getElementById("av-title").textContent = `✨ AI 辅助 · ${label || file}`;
     document.getElementById("av-chat").innerHTML =
-        `<div class="fix-hist">说说想把这个文件改成什么样，AI 会给出具体修改提案（应用前一定会给你看 diff）。</div>`;
+        `<div class="av-hint">说说想把这个文件改成什么样，AI 会给出具体修改提案（应用前一定会给你看 diff）。</div>`;
     document.getElementById("av-proposal").style.display = "none";
     document.getElementById("av-input").value = "";
     v.style.display = "flex";
@@ -28,22 +28,22 @@ window.closeAssist = closeAssist;
 function _avMsg(who, text) {
     const chat = document.getElementById("av-chat");
     chat.insertAdjacentHTML("beforeend",
-        `<div class="fix-msg ${who === "user" ? "me" : "ai"}"><div class="fix-who">${who === "user" ? "我" : "AI"}</div><div class="fix-text">${escapeHtml(text)}</div></div>`);
+        `<div class="av-msg ${who === "user" ? "me" : "ai"}"><div class="av-who">${who === "user" ? "我" : "AI"}</div><div class="av-text">${escapeHtml(text)}</div></div>`);
     chat.scrollTop = chat.scrollHeight;
 }
 
 function _renderProposal(changes) {
     const box = document.getElementById("av-proposal");
     box.style.display = "block";
-    box.innerHTML = `<div class="fix-proposal-title"><span>修改提案（尚未生效）</span><span class="fix-op-tag">待确认</span></div>`
-        + changes.map(c => `<div class="fix-change"><div class="fix-change-head">
-            <span class="fix-op-tag ${c.op === "append" ? "add" : "fix"}">${c.op === "append" ? "补充" : "纠正"}</span></div>
-            ${c.op === "replace" ? `<div class="fix-diff-old">− ${escapeHtml(c.old || "")}</div>` : ""}
-            <div class="fix-diff-new">+ ${escapeHtml(c.new || "")}</div>
-            <div class="fix-reason">${escapeHtml(c.reason || "")}</div></div>`).join("")
-        + `<div class="fix-proposal-actions">
-             <button class="hb-btn" type="button" id="av-discard">放弃</button>
-             <button class="hb-btn primary" type="button" id="av-apply">应用修改</button>
+    box.innerHTML = `<div class="av-prop-title"><span>修改提案（尚未生效）</span><span class="av-op-tag">待确认</span></div>`
+        + changes.map(c => `<div class="av-change"><div class="av-change-head">
+            <span class="av-op-tag ${c.op === "append" ? "add" : "correct"}">${c.op === "append" ? "补充" : "纠正"}</span></div>
+            ${c.op === "replace" ? `<div class="av-diff-old">− ${escapeHtml(c.old || "")}</div>` : ""}
+            <div class="av-diff-new">+ ${escapeHtml(c.new || "")}</div>
+            <div class="av-reason">${escapeHtml(c.reason || "")}</div></div>`).join("")
+        + `<div class="av-prop-actions">
+             <button class="av-btn" type="button" id="av-discard">放弃</button>
+             <button class="av-btn primary" type="button" id="av-apply">应用修改</button>
            </div>`;
     document.getElementById("av-discard").onclick = () => {
         _av.pending = null;
@@ -89,7 +89,7 @@ async function _avSend() {
         const d = await r.json();
         // 摘掉"正在想"
         const chat = document.getElementById("av-chat");
-        const last = chat.querySelectorAll(".fix-msg.ai");
+        const last = chat.querySelectorAll(".av-msg.ai");
         if (last.length) last[last.length - 1].remove();
         if (d.need_key) { _avMsg("ai", "需要先去 ⚙ 设置里填 API Key。"); return; }
         if (!d.ok) { _avMsg("ai", "出了点问题：" + (d.error || "")); return; }
@@ -101,7 +101,7 @@ async function _avSend() {
         }
     } catch (e) {
         const chat = document.getElementById("av-chat");
-        const last = chat.querySelectorAll(".fix-msg.ai");
+        const last = chat.querySelectorAll(".av-msg.ai");
         if (last.length) last[last.length - 1].remove();
         _avMsg("ai", "网络错误，稍后再试");
     }

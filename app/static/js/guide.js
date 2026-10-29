@@ -1,14 +1,12 @@
 // 使用引导（基础 + 深度）
 import { escapeHtml } from "./util.js";
 import { closeFeedback, closeMenu, closeSettings, openMenu, openSettings } from "./panels.js";
-import { openFixView } from "./fix.js";
 import { showChat, showHome } from "./views.js";
 
 // ═══════════════════════════════════════════
 // 使用引导（纯代码：高亮框 + 文字气泡 + CSS 呼吸边，不用任何图片）
-// 基础引导 4 步；结束后可点「深入了解」进入详细引导（设置/菜单/纠错助手）。
+// 基础引导 5 步；结束后可点「深入了解」进入详细引导（设置/菜单）。
 // ═══════════════════════════════════════════
-// 基础引导 5 步；结束后可点「深入了解」进入详细引导（设置/菜单/纠错助手）。
 // ★ 0.9.0 把 KEY 从 v1 升到 v2：引导内容变了（新增"公告与更新说明""自动修复"两步），
 //   不升 key 的话老用户永远看不到新步骤 —— 那等于没更新引导。
 const GUIDE_KEY = "firefly_guide_v2_done";

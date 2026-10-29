@@ -34,7 +34,7 @@
     html, body { height: 100%; }
     body { position: relative; overflow: hidden; }
 
-    #home-view, #app, #fix-view, #settings-panel, #notice-panel, #feedback-panel,
+    #home-view, #app, #settings-panel, #notice-panel, #feedback-panel,
     #cards-view, #pack-view, #plaza-view, #voice-view, #assist-view, #menu-overlay {
         position: absolute !important;
         left: 0 !important; right: 0 !important;
@@ -177,11 +177,6 @@
     #plaza-forge .pfc-box { flex: 0 0 340px; max-height: none; }
     #plaza-forge .pf-review { position: absolute; }
     .pf-modal-box { margin-top: 14vh; }
-    /* 设定纠错助手：头部 + 模式行 + 历史摘要 + 对话 + 提案 各自限宽 */
-    #fix-view .fix-view-header, #fix-modes, #fix-chathist, #fix-chat, #fix-proposal,
-    #fix-start-btn {
-        max-width: 900px; width: 100%; margin-left: auto; margin-right: auto;
-    }
     /* 半透明面板在 1600px 宽下"透出的背景"会被读成脏：PC 提高不透明度（保留氛围，先保可读） */
     #settings-panel, #notice-panel, #feedback-panel {
         background: rgba(16, 16, 30, 0.93);
@@ -193,19 +188,16 @@
 
     /* ── 通用收口：这些视图都是"column flex"容器，**逐个子项居中限宽** ──
        为什么用 `align-items:center` 而不是给每个子项写 `margin:0 auto`：
-       实测（`.tmp_test/fix_children.py`）发现 `#fix-chat` 明明 max-width:900 却贴在左边
-       （x=12）—— auto 外边距被别的规则吃掉了。在**容器**上居中，比逐个子项写 auto 稳。
-       `#fix-history-box` / `.fix-input-row` 这些名字第一版根本没写进规则里（全靠猜），
-       所以它们横跨 1580px；现在按实测拿到的真名收口。 */
+       实测发现子项明明 max-width:900 却贴在左边（x=12）—— auto 外边距被别的规则吃掉了。
+       在**容器**上居中，比逐个子项写 auto 稳。 */
     #settings-panel, #notice-panel, #feedback-panel, #cards-view, #voice-view,
-    #pack-view, #plaza-view, #fix-view {
+    #pack-view, #plaza-view {
         align-items: center;
     }
-    #fix-view > *, #cards-view > *, #voice-view > * {
+    #cards-view > *, #voice-view > * {
         max-width: 900px; width: 100%;
     }
-    #fix-history-box, .fix-input-row, #fix-chat, #fix-proposal, #fix-modes,
-    #fix-chathist, .fix-view-header, #settings-panel .settings-header {
+    #settings-panel .settings-header {
         max-width: 900px; width: 100%;
     }
     #settings-panel .settings-body, #notice-panel .notice-body,
@@ -320,7 +312,7 @@
     #pc-contact-new:hover { color: var(--fg-accent); background: var(--gold-glow); }
 
     /* ── 第三栏：既有视图层右移让位（同一批选择器，声明在后 ⇒ 覆盖上面的 left:0）── */
-    #home-view, #app, #fix-view, #settings-panel, #notice-panel, #feedback-panel,
+    #home-view, #app, #settings-panel, #notice-panel, #feedback-panel,
     #cards-view, #pack-view, #plaza-view, #voice-view, #assist-view, #menu-overlay {
         left: var(--pc-gutter) !important;
     }
@@ -363,7 +355,6 @@
     html.pc-menu-open #pack-view,
     html.pc-menu-open #plaza-view,
     html.pc-menu-open #voice-view,
-    html.pc-menu-open #fix-view,
     html.pc-menu-open #assist-view,
     html.pc-menu-open #settings-panel,
     html.pc-menu-open #notice-panel,

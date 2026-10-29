@@ -2015,7 +2015,7 @@ function openAssist(mode, file, label) {
     if (!v) return;
     document.getElementById("av-title").textContent = `✨ AI 辅助 · ${label || file}`;
     document.getElementById("av-chat").innerHTML =
-        `<div class="fix-hist">说说想把这个文件改成什么样，AI 会给出具体修改提案（应用前一定会给你看 diff）。</div>`;
+        `<div class="av-hint">说说想把这个文件改成什么样，AI 会给出具体修改提案（应用前一定会给你看 diff）。</div>`;
     document.getElementById("av-proposal").style.display = "none";
     document.getElementById("av-input").value = "";
     v.style.display = "flex";
@@ -2032,22 +2032,22 @@ window.closeAssist = closeAssist;
 function _avMsg(who, text) {
     const chat = document.getElementById("av-chat");
     chat.insertAdjacentHTML("beforeend",
-        `<div class="fix-msg ${who === "user" ? "me" : "ai"}"><div class="fix-who">${who === "user" ? "我" : "AI"}</div><div class="fix-text">${escapeHtml(text)}</div></div>`);
+        `<div class="av-msg ${who === "user" ? "me" : "ai"}"><div class="av-who">${who === "user" ? "我" : "AI"}</div><div class="av-text">${escapeHtml(text)}</div></div>`);
     chat.scrollTop = chat.scrollHeight;
 }
 
 function _renderProposal(changes) {
     const box = document.getElementById("av-proposal");
     box.style.display = "block";
-    box.innerHTML = `<div class="fix-proposal-title"><span>修改提案（尚未生效）</span><span class="fix-op-tag">待确认</span></div>`
-        + changes.map(c => `<div class="fix-change"><div class="fix-change-head">
-            <span class="fix-op-tag ${c.op === "append" ? "add" : "fix"}">${c.op === "append" ? "补充" : "纠正"}</span></div>
-            ${c.op === "replace" ? `<div class="fix-diff-old">− ${escapeHtml(c.old || "")}</div>` : ""}
-            <div class="fix-diff-new">+ ${escapeHtml(c.new || "")}</div>
-            <div class="fix-reason">${escapeHtml(c.reason || "")}</div></div>`).join("")
-        + `<div class="fix-proposal-actions">
-             <button class="hb-btn" type="button" id="av-discard">放弃</button>
-             <button class="hb-btn primary" type="button" id="av-apply">应用修改</button>
+    box.innerHTML = `<div class="av-prop-title"><span>修改提案（尚未生效）</span><span class="av-op-tag">待确认</span></div>`
+        + changes.map(c => `<div class="av-change"><div class="av-change-head">
+            <span class="av-op-tag ${c.op === "append" ? "add" : "correct"}">${c.op === "append" ? "补充" : "纠正"}</span></div>
+            ${c.op === "replace" ? `<div class="av-diff-old">− ${escapeHtml(c.old || "")}</div>` : ""}
+            <div class="av-diff-new">+ ${escapeHtml(c.new || "")}</div>
+            <div class="av-reason">${escapeHtml(c.reason || "")}</div></div>`).join("")
+        + `<div class="av-prop-actions">
+             <button class="av-btn" type="button" id="av-discard">放弃</button>
+             <button class="av-btn primary" type="button" id="av-apply">应用修改</button>
            </div>`;
     document.getElementById("av-discard").onclick = () => {
         _av.pending = null;
@@ -2093,7 +2093,7 @@ async function _avSend() {
         const d = await r.json();
         // 摘掉"正在想"
         const chat = document.getElementById("av-chat");
-        const last = chat.querySelectorAll(".fix-msg.ai");
+        const last = chat.querySelectorAll(".av-msg.ai");
         if (last.length) last[last.length - 1].remove();
         if (d.need_key) { _avMsg("ai", "需要先去 ⚙ 设置里填 API Key。"); return; }
         if (!d.ok) { _avMsg("ai", "出了点问题：" + (d.error || "")); return; }
@@ -2105,7 +2105,7 @@ async function _avSend() {
         }
     } catch (e) {
         const chat = document.getElementById("av-chat");
-        const last = chat.querySelectorAll(".fix-msg.ai");
+        const last = chat.querySelectorAll(".av-msg.ai");
         if (last.length) last[last.length - 1].remove();
         _avMsg("ai", "网络错误，稍后再试");
     }
@@ -7563,6 +7563,26 @@ async function checkKey() {
     try { await loadConfig(); } catch (e) { /* 服务未就绪，静默 */ }
 }
 
+// 风格三选一（设置 → 外观）。真正的切换逻辑在 views.js 的 setTheme，
+// 这里只负责把点击转过去、并让高亮跟随当前风格。
+(function initThemePicker() {
+    const box = _$("theme-picker");
+    if (!box) return;
+    const sync = (t) => {
+        box.querySelectorAll("[data-theme-pick]").forEach(b => {
+            b.classList.toggle("on", b.dataset.themePick === t);
+        });
+    };
+    box.querySelectorAll("[data-theme-pick]").forEach(b => {
+        b.addEventListener("click", () => {
+            const t = window.setTheme ? window.setTheme(b.dataset.themePick) : "dark";
+            sync(t);
+        });
+    });
+    window.__themeDidChange = sync;
+    sync(document.body.dataset.theme || "dark");
+})();
+
 // 键盘弹起时把聚焦的输入框滚到可视区中间：
 // WebView 的 adjustResize 只把面板高度压小，不会自动滚动到当前字段（真机实测：
 // 展开「自定义各阶段」后，第三个模型输入框会被键盘压住）。
@@ -9540,8 +9560,6 @@ function openVoiceView() {
     homeView.classList.remove("show");
     const cv = document.getElementById("cards-view");
     if (cv) cv.classList.remove("show");
-    const fv = document.getElementById("fix-view");
-    if (fv) fv.classList.remove("show");
     const v = document.getElementById("voice-view");
     if (!v) return;
     v.classList.add("show");
@@ -9721,450 +9739,6 @@ async function voiceRestoreBarsAuto() {
 window.voiceRestoreBarsAuto = voiceRestoreBarsAuto;
 
 
-/* ── 来源：js/fix.js ── */
-// 设定纠错助手视图
-
-// ═══════════════════════════════════════════
-// 设定纠错助手（对齐 → 开始修改 → diff 审批 → 应用/回滚）
-// ═══════════════════════════════════════════
-const FIX_FILE_LABELS = {
-    "core.md": "核心设定", "identity.md": "关系与习惯", "sms_samples.md": "短信风格",
-    "用户设定.md": "用户补充设定", "memory.md": "过往摘要", "手账.md": "手账",
-};
-let FIX_MODE = "story";   // 首页卡片选择的模式；进入聊天后跟随最近使用模式
-let _fixBusy = false;
-
-
-function fixModeLabel(mode) { return MODE_NAMES[mode] || mode; }
-
-function openFixView() {
-    // F-6.1（2026-09-14）：进入纠错页跟随当前聊天包——原来 FIX_MODE 恒为初值 story，
-    // 用户在 haruno/自建包里点「指出问题」，读的是 story 的历史与设定、写的也是 story。
-    // 页内模式按钮仍可手动切换（setFixMode 语义不变）。
-    if (PRESET_MODES.some(m => m.id === CURRENT_MODE)) FIX_MODE = CURRENT_MODE;
-    document.querySelectorAll("#fix-view .fix-mode").forEach(b => {
-        b.classList.toggle("active", b.dataset.mode === FIX_MODE);
-    });
-    homeView.classList.remove("show");
-    appView.style.display = "none";
-    const view = document.getElementById("fix-view");
-    if (view) view.classList.add("show");
-    try { if (location.hash !== "#fix") history.pushState({fix: true}, "", "#fix"); } catch (e) {}
-    loadFixStatus();
-    loadFixChatHistory();
-    const input = document.getElementById("fix-input");
-    // 引导教程演示纠错页时不要弹键盘（会遮住底部讲解气泡）
-    if (input && !document.getElementById("guide-mask")) setTimeout(() => input.focus(), 300);
-}
-window.openFixView = openFixView;
-
-function closeFixView() {
-    const view = document.getElementById("fix-view");
-    if (view) view.classList.remove("show");
-    showHome();
-    try { if (location.hash === "#fix") history.replaceState({}, "", location.pathname + location.search); } catch (e) {}
-}
-window.closeFixView = closeFixView;
-
-function toggleFixForms() {
-    // 兼容旧入口：现在一律打开独立全屏页
-    openFixView();
-}
-window.toggleFixForms = toggleFixForms;
-
-function setFixMode(mode) {
-    // 模式校验按预设包注册表（不写死两模式）
-    if (!PRESET_MODES.some(m => m.id === mode)) mode = (PRESET_MODES[0] && PRESET_MODES[0].id) || "story";
-    FIX_MODE = mode;
-    document.querySelectorAll("#fix-view .fix-mode").forEach(b => {
-        b.classList.toggle("active", b.dataset.mode === FIX_MODE);
-    });
-    loadFixStatus();
-    loadFixChatHistory();
-}
-window.setFixMode = setFixMode;
-
-function _fixChatScroll() {
-    const el = document.getElementById("fix-chat");
-    if (el) el.scrollTop = el.scrollHeight;
-}
-
-function _setFixStatus(stage) {
-    const dot = document.getElementById("fix-status-dot");
-    const text = document.getElementById("fix-view-status");
-    if (!dot || !text) return;
-    const map = {
-        idle:     ["ok", "状态正常 · 等待你描述问题"],
-        aligning: ["busy", "AI 正在和你对齐问题…"],
-        ready:    ["ready", "已对齐 · 点「开始修改」生成清单"],
-        proposal: ["warn", "方案待确认 · 点「应用修改」才生效"],
-        busy:     ["busy", "AI 正在处理，请稍候…"],
-        error:    ["error", "处理出错 · 请重试"],
-    };
-    const v = map[stage] || map.idle;
-    dot.className = "fix-dot " + v[0];
-    text.textContent = v[1];
-}
-
-function _fixHistText(m) {
-    if (!m) return "";
-    if (m.type === "sticker") return "[表情包：" + (m.label || m.path || m.file || "") + "]";
-    if (m.type === "narration") return (m.text || m.content || "");
-    return m.content || m.text || "";
-}
-
-function _fixHistMsgHtml(m) {
-    const me = m.who === "user";
-    return `<div class="fix-hist-msg ${me ? "me" : ""}">
-        <div class="fix-hist-line">
-            <span class="fix-hist-who">${me ? "我" : escapeHtml(charName())}</span>
-            <span class="fix-hist-time">${escapeHtml((m.time || "").slice(5, 16))}</span>
-        </div>
-        <div class="fix-hist-text">${escapeHtml(_fixHistText(m))}</div>
-    </div>`;
-}
-
-async function loadFixChatHistory() {
-    const meta = document.getElementById("fix-chathist-meta");
-    const count = document.getElementById("fix-chathist-count");
-    const list = document.getElementById("fix-chathist-list");
-    if (!list) return;
-    try {
-        const resp = await fetch(`/history?limit=20&mode=${encodeURIComponent(FIX_MODE)}`);
-        const data = await resp.json();
-        const msgs = Array.isArray(data.messages) ? data.messages : [];
-        const total = data.total != null ? data.total : msgs.length;
-        const label = fixModeLabel(FIX_MODE);
-        if (meta) meta.textContent = msgs.length ? `${label} · 最近 ${msgs.length} 条` : `${label} · 暂无聊天记录`;
-        if (count) count.textContent = msgs.length ? `显示最近 ${msgs.length} 条 / 共 ${total} 条` : "这个模式还没有聊天记录";
-        list.innerHTML = msgs.length
-            ? msgs.map(_fixHistMsgHtml).join("")
-            : `<div class="fix-hist">这个模式还没有聊天记录；先去聊几句，再来描述问题会更方便。</div>`;
-    } catch (e) {
-        if (count) count.textContent = "聊天记录读取失败";
-        list.innerHTML = `<div class="fix-hist">聊天记录读取失败（本地后端未就绪时会这样，不影响对齐功能）</div>`;
-    }
-}
-window.loadFixChatHistory = loadFixChatHistory;
-
-function _fixMsgHtml(m) {
-    const who = m.who === "user" ? "我" : "设定助手";
-    const cls = m.who === "user" ? "me" : "ai";
-    const opts = (m.options || []).map((o, i) =>
-        `<button class="fix-opt" data-opt="${escapeHtml(o)}">${escapeHtml(o)}</button>`).join("");
-    return `<div class="fix-msg ${cls}"><div class="fix-who">${who}</div>`
-         + `<div class="fix-text">${escapeHtml(m.text)}</div>`
-         + (opts ? `<div class="fix-options">${opts}</div>` : "") + `</div>`;
-}
-
-function _fixChangeHtml(ch) {
-    const tag = ch.op === "append" ? "补充" : "纠正";
-    const oldHtml = ch.op === "replace"
-        ? `<div class="fix-diff-old">− ${escapeHtml(ch.old)}</div>` : "";
-    return `<div class="fix-change">
-        <div class="fix-change-head">
-            <span class="fix-file-tag">${escapeHtml(FIX_FILE_LABELS[ch.file] || ch.file)}</span>
-            <span class="fix-op-tag ${ch.op === "append" ? "add" : "fix"}">${tag}</span>
-        </div>
-        ${oldHtml}
-        <div class="fix-diff-new">+ ${escapeHtml(ch.new)}</div>
-        <div class="fix-reason">${escapeHtml(ch.reason || "")}</div>
-    </div>`;
-}
-
-function _renderFix(status) {
-    const chat = document.getElementById("fix-chat");
-    const proposal = document.getElementById("fix-proposal");
-    const startBtn = document.getElementById("fix-start-btn");
-    const historyBox = document.getElementById("fix-history-box");
-    if (!chat || !proposal || !startBtn) return;
-
-    _setFixStatus(status.stage || "idle");
-
-    if (Array.isArray(status.messages) && status.messages.length) {
-        chat.innerHTML = status.messages.map(_fixMsgHtml).join("");
-        _fixChatScroll();
-    } else {
-        chat.innerHTML = `<div class="fix-empty">先说说角色哪里说得不对，我会和你确认后再生成修改方案。</div>`
-                       + `<div class="fix-hint">例如：角色还说自己在医疗舱，但设定里已经恢复得不错、能开机甲了。</div>`;
-    }
-
-    // 选项 chips：只在没有 pending 时启用（有 pending 时是改方案，选项已过期）
-    chat.querySelectorAll(".fix-opt").forEach(btn => {
-        btn.addEventListener("click", () => {
-            if (_fixBusy || status.stage === "proposal") return;
-            sendFixMessage(btn.dataset.opt);
-        });
-    });
-
-    startBtn.style.display = (status.stage === "ready") ? "" : "none";
-    startBtn.disabled = !!_fixBusy;
-
-    // 提案面板
-    if (status.stage === "proposal" && status.proposal) {
-        const p = status.proposal;
-        const changes = Array.isArray(p.changes) ? p.changes : [];
-        proposal.style.display = "block";
-        proposal.innerHTML = `<div class="fix-proposal-title"><span>修改清单（尚未生效）</span><span class="fix-op-tag">待确认</span></div>`
-            + `<div class="fix-diag">${escapeHtml(p.diagnosis || "已生成修改方案，请确认后应用。")}</div>`
-            + (changes.length ? changes.map(_fixChangeHtml).join("") : `<div class="fix-nochange">这次不需要修改设定文件。</div>`)
-            + `<div class="fix-proposal-actions">
-                 <button class="hb-btn" type="button" onclick="dismissFix()">放弃</button>
-                 ${changes.length ? `<button class="hb-btn primary" type="button" onclick="applyFix()">应用修改</button>` : ""}
-               </div>
-               <div class="fix-refine-hint">想调整某一条？直接在下方说，例如：第二条先别改，橡木蛋糕卷那段保留。</div>`;
-    } else {
-        proposal.style.display = "none";
-    }
-
-    // 修正记录：列表 + 静态撤销按钮（全屏页固定位置，便于拇指操作）
-    const hist = Array.isArray(status.history) ? status.history : [];
-    const historyList = document.getElementById("fix-history-list") || historyBox;
-    let histHtml = "";
-    if (hist.length) {
-        histHtml = hist.map(h => `<div class="fix-hist">v${h.v} · ${escapeHtml(h.action === "apply" ? "应用" : "回滚")} · ${escapeHtml((h.time || "").slice(5, 16))}${h.files ? " · " + escapeHtml(h.files.join("、")) : ""}</div>`).join("");
-    } else {
-        histHtml = `<div class="fix-hist">还没有修改记录</div>`;
-    }
-    historyList.innerHTML = histHtml;
-    const rb = document.getElementById("fix-rollback-btn");
-    if (rb) {
-        rb.style.display = status.active_version > 0 ? "" : "none";
-        rb.textContent = `撤销上次修改（回到 v${Math.max(0, status.active_version - 1)}）`;
-    }
-}
-
-async function loadFixStatus(force) {
-    if (_fixBusy && !force) return;
-    try {
-        const resp = await fetch(`/setting-fix/status?mode=${encodeURIComponent(FIX_MODE)}`);
-        const data = await resp.json();
-        if (data.ok) _renderFix(data);
-        else if (data.error) _setFixStatus("error");
-    } catch (e) { _setFixStatus("error"); }
-}
-window.loadFixStatus = loadFixStatus;
-
-async function sendFixMessage(text) {
-    text = (text || "").trim();
-    if (!text || _fixBusy) return;
-    const input = document.getElementById("fix-input");
-    if (input) input.value = "";
-    _fixBusy = true;
-    _setFixStatus("busy");
-    const sendBtn = document.getElementById("fix-send-btn");
-    if (sendBtn) sendBtn.disabled = true;
-    const chat = document.getElementById("fix-chat");
-    if (chat) {
-        chat.insertAdjacentHTML("beforeend", _fixMsgHtml({who: "user", text: text}));
-        _fixChatScroll();
-    }
-    try {
-        const resp = await fetch("/setting-fix/message", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ mode: FIX_MODE, text: text }),
-        });
-        const data = await resp.json();
-        if (data.ok) {
-            await loadFixStatus(true);
-        } else if (data.need_key) {
-            showToast("请先到 ⚙ 设置里填写 API Key");
-            openSettings();
-        } else {
-            // A3：LLM 错误分类 → 人话提示（与聊天页 ERROR_TIPS 同口径：同一错误码全仓同一句话）
-            const FIX_ERROR_TIPS = {
-                key_invalid: "你的 API Key 无效或已过期：请到设置里重新粘贴 Key（本机对话与角色卡不受影响）",
-                no_balance: "你的上游账号余额不足：请到所选供应商的控制台充值后重试（与本机数据、角色卡无关）",
-                rate_limit: "这是上游接口的临时限制，不是你的卡或操作的问题：约 1 分钟后会自动重试",
-                network: "本机网络或接口地址连不上：请检查网络后重试（不是账号问题，数据不受影响）",
-                server_error: "上游服务临时不可用，不是你那边的问题：稍后重试即可，不必改 Key",
-                relay_timeout: "这次请求超时了，不是你那边的问题：请确认应用在前台、网络正常后重试",
-                timeout: "这次生成超过了本轮时间上限，不是你那边的问题：稍等再发一次即可",
-                cooldown: "上游服务波动中，不是你那边的问题：稍等约 1 分钟再试",
-                quota_exhausted: "今日服务器托管额度已用完，可在设置中切换为自带 Key 模式",
-                unknown: "发生了未归类的问题：请重试一次；仍失败请在「反馈」里附诊断包",
-            };
-            showToast(data.error_code
-                ? (FIX_ERROR_TIPS[data.error_code] || FIX_ERROR_TIPS.unknown)
-                : (data.error || "分析失败，请稍后再试"));
-        }
-    } catch (e) {
-        console.warn("[fix] 网络请求失败", e);
-        showToast("本机网络或接口地址连不上：请检查网络后重试（不是账号问题，数据不受影响）");
-    } finally {
-        _fixBusy = false;
-        if (sendBtn) sendBtn.disabled = false;
-    }
-}
-window.sendFixMessage = sendFixMessage;
-
-async function startFix() {
-    if (_fixBusy) return;
-    _fixBusy = true;
-    _setFixStatus("busy");
-    const btn = document.getElementById("fix-start-btn");
-    if (btn) { btn.disabled = true; btn.textContent = "正在生成修改清单…"; }
-    try {
-        const resp = await fetch("/setting-fix/start", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ mode: FIX_MODE }),
-        });
-        const data = await resp.json();
-        if (data.ok) {
-            showToast("修改清单已生成，确认后再点应用");
-            await loadFixStatus(true);
-        } else if (data.need_key) {
-            showToast("请先到 ⚙ 设置里填写 API Key");
-            openSettings();
-        } else {
-            showToast(data.error || "生成失败，请稍后再试");
-        }
-    } catch (e) {
-        console.warn("[fix] 网络请求失败", e);
-        showToast("本机网络或接口地址连不上：请检查网络后重试（不是账号问题，数据不受影响）");
-    } finally {
-        _fixBusy = false;
-        if (btn) { btn.disabled = false; btn.textContent = "开始修改"; }
-    }
-}
-window.startFix = startFix;
-
-async function applyFix() {
-    if (_fixBusy) return;
-    _fixBusy = true;
-    try {
-        const resp = await fetch("/setting-fix/apply", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ mode: FIX_MODE, session_id: SESSION_ID }),
-        });
-        const data = await resp.json();
-        if (data.ok) {
-            showToast(data.message || "修改已生效");
-            await loadFixStatus(true);
-            loadFixChatHistory();
-        } else {
-            showToast(data.error || "应用失败");
-        }
-    } catch (e) {
-        console.warn("[fix] 网络请求失败", e);
-        showToast("本机网络或接口地址连不上：请检查网络后重试（不是账号问题，数据不受影响）");
-    } finally {
-        _fixBusy = false;
-    }
-}
-window.applyFix = applyFix;
-
-async function dismissFix() {
-    if (_fixBusy) return;
-    _fixBusy = true;
-    try {
-        const resp = await fetch("/setting-fix/dismiss", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ mode: FIX_MODE }),
-        });
-        const data = await resp.json();
-        showToast(data.ok ? "已放弃本次修改方案" : (data.error || "操作失败"));
-        await loadFixStatus(true);
-    } catch (e) {
-        console.warn("[fix] 网络请求失败", e);
-        showToast("本机网络或接口地址连不上：请检查网络后重试（不是账号问题，数据不受影响）");
-    } finally {
-        _fixBusy = false;
-    }
-}
-window.dismissFix = dismissFix;
-
-async function rollbackFix() {
-    const ok = await uiConfirm({
-        title: "撤销上次设定修改？",
-        body: "将恢复到上一个版本，对话数据不受影响。",
-        confirmText: "撤销",
-    });
-    if (!ok) return;
-    if (_fixBusy) return;
-    _fixBusy = true;
-    try {
-        const resp = await fetch("/setting-fix/rollback", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ mode: FIX_MODE }),
-        });
-        const data = await resp.json();
-        if (data.ok) showToast("已撤销，设定恢复到上一版本");
-        else showToast(data.error || "撤销失败");
-        await loadFixStatus(true);
-    } catch (e) {
-        console.warn("[fix] 网络请求失败", e);
-        showToast("本机网络或接口地址连不上：请检查网络后重试（不是账号问题，数据不受影响）");
-    } finally {
-        _fixBusy = false;
-    }
-}
-window.rollbackFix = rollbackFix;
-
-async function resetFix() {
-    const ok = await uiConfirm({
-        title: "清空当前问题？",
-        body: "问题描述和待确认方案会清空；已应用的修改记录保留。",
-        confirmText: "清空",
-        danger: true,
-    });
-    if (!ok) return;
-    _fixBusy = true;
-    try {
-        const resp = await fetch("/setting-fix/reset", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ mode: FIX_MODE }),
-        });
-        const data = await resp.json();
-        showToast(data.ok ? "已清空当前问题" : (data.error || "操作失败"));
-        await loadFixStatus(true);
-    } catch (e) {
-        console.warn("[fix] 网络请求失败", e);
-        showToast("本机网络或接口地址连不上：请检查网络后重试（不是账号问题，数据不受影响）");
-    } finally {
-        _fixBusy = false;
-    }
-}
-window.resetFix = resetFix;
-
-// 模式按钮按预设包注册表动态渲染（容器在 index.html 留空，此处填充）
-function renderFixModes() {
-    const box = document.getElementById("fix-modes");
-    if (!box) return;
-    box.innerHTML = "";
-    for (const m of PRESET_MODES) {
-        const b = document.createElement("button");
-        b.className = "fix-mode" + (m.id === FIX_MODE ? " active" : "");
-        b.type = "button";
-        b.dataset.mode = m.id;
-        b.textContent = m.name || m.id;
-        b.addEventListener("click", () => setFixMode(m.id));
-        box.appendChild(b);
-    }
-}
-window.renderFixModes = renderFixModes;   // loadModes 完成后由 views.js 调用重渲染（ESM 循环规避）
-
-(function initFixModule() {
-    const input = document.getElementById("fix-input");
-    const sendBtn = document.getElementById("fix-send-btn");
-    if (input && sendBtn) {
-        sendBtn.addEventListener("click", () => sendFixMessage(input.value));
-        input.addEventListener("keydown", e => {
-            if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendFixMessage(input.value); }
-        });
-    }
-    // 模式按钮由 loadModes 完成后桥调 window.renderFixModes() 渲染
-    // （不可在此直接调：bundle 拼接顺序 fix 段在 views 段前，PRESET_MODES 此时 TDZ 未初始化）
-    const histRefresh = document.getElementById("fix-chathist-refresh");
-    if (histRefresh) histRefresh.addEventListener("click", loadFixChatHistory);})();
-
-
 /* ── 来源：js/views.js ── */
 // 视图切换：首页 / 聊天 / 轮播 / 主题 / 界面缩放 / 粒子与降级开关
 
@@ -10199,23 +9773,45 @@ if (uiSlider) {
 }
 
 // ═══════════════════════════════════════════
-// 配色切换（暗色 / 游戏亮色，首页右上角）
+// 风格切换（三态：dark 简约暗 / light 简约亮 / firefly 流萤）
+// `body[data-theme]` 是唯一事实源；`theme-light` class 保留 —— style.css 里既有的
+// 亮色规则全部按它判定，不动它们。首页右上角按钮仍是"日/夜"快捷切换，
+// 三选一的完整入口在设置 → 外观。
 // ═══════════════════════════════════════════
-function toggleTheme() {
-    const light = document.body.classList.toggle("theme-light");
-    try { localStorage.setItem("theme", light ? "light" : "dark"); } catch (e) {}
+const THEMES = ["dark", "light", "firefly"];
+const THEME_LABELS = { dark: "简约 · 暗", light: "简约 · 亮", firefly: "流萤" };
+
+function currentTheme() {
+    return document.body.dataset.theme || "dark";
+}
+
+function setTheme(name) {
+    const t = THEMES.includes(name) ? name : "dark";
+    document.body.dataset.theme = t;
+    document.body.classList.toggle("theme-light", t === "light");
+    try { localStorage.setItem("theme", t); } catch (e) {}
+    // 首页按钮图标表达的是"点下去会变成什么"：亮色 → 月亮，其余 → 太阳
+    // 2026-10-30：PNG 换成同一套线性 SVG（PNG 与全站图标语言不一致）
     const icon = document.getElementById("theme-icon");
-    if (icon) icon.src = light ? "assets/theme_moon.png" : "assets/theme_sun.png";
+    if (icon) {
+        const use = icon.querySelector("use");
+        if (use) use.setAttribute("href", t === "light" ? "#i-moon" : "#i-sun");
+    }
+    try { window.__themeDidChange && window.__themeDidChange(t); } catch (e) {}
+    return t;
+}
+window.setTheme = setTheme;
+
+function toggleTheme() {
+    // 快捷按钮只在明/暗之间切；流萤风请从设置页选（否则三态循环的图标无法自解释）
+    setTheme(currentTheme() === "light" ? "dark" : "light");
 }
 window.toggleTheme = toggleTheme;
+
 (function applyTheme() {
     let t = "dark";
     try { t = localStorage.getItem("theme") || "dark"; } catch (e) {}
-    if (t === "light") {
-        document.body.classList.add("theme-light");
-        const icon = document.getElementById("theme-icon");
-        if (icon) icon.src = "assets/theme_moon.png";
-    }
+    setTheme(t);   // 旧值 "light"/"dark" 原样可用；未知值回落 dark
 })();
 
 // ═══ 萤火粒子开关（5.1：设置 → 外观；关闭省电）+ 低端机降级（5.5）═══
@@ -10345,7 +9941,6 @@ async function loadModes() {
     _applyMode(pick);
     renderModeCards();
     applyModeBranding();
-    try { window.renderFixModes && window.renderFixModes(); } catch (e) {}   // 纠错页模式按钮随注册表刷新
 }
 
 // 包资产编辑后强制重拉注册表（panels.js 角色包管理调用）
@@ -10445,8 +10040,6 @@ function openPackView(mode, from) {
     homeView.classList.remove("show");
     const cv = document.getElementById("cards-view");
     if (cv) cv.classList.remove("show");
-    const fixView = document.getElementById("fix-view");
-    if (fixView) fixView.classList.remove("show");
     const v = document.getElementById("pack-view");
     if (!v) return;
     v.classList.add("show");
@@ -10466,8 +10059,6 @@ window.closePackView = closePackView;
 // ── 角色卡管理页（全屏：卡片列表 → 点卡进详情编辑）──
 function openCardsView() {
     homeView.classList.remove("show");
-    const fixView = document.getElementById("fix-view");
-    if (fixView) fixView.classList.remove("show");
     const v = document.getElementById("cards-view");
     if (!v) return;
     v.classList.add("show");
@@ -10734,8 +10325,6 @@ function applyModeBranding() {
 }
 
 function showHome() {
-    const fixView = document.getElementById("fix-view");
-    if (fixView) fixView.classList.remove("show");
     homeView.classList.add("show");
     appView.style.display = "none";     // 首页独立视图：真正隐藏聊天页（避免半透明透视）
     closeMenu();
@@ -10782,7 +10371,6 @@ async function showChat() {
         // 进聊天页/模式切换成功后：补一次云端同步（不 await 不阻塞页面；节流期内自动跳过）
         try { window.autoSyncNow && window.autoSyncNow(); } catch (e) {}
     }
-    const fixView = document.getElementById("fix-view");    if (fixView) fixView.classList.remove("show");
     homeView.classList.remove("show");
     appView.style.display = "flex";     // 恢复聊天页
     stopCarousel();   // 聊天页轮播不可见，停止自动轮播（避免返回首页时位置已乱）
@@ -10957,7 +10545,6 @@ carouselTrack.addEventListener("wheel", (e) => {
 document.addEventListener("DOMContentLoaded", async () => {
     await loadModes();   // 先拉预设包清单（渲染轮播/大卡/角色标识），再决定进哪个视图
     if (location.hash === "#chat") showChat();
-    else if (location.hash === "#fix") openFixView();
     // 桌面双栏（≥1100px）：默认直接进聊天，首页降级为侧栏「首页」视图
     else if (window.matchMedia && matchMedia("(min-width:1100px)").matches) showChat();
     else showHome();
@@ -11326,9 +10913,8 @@ function startRelay() {
 
 // ═══════════════════════════════════════════
 // 使用引导（纯代码：高亮框 + 文字气泡 + CSS 呼吸边，不用任何图片）
-// 基础引导 4 步；结束后可点「深入了解」进入详细引导（设置/菜单/纠错助手）。
+// 基础引导 5 步；结束后可点「深入了解」进入详细引导（设置/菜单）。
 // ═══════════════════════════════════════════
-// 基础引导 5 步；结束后可点「深入了解」进入详细引导（设置/菜单/纠错助手）。
 // ★ 0.9.0 把 KEY 从 v1 升到 v2：引导内容变了（新增"公告与更新说明""自动修复"两步），
 //   不升 key 的话老用户永远看不到新步骤 —— 那等于没更新引导。
 const GUIDE_KEY = "firefly_guide_v2_done";
@@ -11605,7 +11191,6 @@ async function checkWake() {
 checkWake();
 checkKey().then(() => { loadHistory(); });
 initAssets();   // 服务器模式：已有 token 时立即资产本地化（未登录静默失败，登录后 initAuth 会再触发）
-loadFixStatus();   // 设定纠错助手：恢复多轮对齐/待确认方案（本地与服务器模式都可用）
 // 公告通道**不在这里启动**：由 js/notice.js 自己挂 DOMContentLoaded（原因见该文件末尾的说明
 // —— bundle 单作用域，从 main 顶层调进去会撞 TDZ，把 notice 整块静默打死）。
 if (IS_SERVER) startRelay();   // relay 引擎仅服务器模式（本地为 direct 直发）

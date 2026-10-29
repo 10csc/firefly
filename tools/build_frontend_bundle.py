@@ -72,7 +72,7 @@ ORDER = ["state", "util", "session_crypto", "ui_select", "imgzip", "api",
          "panels/plaza_admin",
          "settings", "update", "sync",
          "chat_render", "chat", "chat_media", "chat_history", "voice_plugin",
-         "fix", "views", "proactive", "relay", "guide", "main", "hotupdate", "notice",
+         "views", "proactive", "relay", "guide", "main", "hotupdate", "notice",
          "diag"]
 
 # 不参与 bundle 的 js 模块名（写模块名，不带 .js，子目录用相对路径；各自有独立加载方式）：

@@ -6,7 +6,6 @@ import { closeMenu, openSettings } from "./panels.js";
 import { renderMessages, scrollToBottom } from "./chat_render.js";
 import { resetBatchWindow, _clearQuote } from "./chat.js";
 import { loadHistory } from "./chat_history.js";
-import { openFixView } from "./fix.js";
 import { initAssets } from "./relay.js";
 import { uiSelectEnhance } from "./ui_select.js";
 
@@ -41,23 +40,45 @@ if (uiSlider) {
 }
 
 // ═══════════════════════════════════════════
-// 配色切换（暗色 / 游戏亮色，首页右上角）
+// 风格切换（三态：dark 简约暗 / light 简约亮 / firefly 流萤）
+// `body[data-theme]` 是唯一事实源；`theme-light` class 保留 —— style.css 里既有的
+// 亮色规则全部按它判定，不动它们。首页右上角按钮仍是"日/夜"快捷切换，
+// 三选一的完整入口在设置 → 外观。
 // ═══════════════════════════════════════════
-function toggleTheme() {
-    const light = document.body.classList.toggle("theme-light");
-    try { localStorage.setItem("theme", light ? "light" : "dark"); } catch (e) {}
+export const THEMES = ["dark", "light", "firefly"];
+export const THEME_LABELS = { dark: "简约 · 暗", light: "简约 · 亮", firefly: "流萤" };
+
+export function currentTheme() {
+    return document.body.dataset.theme || "dark";
+}
+
+export function setTheme(name) {
+    const t = THEMES.includes(name) ? name : "dark";
+    document.body.dataset.theme = t;
+    document.body.classList.toggle("theme-light", t === "light");
+    try { localStorage.setItem("theme", t); } catch (e) {}
+    // 首页按钮图标表达的是"点下去会变成什么"：亮色 → 月亮，其余 → 太阳
+    // 2026-10-30：PNG 换成同一套线性 SVG（PNG 与全站图标语言不一致）
     const icon = document.getElementById("theme-icon");
-    if (icon) icon.src = light ? "assets/theme_moon.png" : "assets/theme_sun.png";
+    if (icon) {
+        const use = icon.querySelector("use");
+        if (use) use.setAttribute("href", t === "light" ? "#i-moon" : "#i-sun");
+    }
+    try { window.__themeDidChange && window.__themeDidChange(t); } catch (e) {}
+    return t;
+}
+window.setTheme = setTheme;
+
+function toggleTheme() {
+    // 快捷按钮只在明/暗之间切；流萤风请从设置页选（否则三态循环的图标无法自解释）
+    setTheme(currentTheme() === "light" ? "dark" : "light");
 }
 window.toggleTheme = toggleTheme;
+
 (function applyTheme() {
     let t = "dark";
     try { t = localStorage.getItem("theme") || "dark"; } catch (e) {}
-    if (t === "light") {
-        document.body.classList.add("theme-light");
-        const icon = document.getElementById("theme-icon");
-        if (icon) icon.src = "assets/theme_moon.png";
-    }
+    setTheme(t);   // 旧值 "light"/"dark" 原样可用；未知值回落 dark
 })();
 
 // ═══ 萤火粒子开关（5.1：设置 → 外观；关闭省电）+ 低端机降级（5.5）═══
@@ -187,7 +208,6 @@ export async function loadModes() {
     _applyMode(pick);
     renderModeCards();
     applyModeBranding();
-    try { window.renderFixModes && window.renderFixModes(); } catch (e) {}   // 纠错页模式按钮随注册表刷新
 }
 
 // 包资产编辑后强制重拉注册表（panels.js 角色包管理调用）
@@ -287,8 +307,6 @@ function openPackView(mode, from) {
     homeView.classList.remove("show");
     const cv = document.getElementById("cards-view");
     if (cv) cv.classList.remove("show");
-    const fixView = document.getElementById("fix-view");
-    if (fixView) fixView.classList.remove("show");
     const v = document.getElementById("pack-view");
     if (!v) return;
     v.classList.add("show");
@@ -308,8 +326,6 @@ window.closePackView = closePackView;
 // ── 角色卡管理页（全屏：卡片列表 → 点卡进详情编辑）──
 function openCardsView() {
     homeView.classList.remove("show");
-    const fixView = document.getElementById("fix-view");
-    if (fixView) fixView.classList.remove("show");
     const v = document.getElementById("cards-view");
     if (!v) return;
     v.classList.add("show");
@@ -576,8 +592,6 @@ export function applyModeBranding() {
 }
 
 export function showHome() {
-    const fixView = document.getElementById("fix-view");
-    if (fixView) fixView.classList.remove("show");
     homeView.classList.add("show");
     appView.style.display = "none";     // 首页独立视图：真正隐藏聊天页（避免半透明透视）
     closeMenu();
@@ -624,7 +638,6 @@ export async function showChat() {
         // 进聊天页/模式切换成功后：补一次云端同步（不 await 不阻塞页面；节流期内自动跳过）
         try { window.autoSyncNow && window.autoSyncNow(); } catch (e) {}
     }
-    const fixView = document.getElementById("fix-view");    if (fixView) fixView.classList.remove("show");
     homeView.classList.remove("show");
     appView.style.display = "flex";     // 恢复聊天页
     stopCarousel();   // 聊天页轮播不可见，停止自动轮播（避免返回首页时位置已乱）
@@ -799,7 +812,6 @@ carouselTrack.addEventListener("wheel", (e) => {
 document.addEventListener("DOMContentLoaded", async () => {
     await loadModes();   // 先拉预设包清单（渲染轮播/大卡/角色标识），再决定进哪个视图
     if (location.hash === "#chat") showChat();
-    else if (location.hash === "#fix") openFixView();
     // 桌面双栏（≥1100px）：默认直接进聊天，首页降级为侧栏「首页」视图
     else if (window.matchMedia && matchMedia("(min-width:1100px)").matches) showChat();
     else showHome();

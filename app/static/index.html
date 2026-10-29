@@ -7,7 +7,7 @@
      聊天输入栏会被键盘盖住（真机 2026-10-30 确认；旧 WebView 忽略本属性，行为不变）。 -->
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content">
 <title>Firefly</title>
-<link rel="stylesheet" href="style.css?v=47afeae8">
+<link rel="stylesheet" href="style.css?v=4f4fd954">
 <style>
 /* 服务器版：轮播图下登录/用户模块 */
 /* 首页卡片族：账号模块 / 设定纠错共用（原先只写了两份 scoped 副本，导致卡片裸渲染） */
@@ -59,98 +59,6 @@
 .set-save-row{display:flex;align-items:center;gap:10px;margin-top:14px}
 .set-save-row #key-save{width:auto;flex:0 0 auto;margin-top:0}
 .set-save-msg{flex:1;min-width:0;color:var(--fg-muted);font-size:0.75em;line-height:1.5;word-break:break-all;overflow-wrap:anywhere}
-/* 设定纠错助手：卡片样式复用上面的 .am-*（2026-09-08 合并），仅表单区另立 */
-#fix-forms{background:var(--ctrl-bg-2);border:1px solid var(--border-mid);border-radius:14px;padding:12px 14px;margin-top:10px}
-.fix-modes{display:flex;gap:8px;margin-bottom:10px}
-.fix-mode{
-  flex:1;padding:7px 10px;border-radius:12px;border:1px solid var(--border-mid);
-  background:transparent;color:var(--fg-muted);font-family:inherit;font-size:0.8em;cursor:pointer;
-}
-.fix-mode.active{color:var(--fg-bright);border-color:var(--gold-line,#d8b878);background:var(--gold-glow,rgba(216,184,120,.12))}
-#fix-chat{max-height:38vh;overflow-y:auto;background:var(--ctrl-bg);border:1px solid var(--border-mid);border-radius:12px;padding:10px}
-.fix-empty,.fix-hint{color:var(--fg-muted);font-size:0.78em;line-height:1.7}
-.fix-hint{margin-top:6px;color:var(--gold-line,#d8b878)}
-.fix-msg{margin-top:8px}
-.fix-msg:first-child{margin-top:0}
-.fix-who{color:var(--fg-bright);font-size:0.68em;margin-bottom:2px}
-.fix-msg.me .fix-who{text-align:right}
-.fix-text{color:var(--fg-main);font-size:0.82em;line-height:1.6;white-space:pre-wrap;word-break:break-all}
-.fix-options{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
-.fix-opt{
-  background:var(--ctrl-bg-2);border:1px solid var(--gold-line,#d8b878);border-radius:14px;
-  color:var(--fg-main);font-size:0.76em;padding:5px 12px;cursor:pointer;font-family:inherit;
-}
-.fix-input-row{display:flex;gap:8px;margin-top:10px}
-#fix-input{
-  flex:1;min-width:0;padding:10px 12px;box-sizing:border-box;border-radius:12px;
-  border:1px solid var(--border-mid);background:var(--ctrl-bg);color:var(--fg-main);
-  font-family:inherit;font-size:0.82em;
-}
-#fix-send-btn,#fix-start-btn{
-  flex-shrink:0;padding:9px 16px;border-radius:12px;border:1px solid var(--gold-line,#d8b878);
-  background:var(--btn-bg);color:var(--fg-bright);font-family:inherit;font-size:0.82em;cursor:pointer;
-}
-#fix-start-btn{display:none;width:100%;margin-top:10px}
-#fix-proposal{margin-top:10px;background:var(--ctrl-bg);border:1px solid var(--gold-line,#d8b878);border-radius:12px;padding:10px 12px}
-.fix-diag{color:var(--fg-main);font-size:0.82em;line-height:1.6;margin-bottom:8px}
-.fix-nochange{color:var(--fg-muted);font-size:0.8em}
-.fix-change{margin-top:8px;padding-top:8px;border-top:1px dashed var(--border-mid)}
-.fix-change-head{display:flex;align-items:center;gap:6px;margin-bottom:4px}
-.fix-file-tag{color:var(--fg-bright);font-size:0.75em;font-weight:600}
-.fix-op-tag{font-size:0.68em;padding:2px 8px;border-radius:10px;border:1px solid var(--border-mid);color:var(--fg-muted)}
-.fix-op-tag.fix{color:#ffb4a8;border-color:#ffb4a8}
-.fix-op-tag.add{color:#8fe3b2;border-color:#8fe3b2}
-.fix-diff-old,.fix-diff-new{
-  white-space:pre-wrap;word-break:break-all;font-size:0.76em;line-height:1.6;
-  border-radius:8px;padding:6px 8px;margin-top:4px;
-}
-.fix-diff-old{background:rgba(255,122,107,.08);color:#e9a9a0}
-.fix-diff-new{background:rgba(127,217,168,.08);color:#a8e6c0}
-.fix-reason{color:var(--fg-muted);font-size:0.72em;margin-top:5px;line-height:1.6}
-.fix-proposal-actions{display:flex;gap:8px;margin-top:10px}
-.fix-refine-hint{color:var(--fg-muted);font-size:0.7em;margin-top:8px;line-height:1.6}
-.fix-proposal-title{display:flex;align-items:center;gap:6px;color:var(--fg-bright);font-size:0.78em;font-weight:600;margin-bottom:6px}
-.fix-proposal-title .fix-op-tag{flex-shrink:0}
-.hb-btn{
-  padding:7px 14px;border-radius:12px;border:1px solid var(--border-mid);cursor:pointer;
-  background:transparent;color:var(--fg-muted);font-family:inherit;font-size:0.78em;
-}
-.hb-btn.primary{background:var(--btn-bg);color:var(--fg-bright);border-color:transparent}
-#fix-history-box{margin:10px 10px 6px;border-top:1px solid var(--border-mid);padding-top:8px;flex-shrink:0}
-.fix-hist-head{display:flex;align-items:center;justify-content:space-between;gap:8px;color:var(--fg-bright);font-size:0.75em;font-weight:600;margin-bottom:4px}
-.fix-hist{color:var(--fg-muted);font-size:0.72em;line-height:1.7}
-#fix-history-box .hb-btn{margin-top:8px}
-/* 状态点 + 当前模式最近聊天（可折叠参考面板） */
-.fix-dot{width:8px;height:8px;border-radius:50%;display:inline-block;flex-shrink:0}
-.fix-dot.ok{background:#8fe3b2}
-.fix-dot.busy{background:#ffd9a0;animation:guide-pulse 1.2s ease-in-out infinite}
-.fix-dot.ready{background:#ffd9a0}
-.fix-dot.warn{background:#ffb4a8}
-.fix-dot.error{background:#ff7a6b}
-.fix-chathist{margin:8px 10px 0;flex-shrink:0;border:1px solid var(--border-mid);border-radius:12px;background:var(--ctrl-bg);overflow:hidden}
-.fix-chathist summary{
-  display:flex;align-items:center;gap:8px;padding:9px 12px;cursor:pointer;
-  color:var(--fg-bright);font-size:0.8em;user-select:none;list-style:none;
-}
-.fix-chathist summary::-webkit-details-marker{display:none}
-.fix-chathist-meta{flex:1;min-width:0;text-align:right;color:var(--fg-muted);font-size:0.72em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.fix-chathist-arrow{color:var(--fg-muted);font-size:0.78em;transition:transform .18s}
-.fix-chathist[open] .fix-chathist-arrow{transform:rotate(180deg)}
-.fix-chathist-body{display:none;max-height:30vh;overflow-y:auto;padding:2px 12px 10px;border-top:1px dashed var(--border-mid)}
-.fix-chathist[open] .fix-chathist-body{display:block}
-.fix-chathist-tools{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:6px 0 4px;color:var(--fg-muted);font-size:0.7em}
-.fix-mini-btn{
-  padding:5px 12px;border-radius:10px;border:1px solid var(--border-mid);cursor:pointer;
-  background:var(--ctrl-bg-2);color:var(--fg-muted);font-family:inherit;font-size:0.75em;flex-shrink:0;
-}
-.fix-mini-btn.danger{color:#ffb4a8;border-color:rgba(255,122,107,.4);background:rgba(255,122,107,.08)}
-.fix-hist-msg{padding:7px 0;border-bottom:1px dashed var(--border-mid)}
-.fix-hist-msg:last-child{border-bottom:none}
-.fix-hist-line{display:flex;align-items:baseline;gap:6px;min-width:0}
-.fix-hist-who{color:var(--fg-bright);font-size:0.72em;flex-shrink:0}
-.fix-hist-time{color:var(--fg-muted);font-size:0.66em;flex-shrink:0}
-.fix-hist-text{color:var(--fg-muted);font-size:0.72em;line-height:1.55;white-space:pre-wrap;word-break:break-all;margin-top:2px}
-.fix-hist-msg.me .fix-hist-who{color:var(--fg-accent)}
 
 /* 首次使用引导（纯代码：spotlight + 气泡 + 呼吸边，无图片） */
 #guide-mask{position:fixed;inset:0;z-index:500;background:rgba(5,6,12,.45);pointer-events:none}
@@ -209,7 +117,7 @@ svg.ico{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:1.8;st
 <!-- ★ PC 覆盖样式必须**放在这个内联 <style> 之后**：内联块里有针对
      `#settings-panel .settings-body > *` 的限宽规则，同优先级下后加载的才生效。
      （2026-09-19 实测：放在 <head> 开头时，PC 的设置两栏栅格被这条 720px 规则压回单列。） -->
-<link rel="stylesheet" href="pc.css?v=a4058bcc">
+<link rel="stylesheet" href="pc.css?v=e7a26142">
 </head>
 <body>
 <!-- SVG 图标精灵（用 <use href="#i-…"> 引用） -->
@@ -236,11 +144,14 @@ svg.ico{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:1.8;st
     <symbol id="i-bell" viewBox="0 0 24 24"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></symbol>
     <symbol id="i-voice" viewBox="0 0 24 24"><path d="M11 5 6 9H2v6h4l5 4V5z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/><path d="M18.5 5.5a9 9 0 0 1 0 13"/></symbol>
     <symbol id="i-moon" viewBox="0 0 24 24"><path d="M21 12.8A8.5 8.5 0 1 1 11.2 3a6.6 6.6 0 0 0 9.8 9.8z"/></symbol>
+    <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></symbol>
     <!-- 菜单动作区（同一套线性风格；替代原先的彩色 PNG，避免与 tab 区混用两套图标语言） -->
     <symbol id="i-home" viewBox="0 0 24 24"><path d="m3 10 9-7 9 7v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M9 22V12h6v10"/></symbol>
     <symbol id="i-undo" viewBox="0 0 24 24"><path d="M3 7v6h6"/><path d="M3 13a9 9 0 1 0 3-7.7L3 8"/></symbol>
     <symbol id="i-trash" viewBox="0 0 24 24"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/></symbol>
     <symbol id="i-image" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/></symbol>
+    <!-- 外观组：衣服（原 i-sliders 是三条滑杆，与「外观」的语义不匹配） -->
+    <symbol id="i-shirt" viewBox="0 0 24 24"><path d="M15 3a3 3 0 0 1-6 0L4.5 5 3 9l3 1.2V20a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1V10.2L21 9l-1.5-4z"/></symbol>
 </svg>
 <div id="bg"></div>
 <!-- 萤火粒子场：呼吸光点 · 鼠标惊扰散开 · 点击向落点轻聚（资源：单 canvas + rAF） -->
@@ -298,12 +209,12 @@ svg.ico{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:1.8;st
     <div class="home-topbar">
         <button id="home-feedback-btn" class="home-settings home-feedback" onclick="openFeedback()" title="反馈"><svg class="ico" style="vertical-align:-2px"><use href="#i-mail"/></svg> 反馈</button>
         <div class="home-notice" id="home-notice" onclick="toggleNotice()">
-            <img class="notice-icon" src="assets/notice_speaker.png?v=1" alt="">
+            <svg class="ico notice-icon" aria-hidden="true"><use href="#i-bell"/></svg>
             <span class="notice-title">公告 · 使用指南</span>
             <span class="notice-dot" id="notice-dot" hidden title="有新公告"></span>
             <span class="notice-arrow" id="notice-arrow">▾</span>
         </div>
-        <button id="home-theme-btn" class="home-settings" onclick="toggleTheme()" title="切换配色"><img id="theme-icon" src="assets/theme_sun.png?v=1" alt="切换配色"></button>
+        <button id="home-theme-btn" class="home-settings" onclick="toggleTheme()" title="切换配色"><svg class="ico" id="theme-icon" aria-label="切换配色"><use href="#i-sun"/></svg></button>
         <button id="home-settings-btn" class="home-settings" onclick="openSettings()" title="设置"><svg class="ico" style="vertical-align:-2px"><use href="#i-gear"/></svg></button>
     </div>
     <div class="home-carousel" id="home-carousel">
@@ -557,44 +468,6 @@ svg.ico{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:1.8;st
     </div>
 </div>
 
-<!-- ═══ 设定纠错助手：独立全屏页（聊天式，对齐 → 提案 → 审批 → 应用/撤销） ═══ -->
-<div id="fix-view">
-    <div class="fix-view-header">
-        <button id="fix-back-btn" type="button" onclick="closeFixView()">←</button>
-        <div class="fix-view-title">
-            <div class="name">设定纠错助手</div>
-            <div class="status"><span id="fix-status-dot" class="fix-dot ok"></span><span id="fix-view-status">正在读取状态…</span></div>
-        </div>
-    </div>
-    <div class="fix-modes" id="fix-modes"></div>
-    <!-- 当前模式的最近聊天记录（可折叠参考面板） -->
-    <details class="fix-chathist" id="fix-chathist">
-        <summary id="fix-chathist-summary">📜 最近聊天记录<span class="fix-chathist-meta" id="fix-chathist-meta">点开查看，方便对照角色说错的地方</span><span class="fix-chathist-arrow">▾</span></summary>
-        <div class="fix-chathist-body">
-            <div class="fix-chathist-tools">
-                <span id="fix-chathist-count">读取中…</span>
-                <button class="fix-mini-btn" type="button" id="fix-chathist-refresh">刷新</button>
-            </div>
-            <div id="fix-chathist-list"><div class="fix-hist">正在读取…</div></div>
-        </div>
-    </details>
-    <div id="fix-chat"></div>
-    <div id="fix-proposal" style="display:none"></div>
-    <button id="fix-start-btn" type="button" onclick="startFix()">开始修改</button>
-    <div id="fix-history-box">
-        <div class="fix-hist-head">
-            <span>最近修正记录</span>
-            <button class="fix-mini-btn danger" type="button" onclick="resetFix()">清空当前问题</button>
-        </div>
-        <div id="fix-history-list"><div class="fix-hist">正在读取修正记录…</div></div>
-        <button class="hb-btn" type="button" onclick="rollbackFix()" id="fix-rollback-btn" style="display:none">撤销上次修改</button>
-    </div>
-    <div class="fix-input-row">
-        <input id="fix-input" type="text" maxlength="1000" placeholder="说说角色哪里说得不对…" autocomplete="off">
-        <button id="fix-send-btn" type="button">发送</button>
-    </div>
-</div>
-
 <div id="feedback-panel">
     <div class="settings-header">
         <span class="panel-title"><svg class="ico"><use href="#i-mail"/></svg>反馈 · 联系</span>
@@ -747,8 +620,17 @@ svg.ico{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:1.8;st
 
         <!-- ④ 外观 -->
         <section class="set-group">
-            <button class="set-head" type="button" data-group="look"><span class="set-ico"><svg class="ico"><use href="#i-sliders"/></svg></span><span class="set-name">外观</span><span class="set-summary" id="ui-scale-summary">100%</span><span class="set-arrow">▾</span></button>
+            <button class="set-head" type="button" data-group="look"><span class="set-ico"><svg class="ico"><use href="#i-shirt"/></svg></span><span class="set-name">外观</span><span class="set-summary" id="ui-scale-summary">100%</span><span class="set-arrow">▾</span></button>
             <div class="set-body">
+                <div class="field">
+                    <label>风格</label>
+                    <div class="theme-picker" id="theme-picker">
+                        <button type="button" data-theme-pick="dark">简约 · 暗</button>
+                        <button type="button" data-theme-pick="light">简约 · 亮</button>
+                        <button type="button" data-theme-pick="firefly">流萤</button>
+                    </div>
+                    <div class="field-tip">只换配色与质感，角色卡与聊天记录不受影响。</div>
+                </div>
                 <div class="field">
                     <label>消息 / 头像 / 气泡缩放 <span id="ui-scale-value">100%</span></label>
                     <input id="ui-scale-slider" type="range" min="80" max="130" step="5" value="100">
@@ -851,7 +733,7 @@ svg.ico{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:1.8;st
 <div id="notice-panel" role="dialog" aria-modal="true" aria-label="公告与使用指南">
     <div class="notice-header">
         <span class="notice-title-row">
-            <img class="notice-icon-sm" src="assets/notice_speaker.png?v=1" alt="">
+            <svg class="ico notice-icon-sm" aria-hidden="true"><use href="#i-bell"/></svg>
             <span>公告与使用指南</span>
             <span class="notice-badge" id="notice-badge" hidden></span>
         </span>
@@ -1227,7 +1109,7 @@ svg.ico{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:1.8;st
 </script>
 <script src="config.js"></script>
 <!-- 运行时入口：bundle.js（classic script，file:// 兼容；ES Module 在安卓服务器模式 file:// 下被 CORS 拦截） -->
-<script src="js/bundle.js?v=ecc23ceb"></script>
+<script src="js/bundle.js?v=06e64914"></script>
 <script src="js/pc_shell.js"></script>
 </body>
 </html>
