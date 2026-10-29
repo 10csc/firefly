@@ -15,13 +15,25 @@ export function scrollToBottom() {
         messagesEl.scrollTop = messagesEl.scrollHeight;
     });
 }
-// 键盘弹起/收起导致可视高度变化时：若用户原本在底部则自动补滚
+// 键盘弹起/收起导致可视高度变化时：若用户原本在底部则自动补滚。
+// 壳层现在用 IME inset 调整 WebView 高度 ⇒ 触发的是 window.resize（不是 visualViewport），
+// 两个都监听才不会出现「键盘弹起后最后几条消息被挤到视野外」。
+// 「是否停在底部」必须用**变化前**的高度来判断：
+// resize 回调里 clientHeight 已经变小，当场算必然得出"不在底部"，
+// 于是键盘弹起后永远不跟随（真机表现：消息被截住，要手动滑）。
+let _lastClientH = messagesEl.clientHeight;
+const _keepBottomOnResize = () => {
+    const wasAtBottom =
+        messagesEl.scrollTop + _lastClientH >= messagesEl.scrollHeight - 80;
+    _lastClientH = messagesEl.clientHeight;
+    if (!wasAtBottom) return;   // 用户正在翻历史：不打扰
+    scrollToBottom();
+    setTimeout(scrollToBottom, 120);   // 覆盖键盘动画的三个阶段
+    setTimeout(scrollToBottom, 320);
+};
+window.addEventListener("resize", _keepBottomOnResize);
 if (window.visualViewport) {
-    window.visualViewport.addEventListener("resize", () => {
-        if (messagesEl.scrollTop + messagesEl.clientHeight >= messagesEl.scrollHeight - 60) {
-            scrollToBottom();
-        }
-    });
+    window.visualViewport.addEventListener("resize", _keepBottomOnResize);
 }
 
 /** 发送者显示名 —— 统一走 views.js 的 charName()/userName()（**只从当前角色卡取**）。

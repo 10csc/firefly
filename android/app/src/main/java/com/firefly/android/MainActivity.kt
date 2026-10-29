@@ -823,9 +823,13 @@ class MainActivity : AppCompatActivity() {
         // CSS env(safe-area-inset-*) 在部分机型 WebView 取不到值（真机复现），壳侧直接让出系统栏高度。
         ViewCompat.setOnApplyWindowInsetsListener(webView!!) { v, insets ->
             val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
+            // 键盘：Android 15 强制 edge-to-edge 后 windowSoftInputMode=adjustResize 被系统忽略，
+            // IME 高度必须由这里让出来，否则聊天输入栏会整个落在键盘下面（真机 2026-10-30 确认：
+            // 输入栏不可见，且 CSS 侧 visualViewport 不反映键盘，无法在 JS 里补救）。
+            val ime = insets.getInsets(WindowInsetsCompat.Type.ime())
             v.updateLayoutParams<FrameLayout.LayoutParams> {
                 topMargin = bars.top
-                bottomMargin = bars.bottom
+                bottomMargin = maxOf(bars.bottom, ime.bottom)
             }
             insets
         }

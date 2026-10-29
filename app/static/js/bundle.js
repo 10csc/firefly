@@ -7125,17 +7125,29 @@ function _renderProviderSelect() {
 }
 
 function _renderModelSuggest() {
-    const dl = _$("model-suggest");
     const p = _activeProviderObject();
-    if (!dl) return;
     const models = (p && p.models && p.models.length) ? p.models
         : ["deepseek-flash", "deepseek-v4-pro"];
-    dl.innerHTML = "";
-    for (const m of models) {
-        const opt = document.createElement("option");
-        opt.value = m;
-        dl.appendChild(opt);
-    }
+    // 用自绘 chips 取代 <datalist>：安卓 WebView 的原生补全弹层是白色系统弹窗，
+    // 既不跟主题，又会盖住下面的「思考等级」标签与下拉（真机 2026-10-30 实测）。
+    document.querySelectorAll("#settings-panel .model-hints").forEach(box => {
+        const target = document.getElementById(box.dataset.for || "");
+        const cur = target ? target.value.trim() : "";
+        box.innerHTML = "";
+        models.forEach(name => {
+            const b = document.createElement("button");
+            b.type = "button";
+            b.className = "model-hint" + (name === cur ? " on" : "");
+            b.textContent = name;
+            b.addEventListener("click", () => {
+                if (!target) return;
+                target.value = name;
+                target.dispatchEvent(new Event("change", { bubbles: true }));
+                box.querySelectorAll(".model-hint").forEach(x => x.classList.toggle("on", x === b));
+            });
+            box.appendChild(b);
+        });
+    });
 }
 
 function _updateKeyGuide() {
@@ -7551,6 +7563,29 @@ async function checkKey() {
     try { await loadConfig(); } catch (e) { /* 服务未就绪，静默 */ }
 }
 
+// 键盘弹起时把聚焦的输入框滚到可视区中间：
+// WebView 的 adjustResize 只把面板高度压小，不会自动滚动到当前字段（真机实测：
+// 展开「自定义各阶段」后，第三个模型输入框会被键盘压住）。
+(function initKeyboardAware() {
+    const body = document.querySelector("#settings-panel .settings-body");
+    if (!body) return;
+    body.addEventListener("focusin", (e) => {
+        const el = e.target;
+        if (!el || !/^(INPUT|TEXTAREA)$/.test(el.tagName)) return;
+        setTimeout(() => {
+            try {
+                // 直接改滚动容器的 scrollTop：scrollIntoView 在嵌套滚动里会贴到键盘上沿，
+                // 不按预期居中（真机两轮实测）。这里按"输入框中心 = 滚动区中心"算偏移。
+                const scroller = el.closest(".settings-body");
+                if (!scroller) { el.scrollIntoView({ block: "center" }); return; }
+                const er = el.getBoundingClientRect();
+                const sr = scroller.getBoundingClientRect();
+                scroller.scrollTop += (er.top + er.height / 2) - (sr.top + sr.height / 2);
+            } catch (err) {}
+        }, 420);   // 等键盘动画结束再算，否则拿到的是旧视口
+    });
+})();
+
 (function initSetGroups() {
     document.querySelectorAll("#settings-panel .set-head").forEach(head => {
         head.addEventListener("click", () => {
@@ -7949,13 +7984,25 @@ function scrollToBottom() {
         messagesEl.scrollTop = messagesEl.scrollHeight;
     });
 }
-// 键盘弹起/收起导致可视高度变化时：若用户原本在底部则自动补滚
+// 键盘弹起/收起导致可视高度变化时：若用户原本在底部则自动补滚。
+// 壳层现在用 IME inset 调整 WebView 高度 ⇒ 触发的是 window.resize（不是 visualViewport），
+// 两个都监听才不会出现「键盘弹起后最后几条消息被挤到视野外」。
+// 「是否停在底部」必须用**变化前**的高度来判断：
+// resize 回调里 clientHeight 已经变小，当场算必然得出"不在底部"，
+// 于是键盘弹起后永远不跟随（真机表现：消息被截住，要手动滑）。
+let _lastClientH = messagesEl.clientHeight;
+const _keepBottomOnResize = () => {
+    const wasAtBottom =
+        messagesEl.scrollTop + _lastClientH >= messagesEl.scrollHeight - 80;
+    _lastClientH = messagesEl.clientHeight;
+    if (!wasAtBottom) return;   // 用户正在翻历史：不打扰
+    scrollToBottom();
+    setTimeout(scrollToBottom, 120);   // 覆盖键盘动画的三个阶段
+    setTimeout(scrollToBottom, 320);
+};
+window.addEventListener("resize", _keepBottomOnResize);
 if (window.visualViewport) {
-    window.visualViewport.addEventListener("resize", () => {
-        if (messagesEl.scrollTop + messagesEl.clientHeight >= messagesEl.scrollHeight - 60) {
-            scrollToBottom();
-        }
-    });
+    window.visualViewport.addEventListener("resize", _keepBottomOnResize);
 }
 
 /** 发送者显示名 —— 统一走 views.js 的 charName()/userName()（**只从当前角色卡取**）。
@@ -11532,6 +11579,11 @@ if (document.readyState === "loading") {
 
 /* ── 来源：js/main.js ── */
 // 启动编排：合并原文件两套启动路径（DOMContentLoaded 在 views.js）
+
+// 键盘避让在壳层完成（MainActivity 把 IME inset 让给 WebView）：
+// Android 15 edge-to-edge 下 adjustResize 失效，且本机 WebView 的 visualViewport
+// 不反映键盘 —— JS 侧的 --app-h 兜底实测无效，已撤掉，避免把 #app 撑出容器。
+// 浏览器（非 WebView）靠 index.html viewport 的 interactive-widget=resizes-content。
 
 // ═══════════════════════════════════════════
 // 起床检查

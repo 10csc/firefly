@@ -95,17 +95,29 @@ function _renderProviderSelect() {
 }
 
 function _renderModelSuggest() {
-    const dl = _$("model-suggest");
     const p = _activeProviderObject();
-    if (!dl) return;
     const models = (p && p.models && p.models.length) ? p.models
         : ["deepseek-flash", "deepseek-v4-pro"];
-    dl.innerHTML = "";
-    for (const m of models) {
-        const opt = document.createElement("option");
-        opt.value = m;
-        dl.appendChild(opt);
-    }
+    // 用自绘 chips 取代 <datalist>：安卓 WebView 的原生补全弹层是白色系统弹窗，
+    // 既不跟主题，又会盖住下面的「思考等级」标签与下拉（真机 2026-10-30 实测）。
+    document.querySelectorAll("#settings-panel .model-hints").forEach(box => {
+        const target = document.getElementById(box.dataset.for || "");
+        const cur = target ? target.value.trim() : "";
+        box.innerHTML = "";
+        models.forEach(name => {
+            const b = document.createElement("button");
+            b.type = "button";
+            b.className = "model-hint" + (name === cur ? " on" : "");
+            b.textContent = name;
+            b.addEventListener("click", () => {
+                if (!target) return;
+                target.value = name;
+                target.dispatchEvent(new Event("change", { bubbles: true }));
+                box.querySelectorAll(".model-hint").forEach(x => x.classList.toggle("on", x === b));
+            });
+            box.appendChild(b);
+        });
+    });
 }
 
 function _updateKeyGuide() {
@@ -520,6 +532,29 @@ export async function loadConfig() {
 export async function checkKey() {
     try { await loadConfig(); } catch (e) { /* 服务未就绪，静默 */ }
 }
+
+// 键盘弹起时把聚焦的输入框滚到可视区中间：
+// WebView 的 adjustResize 只把面板高度压小，不会自动滚动到当前字段（真机实测：
+// 展开「自定义各阶段」后，第三个模型输入框会被键盘压住）。
+(function initKeyboardAware() {
+    const body = document.querySelector("#settings-panel .settings-body");
+    if (!body) return;
+    body.addEventListener("focusin", (e) => {
+        const el = e.target;
+        if (!el || !/^(INPUT|TEXTAREA)$/.test(el.tagName)) return;
+        setTimeout(() => {
+            try {
+                // 直接改滚动容器的 scrollTop：scrollIntoView 在嵌套滚动里会贴到键盘上沿，
+                // 不按预期居中（真机两轮实测）。这里按"输入框中心 = 滚动区中心"算偏移。
+                const scroller = el.closest(".settings-body");
+                if (!scroller) { el.scrollIntoView({ block: "center" }); return; }
+                const er = el.getBoundingClientRect();
+                const sr = scroller.getBoundingClientRect();
+                scroller.scrollTop += (er.top + er.height / 2) - (sr.top + sr.height / 2);
+            } catch (err) {}
+        }, 420);   // 等键盘动画结束再算，否则拿到的是旧视口
+    });
+})();
 
 (function initSetGroups() {
     document.querySelectorAll("#settings-panel .set-head").forEach(head => {

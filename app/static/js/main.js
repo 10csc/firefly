@@ -9,6 +9,11 @@ import { loadFixStatus } from "./fix.js";
 import { CURRENT_MODE, charName } from "./views.js";
 import { initAssets, startRelay } from "./relay.js";
 
+// 键盘避让在壳层完成（MainActivity 把 IME inset 让给 WebView）：
+// Android 15 edge-to-edge 下 adjustResize 失效，且本机 WebView 的 visualViewport
+// 不反映键盘 —— JS 侧的 --app-h 兜底实测无效，已撤掉，避免把 #app 撑出容器。
+// 浏览器（非 WebView）靠 index.html viewport 的 interactive-widget=resizes-content。
+
 // ═══════════════════════════════════════════
 // 起床检查
 // ═══════════════════════════════════════════

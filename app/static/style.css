@@ -533,6 +533,8 @@ body {
 /* 与表情按钮的中心距 44px（原 38px + 边缘间隙仅 4px，手指容易点错） */
 #image-btn { right: 50px; }
 #image-btn:hover, #sticker-btn:hover { opacity: 1; background: var(--ctrl-bg); }
+/* 图标由 emoji 换成线性 SVG（与全站同一套），尺寸由 SVG 决定，font-size 不再起作用 */
+#image-btn svg.ico, #sticker-btn svg.ico { width: 20px; height: 20px; }
 #send-btn {
     padding: 8px clamp(12px, 4vw, 16px); border-radius: 8px;
     border: 1px solid var(--gold-line); background: var(--send-bg);
@@ -1392,6 +1394,19 @@ body {
 }
 .settings-body .set-check input { accent-color: var(--fg-accent); }
 .settings-body .set-sub { margin-top: 8px; }
+/* 模型候选 chips：取代原生 datalist 弹层（白色系统弹窗、遮挡下方字段） */
+.settings-body .model-hints { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.settings-body .model-hint {
+    width: auto; flex: 0 0 auto; margin: 0;
+    padding: 4px 10px; border-radius: 12px;
+    border: 1px solid var(--border-mid); background: var(--ctrl-bg-3);
+    color: var(--fg-muted); font-family: inherit; font-size: 0.7em;
+    cursor: pointer;
+}
+.settings-body .model-hint:hover { border-color: var(--gold-line); color: var(--fg-accent); }
+.settings-body .model-hint.on {
+    border-color: var(--gold-line); color: var(--fg-accent); background: var(--gold-glow);
+}
 .settings-body .set-note {
     display: flex; align-items: flex-start; gap: 8px;
     margin-top: 10px; padding: 8px 10px; border-radius: 8px;
