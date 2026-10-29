@@ -32,11 +32,11 @@ import shutil
 import socket as _sk
 import subprocess
 import sys
-import tempfile
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import uuid
 from pathlib import Path
 
 try:
@@ -45,6 +45,7 @@ except Exception:
     pass
 
 ROOT = Path(__file__).resolve().parent.parent
+PROFILES = ("dev", "release", "deploy")
 
 
 # ── 路由矩阵：(路径, 期望状态集合 或 None=只观测, 说明) ──────────────
@@ -207,9 +208,36 @@ def _free_port() -> int:
     return p
 
 
+def _sandbox_dir() -> Path:
+    """沙箱目录放工作区 `.test_tmp/`（已 gitignore）。
+
+    不用 tempfile.mkdtemp()：Windows 沙箱下 mode=0o700 的目录会给当前令牌不可写的 ACL，
+    server_app.py 在里面写 user_data 会 PermissionError。默认 mode 的 mkdir 才可写。
+    """
+    base = ROOT / ".test_tmp"
+    base.mkdir(parents=True, exist_ok=True)
+    p = base / f"ff_surface_{os.getpid()}_{uuid.uuid4().hex[:8]}"
+    p.mkdir()
+    return p
+
+
+def resolve_policy(profile: str, base: str) -> tuple[bool, str]:
+    """profile → (strict_platform, error)。纯函数，便于单测。
+
+    dev     遵循旧行为：PENDING 允许；沙箱或 --base 均可。
+    release 严格平台页（平台产物必须齐）；沙箱或 --base 均可（发版前不要求已部署）。
+    deploy  严格平台页 + 必须给 --base 打真实实例（禁止沙箱冒充部署验收）。
+    """
+    if profile not in PROFILES:
+        return False, f"未知 profile: {profile}"
+    if profile == "deploy" and not str(base or "").strip():
+        return True, "deploy 必须提供 --base（线上实例）；禁止沙箱冒充部署验收"
+    return profile in ("release", "deploy"), ""
+
+
 def start_sandbox():
     """起一个真 server_app.py（临时数据根 + 动态端口）；返回 (base, proc, log, sandbox)。"""
-    sandbox = Path(tempfile.mkdtemp(prefix="ff_surface_"))
+    sandbox = _sandbox_dir()
     env = dict(os.environ)
     env.update({"FIREFLY_ANDROID": "1", "FIREFLY_DATA_DIR": str(sandbox),
                 "FIREFLY_PLAZA_DIR": str(sandbox / "plaza"),
@@ -236,14 +264,23 @@ def start_sandbox():
     return None, proc, log, sandbox
 
 
-def main() -> int:
+def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description="服务器对外面路由矩阵自检（服务器只做后台）")
     ap.add_argument("--base", default="", help="已有实例的基址（默认起本地沙箱服务）")
     ap.add_argument("--gateway", action="store_true", help="--base 经 8787 网关（/ 是下载页 → 200）")
+    ap.add_argument("--profile", choices=PROFILES, default="dev",
+                    help="dev=旧行为（PENDING 允许）；release=严格平台（可沙箱）；deploy=严格+必须 --base")
     ap.add_argument("--strict-platform", action="store_true",
-                    help="平台页/bundle 未就位时算 FAIL（部署后门禁用）")
+                    help="兼容旧调用：强制严格平台（release/deploy 默认已严格）")
     ap.add_argument("--baseline", default="", help="API 基线 JSON（默认 _harden/server_surface_baseline.json）")
-    args = ap.parse_args()
+    args = ap.parse_args(argv)
+
+    strict_platform, policy_err = resolve_policy(args.profile, args.base)
+    if policy_err:
+        print(f"X {policy_err}")
+        return 2
+    if args.strict_platform:
+        strict_platform = True
 
     proc = log = sandbox = None
     base = args.base.rstrip("/")
@@ -252,7 +289,8 @@ def main() -> int:
             base, proc, log, sandbox = start_sandbox()
             if not base:
                 return 2
-        print(f"目标：{base}" + ("（经网关）" if args.gateway else "") + "\n")
+        print(f"目标：{base}" + ("（经网关）" if args.gateway else "")
+              + f"（profile={args.profile}，strict_platform={strict_platform}）\n")
 
         baseline_path = Path(args.baseline) if args.baseline else (ROOT / "_harden" / "server_surface_baseline.json")
         baseline = {}
@@ -284,7 +322,7 @@ def main() -> int:
                 verdict = "INFO"
             elif str(status) in expect:
                 verdict = "ok"
-            elif path == "/platform.html" and not args.strict_platform and str(status) in ("401", "404"):
+            elif path == "/platform.html" and not strict_platform and str(status) in ("401", "404"):
                 verdict = "PENDING"      # 平台页还没就位（frontend task-22）；部署后加 --strict-platform
             else:
                 verdict = "FAIL"
@@ -342,16 +380,16 @@ def main() -> int:
 
         passed, failed, pending = stats["ok"], stats["FAIL"], stats["PENDING"]
         print("  " + "-" * 118)
-        print(f"\n  合计：ok={passed} FAIL={failed} PENDING={pending} INFO={stats['INFO']}"
+        print(f"\n  合计（profile={args.profile}）：ok={passed} FAIL={failed} PENDING={pending} INFO={stats['INFO']}"
               f"（枚举 {len(enum_urls)} 个 App 文件 + 基线 API {len(api_rows)} 条）"
-              + ("\n        PENDING = 平台页未就位（frontend task-22）；部署后请加 --strict-platform 复跑" if pending else ""))
+              + ("\n        PENDING = 平台页未就位；发版前用 --profile release、部署后用 --profile deploy 复跑" if pending else ""))
         print("  架构约束：**服务器只做后台** —— 只提供登录页 + 角色卡平台 + 客户端 API；")
         print("            不提供 App 前端（无 index.html / App bundle / App 样式）。")
         print("  量具说明：判定一律用 **GET**（本服务不支持 HEAD，HEAD 全 501 会被误读成'不可达'）。")
         if failed:
             print("\n  ✗ 有 FAIL：App 前端可能仍可访问，或平台/API 被误伤 —— 详见上表。")
             return 1
-        print("\n  ✓ 全部符合预期。" + ("（含 PENDING，部署后再跑 --strict-platform）" if pending else ""))
+        print("\n  ✓ 全部符合预期。" + ("（含 PENDING；用 --profile release/deploy 复跑）" if pending else ""))
         return 0
     finally:
         if proc is not None:

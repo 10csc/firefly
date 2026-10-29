@@ -1,0 +1,33 @@
+{
+  "schema": 2,
+  "version": "0.9.1",
+  "version_code": 901,
+  "generated_at": "2026-10-27T02:08:28+08:00",
+  "released_at": "2026-10-06",
+  "note": "0.9.1 已发布产物（2026-10-06 发布，从 server/update.json 反查登记）。同版本产物不可替换；本地重建差异只能升版本后再发布。",
+  "source": "import-published from server/update.json",
+  "git": {
+    "commit": "",
+    "dirty": null,
+    "changed_files": null
+  },
+  "artifacts": [
+    {
+      "name": "firefly.apk",
+      "path": "android/firefly.apk",
+      "size": 85501452,
+      "sha256": "9613168beae431579b6df01adf384a2bdb73491b44ac2601fb49c595db133c1b",
+      "source_url": "https://gitee.com/cpt-asymmetry/firefly/releases/download/v0.9.1/firefly.apk",
+      "built_at": "2026-10-06T15:48:16+08:00"
+    },
+    {
+      "name": "firefly-setup.exe",
+      "path": "package/firefly-setup.exe",
+      "size": 40564203,
+      "sha256": "262b50471c7f45602601484266acd1c6dbbd47091166d164b68e1dfea028b1ab",
+      "source_url": "https://gitee.com/cpt-asymmetry/firefly/releases/download/v0.9.1/firefly-setup.exe",
+      "built_at": "2026-10-06T15:43:24+08:00"
+    }
+  ],
+  "imported_at": "2026-10-27T02:08:29+08:00"
+}
