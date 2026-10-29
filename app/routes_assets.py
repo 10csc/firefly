@@ -199,14 +199,22 @@ def get_favorites(h):
 
 
 def delete_favorite_route(h):
-    from modules.favorite_store import delete_favorite
+    from modules.favorite_store import delete_favorite, FavoriteError
     body = _read_json(h)
     mode = _body_mode(body)
     fav_id = (body.get("id") or "").strip()
     if not fav_id:
         h._json({"ok": False, "error": "缺少收藏 id"})
         return
-    ok = delete_favorite(mode, fav_id)
+    try:
+        ok = delete_favorite(mode, fav_id)
+    except FavoriteError as e:
+        h._json({"ok": False, "error": str(e)})
+        return
+    except Exception as e:
+        logger.warning("收藏删除失败: %s", e)
+        h._json({"ok": False, "error": "收藏删除失败，请重试"})
+        return
     h._json({"ok": ok, "error": "" if ok else "收藏不存在或已删除"})
 
 
