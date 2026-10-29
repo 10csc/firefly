@@ -659,7 +659,7 @@ def run(args: argparse.Namespace) -> int:
         baseline_pid = dev.pid()
         report["steps"]["test_baseline"] = {"pid": baseline_pid, "status": baseline}
 
-        source.set_mode(Path(args.dist), None)
+        source.set_mode(Path(args.dist), args.target_serial)
         api.action("set_urls", url_roots=[f"http://127.0.0.1:{REVERSE_PORT}"])
         checked = api.action("check")
         if not checked.get("ok"):
