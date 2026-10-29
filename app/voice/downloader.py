@@ -42,6 +42,7 @@ logger = logging.getLogger(__name__)
 _TIMEOUT = 60
 _CHUNK = 1 << 20          # 1 MB
 _UA = "FireflyVoice/1.0"
+_SAFE_MODEL_FILE_RE = re.compile(r"^[A-Za-z0-9._-]+$")
 _stop = threading.Event()
 _thread: threading.Thread | None = None
 
@@ -121,6 +122,19 @@ def _file_sha256(p: Path, chunk: int = 1 << 20) -> str:
     return h.hexdigest()
 
 
+def _safe_model_path(md: Path, filename: str) -> Path:
+    """校验模型文件名并返回解析后的目标路径（只允许官方清单或扁平安全名）。"""
+    if (not isinstance(filename, str) or not filename
+            or (filename not in paths.MODEL_FILES
+                and not _SAFE_MODEL_FILE_RE.fullmatch(filename))):
+        raise RuntimeError("模型文件名不合法，已拒绝下载")
+    root = md.resolve()
+    dst = (root / filename).resolve()
+    if filename in (".", "..") or not dst.is_relative_to(root):
+        raise RuntimeError("模型文件路径越界，已拒绝下载")
+    return dst
+
+
 def _download_one(url: str, dst: Path, base_done: int, total_hint: int,
                   sha_expect: str = "") -> None:
     """单文件下载，支持断点续传 + sha256 对账。进度写进 plugin._DL。
@@ -181,21 +195,27 @@ def _run(template: str, files: list[str]) -> None:
     md = paths.plugin_root() / "models"
     md.mkdir(parents=True, exist_ok=True)
 
+    try:
+        targets = [(f, _safe_model_path(md, f)) for f in files]
+    except RuntimeError as e:
+        plugin._DL.update({"running": False, "error": str(e),
+                           "finished_at": time.time()})
+        return
+
     # 清单一次取回：sha256（校验）+ size（精确总大小）
     man = _manifest(template)
     plugin._DL.update({"verify": "on" if man else "off", "verified": 0})
 
     # 总大小直接用清单里的（不再 HEAD 探；ModelScope 的 HEAD 不给 Content-Length）
-    total = sum(int((man.get(f) or {}).get("size") or 0) for f in files)
+    total = sum(int((man.get(f) or {}).get("size") or 0) for f, _dst in targets)
     plugin._DL.update({"total": total, "done": 0, "percent": 0})
 
     base = 0
     try:
-        for i, f in enumerate(files, 1):
+        for i, (f, dst) in enumerate(targets, 1):
             if _stop.is_set():
                 raise RuntimeError("已取消")
-            dst = md / f
-            plugin._DL.update({"file": f"{i}/{len(files)} {f}"})
+            plugin._DL.update({"file": f"{i}/{len(targets)} {f}"})
             # 已有正式文件且哈希正确 → 跳过（支持"断在最后一个文件"后重跑）
             exp = (man.get(f) or {}).get("sha256", "")
             if exp and dst.exists() and dst.stat().st_size > 0:
@@ -210,7 +230,7 @@ def _run(template: str, files: list[str]) -> None:
             _download_one(_url_for(template, f), dst, base, total, sha_expect=exp)
             base += dst.stat().st_size if dst.exists() else 0
             if not total:
-                plugin._DL.update({"percent": int(i * 100 / len(files)),
+                plugin._DL.update({"percent": int(i * 100 / len(targets)),
                                    "done": base, "total": 0})
         plugin._DL.update({"running": False, "percent": 100, "file": "",
                            "error": "", "finished_at": time.time()})

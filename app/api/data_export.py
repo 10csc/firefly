@@ -19,8 +19,7 @@ from urllib.parse import urlparse, parse_qs
 from modules import app_config as cfg
 from modules.app_config import DEFAULT_MODE
 from modules.multipart import parse_multipart
-from routes_common import _read_json
-from routes_common import _body_mode
+from routes_common import _body_mode, _is_server, _read_json
 
 from infra.sync.restore import (
     _BACKUP_KEEP, _EXPORT_EXCLUDE_DIRS, _IMPORT_MAX_BYTES, _backup_dir,
@@ -28,6 +27,15 @@ from infra.sync.restore import (
 )
 
 logger = logging.getLogger(__name__)
+
+_SERVER_CONFIG_FIELDS = frozenset({
+    "analyzer_model", "organizer_model", "polisher_model", "retriever_model",
+    "retriever_effort", "analyzer_effort", "polisher_effort", "organizer_effort",
+    "retriever_temperature", "polisher_temperature",
+    "proactive_enabled", "proactive_hard", "proactive_soft",
+    "prob_reply_enabled", "prob_reply_value", "hidden_reply_enabled",
+    "memory_window_turns", "memory_keep_turns", "memory_warn_turns",
+})
 
 
 def _build_backup_zip(root: Path, mode: str) -> bytes:
@@ -49,10 +57,14 @@ def _build_backup_zip(root: Path, mode: str) -> bytes:
         # config.json：全量配置但剥离 API Key（换机迁移带上供应商/base 信息）
         try:
             import copy as _copy
-            cfg_copy = _copy.deepcopy(cfg.config)
-            cfg_copy.pop("api_key", None)
-            for _p in cfg_copy.get("providers") or []:
-                _p.pop("api_key", None)
+            if _is_server():
+                cfg_copy = {k: cfg.config[k] for k in _SERVER_CONFIG_FIELDS
+                            if k in cfg.config}
+            else:
+                cfg_copy = _copy.deepcopy(cfg.config)
+                cfg_copy.pop("api_key", None)
+                for _p in cfg_copy.get("providers") or []:
+                    _p.pop("api_key", None)
             zf.writestr("_config.json",
                         json.dumps(cfg_copy, ensure_ascii=False, indent=1))
         except Exception:

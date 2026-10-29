@@ -22,6 +22,20 @@ logger = logging.getLogger(__name__)
 _OVERLAY_LOCKS: dict[int, threading.Lock] = {}
 _OVERLAY_LOCKS_GUARD = threading.Lock()
 
+_SERVER_CONFIG_FIELDS = frozenset({
+    "platform", "running", "has_key", "key_prefix", "active_provider", "providers",
+    "suggested_providers", "analyzer_model", "organizer_model", "polisher_model",
+    "retriever_model", "retriever_effort", "analyzer_effort", "polisher_effort",
+    "organizer_effort", "retriever_temperature", "polisher_temperature",
+    "proactive_enabled", "proactive_hard", "proactive_soft",
+    "prob_reply_enabled", "prob_reply_value", "hidden_reply_enabled",
+    "memory_window_turns", "memory_keep_turns", "memory_warn_turns",
+    "suggested_models", "valid_models", "valid_efforts",
+})
+_SERVER_PROVIDER_FIELDS = frozenset({
+    "id", "name", "models", "caps", "has_key", "key_prefix",
+})
+
 
 def _overlay_lock(uid: int) -> threading.Lock:
     """取该用户的覆盖文件锁（懒建；键数量 = 活跃账号数，量级很小，不做过期回收）。"""
@@ -317,7 +331,7 @@ def get_config(h):
             "has_key": bool(pk) if not _is_server() else False,
             "key_prefix": (pk[:12] + "...") if (pk and not _is_server()) else "",
         })
-    h._json({
+    payload = {
         "platform": _platform_tag(),
         "running": running,
         "has_key": bool(cfg.get_api_key()),
@@ -349,7 +363,14 @@ def get_config(h):
         "suggested_models": list(cfg.SUGGESTED_MODELS),
         "valid_models": list(cfg.SUGGESTED_MODELS),
         "valid_efforts": list(cfg.VALID_EFFORTS),
-    })
+    }
+    if _is_server():
+        payload = {k: v for k, v in payload.items() if k in _SERVER_CONFIG_FIELDS}
+        payload["providers"] = [
+            {k: v for k, v in provider.items() if k in _SERVER_PROVIDER_FIELDS}
+            for provider in payload.get("providers", [])
+        ]
+    h._json(payload)
 
 
 # ── 包形象资产：槽位回落链（2026-10-01，共创平台 V1）──────────────

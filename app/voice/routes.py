@@ -16,6 +16,7 @@ from urllib.parse import parse_qs, urlparse
 
 import voice
 from voice import store
+from routes_common import _is_server
 
 logger = logging.getLogger(__name__)
 
@@ -23,8 +24,17 @@ logger = logging.getLogger(__name__)
 _NAME_RE = re.compile(r"^v(\d+)\.wav$")
 
 
+def _deny(h) -> bool:
+    if _is_server():
+        h._json({"ok": False, "error": "服务器版不提供语音插件"}, 403)
+        return True
+    return False
+
+
 def voice_status(h):
     """插件状态。任何异常都转成"不可用 + 原因"，不 500。"""
+    if _deny(h):
+        return
     try:
         h._json(voice.status())
     except Exception as e:
@@ -36,6 +46,8 @@ def voice_status(h):
 def voice_tts(h):
     """把某条消息转成语音。永远返回 200 + {ok:false,error}（业务失败不当作 HTTP 错误，
     前端只关心"能不能播"）。"""
+    if _deny(h):
+        return
     from routes_common import _body_mode, _read_json
     body = _read_json(h) or {}
     mode = _body_mode(body)
@@ -52,6 +64,8 @@ def voice_tts(h):
 
 def voice_file(h):
     """返回 wav 字节。名字走白名单，路径由 store 拼（不接受外部路径）。"""
+    if _deny(h):
+        return
     qs = parse_qs(urlparse(h.path).query)
     name = (qs.get("name", [""])[0] or "").strip()
     from routes_common import _query_mode
@@ -90,6 +104,8 @@ _ACTIONS = {"install", "cancel", "enable", "disable", "uninstall", "rescan",
 
 def voice_plugin(h):
     """GET /voice/plugin → 插件状态（5 态 + 缺什么 + 下载进度）。永不 500。"""
+    if _deny(h):
+        return
     try:
         from voice import plugin as vp
         h._json(vp.state())
@@ -101,6 +117,8 @@ def voice_plugin(h):
 
 def voice_plugin_action(h):
     """POST /voice/plugin {"action": "...", ...}"""
+    if _deny(h):
+        return
     from routes_common import _read_json
     from voice import downloader, plugin as vp
     body = _read_json(h) or {}

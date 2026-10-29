@@ -19,6 +19,20 @@ from routes_common import (_read_json, _body_mode, _query_mode, _is_server,
 
 logger = logging.getLogger(__name__)
 
+_IMAGE_UPLOAD_LOCKS: dict[str, threading.Lock] = {}
+_IMAGE_UPLOAD_LOCKS_GUARD = threading.Lock()
+
+
+def _image_upload_lock() -> threading.Lock:
+    """同一用户的上传配额检查与落盘串行化。"""
+    key = cfg.user_dir_id()
+    with _IMAGE_UPLOAD_LOCKS_GUARD:
+        lock = _IMAGE_UPLOAD_LOCKS.get(key)
+        if lock is None:
+            lock = threading.Lock()
+            _IMAGE_UPLOAD_LOCKS[key] = lock
+        return lock
+
 
 def upload_image(h):
     """POST /upload-image（A9）：接收压缩图字节 → 落盘 {mode}/images/。
@@ -44,16 +58,19 @@ def upload_image(h):
     if not isinstance(data, bytes) or len(data) > 10 * 1024 * 1024:
         _mb = len(data) / 1024 / 1024 if isinstance(data, bytes) else 0.0
         h._json({"ok": False, "error": f"图片过大（当前 {_mb:.1f}MB，上限 10MB）；请压缩后再传"}); return
-    if _image_used_bytes() + len(data) > _image_quota_bytes():
-        _used_mb = _image_used_bytes() / 1024 / 1024
-        _quota_mb = _image_quota_bytes() / 1024 / 1024
-        h._json({"ok": False, "error": f"图片空间已满（已用 {_used_mb:.1f}MB，上限 {_quota_mb:.0f}MB）；"
-                                       "请在数据面板清理后重试"}); return
-    img_id = "img_" + _uuid.uuid4().hex[:12]
-    fp = _image_dir(mode) / (img_id + ext)
-    from modules.storage import atomic_write_bytes
-    if not atomic_write_bytes(fp, data):
-        h._json({"ok": False, "error": "图片保存失败"}); return
+    with _image_upload_lock():
+        used = _image_used_bytes()
+        quota = _image_quota_bytes()
+        if used + len(data) > quota:
+            _used_mb = used / 1024 / 1024
+            _quota_mb = quota / 1024 / 1024
+            h._json({"ok": False, "error": f"图片空间已满（已用 {_used_mb:.1f}MB，上限 {_quota_mb:.0f}MB）；"
+                                           "请在数据面板清理后重试"}); return
+        img_id = "img_" + _uuid.uuid4().hex[:12]
+        fp = _image_dir(mode) / (img_id + ext)
+        from modules.storage import atomic_write_bytes
+        if not atomic_write_bytes(fp, data):
+            h._json({"ok": False, "error": "图片保存失败"}); return
     # 图片理解统一由模型原生识图；desc 恒空（旧数据手填 desc 兼容读法不受影响）
     h._json({"ok": True, "img_id": img_id, "file": fp.name, "desc": "",
              "server_side": _is_server()})
@@ -213,6 +230,7 @@ def get_image(h):
             data = fp.read_bytes()
             h.send_response(200)
             h.send_header("Content-Type", mime)
+            h.send_header("X-Content-Type-Options", "nosniff")
             h.send_header("Cache-Control", "no-cache")
             h.send_header("Content-Length", str(len(data)))
             h.end_headers()

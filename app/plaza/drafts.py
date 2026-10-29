@@ -38,6 +38,7 @@ from plaza import store as st
 logger = logging.getLogger(__name__)
 
 DRAFT_MAX = 50                       # 每人最多保留的草稿数（★2026-10-02：10 → 50；**管理员不限**）
+DRAFT_MAX_BYTES = 100 * 1024 * 1024  # 每位作者草稿目录总字节软上限（防写满磁盘）
 # 定位：草稿份数是**存储安全阀**，不是内容限制（用户实测"最多保留 10 份"太紧）。管理员
 # （`role == admin`）在 `save_draft(is_admin=True)` 时完全豁免 —— 他们的草稿是运营/调试用途。
 DRAFT_STATUSES = ("draft", "reviewed", "rejected", "published")
@@ -106,6 +107,13 @@ def draft_meta(ohash: str, did: str) -> Path:
     return owner_dir(ohash) / f"{did}.json"
 
 
+def _owner_dir_bytes(d: Path) -> int:
+    try:
+        return sum(fp.stat().st_size for fp in d.iterdir() if fp.is_file())
+    except OSError:
+        return 0
+
+
 def _read_meta(ohash: str, did: str) -> dict:
     try:
         data = json.loads(draft_meta(ohash, did).read_text(encoding="utf-8"))
@@ -157,6 +165,18 @@ def save_draft(ohash: str, card_zip: bytes, *, display: str = "",
         if len(others) >= DRAFT_MAX:
             raise DraftError(DRAFT_LIMIT,
                              f"草稿最多保留 {DRAFT_MAX} 份，请先删除不再需要的")
+    used = _owner_dir_bytes(d)
+    current_zip = draft_zip(ohash, did)
+    if existing and current_zip.is_file():
+        try:
+            used -= current_zip.stat().st_size
+        except OSError:
+            pass
+    if max(0, used) + len(card_zip) > DRAFT_MAX_BYTES:
+        raise DraftError(
+            DRAFT_LIMIT,
+            f"草稿存储空间最多 {DRAFT_MAX_BYTES // (1024 * 1024)}MB，请先删除不再需要的",
+        )
     meta = {
         "id": did,
         "name": parsed["manifest"]["name"],
