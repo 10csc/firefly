@@ -1,7 +1,12 @@
 package com.firefly.android
 
+import android.content.Context
+import android.content.Intent
+import android.os.Process
 import android.util.Base64
 import android.util.Log
+import java.io.File
+import java.util.concurrent.atomic.AtomicBoolean
 import java.security.KeyFactory
 import java.security.Signature
 import java.security.spec.X509EncodedKeySpec
@@ -21,6 +26,84 @@ import java.security.spec.X509EncodedKeySpec
 object HotUpdateBridge {
 
     private const val TAG = "FireflyHotUpdate"
+    private const val HANDOFF_TIMEOUT_MS = 5_000L
+    private const val HANDOFF_SETTLE_CHECK_MS = 3_000L
+    private const val HANDOFF_FILE = "hotupdate_restart_ready"
+    private val restartScheduled = AtomicBoolean(false)
+    private var appContext: Context? = null
+
+    @JvmStatic
+    fun attach(context: Context) {
+        appContext = context.applicationContext
+    }
+
+    /**
+     * 通过独立进程里的可见交接 Activity 真正重启应用。
+     *
+     * 仅调用 finishAffinity() 不会销毁 JVM；KeepAliveService 还在时尤其如此，Chaquopy
+     * 已加载的模块也不会重走 import。
+     *
+     * Android 14 会拦截“进程已经死亡后，AlarmManager 再拉起 Activity”的 BAL 请求。
+     * 因此顺序必须是：旧进程启动 `:hotupdate_restart` 里的可见交接窗口 → 交接窗口
+     * 在 onResume 写入就绪令牌 → 交接进程按 Intent 中的旧 PID 执行原生 kill →
+     * 仍有可见窗口的交接 Activity 拉起全新的默认进程。旧 PID 的销毁权交给交接
+     * 进程，避免默认进程自毁失败后无人兜底；也绝不依赖 ColorOS 可能不可见的 /proc。
+     */
+    @JvmStatic
+    fun requestProcessRestart(): Boolean {
+        if (!restartScheduled.compareAndSet(false, true)) return true
+        val context = appContext
+        if (context == null) {
+            restartScheduled.set(false)
+            Log.w(TAG, "原生重启失败：MainActivity 尚未 attach Context")
+            return false
+        }
+        return try {
+            val token = "${Process.myPid()}-${System.nanoTime()}"
+            val readyFile = File(context.filesDir, HANDOFF_FILE)
+            readyFile.writeText("")
+            val intent = Intent(context, HotUpdateRestartActivity::class.java).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                putExtra(HotUpdateRestartActivity.EXTRA_OLD_PID, Process.myPid())
+                putExtra(HotUpdateRestartActivity.EXTRA_READY_TOKEN, token)
+            }
+            context.startActivity(intent)
+            Log.i(TAG, "已启动隔离进程交接窗口：旧 PID=${Process.myPid()}")
+            Thread {
+                try {
+                    val deadline = System.currentTimeMillis() + HANDOFF_TIMEOUT_MS
+                    while (readyFile.readText() != token &&
+                        System.currentTimeMillis() < deadline
+                    ) {
+                        Thread.sleep(50)
+                    }
+                    if (readyFile.readText() != token) {
+                        restartScheduled.set(false)
+                        readyFile.delete()
+                        Log.e(TAG, "交接窗口未就绪，取消销毁旧进程（可安全重试）")
+                        return@Thread
+                    }
+                    // 正常路径由可见交接进程 kill(oldPid)；这里仅在交接进程异常停滞时
+                    // 解除一次性锁，让下一轮热更轮询可以重新发起，而不是永久卡死。
+                    Thread.sleep(HANDOFF_SETTLE_CHECK_MS)
+                    restartScheduled.set(false)
+                    readyFile.delete()
+                    Log.e(TAG, "交接进程未在期限内销毁旧 PID，允许安全重试")
+                } catch (e: Exception) {
+                    restartScheduled.set(false)
+                    Log.e(TAG, "交接进程确认失败: ${e.javaClass.simpleName}: ${e.message}")
+                }
+            }.apply {
+                name = "firefly-hotupdate-restart"
+                start()
+            }
+            true
+        } catch (e: Exception) {
+            restartScheduled.set(false)
+            Log.e(TAG, "原生重启交接失败: ${e.javaClass.simpleName}: ${e.message}")
+            false
+        }
+    }
 
     @JvmStatic
     fun verifyRsaSha256(data: ByteArray, sigB64: String): Boolean {

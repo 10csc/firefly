@@ -7440,7 +7440,7 @@ _$("key-save")?.addEventListener("click", () => saveConfigNow(true));
 // 现在：服务器统一管理版本号与下载直链，客户端只认一个端点；
 //      兜底阶段也改为**按版本号取最高**，而非先到先得。
 // ═══════════════════════════════════════════
-const CURRENT_VERSION = "0.9.1";   // 与 android versionName / 安装器 AppVersion 保持一致
+const CURRENT_VERSION = "0.9.2";   // 与 android versionName / 安装器 AppVersion 保持一致
 // PC 三栏外壳（pc_shell.js，独立 classic script）底部状态栏要显示版本号，
 // 它看不到 bundle 作用域，所以暴露一个只读副本（不要在这里写版本，单一来源仍是本文件）。
 window.__appVersion = CURRENT_VERSION;

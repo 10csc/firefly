@@ -93,8 +93,8 @@ android {
         applicationId = "com.firefly.android"
         minSdk = 26
         targetSdk = 35
-        versionCode = 901
-        versionName = "0.9.1"
+        versionCode = 902
+        versionName = "0.9.2"
         ndk {
             // 只发 arm64-v8a（真机全是 64 位 arm64；Python 3.12 也不支持 32 位）。
             // ★ 为什么必须砍掉 x86_64（2026-09-19）：Gitee 单个附件上限 **100MB**

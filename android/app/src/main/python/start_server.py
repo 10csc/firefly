@@ -67,6 +67,11 @@ def _load_server_with_overlay_recovery(overlay_dir, load_server):
                 "[hotupdate] Python 覆盖层隔离失败，仅从 sys.path 移除并回退 APK 底座",
                 file=sys.stderr,
             )
+        try:
+            from hotupdate import mark_boot_failed
+            mark_boot_failed("覆盖层 import 失败，已隔离到 %s" % quarantine)
+        except Exception:
+            traceback.print_exc()
         importlib.invalidate_caches()
         return load_server()
 
@@ -79,6 +84,14 @@ def _setup_env():
     # 覆盖层里的 core/paths.py 不能按自身 __file__ 反推底座；这里显式提供
     # 只读 app 目录。旧底座没有这个变量时，core.paths 仍会从 sys.path 兜底。
     os.environ.setdefault("FIREFLY_ANDROID_APP_DIR", join(_BACKEND, "app"))
+    try:
+        from java import jclass
+        base_version = str(jclass("com.firefly.android.BuildConfig").VERSION_NAME)
+        if base_version:
+            os.environ.setdefault("FIREFLY_BASE_VERSION", base_version)
+    except Exception:
+        # 单测/桌面路径由调用方显式 configure；Android 正式壳一定有 BuildConfig。
+        pass
     os.environ["FIREFLY_NO_BROWSER"] = "1"
 
 
@@ -93,10 +106,13 @@ def start():
     _overlay_py = join(os.environ.get("FIREFLY_DATA_DIR", ""), "hotupdate", "py")
     sys.path.insert(0, _BACKEND)
     sys.path.insert(0, join(_BACKEND, "app"))
+    from hotupdate import configure_runtime, prepare_startup
+    configure_runtime()
+    startup = prepare_startup()
     # ★ 覆盖层必须插在**这两条之后**（insert(0) ⇒ 最后插的在最前）。
     #   若先插覆盖层再插 `_BACKEND/app`，`import modules.x` 会先命中 APK 里的底座代码，
     #   补丁形同没装 —— 这是一个不报错的静默失效，故写死顺序。
-    use_overlay = os.path.isdir(_overlay_py)
+    use_overlay = os.path.isdir(_overlay_py) and not startup.get("rolled_back")
     if use_overlay and _overlay_py not in sys.path:
         sys.path.insert(0, _overlay_py)
 

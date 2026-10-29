@@ -30,9 +30,7 @@ import time
 import uuid
 from pathlib import Path
 
-from core import paths
-from hotupdate import net, verify
-from modules import app_config as cfg
+from hotupdate import native, net, runtime, verify
 
 logger = logging.getLogger(__name__)
 
@@ -56,10 +54,11 @@ DEFAULT_URL_ROOTS = (
 CHECK_INTERVAL = 24 * 3600      # 规范 §5.1：每天一次
 STARTUP_DELAY = 30              # 冷启动后 30 秒
 IDLE_CONFIRM = 3.0              # 规范 §5.2.1：连续 3 秒无活动才算空闲
-BOOT_FAIL_LIMIT = 2             # 规范 §5.5：连续 2 次带 pending 启动失败 ⇒ 回滚
+BOOT_FAIL_LIMIT = 1             # 候选进程未 boot-ok 就死亡 ⇒ 下次启动立即回滚
 
 _LOCK = threading.RLock()
 _thread = None
+_busy_probe = None
 
 _DEFAULTS = {
     "enabled": True,
@@ -70,6 +69,8 @@ _DEFAULTS = {
     "applied_layer": "",          # v2：本 serial 含哪些层（"web" / "py" / "web+py"）
     "applied_pid": 0,             # 应用补丁时的进程号（见 boot_ok：同进程的 boot-ok 不算 py 层启动确认）
     "pending_serial": 0,
+    "pending_boot_pid": 0,        # 正在验证 pending 的进程号；下次启动发现它不是自己 ⇒ 上次启动失败
+    "pending_started_at": 0.0,
     "boot_fail_count": 0,
     "last_check": 0.0,
     "last_error": "",
@@ -93,8 +94,13 @@ _RT = {"available": None, "reload_pending": False, "restart_pending": False,
 LAYERS = ("web", "py")
 
 
+def configure_runtime(*, base_version: str | None = None,
+                      data_root: str | Path | None = None) -> None:
+    runtime.configure(base_version=base_version, data_root=data_root)
+
+
 def root() -> Path:
-    return paths.hotupdate_root()
+    return runtime.hotupdate_root()
 
 
 def web_dir() -> Path:
@@ -206,8 +212,9 @@ def base_urls(d: dict) -> list:
         s = str(r).strip()
         if not s:
             continue
-        out.append(s.replace("{base}", cfg.APP_VERSION) if "{base}" in s
-                   else f"{s.rstrip('/')}/{cfg.APP_VERSION}")
+        version = runtime.base_version()
+        out.append(s.replace("{base}", version) if "{base}" in s
+                   else f"{s.rstrip('/')}/{version}")
     return out
 
 
@@ -227,7 +234,7 @@ def _rollout_decision(d: dict, manifest: dict, serial: int) -> bool:
     except Exception:
         pct = 100
     pct = max(0, min(100, pct))
-    raw = f"{cid}:{cfg.APP_VERSION}:{int(serial)}".encode("utf-8")
+    raw = f"{cid}:{runtime.base_version()}:{int(serial)}".encode("utf-8")
     bucket = int.from_bytes(hashlib.sha256(raw).digest()[:8], "big") % 100
     selected = bucket < pct
     d["rollout_percent"] = pct
@@ -283,17 +290,23 @@ def _overlay_effective(files: list) -> tuple[bool, str]:
 
 
 # ── 空闲判定（规范 §5.2.1）──────────────────────────
-def _voice_downloading() -> bool:
-    try:
-        from voice import plugin as vp
-        return bool(vp._DL.get("running"))
-    except Exception:
-        return False
+def set_busy_probe(probe) -> None:
+    """业务侧可注册额外忙碌信号；加载器本身绝不 import 业务模块。"""
+    global _busy_probe
+    _busy_probe = probe if callable(probe) else None
 
 
 def idle() -> bool:
     """空闲 = 前端不忙 + 模型没在下载 + 没有补丁在应用。"""
-    if _RT["applying"] or _RT["busy"] or _voice_downloading():
+    extra_busy = False
+    if callable(_busy_probe):
+        try:
+            extra_busy = bool(_busy_probe())
+        except Exception as exc:
+            logger.warning("热更新忙碌探针异常（按忙碌处理）: %s: %s",
+                           type(exc).__name__, exc)
+            extra_busy = True
+    if _RT["applying"] or _RT["busy"] or extra_busy:
         return False
     return (time.time() - float(_RT["last_busy_at"] or 0)) >= IDLE_CONFIRM
 
@@ -312,15 +325,27 @@ def status() -> dict:
     d = load_state()
     with _LOCK:
         avail = _RT["available"]
+        layer = str(d.get("applied_layer") or applied_layer())
+        current_pid = os.getpid()
+        pending = int(d["pending_serial"])
+        same_process = bool(d.get("applied_pid")) and int(d["applied_pid"]) == current_pid
+        restart_pending = bool(_RT["restart_pending"]) or (
+            pending > 0 and "py" in layer and same_process
+        )
+        reload_pending = bool(_RT["reload_pending"]) or (
+            pending > 0 and "web" in layer and "py" not in layer and same_process
+        )
+        version = runtime.base_version()
         out = {
             "ok": True,
             "enabled": bool(d["enabled"]),
             "url_roots": list(d["url_roots"]),
-            "base_version": cfg.APP_VERSION,
+            "base_version": version,
             "applied_serial": int(d["applied_serial"]),
             "applied_hash": d["applied_hash"],
-            "applied_layer": d.get("applied_layer") or applied_layer(),
-            "pending_serial": int(d["pending_serial"]),
+            "applied_layer": layer,
+            "pending_serial": pending,
+            "pending_boot_pid": int(d.get("pending_boot_pid") or 0),
             "boot_fail_count": int(d["boot_fail_count"]),
             "last_check": d["last_check"],
             "last_error": d["last_error"],
@@ -331,9 +356,9 @@ def status() -> dict:
             "overlay_files": _overlay_files(),
             "web_files": _layer_files("web"),
             "py_files": _layer_files("py"),
-            "reload_pending": bool(_RT["reload_pending"]),
+            "reload_pending": reload_pending,
             # ★ v2：含 py 的补丁**只能**靠重启进程生效；reload 页面换不掉已 import 的模块
-            "restart_pending": bool(_RT["restart_pending"]),
+            "restart_pending": restart_pending,
             "restart_note": _RT["last_note"],
             "idle": idle(),
             "busy_why": _RT["busy_why"],
@@ -345,7 +370,7 @@ def status() -> dict:
                            "files": len(avail["manifest"].get("files") or []),
                            "note": avail["manifest"].get("note", "")} if avail else None),
             # 客户端上报给排障用的三元组（契约 §二）
-            "running": {"base_version": cfg.APP_VERSION,
+            "running": {"base_version": version,
                         "hot_serial": int(d["applied_serial"]),
                         "patch_hash": d["applied_hash"]},
         }
@@ -379,8 +404,9 @@ def check(manual: bool = False) -> dict:
         save_state(d)
         return {"ok": False, "error": d["last_error"], "status": status()}
 
-    if str(latest.get("base") or "") != cfg.APP_VERSION:
-        d["last_error"] = f"更新源的 base 不符（{latest.get('base')} != {cfg.APP_VERSION}）"
+    version = runtime.base_version()
+    if str(latest.get("base") or "") != version:
+        d["last_error"] = f"更新源的 base 不符（{latest.get('base')} != {version}）"
         d["last_check"] = time.time()
         save_state(d)
         return {"ok": False, "error": d["last_error"], "status": status()}
@@ -516,7 +542,7 @@ def apply_available() -> dict:
         return {"ok": False, "error": f"补丁 {avail['serial']} 已应用过"}
 
     m = avail["manifest"]
-    if str(m.get("base_version")) != cfg.APP_VERSION:
+    if str(m.get("base_version")) != runtime.base_version():
         return {"ok": False, "error": f"补丁底座不符（{m.get('base_version')}）"}
     if not _rollout_decision(d, m, int(avail["serial"])):
         save_state(d)
@@ -555,12 +581,14 @@ def apply_available() -> dict:
         d["applied_layer"] = layer
         d["applied_pid"] = os.getpid()      # 供 boot_ok 判断"是不是新进程在确认"
         d["pending_serial"] = int(avail["serial"])
+        d["pending_boot_pid"] = 0           # 下一次进程启动时再登记候选 boot
+        d["pending_started_at"] = 0.0
         d["boot_fail_count"] = 0
         d["last_error"] = ""
         d["rolled_back_reason"] = ""
         save_state(d)
         with _LOCK:
-            _RT["reload_pending"] = "web" in staged
+            _RT["reload_pending"] = "web" in staged and "py" not in staged
             # 含 py ⇒ 必须重启进程；不安全包已在下载前拒绝，这里保留防御性判定。
             _RT["restart_pending"] = ("py" in staged) and py_ok
             _RT["last_note"] = "" if py_ok else f"py 层重启无效：{py_note}（装新整包后才生效）"
@@ -595,6 +623,8 @@ def rollback(reason: str = "") -> dict:
     d["applied_layer"] = ""
     d["applied_pid"] = 0
     d["pending_serial"] = 0
+    d["pending_boot_pid"] = 0
+    d["pending_started_at"] = 0.0
     d["boot_fail_count"] = 0
     d["rolled_back_reason"] = reason or "手动回滚"
     save_state(d)
@@ -604,6 +634,77 @@ def rollback(reason: str = "") -> dict:
         _RT["available"] = None
     logger.info("热更新已回滚：%s（清掉 %s 个文件）", d["rolled_back_reason"], n)
     return {"ok": True, "removed": n, "reason": d["rolled_back_reason"], "status": status()}
+
+
+def prepare_startup() -> dict:
+    """业务 import 之前的独立 preflight；负责整包换代清理与崩溃候选回滚。
+
+    这是 0.9.2 防砖状态机的关键顺序：
+      pending 已应用 → 新进程登记 pending_boot_pid → 导入覆盖层
+      →（前端 boot-ok）清零
+    若该进程在 boot-ok 前死亡，下一次进程会发现 pending_boot_pid 不是自己，并在
+    `sys.path` 注入覆盖层之前删掉坏补丁。覆盖层导入抛异常时由调用方再调用
+    `mark_boot_failed()`，无需等待下一次启动。
+    """
+    current_pid = int(os.getpid())
+    version = runtime.base_version()
+    d = load_state()
+
+    old_base = str(d.get("base_version") or "")
+    if old_base and old_base != version:
+        reason = f"整包已升级（{old_base} → {version}），旧补丁已作废"
+        rollback(reason)
+        # rollback 只清补丁状态；换代本身也必须落盘。否则新进程再次读到旧
+        # base_version，会把本进程刚应用的新底座候选补丁误判成遗留物并回滚。
+        d = load_state()
+        d["base_version"] = version
+        d["rolled_back_reason"] = reason
+        save_state(d)
+        return {
+            "ok": True,
+            "rolled_back": True,
+            "boot_candidate": False,
+            "reason": "base-changed",
+        }
+    if not old_base:
+        d["base_version"] = version
+        save_state(d)
+
+    d = load_state()
+    pending = int(d.get("pending_serial") or 0)
+    previous_boot_pid = int(d.get("pending_boot_pid") or 0)
+    if not pending:
+        if previous_boot_pid:
+            d["pending_boot_pid"] = 0
+            d["pending_started_at"] = 0.0
+            save_state(d)
+        return {"ok": True, "rolled_back": False, "boot_candidate": False}
+
+    if previous_boot_pid and previous_boot_pid != current_pid:
+        d["boot_fail_count"] = int(d.get("boot_fail_count") or 0) + 1
+        save_state(d)
+        reason = (
+            f"补丁 {pending} 的候选进程 {previous_boot_pid} "
+            f"连续 {d['boot_fail_count']} 次未能完成启动，已自动回退"
+        )
+        rollback(reason)
+        return {
+            "ok": True,
+            "rolled_back": True,
+            "boot_candidate": False,
+            "reason": reason,
+        }
+
+    if not previous_boot_pid:
+        d["pending_boot_pid"] = current_pid
+        d["pending_started_at"] = time.time()
+        save_state(d)
+    return {"ok": True, "rolled_back": False, "boot_candidate": True}
+
+
+def mark_boot_failed(reason: str) -> dict:
+    """候选覆盖层在 import/启动阶段失败时立即回退，供启动引导器调用。"""
+    return rollback(f"候选补丁启动失败：{reason}")
 
 
 def set_enabled(on: bool) -> dict:
@@ -645,6 +746,10 @@ def boot_ok() -> dict:
     if int(d["pending_serial"]):
         d["pending_serial"] = 0
         changed = True
+    if int(d.get("pending_boot_pid") or 0):
+        d["pending_boot_pid"] = 0
+        d["pending_started_at"] = 0.0
+        changed = True
     if int(d["boot_fail_count"]):
         d["boot_fail_count"] = 0
         changed = True
@@ -665,6 +770,21 @@ def restart_ready() -> bool:
     所以这里不再看层 —— 语义是"重启有效且尚未完成"。
     """
     return bool(_RT["restart_pending"]) and idle()
+
+
+def request_native_restart() -> dict:
+    """让 Android 壳销毁当前进程；只对当前进程里仍未生效的 py 补丁开放。"""
+    state = status()
+    if not state.get("restart_pending"):
+        return {"ok": False, "called": False, "error": "当前没有待重启的 py 补丁"}
+    result = native.request_process_restart(pid=os.getpid(), reason="py-pending")
+    with _LOCK:
+        _RT["last_note"] = (
+            "已请求 Android 原生重启进程"
+            if result.get("ok")
+            else f"原生重启请求失败：{result.get('error') or '不可用'}"
+        )
+    return result
 
 
 def clear_note() -> dict:
@@ -705,7 +825,7 @@ def running_id() -> dict:
     """
     d = load_state()
     serial = int(d.get("applied_serial") or 0)
-    out = {"base_version": cfg.APP_VERSION,
+    out = {"base_version": runtime.base_version(),
            "hot_serial": serial,
            "patch_hash": str(d.get("applied_hash") or ""),
            "layer": str(d.get("applied_layer") or applied_layer())}
@@ -719,30 +839,11 @@ def running_id() -> dict:
 
 # ── 启动 ────────────────────────────────────────────
 def on_startup() -> dict:
-    """进程启动时调一次：整包变更清理 → 安全模式判定 → 起后台检查线程。"""
-    d = load_state()
-    note = ""
-    if d.get("base_version") != cfg.APP_VERSION:
-        old = d.get("base_version") or "(无)"
-        n = _clear_overlay()
-        d = dict(_DEFAULTS)
-        d["base_version"] = cfg.APP_VERSION
-        d["url_roots"] = list(DEFAULT_URL_ROOTS) if DEFAULT_URL_ROOTS else load_state()["url_roots"]
-        d["rolled_back_reason"] = f"整包已升级（{old} → {cfg.APP_VERSION}），旧补丁已作废"
-        save_state(d)
-        note = f"base 变更，已清空覆盖层（{n} 个文件）"
-        logger.info("热更新：%s", note)
-        with _LOCK:
-            _RT["reload_pending"] = False
-            _RT["restart_pending"] = False
-    elif int(d["pending_serial"]):
-        d["boot_fail_count"] = int(d["boot_fail_count"]) + 1
-        save_state(d)
-        if d["boot_fail_count"] >= BOOT_FAIL_LIMIT:
-            rollback(f"补丁 {d['pending_serial']} 连续 {d['boot_fail_count']} 次未能完成启动，已自动回退")
-            note = "安全模式触发，已回滚"
-        else:
-            note = f"上次补丁未确认启动（{d['boot_fail_count']}/{BOOT_FAIL_LIMIT}）"
+    """服务启动后调一次：重复 preflight（兼容旧调用）→ 起后台检查线程。"""
+    prepared = prepare_startup()
+    note = prepared.get("reason") or ""
+    if prepared.get("rolled_back"):
+        logger.warning("热更新 preflight 已回退：%s", note)
     _start_background()
     return {"ok": True, "note": note, "status": status()}
 

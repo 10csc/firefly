@@ -22,6 +22,7 @@ import hashlib
 import http.server
 import json
 import os
+import re
 import shutil
 import socket
 import socketserver
@@ -51,7 +52,6 @@ DEFAULT_DIST = ROOT / "hotupdate_dist" / "prod"
 DEFAULT_OUT = ROOT / ".tmp_test" / "adb_hotupdate"
 PACKAGE = "com.firefly.android"
 ACTIVITY = f"{PACKAGE}/.MainActivity"
-BASE_VERSION = "0.9.1"
 DEVICE_API_PORT = 8765
 HOST_FORWARD_PORT = 18765
 REVERSE_PORT = 18766
@@ -81,8 +81,18 @@ def _manifest_hash(raw: bytes) -> str:
     return hashlib.sha256(raw).hexdigest()[:16]
 
 
-def _read_manifest(dist: Path, serial: int) -> tuple[dict, bytes, Path, Path]:
-    base = dist / BASE_VERSION
+def _default_base_version() -> str:
+    text = (ROOT / "app" / "core" / "config.py").read_text(encoding="utf-8")
+    match = re.search(r'^APP_VERSION\s*=\s*"([^"]+)"', text, re.MULTILINE)
+    if not match:
+        raise E2EFailure("无法从 app/core/config.py 读取 APP_VERSION")
+    return match.group(1)
+
+
+def _read_manifest(
+    dist: Path, serial: int, base_version: str
+) -> tuple[dict, bytes, Path, Path]:
+    base = dist / base_version
     js = base / f"patch-{serial}.json"
     zp = base / f"patch-{serial}.zip"
     if not js.is_file() or not zp.is_file():
@@ -95,13 +105,17 @@ def _read_manifest(dist: Path, serial: int) -> tuple[dict, bytes, Path, Path]:
     manifest = json.loads(raw.decode("utf-8"))
     if int(manifest.get("serial") or 0) != serial:
         raise E2EFailure(f"patch-{serial}.json 内 serial 不符")
-    if str(manifest.get("base_version") or "") != BASE_VERSION:
-        raise E2EFailure(f"patch-{serial} base={manifest.get('base_version')}，预期 {BASE_VERSION}")
+    if str(manifest.get("base_version") or "") != base_version:
+        raise E2EFailure(
+            f"patch-{serial} base={manifest.get('base_version')}，预期 {base_version}"
+        )
     return manifest, raw, js, zp
 
 
-def _verify_patch(dist: Path, serial: int) -> tuple[dict, bytes, Path, Path]:
-    manifest, raw, js, zp = _read_manifest(dist, serial)
+def _verify_patch(
+    dist: Path, serial: int, base_version: str
+) -> tuple[dict, bytes, Path, Path]:
+    manifest, raw, js, zp = _read_manifest(dist, serial, base_version)
     meta = manifest.get("zip") or {}
     expect_sha = str(meta.get("sha256") or "")
     expect_size = int(meta.get("size") or 0)
@@ -237,9 +251,10 @@ class Api:
 
 
 class SourceServer:
-    def __init__(self, port: int, log_path: Path):
+    def __init__(self, port: int, log_path: Path, base_version: str):
         self.port = port
         self.log_path = log_path
+        self.base_version = base_version
         self.root = DEFAULT_DIST
         self.latest_override: int | None = None
         self.lock = threading.Lock()
@@ -266,8 +281,10 @@ class SourceServer:
                 path = self.path.split("?", 1)[0]
                 with owner.lock:
                     override = owner.latest_override
-                if path == f"/{BASE_VERSION}/latest" and override is not None:
-                    data = json.dumps({"base": BASE_VERSION, "serial": override}).encode("utf-8")
+                if path == f"/{owner.base_version}/latest" and override is not None:
+                    data = json.dumps(
+                        {"base": owner.base_version, "serial": override}
+                    ).encode("utf-8")
                     self.send_response(200)
                     self.send_header("Content-Type", "application/json")
                     self.send_header("Content-Length", str(len(data)))
@@ -328,14 +345,16 @@ def _try_exact_overlay_backup(dev: Device, out: Path) -> tuple[bool, str]:
     return True, f"{len(names)} 个成员，{tar_path.stat().st_size} 字节"
 
 
-def _build_artifact_recovery(dist: Path, serial: int, out: Path) -> dict:
-    manifest, raw, js, zp = _verify_patch(dist, serial)
-    rec = out / "recovery_dist" / BASE_VERSION
+def _build_artifact_recovery(
+    dist: Path, serial: int, out: Path, base_version: str
+) -> dict:
+    manifest, raw, js, zp = _verify_patch(dist, serial, base_version)
+    rec = out / "recovery_dist" / base_version
     rec.mkdir(parents=True, exist_ok=True)
     shutil.copy2(js, rec / js.name)
     shutil.copy2(zp, rec / zp.name)
     (rec / "latest").write_text(
-        json.dumps({"base": BASE_VERSION, "serial": serial}), encoding="utf-8"
+        json.dumps({"base": base_version, "serial": serial}), encoding="utf-8"
     )
     (out / "patch-manifest.json").write_bytes(raw)
 
@@ -590,7 +609,7 @@ def run(args: argparse.Namespace) -> int:
         _check_port(HOST_FORWARD_PORT)
         dev.reverse(REVERSE_PORT, REVERSE_PORT)
         dev.forward(HOST_FORWARD_PORT, DEVICE_API_PORT)
-        source = SourceServer(REVERSE_PORT, out / "http.log")
+        source = SourceServer(REVERSE_PORT, out / "http.log", args.base_version)
         source.start()
         report["steps"]["transport"] = {
             "reverse": f"device:{REVERSE_PORT} -> host:{REVERSE_PORT}",
@@ -611,7 +630,9 @@ def run(args: argparse.Namespace) -> int:
         artifact = None
         if not exact_ok:
             if old_serial and old_status.get("applied_hash"):
-                artifact = _build_artifact_recovery(Path(args.dist), old_serial, out)
+                artifact = _build_artifact_recovery(
+                    Path(args.dist), old_serial, out, args.base_version
+                )
                 if artifact["manifest_hash"] != old_status.get("applied_hash"):
                     raise E2EFailure(
                         "设备 applied_hash 与本地 patch 清单不一致，拒绝继续："
@@ -631,7 +652,7 @@ def run(args: argparse.Namespace) -> int:
             raise E2EFailure("没有可恢复备份，拒绝注入补丁")
 
         target_manifest, target_raw, _, target_zip = _verify_patch(
-            Path(args.dist), args.target_serial
+            Path(args.dist), args.target_serial, args.base_version
         )
         target_paths = {str(x.get("path")) for x in target_manifest.get("files") or []}
         if "py/core/pack_paths.py" not in target_paths:
@@ -716,7 +737,7 @@ def run(args: argparse.Namespace) -> int:
             "pack_paths_verification": {
                 "in_manifest": True,
                 "landing_proven_by": (
-                    "serial 8 的 api/pack_paths.py 在顶层 import core.pack_paths；"
+                    f"serial {args.target_serial} 的 api/pack_paths.py 在顶层 import core.pack_paths；"
                     "新进程能启动并完成 /modes、/config 请求，说明该文件已落盘并可导入。"
                 ),
             },
@@ -809,13 +830,19 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--device", default=None, help="adb serial；省略则要求只有一台设备")
     p.add_argument("--dist", default=str(DEFAULT_DIST), help="hotupdate_dist/prod 根目录")
     p.add_argument("--out", default=str(DEFAULT_OUT))
-    p.add_argument("--target-serial", type=int, default=8)
+    p.add_argument(
+        "--base-version",
+        default=None,
+        help="补丁底座版本；省略时读取 app/core/config.py 的 APP_VERSION",
+    )
+    p.add_argument("--target-serial", type=int, required=True)
     p.add_argument(
         "--allow-assisted-restart",
         action="store_true",
         help="壳漏报 restart_pending 时，仍冷启动验证补丁兼容性；总结果仍判 FAIL",
     )
     args = p.parse_args()
+    args.base_version = args.base_version or _default_base_version()
 
     if not Path(args.adb).is_file():
         raise SystemExit(f"adb 不存在：{args.adb}")

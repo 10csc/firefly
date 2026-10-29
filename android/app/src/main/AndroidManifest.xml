@@ -47,6 +47,15 @@
             </intent-filter>
         </activity>
 
+        <!-- 热更新原生重启交接：必须在独立进程里有真实可见窗口，Android 14 才允许
+             旧默认进程销毁后从这里拉起 MainActivity；绝不可合并回默认进程。 -->
+        <activity
+            android:name=".HotUpdateRestartActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:process=":hotupdate_restart"
+            android:taskAffinity="com.firefly.android.hotupdate_restart" />
+
         <!-- 诊断包分享：ACTION_SEND 带附件要用 content:// URI（Android 7+ 禁 file://），
              所以必须有 FileProvider；白名单只放 cacheDir/diagnostics/（见 res/xml/file_paths.xml） -->
         <provider

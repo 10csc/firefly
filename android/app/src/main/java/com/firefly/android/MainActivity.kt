@@ -2,10 +2,8 @@ package com.firefly.android
 
 import android.annotation.SuppressLint
 import android.app.Activity
-import android.app.AlarmManager
 import android.app.AlertDialog
 import android.app.DownloadManager
-import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -17,7 +15,6 @@ import android.os.Environment
 import android.os.Handler
 import android.os.Looper
 import android.os.PowerManager
-import android.os.SystemClock
 import android.provider.Settings
 import android.util.Log
 import android.view.ViewGroup
@@ -62,11 +59,8 @@ class MainActivity : AppCompatActivity() {
     companion object {
         private const val SERVER_URL = "http://127.0.0.1:8765"
         private const val HOTUPDATE_POLL_MS = 8000L   // 热更新待生效时的轮询间隔（本地请求，代价可忽略）
-        // ★ v2：含 py 层的补丁只能靠**重启 App 进程**生效（Chaquopy 一进程只能 Python.start() 一次）。
-        //   重启器：AlarmManager 定一个 800ms 后的 PendingIntent 自拉起，然后 finishAffinity()
-        //   结束当前 Activity（进程随 KeepAliveService 之后自然换新）。与规范 §5.2 表格一致。
-        private const val HOTUPDATE_RESTART_ACTION = "com.firefly.android.HOTUPDATE_RESTART"
-        private const val HOTUPDATE_RESTART_DELAY_MS = 800L
+        // 含 py 层的补丁由 HotUpdateBridge 在独立进程建立可见交接窗口，
+        // 再销毁旧 JVM；finishAffinity() 不能保证 Chaquopy 模块重新 import。
         // ★ APP 内安装更新包（2026-09-25）：
         //   · `UPDATE_DIR` + `ANDROID_UPDATE_APK` 是**壳自己拼路径**用的固定值，
         //     与 `app/routes_update.py::_DOWNLOAD_FILENAMES["apk"]` 逐字对应，
@@ -119,6 +113,7 @@ class MainActivity : AppCompatActivity() {
         // 这里只注入 Context，**不加载任何模型** —— 引擎由 Python 侧（app/voice/）按需 init，
         // 这样"未安装/未启用"时零成本，且保证"同时只有一个合成"由 Python 侧统一调度。
         VoiceBridge.attach(this)
+        HotUpdateBridge.attach(this)
 
         // 后台保活：前台服务（对话流程较长，防止切后台/锁屏时进程被杀导致内容丢失）
         startForegroundService(Intent(this, KeepAliveService::class.java))
@@ -995,17 +990,18 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    /** 自拉起式重启：**只在 App 处于前台时做**，先定一个短延时闹钟把界面叫回来，再结束当前界面。
+    /** 原生自拉起式重启：**只在 App 处于前台时做**。
      *
-     *  ★ 2026-09-25 真机实测暴露的设计缺陷（已修）：原实现无条件 `finishAffinity()`，
-     *  而 Android 10+ 会**拦截后台应用的 Activity 启动**（真机日志：
+     *  ★ Android 10+ 会**拦截后台应用的 Activity 启动**（真机日志：
      *  `Background activity launch blocked … (BAL_BLOCK) result code=102`）。
-     *  于是 App 在后台时：闹钟被拦 → 界面却已经被结束 → **补丁永远不生效，而且每 8 秒
-     *  重试一次**（真机实测循环了十几分钟）。修法三条：
+     *  修法：
      *    ① 只有 `isAppForeground()` 为真才走重启（前台点名自己不受 BAL 限制）；
      *    ② 后台时**什么都不做**（覆盖层已落盘，用户下次冷启动就带上了 —— 规范 §5.2.1 的
      *       "长时间不空闲 ⇒ 推迟到下次冷启动"本来就是允许的路径）；
      *    ③ 加 30 秒节流，防"排程失败后每轮都杀一遍进程"。
+     *
+     *  ★ 0.9.2：真正动作下沉到 HotUpdateBridge。先确认独立进程中的可见交接窗口
+     *  已就绪，再 killProcess；finishAffinity() 不能冒充真正进程重启。
      */
     private fun restartForHotUpdate() {
         if (!KeepAliveService.isAppForeground()) {
@@ -1018,35 +1014,11 @@ class MainActivity : AppCompatActivity() {
         //   否则用户重新打开 App 还得白等最多 30 秒才看到修复生效（真机联调时踩到）。
         if (now - lastRestartAt < RESTART_THROTTLE_MS) return
         lastRestartAt = now
-        try {
-            val intent = Intent(this, MainActivity::class.java).apply {
-                action = HOTUPDATE_RESTART_ACTION
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
-            }
-            val pi = PendingIntent.getActivity(
-                this, 0, intent,
-                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-            )
-            val am = getSystemService(Context.ALARM_SERVICE) as AlarmManager
-            val at = android.os.SystemClock.elapsedRealtime() + HOTUPDATE_RESTART_DELAY_MS
-            // Android 12+ 精确闹钟需要 SCHEDULE_EXACT_ALARM 权限；没有就退到非精确闹钟
-            // （差几秒对"重启生效"没有影响，绝不为了精确而让功能失效）
-            val exact = Build.VERSION.SDK_INT < Build.VERSION_CODES.S || am.canScheduleExactAlarms()
-            if (exact) {
-                am.setExactAndAllowWhileIdle(AlarmManager.ELAPSED_REALTIME_WAKEUP, at, pi)
-            } else {
-                am.set(AlarmManager.ELAPSED_REALTIME_WAKEUP, at, pi)
-            }
-            Log.i("FireflyHotUpdate", "已排程自拉起（${HOTUPDATE_RESTART_DELAY_MS}ms 后），随后结束当前界面")
+        if (HotUpdateBridge.requestProcessRestart()) {
             Toast.makeText(this, "修复已生效，正在重启…", Toast.LENGTH_SHORT).show()
-            uiHandler.postDelayed({ finishAffinity() }, 300)
-        } catch (e: Exception) {
-            Log.w("FireflyHotUpdate", "重启排程失败，退回结束进程: ${e.message}")
-            try {
-                Toast.makeText(this, "修复已生效，正在重启…", Toast.LENGTH_SHORT).show()
-            } catch (_: Exception) {
-            }
-            android.os.Process.killProcess(android.os.Process.myPid())
+        } else {
+            Log.e("FireflyHotUpdate", "原生重启排程失败，保留旧进程并等待下一轮")
+            Toast.makeText(this, "补丁已落盘，重启未成功；稍后将重试", Toast.LENGTH_LONG).show()
         }
     }
 }

@@ -9,7 +9,7 @@
 - server.py（本文件）    FireflyHandler + 启动块
 """
 
-import json, sys, os, logging, subprocess, warnings
+import json, sys, os, logging, re, subprocess, warnings
 # 屏蔽 requests 依赖版本不匹配的警告（不影响功能）
 warnings.filterwarnings("ignore", message=".*urllib3.*", module="requests")
 warnings.filterwarnings("ignore", message=".*chardet.*", module="requests")
@@ -70,7 +70,25 @@ if not os.environ.get("FIREFLY_ANDROID"):
     _hu_data = os.environ.get("FIREFLY_DATA_DIR")
     _hu_user = (Path(_hu_data) / "user_data") if _hu_data else (Path(_PROJECT_ROOT) / "user_data")
     _hu_py = _hu_user.parent / "hotupdate" / "py"
-    if _hu_py.is_dir() and str(_hu_py) not in sys.path:
+    # 版本是加载器 preflight 的输入，但读取源码字面量不能 import 业务模块：
+    # 即使 core/routes 全坏，下面也必须先完成 pending 回滚判定。
+    _base_version = str(os.environ.get("FIREFLY_BASE_VERSION") or "")
+    if not _base_version:
+        try:
+            _cfg_text = (Path(__file__).resolve().parent / "core" / "config.py").read_text(
+                encoding="utf-8"
+            )
+            _match = re.search(r'^APP_VERSION\s*=\s*"([^"]+)"', _cfg_text, re.MULTILINE)
+            if _match:
+                _base_version = _match.group(1)
+        except OSError:
+            pass
+    _base_version = _base_version or "unknown"
+    os.environ.setdefault("FIREFLY_BASE_VERSION", _base_version)
+    from hotupdate import configure_runtime, prepare_startup
+    configure_runtime(base_version=_base_version)
+    _hu_startup = prepare_startup()
+    if _hu_py.is_dir() and not _hu_startup.get("rolled_back") and str(_hu_py) not in sys.path:
         sys.path.insert(0, str(_hu_py))
         print(f"  [热更新] 已挂载 py 覆盖层：{_hu_py}", flush=True)
 

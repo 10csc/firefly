@@ -47,6 +47,9 @@ RE_ASSIGN = re.compile(
 PLACEHOLDER = re.compile(
     r"(?i)^(xxx+|\*{3,}|your[_\-]?\w+|<[^>]+>|\$\{[^}]+\}|%s|changeme|todo|none|null|placeholder|example|\.\.\.)$"
 )
+# Kotlin/Java 等语言的运行时字符串模板，例如 "${pid}-${System.nanoTime()}"。
+# 这类值在源码里没有字面凭据；若模板里另含 `sk-...`，仍会被 RE_SK 独立捕获。
+RUNTIME_TEMPLATE = re.compile(r"\$\{[^}]+\}")
 # 已声明的假值：值里带这些词 ⇒ 判定为"测试用的假凭据"，**降级为提示**而不是命中。
 # ★ 这不是放宽：形态检测（sk- / token= / secret=）一条都没删，只是不再把「自己写明是假的」
 #   的值当事故报 —— 否则工具永远红灯，红灯就失去意义。
@@ -130,7 +133,7 @@ def scan(files, max_bytes, allow_large):
                         bucket.append((rel, i, "sk-前缀 API Key", mask(v, 3)))
                     for m in RE_ASSIGN.finditer(line):
                         val = m.group(2)
-                        if PLACEHOLDER.match(val.strip()):
+                        if PLACEHOLDER.match(val.strip()) or RUNTIME_TEMPLATE.search(val):
                             continue
                         bucket = hits_fake if DECLARED_FAKE.search(val) else hits_secret
                         bucket.append((rel, i, f"{m.group(1)} 赋值", mask(val, 0)))

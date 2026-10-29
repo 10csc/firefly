@@ -220,6 +220,13 @@ _DL = {"running": False, "percent": 0, "done": 0, "total": 0,
        "file": "", "error": "", "started_at": 0.0, "finished_at": 0.0,
        "verify": "", "verified": 0}
 
+# 热更新器保持零业务 import；忙碌信号由业务模块主动向它注册。
+try:
+    from hotupdate import set_busy_probe as _set_hu_busy_probe
+    _set_hu_busy_probe(lambda: bool(_DL.get("running")))
+except Exception:
+    pass
+
 
 def download_status() -> dict:
     d = dict(_DL)

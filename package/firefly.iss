@@ -2,7 +2,7 @@
 [Setup]
 AppId={{F1E7A3C5-9B2D-4E6A-8F1C-3D5B7A9E0C41}
 AppName=Firefly
-AppVersion=0.9.1
+AppVersion=0.9.2
 AppPublisher=Firefly Project
 DefaultDirName={localappdata}\Programs\Firefly
 DefaultGroupName=Firefly
