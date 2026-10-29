@@ -1,175 +1,141 @@
 # Firefly（萤火虫）— 角色扮演 Agent
 
-基于 DeepSeek API（Flash + Think High）的独立角色扮演系统。开源版，本地运行，不依赖服务器。
+Firefly 是以流萤为主要角色、同时允许制作和安装其他角色包的独立角色扮演应用。
+本地版可运行在 Windows 和 Android；服务器只提供账号、同步、下载、更新、公告和登录后的角色卡平台，
+不对外提供 App 前端。
 
 ## 环境要求
 
-- **Python 3.10+**（代码使用了 `X | None` 语法）
-- 需要可访问 DeepSeek API 的网络（对话走 API）
-- 无本地模型依赖（知识检索由 LLM 子代理完成，无需安装 embedding 模型）
+- Python 3.10+
+- `requests>=2.28`（见 `requirements.txt`）
+- 可访问所配置 AI 服务商的网络
+- 不需要本地 embedding 模型，也不依赖 OpenAI Python SDK
 
 ## 快速开始
 
 ```powershell
-# 1. 安装依赖（仅两个；国内网络慢可加清华镜像：-i https://pypi.tuna.tsinghua.edu.cn/simple）
-pip install openai requests
-
-# 2. 启动（Windows 下建议先设 UTF-8）
-cd app
-$env:PYTHONIOENCODING="utf-8"; $env:PYTHONUTF8="1"
+Set-Location F:\CodeFile\firefly
+python -m pip install -r requirements.txt
+$env:PYTHONUTF8 = "1"
+$env:PYTHONIOENCODING = "utf-8"
+Set-Location app
 python server.py
-
-# 3. 启动后自动打开浏览器；未自动打开则手动访问 http://localhost:8765，
-#    在设置中填入 DeepSeek API Key 即可开始对话
 ```
 
-Linux / macOS：`cd app && python server.py` 即可（路径与编码自动处理）。
-> 说明：Windows 为验证主平台；Linux/macOS 代码层已做路径/编码兼容，但未实测，遇到问题欢迎反馈。
+服务默认监听 `127.0.0.1:8765`。启动后打开 `http://127.0.0.1:8765`，在设置页填写 API Key。
 
 ## 功能
 
-- 角色扮演对话：分析器（意图/事实核查）→ 回复器（短信生成）→ 表情包调度
-- 知识检索：LLM 子代理读取完整设定库输出压缩摘要（全局关联，非向量截断）
-- 记忆压缩存档：对话在"休息"时整理进 memory.md（`user_data/{mode}/data/`），起床加载
-- 手账：重要对话与约定以流萤口吻记录（`user_data/story/手账.md`）
-- 前端设定编辑：角色文件/短信样本/表情包管理
-- 调试面板：流水线中间态、请求日志、token/费用统计
+- 对话流水线：知识检索 → 分析 → 回复 → 组织器 → 历史与观测。
+- 角色包：人格、知识库、提示词覆盖、开场、消息表现、表情和图片。
+- 对话能力：文本、图片、表情、旁白、引用、收藏、主动消息和语音附件。
+- 数据能力：本地持久化、备份、快照、账号同步、墓碑和冲突备份。
+- 角色卡平台：广场、搜索、制卡、草稿、审核、发布、改编、举报和治理。
+- 更新能力：签名整包、签名累积热更新和签名公告通道。
 
 ## 数据与隐私
 
-- 所有用户数据在 `user_data/`（对话历史、记忆、手账、配置、用户表情包），**升级版本不会覆盖**
-- 服务只绑定 `127.0.0.1`（仅本机访问）
-- API Key 只存本机 `user_data/config.json`
+- 本地数据写入 `user_data/`；覆盖升级保留，手机卸载会清除 App 私有目录。
+- API Key 保存在本机配置中，不写入项目仓库。
+- 本地服务默认只绑定回环地址，不向局域网暴露。
+- AI 对话、角色卡审核等操作会把完成任务所需内容发送给所配置的服务商；具体边界见
+  [使用指南](docs/使用指南/README.md)。
+- `server/`、发布密钥、keystore、用户数据库和备份不得提交或打进发行包。
 
 ## 发行版
 
-**📦 直接下载（无需构建）**：https://github.com/10csc/firefly/releases
+发行资产固定为：
 
-| 平台 | 包 | 说明 |
-|------|-----|------|
-| Windows | `firefly-setup.exe` | **一键安装**，装完桌面/开始菜单有快捷方式，双击即启动 |
-| Android | `firefly.apk` | 手机独立运行（Android 8.0+ 64 位），装完填 API Key 即用 |
+- Windows：`firefly-setup.exe`
+- Android：`firefly.apk`
 
-### Windows（源码构建，可选）
+请从官方 Release 或下载页获取。当前版本、产物尺寸和 SHA-256 以
+[当前状态](docs/当前状态.md) 与 `release_manifests/` 为准。
 
-```powershell
-pip install pyinstaller
-pyinstaller firefly.spec --noconfirm
-# 产物：dist/firefly/firefly.exe
-```
+## 构建
 
-双击 `dist/firefly/firefly.exe` 启动，浏览器自动打开 `http://localhost:8765`。
-用户数据在 exe 同级的 `user_data/` 目录——覆盖安装新版本前**先备份该目录**。
-
-> **发布者注意**：发布安装包前必须删除 `dist/firefly/user_data/`（内含用户 API Key 与对话数据），只发布 `firefly.exe + _internal/`。
-
-### Android（完全独立运行）
-
-后端（Python + DeepSeek API）通过 Chaquopy 直接打进 APK，**无需电脑端服务**——手机独立运行，数据存 App 私有目录（卸载即清除，注意备份）。
-
-**适配系统（重要，避免安装问题）**：
-
-| 项目 | 要求 |
-|------|------|
-| Android 版本 | **Android 8.0（API 26）及以上** |
-| CPU 架构 | **仅 64 位**：arm64-v8a（现代手机）/ x86_64（模拟器）——**32 位设备（armeabi-v7a）不支持，无法安装** |
-| 存储空间 | 建议 ≥200MB（APK 49MB + 运行时数据） |
-| 网络 | 需要联网（调用 DeepSeek API，无本地模型） |
-| 权限 | 仅 INTERNET（无其他权限） |
-| 已验证 | Android 15 国产旗舰真机、Android 16 模拟器（API 36.1） |
-
-**已知行为说明**：
-- 首次启动：内嵌服务初始化约 5-8 秒（加载设定资料库），随后进入聊天页
-- 锁屏/后台：系统可能冻结 App（服务暂停响应），**回到前台自动恢复**，无需重开
-- 数据存于 App 私有目录：**卸载 App 会清空全部数据**（对话/记忆/手账/Key），升级覆盖安装则保留
+PC：
 
 ```powershell
-# 构建（首次会自动下载 Android SDK，需 JDK 17+ 与 Gradle）
-.\android\build_apk.ps1
-# 产物：android\firefly.apk（arm64-v8a + x86_64）
+python -m PyInstaller firefly.spec --noconfirm
+Remove-Item -Recurse -Force dist\firefly\user_data -ErrorAction SilentlyContinue
+& 'C:\Program Files\Inno Setup 7\ISCC.exe' package\firefly.iss
 ```
 
-**App 图标**：内置萤火虫主题 adaptive icon（深蓝夜空 + 暖黄光点 + 轨迹余韵），可自行替换：`android/app/src/main/res/mipmap-anydpi-v26/`（ic_launcher.xml）与 `drawable/ic_launcher_foreground.xml`、`ic_launcher_background.xml`。
-
-- 安装：`adb install firefly.apk` 或直接传到手机安装
-- 首次启动：App 内嵌服务启动（约 5 秒）→ 设置页填入 DeepSeek API Key → 开始对话
-- 升级：直接覆盖安装（数据保留在内部存储）
-- **签名注意**：`android/keystore/` 是发布签名（已 gitignore），**务必自行备份**；密码在 `keystore/keystore.properties`。更换设备/重装前请先导出签名，否则无法覆盖升级
-- 图标：内置萤火虫 adaptive icon，可自行替换 `res/mipmap-anydpi-v26/`
-
-> 旧版 WebView 客户端（连接电脑端服务）已由独立运行版取代；如需局域网远程模式，参考 git 历史。
-
-## 服务器版（可选，云端部署）
-
-把 Firefly 部署到云服务器后，**鸿蒙 / iOS / PC 用服务器版 APP（WebView 壳）加载服务器前端**（无需安装）：
-
-- **用户自带 API Key**：Key 只存在用户浏览器（localStorage），服务器只处理逻辑、用用户的 Key 调 DeepSeek API，**不落盘不存储**
-- **多用户隔离**：数据按按账号（user_id）分目录（`user_data/{uuid}/`），互不可见
-- **本地版零影响**：服务器版独立在 `server/`，复用 `app/modules` 全部流水线逻辑，`app/` 代码不变
-
-```bash
-# 部署（详见 docs/部署说明.md）
-scp -r server app database root@<公网IP>:/opt/firefly/   # 2026-09-14 起 knowledge 已并入 app/assets/character/story/knowledge/
-# 服务器上：python3 -m venv venv && venv/bin/pip install requests
-nohup venv/bin/python server/server_app.py > /var/log/firefly.log 2>&1 &
-```
-
-## 运行测试
+Android：
 
 ```powershell
-cd firefly
-$env:PYTHONUTF8=1
-$tests = @("test_orchestrator","test_organizer","test_polisher","test_analyzer",
-           "test_llm_retriever","test_memory_manager","test_conversation_store",
-           "test_sticker_picker","test_llm_base")
-foreach ($t in $tests) { python "tests/$t.py" }
+$env:JAVA_HOME = "D:\Java"
+$env:PATH = "D:\python_all\Python312;$env:PATH"
+$env:ANDROID_HOME = "F:\CodeFile\firefly\android\sdk"
+$env:PYTHONUTF8 = "1"
+$gradleBat = Get-ChildItem 'D:\Android\.gradle\wrapper\dists' -Recurse -Filter 'gradle.bat' |
+  Select-Object -First 1 -ExpandProperty FullName
+& $gradleBat -p F:\CodeFile\firefly\android assembleRelease --no-daemon
 ```
 
-## 项目结构
+完整依赖位置、包内验收和真机安装步骤见
+[本地开发与构建](docs/操作/本地开发与构建.md)。
 
+## 测试
+
+当前活动测试只保留 hot5 的同步与发布真实链路：
+
+```powershell
+$env:PYTHONUTF8 = "1"
+python -B tests\test_sync_http_e2e.py
+python -B tests\test_sync_concurrency.py
+python -B tests\test_sync_crash_recovery.py
+python -B tests\test_sync_spec_guard.py
+python -B tests\test_hot5_release_pipeline.py
 ```
+
+`tests/sync_real_harness.py` 是共享 harness，不单独执行。旧模块单测与历史报告已归档，
+不再作为当前通过证据。测试设计门槛见 [测试基线](docs/参考/测试基线.md)。
+
+## 服务器边界
+
+服务器提供：
+
+- 客户端 API：账号、数据隔离、同步、下载、更新、热更新和公告。
+- 登录后的角色卡共创平台：广场、制卡、我的卡和治理台。
+
+服务器不提供 App 的 `index.html`、App bundle、App 面板或 App 样式。平台前端和 App 前端分别构建；
+`tools/sync_frontends.py` 不得把 `app/static/` 镜像进 `server/frontend/`。
+
+生产入口由 `server/server_app.py` 启动，内部装配和主服务实现在 `server/app.py`。
+部署约束见 [生产服务器](docs/操作/生产服务器.md)，发布边界见 [发布规则](docs/参考/发布规则.md)。
+
+## 目录
+
+```text
 firefly/
-├── app/                    全部代码（按触发时间线组织）
-│   ├── server.py           HTTP 骨架（端口 8765，只绑 127.0.0.1）— 启动入口
-│   ├── routes.py           API 路由
-│   ├── orchestrator.py     编排器（子代理检索→分析器→回复器→表情包）
-│   ├── modules/            流水线模块（按调用顺序）
-│   │   ├── app_config.py   路径引导 + 配置状态（唯一 USER_DIR 公式）
-│   │   ├── llm_base.py     共享基础设施：设定加载/JSON解析/统计
-│   │   ├── llm_retriever.py  LLM 子代理检索（设定库压缩摘要）
-│   │   ├── analyzer.py     分析器：意图 + 事实核查
-│   │   ├── polisher.py     回复器：全权生成短信
-│   │   ├── organizer.py    组织器：表情包调度
-│   │   ├── context_manager.py / conversation_store.py  历史与持久化
-│   │   ├── memory_manager.py  记忆管理器（休息时整理 memory.md）
-│   │   └── metrics.py      监控聚合
-│   ├── tools/              表情包选择器
-│   ├── assets/character/   内置设定模板（core/identity/sms_samples/用户设定）
-│   └── static/             前端
-├── app/assets/character/story/knowledge/  story 包知识层（世界观 + 个人经历 + 剧本 + 对话压缩版，包内归位 2026-09-14）
-├── database/               原始资料（wiki 抓取/对话原文，仅查证，不扫描）
-├── user_data/              运行时用户数据（升级保留；exe 同级 / 安卓内部存储）
-├── _trash/                 弃用文件暂存区（标注原位置与逻辑，见 _trash/README.md）
-├── docs/                   文档（需求设计/错误总结/待办/README 索引）
-├── server/                服务器版（独立入口 server_app.py + frontend/，复用 app/modules）
-│   ├── server_app.py     服务器版入口（0.0.0.0:8765，多用户 + 用户自带 Key）
-│   └── frontend/          服务器版前端（index.html/app.js，样式复用 app/static）
-├── android/               Android 客户端（backend 由 Gradle syncBackend 自动同步）
-├── tests/                 白盒测试
-└── package/  dist/        打包（Inno Setup 安装器 / PyInstaller 产物）
+├── app/                  本地版后端、前端与角色资产
+├── android/              Android 壳与内嵌后端
+├── server/               服务器 API、平台前端与生产入口（仅同步私有仓库）
+├── tests/                当前活动真实链路测试
+├── tools/                构建、同步、门禁与发布工具
+├── docs/                 当前事实、操作、参考、决策和事故记录
+├── release_manifests/    已发布产物不可变台账
+├── package/              Windows 安装器
+└── database/             原始资料与查证数据
 ```
+
+文档入口是 [docs/README.md](docs/README.md)。待办只认
+[未完成事项清单](docs/未完成事项清单.md)，已验证错误模式见
+[错误总结](docs/错误总结/README.md)。
 
 ## 常见问题
 
-- **前端打不开**：确认服务日志出现 `打开浏览器访问`，且没有其他进程占用 8765 端口
-- **对话报"信号不好"**：API Key 无效或网络不通，检查设置页
-- **端口被占用**：`netstat -ano | findstr 8765` 找到进程后关闭
-- **改设定不生效**：设定文件在 `user_data/character/`，前端编辑保存后自动生效
+- 页面打不开：先确认进程日志出现启动信息，再检查 `8765` 是否被占用。
+- 对话提示网络或 Key 错误：检查 API Key、余额、接口地址和本机网络。
+- 角色设定修改不生效：确认编辑的是 `user_data/{mode}/character/` 下的用户副本。
+- 手机后端失效：先保留当前版本与诊断信息，不要反复登录或清数据；按
+  [常见问题与排障](docs/使用指南/05_常见问题与排障对照表.md) 收集证据。
 
-## 尾言
-项目参考与引用：
-- HeartEase1 / firefly-skill   https://github.com/HeartEase1/firefly-skill
-- SyrieYume / starrail_ui   https://github.com/SyrieYume/starrail_ui
-- B站wiki-崩坏：星穹铁道wiki  wiki.biligame.com/sr
-- Fandom Wiki   honkai-star-rail.fandom.com
-- 以及个人整理数据与mihoyo官方资源
+## 致谢
+
+- HeartEase1 / firefly-skill
+- SyrieYume / starrail_ui
+- 崩坏：星穹铁道 Wiki 与 Fandom Wiki
+- 个人整理资料与米哈游官方资源
