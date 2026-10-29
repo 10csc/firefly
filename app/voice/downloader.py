@@ -250,6 +250,11 @@ def start(url: str | None = None, files: list[str] | None = None) -> dict:
     template = (url or plugin.repo_url() or "").strip()
     if not template:
         return {"ok": False, "error": "未配置模型仓库地址（见插件页「模型仓库地址」）"}
+    if not template.lower().startswith("https://"):
+        return {"ok": False, "error": "模型仓库地址必须使用 https://"}
+    from modules.api_client import is_public_endpoint
+    if not is_public_endpoint(template):
+        return {"ok": False, "error": "模型仓库地址必须是公网地址"}
     if plugin._DL.get("running"):
         return {"ok": False, "error": "已有一个下载在进行，请等它完成或先取消"}
     if _thread is not None and _thread.is_alive():

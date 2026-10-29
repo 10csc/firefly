@@ -38,6 +38,11 @@ _SERVER_CONFIG_FIELDS = frozenset({
 })
 
 
+def _server_config_subset(config: dict) -> dict:
+    """服务器版可导出的配置白名单，按单一字段表过滤全局配置。"""
+    return {key: config[key] for key in _SERVER_CONFIG_FIELDS if key in config}
+
+
 def _build_backup_zip(root: Path, mode: str) -> bytes:
     """打包模式数据为 zip 字节：{mode} 根全量文件（排除内部目录；images/ 压缩图是
     正式消息数据，进包）+ _config.json（剥离 Key）+ stickers-meta.json（表情包
@@ -58,8 +63,7 @@ def _build_backup_zip(root: Path, mode: str) -> bytes:
         try:
             import copy as _copy
             if _is_server():
-                cfg_copy = {k: cfg.config[k] for k in _SERVER_CONFIG_FIELDS
-                            if k in cfg.config}
+                cfg_copy = _server_config_subset(cfg.config)
             else:
                 cfg_copy = _copy.deepcopy(cfg.config)
                 cfg_copy.pop("api_key", None)

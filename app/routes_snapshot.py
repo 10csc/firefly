@@ -77,10 +77,14 @@ def build_full_snapshot_zip() -> bytes:
                     sticker_digest.append((fp.relative_to(sdir).as_posix(), _sha256_file(fp)))
         try:
             import copy as _copy
-            cfg_copy = _copy.deepcopy(cfg.config)
-            cfg_copy.pop("api_key", None)
-            for _p in cfg_copy.get("providers") or []:
-                _p.pop("api_key", None)
+            if _is_server():
+                from api.data_export import _server_config_subset
+                cfg_copy = _server_config_subset(cfg.config)
+            else:
+                cfg_copy = _copy.deepcopy(cfg.config)
+                cfg_copy.pop("api_key", None)
+                for _p in cfg_copy.get("providers") or []:
+                    _p.pop("api_key", None)
             zf.writestr("_config.json", json.dumps(cfg_copy, ensure_ascii=False, indent=1))
         except Exception:
             pass

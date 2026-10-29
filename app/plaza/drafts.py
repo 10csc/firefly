@@ -26,6 +26,7 @@ import json
 import logging
 import re
 import shutil
+import threading
 import time
 from pathlib import Path
 
@@ -51,12 +52,25 @@ DRAFT_NOT_REVIEWED = "PLAZA_DRAFT_NOT_REVIEWED"
 DRAFT_STALE_REVIEW = "PLAZA_DRAFT_STALE_REVIEW"
 DRAFT_PUBLISH_FAILED = "PLAZA_PUBLISH_FAILED"
 
+_DRAFT_SAVE_LOCKS: dict[str, threading.Lock] = {}
+_DRAFT_SAVE_LOCKS_GUARD = threading.Lock()
+
 
 class DraftError(Exception):
     def __init__(self, code: str, message: str):
         super().__init__(f"{code}: {message}")
         self.code = code
         self.message = message
+
+
+def _draft_save_lock(ohash: str) -> threading.Lock:
+    """同一作者的配额检查和草稿落盘必须串行，避免并发穿透字节上限。"""
+    with _DRAFT_SAVE_LOCKS_GUARD:
+        lock = _DRAFT_SAVE_LOCKS.get(ohash)
+        if lock is None:
+            lock = threading.Lock()
+            _DRAFT_SAVE_LOCKS[ohash] = lock
+        return lock
 
 
 # ── 身份 ────────────────────────────────────────────
@@ -159,55 +173,56 @@ def save_draft(ohash: str, card_zip: bytes, *, display: str = "",
     did = parsed["manifest"]["id"]
     d = owner_dir(ohash)
     d.mkdir(parents=True, exist_ok=True)
-    existing = _read_meta(ohash, did)
-    if not existing and not is_admin:      # 管理员不限草稿份数（存储安全阀对他们没意义）
-        others = [p for p in d.glob("*.json") if p.stem != did]
-        if len(others) >= DRAFT_MAX:
-            raise DraftError(DRAFT_LIMIT,
-                             f"草稿最多保留 {DRAFT_MAX} 份，请先删除不再需要的")
-    used = _owner_dir_bytes(d)
-    current_zip = draft_zip(ohash, did)
-    if existing and current_zip.is_file():
-        try:
-            used -= current_zip.stat().st_size
-        except OSError:
-            pass
-    if max(0, used) + len(card_zip) > DRAFT_MAX_BYTES:
-        raise DraftError(
-            DRAFT_LIMIT,
-            f"草稿存储空间最多 {DRAFT_MAX_BYTES // (1024 * 1024)}MB，请先删除不再需要的",
-        )
-    meta = {
-        "id": did,
-        "name": parsed["manifest"]["name"],
-        "char_name": parsed["manifest"]["char_name"],
-        "category": parsed["manifest"]["category"],
-        "display": display or existing.get("display") or "",
-        "status": status if status in DRAFT_STATUSES else "draft",
-        "created_at": int(existing.get("created_at") or time.time()),
-        "updated_at": int(time.time()),
-        "size_bytes": len(card_zip),
-    }
-    if derived_from:
-        meta["derived_from"] = str(derived_from)[:64]
-    elif existing.get("derived_from"):
-        meta["derived_from"] = existing["derived_from"]      # 覆盖保存时保留来源（别再问客户端要一次）
-    if review is not None:
-        # 只留结论，不留任何调用凭据（review 里本来就没有）
-        meta["review"] = {k: review.get(k) for k in
-                          ("verdict", "risk", "reasons", "categories", "model",
-                           "usage", "signals", "reviewed_at", "digest",
-                           # ★2026-10-02：审核**覆盖范围**一起留档 ⇒ 草稿回读/平台 UI 才能如实写
-                           # "按前 N 字符抽检（本次是否截断）"，不许让人以为全文都过了审
-                           "reviewed_chars", "truncated", "files_included", "files_omitted",
-                           # ★2026-10-02：**失败性质**也要留档 ⇒ UI 区分"系统错误"与"审核未通过"
-                           "error_kind", "raw_excerpt", "finish_reason", "attempts", "retried")}
-    elif existing.get("review"):
-        meta["review"] = existing["review"]
-    if not atomic_write_bytes(draft_zip(ohash, did), card_zip):
-        raise DraftError(DRAFT_PUBLISH_FAILED, "草稿保存失败（磁盘写入错误）")
-    if not atomic_write_json(draft_meta(ohash, did), meta):
-        raise DraftError(DRAFT_PUBLISH_FAILED, "草稿元数据保存失败")
+    with _draft_save_lock(ohash):
+        existing = _read_meta(ohash, did)
+        if not existing and not is_admin:      # 管理员不限草稿份数（存储安全阀对他们没意义）
+            others = [p for p in d.glob("*.json") if p.stem != did]
+            if len(others) >= DRAFT_MAX:
+                raise DraftError(DRAFT_LIMIT,
+                                 f"草稿最多保留 {DRAFT_MAX} 份，请先删除不再需要的")
+        used = _owner_dir_bytes(d)
+        current_zip = draft_zip(ohash, did)
+        if existing and current_zip.is_file():
+            try:
+                used -= current_zip.stat().st_size
+            except OSError:
+                pass
+        if max(0, used) + len(card_zip) > DRAFT_MAX_BYTES:
+            raise DraftError(
+                DRAFT_LIMIT,
+                f"草稿存储空间最多 {DRAFT_MAX_BYTES // (1024 * 1024)}MB，请先删除不再需要的",
+            )
+        meta = {
+            "id": did,
+            "name": parsed["manifest"]["name"],
+            "char_name": parsed["manifest"]["char_name"],
+            "category": parsed["manifest"]["category"],
+            "display": display or existing.get("display") or "",
+            "status": status if status in DRAFT_STATUSES else "draft",
+            "created_at": int(existing.get("created_at") or time.time()),
+            "updated_at": int(time.time()),
+            "size_bytes": len(card_zip),
+        }
+        if derived_from:
+            meta["derived_from"] = str(derived_from)[:64]
+        elif existing.get("derived_from"):
+            meta["derived_from"] = existing["derived_from"]      # 覆盖保存时保留来源（别再问客户端要一次）
+        if review is not None:
+            # 只留结论，不留任何调用凭据（review 里本来就没有）
+            meta["review"] = {k: review.get(k) for k in
+                              ("verdict", "risk", "reasons", "categories", "model",
+                               "usage", "signals", "reviewed_at", "digest",
+                               # ★2026-10-02：审核**覆盖范围**一起留档 ⇒ 草稿回读/平台 UI 才能如实写
+                               # "按前 N 字符抽检（本次是否截断）"，不许让人以为全文都过了审
+                               "reviewed_chars", "truncated", "files_included", "files_omitted",
+                               # ★2026-10-02：**失败性质**也要留档 ⇒ UI 区分"系统错误"与"审核未通过"
+                               "error_kind", "raw_excerpt", "finish_reason", "attempts", "retried")}
+        elif existing.get("review"):
+            meta["review"] = existing["review"]
+        if not atomic_write_bytes(draft_zip(ohash, did), card_zip):
+            raise DraftError(DRAFT_PUBLISH_FAILED, "草稿保存失败（磁盘写入错误）")
+        if not atomic_write_json(draft_meta(ohash, did), meta):
+            raise DraftError(DRAFT_PUBLISH_FAILED, "草稿元数据保存失败")
     return meta
 
 

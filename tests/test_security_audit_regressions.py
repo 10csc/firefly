@@ -149,6 +149,71 @@ def test_draft_owner_byte_quota_rejects_before_write(monkeypatch, tmp_path):
     assert writes == []
 
 
+def test_draft_byte_quota_check_and_write_are_serialized(monkeypatch, tmp_path):
+    from plaza import drafts
+
+    owner = tmp_path / "owner"
+    owner.mkdir()
+    barrier = threading.Barrier(2)
+    results: list[str] = []
+    original_used = drafts._owner_dir_bytes
+
+    monkeypatch.setattr(drafts, "owner_dir", lambda _ohash: owner)
+    monkeypatch.setattr(drafts, "DRAFT_MAX_BYTES", 50, raising=False)
+
+    def fake_parse(card_zip, **_kwargs):
+        draft_id = "draft-a" if card_zip.startswith(b"a") else "draft-b"
+        return {
+            "manifest": {
+                "id": draft_id,
+                "name": draft_id,
+                "char_name": "角色",
+                "category": "剧情",
+            },
+            "digest": draft_id,
+        }
+
+    def delayed_used(path):
+        used = original_used(path)
+        time.sleep(0.05)
+        return used
+
+    def write_bytes(path, data):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(data)
+        return True
+
+    monkeypatch.setattr(drafts.cf, "parse_card_zip", fake_parse)
+    monkeypatch.setattr(drafts, "_owner_dir_bytes", delayed_used)
+    monkeypatch.setattr(drafts, "atomic_write_bytes", write_bytes)
+    monkeypatch.setattr(drafts, "atomic_write_json", lambda *_args: True)
+    locks = getattr(drafts, "_DRAFT_SAVE_LOCKS", None)
+    if isinstance(locks, dict):
+        locks.clear()
+
+    def worker(card_zip):
+        barrier.wait(timeout=5)
+        try:
+            drafts.save_draft("owner", card_zip)
+            results.append("ok")
+        except drafts.DraftError as exc:
+            results.append(exc.code)
+
+    threads = [
+        threading.Thread(target=worker, args=(b"a" * 30,)),
+        threading.Thread(target=worker, args=(b"b" * 30,)),
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=5)
+
+    assert all(not thread.is_alive() for thread in threads)
+    assert results.count("ok") == 1
+    assert results.count(drafts.DRAFT_LIMIT) == 1
+    assert original_used(owner) <= drafts.DRAFT_MAX_BYTES
+
+
 def test_server_config_api_uses_safe_field_whitelist(monkeypatch):
     from routes_config import _is_server
     import routes_config as rc
@@ -197,6 +262,34 @@ def test_server_backup_config_uses_safe_field_whitelist(monkeypatch, tmp_path):
 
     with patch.dict(data_export.cfg.config, config, clear=True):
         blob = data_export._build_backup_zip(tmp_path, "story")
+
+    with zipfile.ZipFile(io.BytesIO(blob)) as zf:
+        packaged = json.loads(zf.read("_config.json").decode("utf-8"))
+
+    assert packaged.get("analyzer_model") == "deepseek-flash"
+    assert "api_base" not in packaged
+    assert "GO_BASE" not in packaged
+    assert "providers" not in packaged
+    assert secret_base not in json.dumps(packaged, ensure_ascii=False)
+
+
+def test_server_snapshot_config_uses_safe_field_whitelist(monkeypatch, tmp_path):
+    import routes_snapshot
+
+    monkeypatch.setattr(routes_snapshot, "_is_server", lambda: True)
+    monkeypatch.setattr(routes_snapshot.cfg, "backup_pack_ids", lambda: [])
+    monkeypatch.setattr(routes_snapshot, "_user_root", lambda: tmp_path)
+    secret_base = "https://internal-provider.example/v1"
+    config = {
+        "api_base": secret_base,
+        "GO_BASE": "https://go.internal.example/v1",
+        "providers": [{"id": "private", "base_url": secret_base, "api_key": "secret"}],
+        "analyzer_model": "deepseek-flash",
+        "memory_window_turns": 100,
+    }
+
+    with patch.dict(routes_snapshot.cfg.config, config, clear=True):
+        blob = routes_snapshot.build_full_snapshot_zip()
 
     with zipfile.ZipFile(io.BytesIO(blob)) as zf:
         packaged = json.loads(zf.read("_config.json").decode("utf-8"))
@@ -275,3 +368,25 @@ def test_get_image_sets_nosniff(monkeypatch, tmp_path):
 
     assert handler.status == 200
     assert ("X-Content-Type-Options", "nosniff") in handler.out_headers
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://public.example/models/{file}",
+        "https://10.0.0.1/models/{file}",
+    ],
+)
+def test_voice_downloader_rejects_unsafe_repository_url(monkeypatch, url):
+    from voice import downloader, plugin
+
+    monkeypatch.setattr(downloader, "_run", lambda *_args: None)
+    downloader._thread = None
+    plugin._DL.clear()
+    try:
+        result = downloader.start(url, [])
+        assert result["ok"] is False
+        assert downloader._thread is None
+    finally:
+        downloader._thread = None
+        plugin._DL.clear()
