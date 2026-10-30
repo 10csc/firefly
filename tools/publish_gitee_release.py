@@ -38,7 +38,7 @@ TOKEN_FILE = Path.home() / ".config" / "firefly" / "gitee_token.txt"
 OWNER_REPO = "cpt-asymmetry/firefly"
 API = f"https://gitee.com/api/v5/repos/{OWNER_REPO}"
 DL = f"https://gitee.com/{OWNER_REPO}/releases/download"
-TAG = "v0.9.0"
+TAG = "v0.9.2"
 
 PASS = FAIL = 0
 
