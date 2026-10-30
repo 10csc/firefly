@@ -164,6 +164,25 @@ _SIGNED_MANIFEST_FIELDS = ("schema", "tag", "channel", "released_at",
 _DOWNLOAD_FILENAMES = {"apk": "firefly-update.apk", "exe": "firefly-update.exe"}
 
 
+def _update_download_dir() -> Path:
+    """安装包落点（必须与壳和 FileProvider 三方对齐）。
+
+    安卓：`cacheDir/update/` —— `res/xml/file_paths.xml` 只白名单了这一条，
+          `MainActivity.installApk` 也只到这里找。经 Chaquopy 的 Java API 取真实
+          cacheDir，**不能**用 `tempfile.gettempdir()`：Chaquopy 把 TMPDIR 设成
+          `cache/chaquopy/tmp`，与壳的路径差两层，症状是"下载完成但提示找不到安装包"
+          （2026-10-30 真机实测）。
+    其他平台：系统临时目录下的 `update/`；PC 由后端自己拉起安装器，位置不敏感。
+    """
+    try:
+        from java import jclass
+        app = jclass("com.chaquo.python.Python").getPlatform().getApplication()
+        return Path(str(app.getCacheDir())) / "update"
+    except Exception:
+        import tempfile
+        return Path(tempfile.gettempdir()) / "update"
+
+
 def _validate_download_url(url: str, kind: str) -> str:
     """下载 URL 审查：https + 域名白名单 + 扩展名与 kind 一致。返回错误文案（""=通过）。"""
     p = urlparse(url)
@@ -331,7 +350,15 @@ def update_download(h):
             max_size = _DOWNLOAD_MAX_BYTES[kind]
             # 固定文件名（见 _DOWNLOAD_FILENAMES 的说明）：同一个文件反复覆盖，
             # 既让安卓壳能定位，也避免临时目录里堆一串 85MB 的旧包。
-            dst = Path(tempfile.gettempdir()) / _DOWNLOAD_FILENAMES[kind]
+            # ★ 2026-10-30 修：落点必须与壳/FileProvider 三方一致。
+            #   壳（MainActivity.installApk）按 `cacheDir/update/firefly-update.apk` 定位，
+            #   file_paths.xml 也只白名单了 `cache-path path="update/"`。
+            #   之前用 tempfile.gettempdir() —— Chaquopy 把 TMPDIR 设成
+            #   `cache/chaquopy/tmp`，于是文件落在壳找不到、白名单也不覆盖的地方，
+            #   每次自动更新都停在"没找到下好的安装包"。
+            dst_dir = _update_download_dir()
+            dst_dir.mkdir(parents=True, exist_ok=True)
+            dst = dst_dir / _DOWNLOAD_FILENAMES[kind]
             with urllib.request.urlopen(req, timeout=600) as resp, open(dst, "wb") as out:
                 local = str(dst)
                 # Content-Length 预检 + 流式累计兜底（防无/伪造 Content-Length）

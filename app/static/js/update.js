@@ -40,7 +40,12 @@ function compareVersions(a, b) {
     return 0;
 }
 function _isAndroid() {
-    return /Android/i.test(navigator.userAgent) && !/Windows|Mac|Linux/i.test(navigator.userAgent);
+    // ★ 2026-10-30 修：旧实现是 `/Android/ && !/Windows|Mac|Linux/` ——
+    //   安卓 WebView 的 UA 必然含 "Linux"（形如 `(Linux; Android 14; PJE110)`），
+    //   后半段把安卓自己也排除掉了，函数恒为 false：
+    //   于是自动更新在手机上一直走 PC 分支，下载完只给个 file:// 链接，
+    //   壳的 installApk 从来没被调用过。UA 含 Android 即移动端，无需再排除桌面系统。
+    return /Android/i.test(navigator.userAgent);
 }
 // 资产匹配：PC 装包 exe / 安卓 apk（Gitee 资产名可能带前缀，模糊匹配）
 function _matchAsset(assets, re) {
