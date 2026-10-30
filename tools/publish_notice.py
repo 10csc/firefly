@@ -91,6 +91,36 @@ def push_server(local: Path, files: list) -> None:
         print(f"  {'V' if r.returncode == 0 else 'X'} 上传 {f}")
 
 
+def gitee_attach_map(rid: int, tok: str) -> dict:
+    """release 全部附件 → {name: [id, ...]}。
+
+    ⚠️ 附件 id 只能从 `/releases/{rid}/attach_files` 拿（release 详情里没有，DELETE 会 404）。
+    同名会有多条：Gitee **不禁止**重复上传，而 `releases/download/<tag>/<name>` 只解析到
+    **最早挂的那一条** —— 2026-10-30 实测 `latest` 停在 `{"serial": 1}`，就是因为历次
+    上传都新建了同名附件，下载 URL 永远指向第一次那份。所以替换前必须把同名**全部**删掉。
+    """
+    url = f"{GITEE_API}/releases/{rid}/attach_files?access_token={tok}&per_page=100"
+    d = json.loads(urllib.request.urlopen(url, timeout=30).read().decode())
+    out: dict = {}
+    for a in d or []:
+        n = str(a.get("name") or "")
+        if n:
+            out.setdefault(n, []).append(int(a.get("id") or 0))
+    return out
+
+
+def gitee_delete_attach(rid: int, aid: int, tok: str) -> bool:
+    try:
+        req = urllib.request.Request(
+            f"{GITEE_API}/releases/{rid}/attach_files/{aid}?access_token={tok}",
+            method="DELETE")
+        urllib.request.urlopen(req, timeout=30).read()
+        return True
+    except Exception as e:
+        print(f"    ! 删除附件失败 id={aid}: {type(e).__name__}: {e}")
+        return False
+
+
 def push_gitee(local: Path, files: list, tok: str) -> None:
     print(f"\n--- Gitee 镜像：release {GITEE_TAG} 附件 ---")
     rid = gitee_release_id(GITEE_TAG, tok)
@@ -98,7 +128,11 @@ def push_gitee(local: Path, files: list, tok: str) -> None:
         print(f"  X 找不到 Gitee release {GITEE_TAG}（不新建 release：会打断整包兜底）")
         return
     print(f"  release id = {rid}")
+    existing = gitee_attach_map(rid, tok)
     for f in files:
+        for aid in existing.get(f, []):
+            print(f"  · 同名附件已存在 id={aid}，先删后传")
+            gitee_delete_attach(rid, aid, tok)
         r = subprocess.run(["curl.exe", "-s", "-X", "POST",
                             f"{GITEE_API}/releases/{rid}/attach_files?access_token={tok}",
                             "-F", f"file=@{local / f}"], capture_output=True, timeout=300)
