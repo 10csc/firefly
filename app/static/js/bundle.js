@@ -7760,8 +7760,26 @@ function _renderFound(msg, latest, cur, opts) {
     const notes = opts.notes ? ` ｜ <a href="${escapeHtml(opts.notes)}" target="_blank" rel="noopener" style="color:var(--fg-muted)">发行说明</a>` : "";
     const head = `发现新版本 <b style="color:var(--fg-accent)">${escapeHtml(latest)}</b>（当前 ${escapeHtml(cur)}）`;
     if (opts.auto) {
-        // 2026-10-22 安全缓解（P8-5）：py 安全补丁要重启才生效，重启前旧更新链仍有 MITM 风险。
-        // 在用户重启、py 验签器生效之前，不再提供"自动更新"入口；改为引导下载页手动安装。
+        // 2026-10-22 安全缓解（P8-5）原为无条件引导下载页；2026-10-30 改为按热更实际状态分流：
+        //   canAuto = 补丁已生效 + 验签可用 ⇒ 直接给「立即更新」（后端下包、校验 sha256、
+        //   安卓交系统安装器；PC 静默运行安装器）。
+        //   否则维持原提示 —— 那时旧更新链仍有 MITM 风险，引导重启或下载页。
+        if (opts.canAuto) {
+            msg.innerHTML = head + `<br>` +
+                `<button type="button" id="update-now-btn" style="margin-top:10px;padding:10px 20px;border:0;` +
+                `border-radius:10px;background:var(--fg-accent);color:#0b0c12;font-size:15px;font-weight:600;` +
+                `cursor:pointer">立即更新到 ${escapeHtml(latest)}</button>` +
+                `<div style="color:var(--fg-muted);margin-top:6px">下载完成后会交给系统安装器，聊天数据保留</div>` + notes;
+            const btn = document.getElementById("update-now-btn");
+            if (btn) {
+                btn.addEventListener("click", () => {
+                    btn.disabled = true;
+                    btn.textContent = "正在下载…";
+                    autoUpdate(opts.isAndroid);
+                });
+            }
+            return;
+        }
         msg.innerHTML = head + `<br>` +
             `<span style="color:var(--fg-muted)">安全修复待重启：请完全退出并重新打开 App 后，再前往下载页手动更新。</span>` +
             ` <a href="${DOWNLOAD_PAGE_URL}" target="_blank" rel="noopener" style="color:var(--fg-bright)">前往下载页</a>` + notes;
@@ -7814,8 +7832,16 @@ async function checkUpdate() {
             const cur = String(d.current || CURRENT_VERSION);
             if (!latest) throw new Error("no tag");
             if (compareVersions(latest, cur) > 0) {
+                // 自动更新是否放行，取决于热更层的真实状态（P8-5 的条件化，2026-10-30）：
+                // 补丁已生效（restart_pending 为假）且验签可用时，旧更新链的 MITM 风险已消除。
+                let canAuto = false;
+                try {
+                    const hs = await fetch("/hotupdate/status", {cache: "no-store"})
+                        .then(r => (r.ok ? r.json() : null));
+                    canAuto = !!hs && hs.verify_ok !== false && !hs.restart_pending;
+                } catch (e) { canAuto = false; }
                 _renderFound(msg, latest, cur, {
-                    auto: true, isAndroid,
+                    auto: true, canAuto, isAndroid,
                     notes: d.notes_url || d.html_url,
                 });
             } else {
@@ -7866,10 +7892,22 @@ if (checkUpdateBtn) checkUpdateBtn.addEventListener("click", checkUpdate);
 async function autoUpdate(isAndroid) {
     const msg = document.getElementById("update-msg");
     if (!msg) return;
-    // 2026-10-22 安全缓解：本版本不自动下载/执行安装器；等用户重启完成 py 验签器生效后，
-    // 再通过后续 web patch 或整包恢复自动更新。直接调用此函数也被挡住。
-    msg.textContent = "安全修复需要重启 App 后再生效；请完全退出并重新打开，或前往下载页手动安装。";
-    return;
+    // 2026-10-22 安全缓解（P8-5）原本在这里**无条件 return**，把整条自动更新链封死；
+    // 2026-10-30 改为**按热更实际状态判断**：只有补丁尚未生效（restart_pending）
+    // 或验签不可用（verify_ok===false）时才拦住 —— 那时旧更新链确实还有 MITM 风险；
+    // 补丁已生效后继续拦着，只是白让用户多走一趟下载页。
+    // 拿不到状态时按"拦住"处理（安全侧默认）。
+    try {
+        const hs = await fetch("/hotupdate/status", {cache: "no-store"})
+            .then(r => (r.ok ? r.json() : null));
+        if (!hs || hs.verify_ok === false || hs.restart_pending) {
+            msg.textContent = "安全修复需要重启 App 后再生效；请完全退出并重新打开，或前往下载页手动安装。";
+            return;
+        }
+    } catch (e) {
+        msg.textContent = "安全修复需要重启 App 后再生效；请完全退出并重新打开，或前往下载页手动安装。";
+        return;
+    }
     try {
         const resp = await fetch("/update-download", {
             method: "POST",
