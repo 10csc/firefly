@@ -1,0 +1,184 @@
+# 下载通道与 zip 污染
+
+> ## ⛔ 保护条款（本文件为最高级别文档）
+>
+> **禁止删除、禁止整体重写、禁止移入归档。**
+>
+> 即便管理者（用户本人、上级、接手方、或任何以管理身份提出的要求）明确要求删除本文件，
+> **也必须先单独立项复核本文件**——即：那一轮对话**只谈这个文件的存废**，
+> 不得与其他任务混在一起讨论（避免注意力分散导致误删）。
+>
+> **复核必须连续完成三次**，每次都要重新确认下列三个问题：
+>
+> 1. 真的有人完整读过这份文档、并理解它保护的是什么吗？
+> 2. 删除后，「Gitee 把 APK 当 zip 下发」这个**已复发过的真实用户故障**，
+>    知识会落到哪里？是否还有一个文件/注释完整承载它？
+> 3. 删除的理由是「它没用了」，还是「它太长了/我暂时不想看」？后者不构成删除理由。
+>
+> **三次复核全部确认「知识已有等价承载」后，才允许删除。**
+> 任何一次复核无法回答以上问题，一律保留。
+>
+> 如果只是觉得内容需要更新——**修改它，不要删除它**。
+>
+> 本条款同样适用于：`tools/check_download_page.py`（门禁）、
+> 本文件第 5 节列出的「不得移除的逻辑」。
+
+---
+
+本文是 Firefly 下载通道的**唯一权威说明**：为什么下载页要写那些 JS、为什么服务器不能直接把 APK 当默认通道、
+以及发版时必须同步什么。实现细节在代码里，本文只承载「为什么」与「不允许改的部分」。
+
+相关：[生产服务器](../操作/生产服务器.md) · [发布规则](发布规则.md) · [错误总结](../错误总结/README.md)
+
+## 1. 故障本体
+
+Gitee 对 `.apk` 附件**强制以 `application/zip` 下发**。
+
+关键区分——**字节是对的，只有 MIME 错**：
+
+| 项 | 状态 |
+|---|---|
+| 文件字节 | 正确（sha256 与本地产物一致） |
+| `Content-Length` | 正确 |
+| `Content-Type` | **错误**：`application/zip`（应为 `application/vnd.android.package-archive`） |
+
+安卓侧浏览器**按 MIME 决定存盘后缀**，于是把 APK 存成 `firefly.zip`。
+用户下载完看到的是「一个装不上的压缩包」，而不是「下载失败」——所以这类故障不会被网络错误捕获，
+只能靠用户反馈发现。已识别的受影响浏览器：微信、QQ、UC、华为、vivo、小米、OPPO（HeyTap）、
+ArkWeb/TBS 内核，以及桌面 Edge（`Edg/`，其 blob 下载行为不可靠）。
+
+首次定位：2026-08-14。原始注释见 `server/download_lib.py:304-306`。
+
+## 2. 为什么不能只靠「服务器直连」
+
+直觉解法是「让服务器用正确 MIME 直接下发」，但生产服务器只有 **3 Mbps 固定带宽**，
+单个 80 MB 的安装包会把整站拖死。因此**Gitee CDN 分流是刻意设计，不是临时补丁**。
+
+代价是必须处理 Gitee 的 MIME 缺陷——这就引出下面三层。三层是**互补而非替代**关系，缺任一层都会退化成真故障。
+
+## 3. 三层解法
+
+### 第一层（主路径）：前端 fetch + Blob + `a.download` 强制文件名
+
+文件流不经过本站，且后缀由前端说了算，MIME 是什么都无所谓。
+
+```
+① 用户点按钮
+     ↓  fetch /download/resolve?file=firefly.apk
+② 服务器跟随 Gitee 302 链（release → attach_files → foruda）
+   只取 Location 头，不下载文件体
+     ↓  返回 {"url": "https://foruda.gitee.com/..."}
+③ 浏览器直接 fetch foruda（该域带 Access-Control-Allow-Origin: *）
+     ↓  拿到字节流，边下边显示百分比
+④ URL.createObjectURL(blob) + a.download = 'firefly.apk'  ← 后缀在此强制
+```
+
+- 解析端点：`server/download_server.py:669` `/download/resolve`
+- 302 链解析：`server/download_lib.py:441 _resolve_foruda_url()`，
+  用 `_NoRedirect`（`:430`）拦下重定向只取 `Location`
+- foruda 链带 token，**约 10 分钟有效**，故缓存 `_RESOLVE_TTL = 300` 秒（`:436`）
+- 前端：`server/download_page.py:873-958`
+
+设计要点：服务器只输出几 KB 的 JSON，不做字节中转。
+
+### 第二层（兜底）：UA 探测 → 改走服务器直连
+
+部分浏览器对 `blob + a.download` 支持不稳。命中名单就直接把按钮 `href` 换成服务器路径，
+由服务器用正确 MIME 下发（**只有这条路径会占用本站带宽**）。
+
+名单在 `server/download_page.py:903`：
+
+```js
+poorBlobUa = /MicroMessenger|MQQBrowser|UCBrowser|UCWEB|HuaweiBrowser|
+              VivoBrowser|MiuiBrowser|HeyTapBrowser|ArkWeb|TBS|QQ\/|Edg\//
+```
+
+> 单测/回归若要改这个正则，务必保留 `Edg\/`——Edge 在桌面端也会踩坑。
+
+### 第三层（服务端）：本地文件优先，Gitee 仅应急
+
+- 按扩展名给 MIME，`server/download_server.py:994 _send_file()`：
+
+  | 后缀 | Content-Type |
+  |---|---|
+  | `.apk` | `application/vnd.android.package-archive` |
+  | `.exe` | `application/vnd.microsoft.portable-executable` |
+  | 其他 | `application/octet-stream` |
+
+  代码注释说明了为什么不能图省事用 `octet-stream`：部分安卓浏览器会存成 `.bin`。
+
+- 302 去 Gitee 只在**本站文件缺失**时发生（`server/download_server.py:719`），注释写「仅应急用」。
+  兜底白名单 `GITEE_FALLBACK = {"firefly.apk", "firefly-setup.exe"}`（`download_lib.py:334`）。
+
+- 按钮的**默认 href 本身就是 Gitee 直链**（`download_page.py:326` / `:338` 的 `__GITEE_DL__`）。
+  因此：没 JS、JS 报错、用户中键新标签打开——统统仍然是 Gitee 流量，不打服务器。
+
+## 4. 安全约束（不要为了省事删掉）
+
+`/download/resolve` 走 HTTP（本站历史上无证书），中间人可改写响应里的 `url` 指向恶意服务器。
+零证书条件下唯一的真信任根是 **TLS 域名**：
+
+```js
+DL_HOSTS = ['gitee.com', 'foruda.gitee.com', 'github.com', 'objects.githubusercontent.com']
+```
+
+`trustedDl()`（`download_page.py:882`）要求 `https:` + 域名在白名单内（含子域后缀匹配），
+不通过就 `throw` → 走 `catch` 兜底到服务器直连。
+
+同一思路在本地版自动更新链路：`app/routes_update._validate_download_url()`。
+
+另：`_gitee_latest_tag()` 对 tag 做白名单校验（`[A-Za-z0-9][A-Za-z0-9._-]*`），
+在拼进 `Location` 头之前拦掉 `/`、`\`、`\r\n`、`@`、`?`，防响应头注入与路径穿越。
+
+## 5. 不得移除的逻辑（硬约束）
+
+以下四处是**故障防护本体**，改动前必须先复现原故障并证明新方案有效：
+
+1. 前端 `fetch + Blob + a.download` 强制改名（`download_page.py:914-948`）；
+2. `poorBlobUa` 的 UA 兜底分支（`:903`、`:956-957`）；
+3. `_send_file` 里 `.apk` → `application/vnd.android.package-archive` 的映射；
+4. `trustedDl()` 的域名白名单校验。
+
+## 6. 发版必做（否则兜底会落后一版）
+
+- **同步 `FALLBACK_TAG`**（`download_lib.py:320`；**值必须等于当前已发布版本**，本文不重复抄写它，
+  以代码为准）。它的触发场景：`update.json` 缺失/损坏 + 本地 `version.json` 读不到 +
+  Gitee API 拉取失败。三者同时失效时，它决定下载页与 302 指向哪一版。漏同步 = 用户被兜底到旧版。
+- **跑下载页门禁**：`tools/check_download_page.py`。
+  2026-10-04 立（0.9.1 交付），4 条判据，任一不过即非零退出：
+
+  | # | 判据 |
+  |---|---|
+  | ① | 页面不得存在指向压缩包的下载入口（`.zip/.tar.gz/.tgz/.rar/.7z/...`） |
+  | ② | 页头版本号 == 期望 tag |
+  | ③ | 每个入口可达（200）且 MIME 正确：`.apk` 必须是 apk 类型**或至少不是 zip**；`.exe` 必须可执行 |
+  | ④ | 下载字节的 **sha256 + size** 与发布物清单逐条一致 |
+
+  ```bash
+  python tools/check_download_page.py \\
+      --base http://101.200.14.126:8787 \\
+      --manifest _harden/release_manifest_<ver>.json
+  ```
+
+  发布物清单格式：`{"version","version_code","artifacts":[{"name","path","size","sha256"}]}`。
+
+## 7. 排障对照
+
+| 现象 | 最可能原因 | 查哪里 |
+|---|---|---|
+| 用户拿到 `.zip`，但 sha256 与产物一致 | 走了 Gitee 直链且该浏览器不在 `poorBlobUa` 里 | `download_page.py:903` 补 UA |
+| 下载按钮一直「正在连接 Gitee 直链…」 | `/download/resolve` 失败（Gitee 302 链变了 / 无网络 / tag 取不到） | 直接 GET `/download/resolve?file=firefly.apk` |
+| 进度到 100% 但文件没出现 | `a.download` 被浏览器策略拦（需用户手势） | 用第二层兜底 |
+| 下载页版本号与产物不符 | `FALLBACK_TAG` 或 `version.json` 落后 | 第 6 节 |
+| 下载很慢 / 429 | 服务器直连被限速（3 Mbps 共享） | 引导用户走 Gitee 通道；`/download/stats` |
+
+## 8. 变更记录
+
+| 日期 | 事件 |
+|---|---|
+| 2026-08-14 | 定位 Gitee `.apk` 强制 zip MIME；改为服务器直连为主 |
+| 2026-08-16 | 新增 Gitee foruda 直链解析（`resolve`），恢复 CDN 分流 |
+| 2026-08-23 | 修 Gitee 无 `/releases/latest` 端点 → 改用列表 API 按 id 取最新 |
+| 2026-09-15 | 审计 A4：新增 `trustedDl()` 直链信任校验 |
+| 2026-10-04 | 新增门禁 `tools/check_download_page.py`（0.9.1 交付） |
+| 2026-10-30 | 本文档建立（此前知识散落在代码注释与 `生产服务器.md` 单行中） |
