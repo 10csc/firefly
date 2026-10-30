@@ -103,7 +103,9 @@ def _page_contracts(texts: dict[Path, str]) -> tuple[int, list[str]]:
 
     for heading in ("## 发布前检查", "## 发布", "## 真机验收", "## 失败与回滚"):
         require(hotupdate, heading)
-    for needle in ("0.9.1/5", "生产业务代码仍为 patch4", "真机未验证"):
+    # 2026-10-30：生产已部署 P0-4 对齐（69 个 app/*.py），"仍为 patch4" 不再成立。
+    # 这里钉的是**当前事实**，不是"检查要能过"——事实再变就跟着改这句。
+    for needle in ("0.9.1/5", "生产业务代码已与 0.9.2 源码对齐", "真机未验证"):
         require(hotupdate, needle)
 
     for heading in ("## 2. 拓扑与目录", "## 4. 标准部署/更新流程",
@@ -174,7 +176,7 @@ def self_test() -> dict:
         version: "## 版本格式\n## 单一事实源\n## 三档门禁\n## 包内验收\n"
                  "本地预检；不能证明线上。",
         hotupdate: "## 发布前检查\n## 发布\n## 真机验收\n## 失败与回滚\n"
-                   "0.9.1/5；生产业务代码仍为 patch4；真机未验证。",
+                   "0.9.1/5；生产业务代码已与 0.9.2 源码对齐；真机未验证。",
         production: "## 2. 拓扑与目录\n## 4. 标准部署/更新流程\n## 11. 回滚\n"
                     "22 + 8787\n§4.5\nmd5sum\n",
     }
