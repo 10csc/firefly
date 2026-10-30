@@ -61,9 +61,12 @@ try:
     print("\n=== A. 版本与前端资源 ===")
     st, raw = get("/index.html")
     html = raw.decode("utf-8", "replace")
-    # 第二版 PC 适配层：**不许有自造的第二套导航**（第一版被否掉的 pc-shell/rail/list）
-    check("index.html 不含自造外壳（pc-shell/pc-rail/pc-list/pc-chat-side）",
-          all(k not in html for k in ('id="pc-shell"', 'id="pc-rail"', 'id="pc-list"',
+    # 不许有**第一版**被否掉的自造导航（pc-rail/pc-list/pc-chat-side）。
+    # `id="pc-shell"` 不在禁止列表里：0.9.1（d9c60b5）起把它重新用作三栏外壳的**容器**，
+    # 方案已获用户批准（骨架见 index.html 该元素上方的注释：默认 display:none，
+    # 仅 @media ≥1100px 显形，手机端零影响）。本断言写于 0.9.0，口径未跟上，2026-10-30 修正。
+    check("index.html 不含第一版自造外壳（pc-rail/pc-list/pc-chat-side）",
+          all(k not in html for k in ('id="pc-rail"', 'id="pc-list"',
                                       'id="pc-chat-side"')))
     check("index.html 有底部状态栏（只放信息）", 'id="pc-statusbar"' in html)
     check("index.html 保留手机端的 ☰ 菜单入口与菜单本体",
