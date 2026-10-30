@@ -2,28 +2,28 @@
   "schema": 2,
   "version": "0.9.2",
   "version_code": 902,
-  "generated_at": "2026-10-30T21:44:16+08:00",
+  "generated_at": "2026-10-30T22:13:55+08:00",
   "released_at": "",
   "note": "",
   "source": "build: firefly.apk, firefly-setup.exe",
   "git": {
-    "commit": "a3850bbdb70b6e5830bc35eddc137a292ac2825d",
+    "commit": "f8a0967a8f590055ca19290babd66132e849fe8a",
     "dirty": true,
-    "changed_files": 1
+    "changed_files": 2
   },
   "artifacts": [
     {
       "name": "firefly.apk",
       "path": "android/firefly.apk",
-      "size": 85567182,
-      "sha256": "c1e644b68362aa88abf43f61b49d580845d9f502cc752b8d7682694f238a3541",
+      "size": 85567646,
+      "sha256": "ced0081630ef989ab1b5dfd02ce49a80ed552d0ec970d6ac0820525c9ab8171e",
       "version": "0.9.2"
     },
     {
       "name": "firefly-setup.exe",
       "path": "package/firefly-setup.exe",
-      "size": 39701926,
-      "sha256": "8a18fdb153b32fa83c364e9e453a490b8bc4ed0e9a20a4155cd2d85a08bfd5f3",
+      "size": 39697860,
+      "sha256": "77e84120ac4c9a26a89a0af68ef46464a8889479a9bc6ec8385179ca4c80a923",
       "version": "0.9.2"
     }
   ]
