@@ -81,19 +81,25 @@ ArkWeb/TBS 内核，以及桌面 Edge（`Edg/`，其 blob 下载行为不可靠�
 
 设计要点：服务器只输出几 KB 的 JSON，不做字节中转。
 
-### 第二层（兜底）：UA 探测 → 改走服务器直连
+### 第二层（兜底）：Gitee 链路失败 → 服务器直连
 
-部分浏览器对 `blob + a.download` 支持不稳。命中名单就直接把按钮 `href` 换成服务器路径，
-由服务器用正确 MIME 下发（**只有这条路径会占用本站带宽**）。
+**2026-10-30 起不再有任何 UA 预判。** 所有浏览器一律先走 Gitee blob；只有
+`resolve` 拿不到直链、或 foruda 下载失败时，`catch` 才把地址回退到 `/download/<file>`，
+由服务器以正确 MIME 下发。**这是唯一的服务器带宽出口。**
 
-名单在 `server/download_page.py:903`：
+历史（2026-08-14 → 10-30）：曾按 UA 名单在点击时就把 `href` 换成服务器路径：
 
 ```js
+// 已删除，勿恢复
 poorBlobUa = /MicroMessenger|MQQBrowser|UCBrowser|UCWEB|HuaweiBrowser|
               VivoBrowser|MiuiBrowser|HeyTapBrowser|ArkWeb|TBS|QQ\/|Edg\//
 ```
 
-> 单测/回归若要改这个正则，务必保留 `Edg\/`——Edge 在桌面端也会踩坑。
+移除依据（2026-10-30 实测）：`HeyTapBrowser/40.8.29.9`（Chrome 90 内核）本来能正常
+`fetch + Blob + a.download`，却因命中名单而稳定走服务器，实测 100 KB/s（Gitee 同期 2 MB/s）。
+预判名单的误伤面大于它规避的风险，且**它会让"页面明明指向 Gitee、下载却很慢"这种问题
+难以从代码和日志里看出来**。宁可让个别浏览器偶尔存成 zip（用户仍可手动改名），
+也不要把整批用户悄悄降速到服务器带宽。
 
 ### 第三层（服务端）：本地文件优先，Gitee 仅应急
 
@@ -134,10 +140,12 @@ DL_HOSTS = ['gitee.com', 'foruda.gitee.com', 'github.com', 'objects.githubuserco
 
 以下四处是**故障防护本体**，改动前必须先复现原故障并证明新方案有效：
 
-1. 前端 `fetch + Blob + a.download` 强制改名（`download_page.py:914-948`）；
-2. `poorBlobUa` 的 UA 兜底分支（`:903`、`:956-957`）；
+1. 前端 `fetch + Blob + a.download` 强制改名；
+2. `catch` 里回退服务器直连的分支（Gitee 链路失败时**唯一**的兜底，`download_page.py`）；
 3. `_send_file` 里 `.apk` → `application/vnd.android.package-archive` 的映射；
 4. `trustedDl()` 的域名白名单校验。
+
+> ⚠️ **不要**再往第 2 条里加 UA 白名单。2026-10-30 已整体移除一次，依据见 §3 第二层。
 
 ## 6. 发版必做（否则兜底会落后一版）
 
@@ -223,3 +231,4 @@ sha256sum /tmp/a.apk
 | 2026-10-30 | 本文档建立（此前知识散落在代码注释与 `生产服务器.md` 单行中） |
 | 2026-10-30 | 新增 §6.1「发版后实测」：门禁验不到真实通道，必须实际下载测速（PC + 安卓各一次，在电脑上完成） |
 | 2026-10-30 | 请求日志的 UA 从截断 120 字符改为 400 —— 原来只记到 `Version/4`，内核标识全丢，无法判断是否命中 `poorBlobUa` |
+| 2026-10-30 | **移除 `poorBlobUa` UA 预判名单**，改为全部优先 Gitee；服务器直连仅在 Gitee 链路失败时兜底。实测 HeyTapBrowser 被误伤，稳定吃 100 KB/s |
