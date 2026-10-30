@@ -51,7 +51,12 @@ RUNTIME_SUFFIXES = {".log", ".tmp", ".bak", ".swp"}
 SKIP_SUFFIX = {".pyc", ".pyo"} | RUNTIME_SUFFIXES
 
 # 唯一豁免表：相对源根 posix 路径 → 理由。新增必须用户批准。
-EXEMPTIONS: dict[str, str] = {}
+EXEMPTIONS: dict[str, str] = {
+    # 2026-10-30（用户要求「别把隐私数据打进包」）：app/config.json 是**开发机个人配置**
+    # （模型选择、effort 等），不得进发行包。gradle 的 syncBackend 已 exclude 它，
+    # 所以镜像里本就不该有 —— 这里同步豁免，否则门禁会一直报「缺失」并逼着 --sync 把它塞回去。
+    "app/config.json": "开发机个人配置，禁止进发行包（2026-10-30）",
+}
 
 
 def mirror_path(root: Path) -> Path:
@@ -124,6 +129,9 @@ def do_sync(root: Path = ROOT) -> int:
         dst_root = mirror / name
         dst_root.mkdir(parents=True, exist_ok=True)
         for rel, fp in _files(src_root).items():
+            key = f"{name}/{rel}"
+            if key in EXEMPTIONS:      # 豁免项不复制（如 app/config.json 不得进镜像）
+                continue
             d = dst_root / rel
             d.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(fp, d)
