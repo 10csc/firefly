@@ -15,6 +15,11 @@ val syncBackend = tasks.register<Sync>("syncBackend") {
     from("../../app") {
         into("app")
         exclude("**/__pycache__/**", "**/*.pyc")
+        // ★ 2026-10-30：开发机上的个人配置（模型选择等）绝不能进发行包。
+        // 安卓上 ROOT=BASE_DIR.parent=backend/，_defaults_map() 查的是 backend/config.json
+        // 而不是这份 backend/app/config.json，所以它本来也不会被读——但仍要排除：
+        // 一是减小包体，二是杜绝"以后有代码改成读它"时静默带出开发者偏好。
+        exclude("config.json")
     }
     from("../../database") {
         into("database")

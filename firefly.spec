@@ -20,8 +20,13 @@ a = Analysis(
     datas=[
         # 前端静态文件
         (str(ROOT / "app/static"), "static"),
-        # 首次启动的默认配置源
-        (str(ROOT / "app/config.json"), "."),
+        # ★ 2026-10-30：**不再打包 app/config.json**。
+        # 它原本被当作"首次启动的默认配置源"，由 core/migrations.py 的 _defaults_map()
+        # 在首启时复制成 user_data/config.json —— 但仓库里那份是**开发机上的个人配置**
+        # （模型选择 deepseek-v4-flash、polisher_effort=high 等），会把开发者的偏好
+        # 当成每个新用户的默认值发出去。
+        # 不打包时 _defaults_map() 因 `src` 不存在而跳过（migrations.py 里已判 exists），
+        # 新用户直接落到 core/config.py::_load_config() 的代码默认值，语义正确且干净。
         # 角色设定 + 表情包注册表源
         (str(ROOT / "app/assets"), "assets"),
         # 知识层在 2026-09-14 归位进角色包（assets/character/story/knowledge/，
