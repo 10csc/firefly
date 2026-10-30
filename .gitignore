@@ -131,3 +131,6 @@ _tmp_test/
 # 推广脚本运行期目录；⚠️ 其下 user_data/config.json **明文含真实 API Key**，
 # 虽已被 `user_data/` 规则挡住（实测未进 git、历史中也不存在），整个目录再挡一道防手滑
 _promo_run/
+
+# 安全告警脚本的运行期产物（每次告警追加，不参与版本管理）
+/docs/安全日报.md
