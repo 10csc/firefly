@@ -78,8 +78,12 @@ def collect_diagnostics() -> dict:
     """收集攻击诊断数据（代码能查的原始信息，喂给模型分析）。"""
     return {
         "fail2ban": run("fail2ban-client status sshd 2>/dev/null | head -10"),
-        "gateway_429_30m": run("journalctl -u firefly-downloads --since '30 minutes ago' --no-pager 2>/dev/null | grep -c '429'"),
-        "api_429_30m": run("journalctl -u firefly-server --since '30 minutes ago' --no-pager 2>/dev/null | grep -c '429\\|过于频繁'"),
+        # 2026-10-30 修误报：原口径是 `grep -c '429'`，匹配的是**含字符串 429 的行**。
+        # 而 journalctl 每行都带进程前缀 `python3[<pid>]` —— 当天下载服务 PID 恰为 88429，
+        # 于是 49 行普通日志被数成 49 次"网关 429"，弹了一次假警报（真实 HTTP 429 为 0）。
+        # 只认状态码本身：`" 429 ` 是 server.py 日志里状态码的位置（引号后跟空格）。
+        "gateway_429_30m": run("journalctl -u firefly-downloads --since '30 minutes ago' --no-pager 2>/dev/null | grep -cE '\" 429 '"),
+        "api_429_30m": run("journalctl -u firefly-server --since '30 minutes ago' --no-pager 2>/dev/null | grep -cE '\" 429 |过于频繁'"),
         "ssh_fails_30m": run("journalctl -u ssh --since '30 minutes ago' --no-pager 2>/dev/null | grep -c 'Failed password'"),
         "recent_errors": run("journalctl -u firefly-server --since '30 minutes ago' --no-pager 2>/dev/null | grep -E 'Traceback|Exception' | tail -3"),
         "services": run("systemctl is-active firefly-server firefly-downloads fail2ban 2>&1"),
