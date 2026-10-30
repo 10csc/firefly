@@ -162,6 +162,43 @@ DL_HOSTS = ['gitee.com', 'foruda.gitee.com', 'github.com', 'objects.githubuserco
 
   发布物清单格式：`{"version","version_code","artifacts":[{"name","path","size","sha256"}]}`。
 
+### 6.1 发版后实测（2026-10-30 立，强制）
+
+**门禁只验页面与产物，验不到真实下载走的是哪条通道。**
+
+2026-10-30 实测教训：页面 href 已是 Gitee 直链、下载页门禁全绿，但用户下载仍走服务器直连
+（约 100 KB/s），原因是 `poorBlobUa` 命中了他的浏览器内核。**从 HTML、代码、日志状态码里
+都看不出异常** —— 只有实际下一遍、看速度才能发现。
+
+因此每次发版后，**在电脑上**完整走一遍（PC 与安卓两个包各一次）：
+
+```bash
+# ① 按钮 href 必须是 Gitee 直链，不能是 /download/
+curl -s http://101.200.14.126:8787/download/ \
+  | grep -oE 'id="dl-(apk|exe)" href="[^"]*"'
+
+# ② resolve 必须返回 foruda 直链
+curl -s "http://101.200.14.126:8787/download/resolve?file=firefly.apk" | head -c 200
+
+# ③ 实际下载 + 测速（APK / EXE 各跑一次，只改 file=）
+U=$(curl -s "http://101.200.14.126:8787/download/resolve?file=firefly.apk" \
+    | python -c "import sys,json;print(json.load(sys.stdin)['url'])")
+curl -s -o /tmp/a.apk -m 300 -w "速度=%{speed_download} B/s 大小=%{size_download}\n" "$U"
+sha256sum /tmp/a.apk
+```
+
+判据：
+
+| 项 | 期望 | 不符时 |
+|---|---|---|
+| 下载速度 | **≥ 1.5 MB/s**（Gitee 常态约 2 MB/s） | 低于 300 KB/s ⇒ **走的是服务器直连**，按第 7 节查 |
+| `sha256` | 与 `release_manifests/release_manifest_<ver>.json` 逐条一致 | 产物没替换成功 |
+| 按钮 href | `https://gitee.com/...` | 页面模板 / 渲染占位符没生效 |
+| resolve 响应 | `{"url": "https://foruda.gitee.com/..."}` | Gitee 302 链变了或 tag 取不到 |
+
+**看到 100 KB/s 左右的速度，不要当成"网络慢"放过** —— 那就是服务器 3 Mbps 带宽被单个下载占满的
+典型值，是个真问题。
+
 ## 7. 排障对照
 
 | 现象 | 最可能原因 | 查哪里 |
@@ -171,6 +208,8 @@ DL_HOSTS = ['gitee.com', 'foruda.gitee.com', 'github.com', 'objects.githubuserco
 | 进度到 100% 但文件没出现 | `a.download` 被浏览器策略拦（需用户手势） | 用第二层兜底 |
 | 下载页版本号与产物不符 | `FALLBACK_TAG` 或 `version.json` 落后 | 第 6 节 |
 | 下载很慢 / 429 | 服务器直连被限速（3 Mbps 共享） | 引导用户走 Gitee 通道；`/download/stats` |
+| **下载速度约 100 KB/s**（Gitee 应约 2 MB/s） | 实际走了服务器直连：`poorBlobUa` 命中了该浏览器内核，或用户浏览器缓存了旧页面 | 查 `requests` 表的 `ua` 列（现记录 400 字符，足以看到 `TBS`/`HeyTapBrowser` 等内核标识）；`download_page.py:903` 的 `poorBlobUa` 正则 |
+| 页面 href 是 Gitee，下载却打到 `/download/firefly.apk` | JS 主动改的（`poorBlobUa` 分支），不是页面陈旧 | 同上，先看 UA |
 
 ## 8. 变更记录
 
@@ -182,3 +221,5 @@ DL_HOSTS = ['gitee.com', 'foruda.gitee.com', 'github.com', 'objects.githubuserco
 | 2026-09-15 | 审计 A4：新增 `trustedDl()` 直链信任校验 |
 | 2026-10-04 | 新增门禁 `tools/check_download_page.py`（0.9.1 交付） |
 | 2026-10-30 | 本文档建立（此前知识散落在代码注释与 `生产服务器.md` 单行中） |
+| 2026-10-30 | 新增 §6.1「发版后实测」：门禁验不到真实通道，必须实际下载测速（PC + 安卓各一次，在电脑上完成） |
+| 2026-10-30 | 请求日志的 UA 从截断 120 字符改为 400 —— 原来只记到 `Version/4`，内核标识全丢，无法判断是否命中 `poorBlobUa` |
