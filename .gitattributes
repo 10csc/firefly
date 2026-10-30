@@ -1,0 +1,4 @@
+# .githooks/ 下的脚本由 POSIX sh 执行。本仓库 core.autocrlf=true（Windows 默认安装），
+# 没有这条规则时检出会写成 CRLF，sh 报 "bad interpreter" 而非执行脚本
+# —— 表现是"提交被拒"，实际是钩子根本没跑起来（2026-10-30 实际踩到）。
+.githooks/* text eol=lf
