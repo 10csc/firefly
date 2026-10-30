@@ -13,6 +13,13 @@
 
 set -e
 
+# 检查脚本输出含 ✓ 等非 GBK 字符；Windows 控制台默认 GBK，未强制 UTF-8 时
+# 会在 print 处 UnicodeEncodeError 崩掉，把「扫描通过」伪装成「提交被拒」
+# （2026-10-30 实际踩到）。项目规范本就要求这两条，这里补齐。
+PYTHONUTF8=1
+PYTHONIOENCODING=utf-8
+export PYTHONUTF8 PYTHONIOENCODING
+
 # Windows / Unix 通用：优先 python，退化 python3
 PY=python
 command -v python >/dev/null 2>&1 || PY=python3
